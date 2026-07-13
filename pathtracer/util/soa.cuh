@@ -21,7 +21,7 @@ namespace spectra {
     };
 
     __host__ __device__ inline Float4 Load4(const Float4* p) {
-#if defined(__CUDA_ARCH__) && !defined(SPECTRA_FLOAT_AS_DOUBLE)
+#if defined(__CUDA_ARCH__)
         float4 v = *(const float4*) p;
         return {{v.x, v.y, v.z, v.w}};
 #else
@@ -30,7 +30,7 @@ namespace spectra {
     }
 
     __host__ __device__ inline void Store4(Float4* p, Float4 v) {
-#if defined(__CUDA_ARCH__) && !defined(SPECTRA_FLOAT_AS_DOUBLE)
+#if defined(__CUDA_ARCH__)
         *(float4*) p = make_float4(v.v[0], v.v[1], v.v[2], v.v[3]);
 #else
         *p = v;
@@ -62,14 +62,12 @@ namespace spectra {
             SampledSpectrum s;
             if constexpr ((NSpectrumSamples % 4) == 0) {
                 int offset = n4 * i;
-                DCHECK_LT(offset, nAlloc);
                 for (int i = 0; i < n4; ++i, ++offset) {
                     Float4 v4 = Load4(ptr4 + offset);
                     for (int j = 0; j < 4; ++j) s[4 * i + j] = v4.v[j];
                 }
             } else {
                 int offset = i * NSpectrumSamples;
-                DCHECK_LT(offset, nAlloc);
                 for (int i = 0; i < NSpectrumSamples; ++i) s[i] = ptr1[offset + i];
             }
             return s;
@@ -84,11 +82,9 @@ namespace spectra {
             __host__ __device__ void operator=(const SampledSpectrum& s) {
                 if constexpr ((NSpectrumSamples % 4) == 0) {
                     int offset = n4 * index;
-                    DCHECK_LT(offset, soa->nAlloc);
                     for (int i = 0; i < n4; ++i, ++offset) Store4(soa->ptr4 + offset, {s[4 * i], s[4 * i + 1], s[4 * i + 2], s[4 * i + 3]});
                 } else {
                     int offset = index * NSpectrumSamples;
-                    DCHECK_LT(offset, soa->nAlloc);
                     for (int i = 0; i < NSpectrumSamples; ++i) soa->ptr1[offset + i] = s[i];
                 }
             }
@@ -141,7 +137,6 @@ namespace spectra {
             if constexpr ((NSpectrumSamples % 4) == 0) {
                 int offset = n4 * i;
                 for (int i = 0; i < n4; ++i, ++offset) {
-                    DCHECK_LT(offset, nAlloc);
                     Float4 l4 = Load4(lambda4 + offset);
                     Float4 p4 = Load4(pdf4 + offset);
                     for (int j = 0; j < 4; ++j) {

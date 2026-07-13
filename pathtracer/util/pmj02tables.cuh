@@ -21,7 +21,6 @@ namespace spectra {
 
     __host__ __device__ inline Point2f GetPMJ02BNSample(int setIndex, int sampleIndex) {
         setIndex %= nPMJ02bnSets;
-        DCHECK_LT(sampleIndex, nPMJ02bnSamples);
         sampleIndex %= nPMJ02bnSamples;
 
         // Convert from fixed-point.

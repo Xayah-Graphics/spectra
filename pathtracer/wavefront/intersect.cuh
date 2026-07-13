@@ -34,34 +34,26 @@ namespace spectra {
             return;
         }
 
-        // FIXME: this is all basically duplicate code w/medium.cpp
         Material material = intr.material;
-
         const MixMaterial* mix = material.CastOrNullptr<MixMaterial>();
         while (mix) {
             MaterialEvalContext ctx(intr);
             material = mix->ChooseMaterial(BasicTextureEvaluator(), ctx);
-            mix      = material.CastOrNullptr<MixMaterial>();
+            mix = material.CastOrNullptr<MixMaterial>();
         }
 
         if (!material) {
-            Ray newRay = intr.SpawnRay(r.ray.d);
+            const Ray newRay = intr.SpawnRay(r.ray.d);
             nextRayQueue->PushIndirectRay(newRay, r.depth, r.prevIntrCtx, r.beta, r.r_u, r.r_l, r.lambda, r.etaScale, r.specularBounce, r.anyNonSpecularBounces, r.pixelIndex);
             return;
         }
 
-        if (intr.areaLight) {
-            // TODO: intr.wo == -ray.d?
-            hitAreaLightQueue->Push(HitAreaLightWorkItem{intr.areaLight, intr.p(), intr.n, intr.uv, intr.wo, r.lambda, r.depth, r.beta, r.r_u, r.r_l, r.prevIntrCtx, (int) r.specularBounce, r.pixelIndex});
-        }
+        if (intr.areaLight) hitAreaLightQueue->Push(HitAreaLightWorkItem{intr.areaLight, intr.p(), intr.n, intr.uv, intr.wo, r.lambda, r.depth, r.beta, r.r_u, r.r_l, r.prevIntrCtx, static_cast<int>(r.specularBounce), r.pixelIndex});
 
-        FloatTexture displacement = material.GetDisplacement();
-
-        MaterialEvalQueue* q = (material.CanEvaluateTextures(BasicTextureEvaluator()) && (!displacement || BasicTextureEvaluator().CanEvaluate({displacement}, {}))) ? basicEvalMaterialQueue : universalEvalMaterialQueue;
-
-        auto enqueue = [=](auto ptr) {
-            using Material = typename std::remove_reference_t<decltype(*ptr)>;
-            q->Push(MaterialEvalWorkItem<Material>{ptr, intr.pi, intr.n, intr.dpdu, intr.dpdv, intr.time, r.depth, intr.shading.n, intr.shading.dpdu, intr.shading.dpdv, intr.shading.dndu, intr.shading.dndv, intr.uv, intr.faceIndex, r.lambda, r.pixelIndex, r.anyNonSpecularBounces, intr.wo, r.beta, r.r_u, r.etaScale, mediumInterface});
+        const FloatTexture displacement = material.GetDisplacement();
+        MaterialEvalQueue* queue = material.CanEvaluateTextures(BasicTextureEvaluator()) && (!displacement || BasicTextureEvaluator().CanEvaluate({displacement}, {})) ? basicEvalMaterialQueue : universalEvalMaterialQueue;
+        auto enqueue = [=](auto pointer) {
+            queue->Push(MaterialEvalWorkItem<std::remove_pointer_t<decltype(pointer)>>{pointer, intr.pi, intr.n, intr.dpdu, intr.dpdv, intr.time, r.depth, intr.shading.n, intr.shading.dpdu, intr.shading.dpdv, intr.shading.dndu, intr.shading.dndv, intr.uv, intr.faceIndex, r.lambda, r.pixelIndex, r.anyNonSpecularBounces, intr.wo, r.beta, r.r_u, r.etaScale, mediumInterface});
         };
         material.Dispatch(enqueue);
     }

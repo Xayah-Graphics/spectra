@@ -37,7 +37,6 @@ namespace spectra {
             return alloc.new_object<PlanarMapping>(Inverse(renderFromTexture), parameters.GetOneVector3f("v1", Vector3f(1, 0, 0)), parameters.GetOneVector3f("v2", Vector3f(0, 1, 0)), parameters.GetOneFloat("udelta", 0.f), parameters.GetOneFloat("vdelta", 0.f));
         else {
             throw std::runtime_error(diagnostics::Format(loc, "2D texture mapping \"%s\" unknown", type));
-            return alloc.new_object<UVMapping>();
         }
     }
 
@@ -114,7 +113,6 @@ namespace spectra {
         int dim = parameters.GetOneInt("dimension", 2);
         if (dim != 2 && dim != 3) {
             throw std::runtime_error(diagnostics::Format(loc, "%d dimensional checkerboard texture not supported", dim));
-            return nullptr;
         }
         FloatTexture tex1 = parameters.GetFloatTexture("tex1", 1.f, alloc);
         FloatTexture tex2 = parameters.GetFloatTexture("tex2", 0.f, alloc);
@@ -135,7 +133,6 @@ namespace spectra {
         int dim = parameters.GetOneInt("dimension", 2);
         if (dim != 2 && dim != 3) {
             throw std::runtime_error(diagnostics::Format(loc, "%d dimensional checkerboard texture not supported", dim));
-            return nullptr;
         }
 
         Spectrum zero = alloc.new_object<ConstantSpectrum>(0.);
@@ -198,98 +195,6 @@ namespace spectra {
         return alloc.new_object<FBmTexture>(map, parameters.GetOneInt("octaves", 8), parameters.GetOneFloat("roughness", .5f));
     }
 
-
-    // SpectrumImageTexture Method Definitions
-    SampledSpectrum SpectrumImageTexture::Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
-#if defined(__CUDA_ARCH__)
-        assert(!"Should not be called in GPU code");
-        return SampledSpectrum(0);
-#else
-        // Apply texture mapping and flip $t$ coordinate for image texture lookup
-        TexCoord2D c = mapping.Map(ctx);
-        c.st[1]      = 1 - c.st[1];
-
-        // Lookup filtered RGB value in _MIPMap_
-        RGB rgb = scale * mipmap->Filter<RGB>(c.st, {c.dsdx, c.dtdx}, {c.dsdy, c.dtdy});
-        rgb     = ClampZero(invert ? (RGB(1, 1, 1) - rgb) : rgb);
-
-        // Return _SampledSpectrum_ for RGB image texture value
-        if (const RGBColorSpace* cs = mipmap->GetRGBColorSpace(); cs) {
-            if (spectrumType == SpectrumType::Unbounded)
-                return RGBUnboundedSpectrum(*cs, rgb).Sample(lambda);
-            else if (spectrumType == SpectrumType::Albedo)
-                return RGBAlbedoSpectrum(*cs, Clamp(rgb, 0, 1)).Sample(lambda);
-            else
-                return RGBIlluminantSpectrum(*cs, rgb).Sample(lambda);
-        }
-        // otherwise it better be a one-channel texture
-        DCHECK(rgb[0] == rgb[1] && rgb[1] == rgb[2]);
-        return SampledSpectrum(rgb[0]);
-
-#endif
-    }
-
-
-    std::mutex ImageTextureBase::textureCacheMutex;
-    std::map<TexInfo, MIPMap*> ImageTextureBase::textureCache;
-
-    FloatImageTexture* FloatImageTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
-        // Initialize 2D texture mapping _map_ from _tp_
-        TextureMapping2D map = TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
-
-        // Initialize _ImageTexture_ parameters
-        Float maxAniso     = parameters.GetOneFloat("maxanisotropy", 8.f);
-        std::string filter = parameters.GetOneString("filter", "bilinear");
-        MIPMapFilterOptions filterOptions;
-        filterOptions.maxAnisotropy       = maxAniso;
-        pstd::optional<FilterFunction> ff = ParseFilter(filter);
-        if (ff)
-            filterOptions.filter = *ff;
-        else
-            throw std::runtime_error(diagnostics::Format(loc, "%s: filter function unknown", filter));
-
-        std::string wrapString            = parameters.GetOneString("wrap", "repeat");
-        pstd::optional<WrapMode> wrapMode = ParseWrapMode(wrapString.c_str());
-        if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
-        Float scale          = parameters.GetOneFloat("scale", 1.f);
-        bool invert          = parameters.GetOneBool("invert", false);
-        std::string filename = parameters.GetOneString("filename", "");
-
-        const char* defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
-        std::string encodingString  = parameters.GetOneString("encoding", defaultEncoding);
-        ColorEncoding encoding      = ColorEncoding::Get(encodingString, alloc);
-
-        return alloc.new_object<FloatImageTexture>(map, filename, filterOptions, *wrapMode, scale, invert, encoding, alloc);
-    }
-
-    SpectrumImageTexture* SpectrumImageTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
-        // Initialize 2D texture mapping _map_ from _tp_
-        TextureMapping2D map = TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
-
-        // Initialize _ImageTexture_ parameters
-        Float maxAniso     = parameters.GetOneFloat("maxanisotropy", 8.f);
-        std::string filter = parameters.GetOneString("filter", "bilinear");
-        MIPMapFilterOptions filterOptions;
-        filterOptions.maxAnisotropy       = maxAniso;
-        pstd::optional<FilterFunction> ff = ParseFilter(filter);
-        if (ff)
-            filterOptions.filter = *ff;
-        else
-            throw std::runtime_error(diagnostics::Format(loc, "%s: filter function unknown", filter));
-
-        std::string wrapString            = parameters.GetOneString("wrap", "repeat");
-        pstd::optional<WrapMode> wrapMode = ParseWrapMode(wrapString.c_str());
-        if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
-        Float scale          = parameters.GetOneFloat("scale", 1.f);
-        bool invert          = parameters.GetOneBool("invert", false);
-        std::string filename = parameters.GetOneString("filename", "");
-
-        const char* defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
-        std::string encodingString  = parameters.GetOneString("encoding", defaultEncoding);
-        ColorEncoding encoding      = ColorEncoding::Get(encodingString, alloc);
-
-        return alloc.new_object<SpectrumImageTexture>(map, filename, filterOptions, *wrapMode, scale, invert, encoding, spectrumType, alloc);
-    }
 
     // MarbleTexture Method Definitions
     SampledSpectrum MarbleTexture::Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
@@ -375,28 +280,17 @@ namespace spectra {
         }
         ptexMutex.unlock();
 
-        // Issue an error if the texture doesn't exist or has an unsupported
-        // number of channels.
-        valid = false;
         Ptex::String error;
         PtexTexture* texture = cache->get(filename.c_str(), error);
-        if (!texture)
-            throw std::runtime_error(diagnostics::Format("%s", error));
-        else {
-            if (texture->numChannels() != 1 && texture->numChannels() != 3)
-                throw std::runtime_error(diagnostics::Format("%s: only one and three channel ptex textures are supported", filename));
-            else
-                valid = true;
+        if (!texture) throw std::runtime_error(diagnostics::Format("%s", error));
+        if (texture->numChannels() != 1 && texture->numChannels() != 3) {
             texture->release();
+            throw std::runtime_error(diagnostics::Format("%s: only one and three channel ptex textures are supported", filename));
         }
+        texture->release();
     }
 
     int PtexTextureBase::SampleTexture(TextureEvalContext ctx, float result[3]) const {
-        if (!valid) {
-            result[0] = 0.;
-            return 1;
-        }
-
         Ptex::String error;
         PtexTexture* texture = cache->get(filename.c_str(), error);
         CHECK(texture);
@@ -416,7 +310,6 @@ namespace spectra {
             uint8_t result8[3];
             for (int i = 0; i < nc; ++i) result8[i] = uint8_t(Clamp(result[i] * 255.f + 0.5f, 0, 255));
 
-            // Handle Float == double.
             Float fResult[3];
             encoding.ToLinear(pstd::MakeConstSpan(result8, nc), pstd::MakeSpan(fResult, nc));
             for (int c = 0; c < nc; ++c) result[c] = fResult[c];
@@ -428,56 +321,8 @@ namespace spectra {
     }
 
 
-    Float FloatPtexTexture::Evaluate(TextureEvalContext ctx) const {
-#if defined(__CUDA_ARCH__)
-        SPECTRA_FATAL("Ptex not supported with GPU renderer");
-        return 0;
-#else
-        float result[3];
-        int nc = SampleTexture(ctx, result);
-        if (nc == 1) return result[0];
-        DCHECK_EQ(3, nc);
-        return (result[0] + result[1] + result[2]) / 3;
-#endif
-    }
-
-    SampledSpectrum SpectrumPtexTexture::Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
-#if defined(__CUDA_ARCH__)
-        SPECTRA_FATAL("Ptex not supported with GPU renderer");
-        return SampledSpectrum(0);
-#else
-        float result[3];
-        int nc = SampleTexture(ctx, result);
-        if (nc == 1) return SampledSpectrum(result[0]);
-        DCHECK_EQ(3, nc);
-        RGB rgb(result[0], result[1], result[2]);
-        if (spectrumType == SpectrumType::Unbounded)
-            return RGBUnboundedSpectrum(*RGBColorSpace::SRGB(), rgb).Sample(lambda);
-        else if (spectrumType == SpectrumType::Albedo)
-            return RGBAlbedoSpectrum(*RGBColorSpace::SRGB(), Clamp(rgb, 0, 1)).Sample(lambda);
-        else
-            return RGBIlluminantSpectrum(*RGBColorSpace::SRGB(), rgb).Sample(lambda);
-#endif
-    }
-
-    FloatPtexTexture* FloatPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
-        std::string filename       = parameters.GetOneString("filename", "");
-        std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
-        ColorEncoding encoding     = ColorEncoding::Get(encodingString, alloc);
-        Float scale                = parameters.GetOneFloat("scale", 1.f);
-        return alloc.new_object<FloatPtexTexture>(filename, encoding, scale);
-    }
-
-    SpectrumPtexTexture* SpectrumPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
-        std::string filename       = parameters.GetOneString("filename", "");
-        std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
-        ColorEncoding encoding     = ColorEncoding::Get(encodingString, alloc);
-        Float scale                = parameters.GetOneFloat("scale", 1.f);
-        return alloc.new_object<SpectrumPtexTexture>(filename, encoding, scale, spectrumType);
-    }
-
     GPUFloatPtexTexture::GPUFloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, Allocator alloc) : faceValues(alloc) {
-        FloatPtexTexture tex(filename, encoding, scale);
+        PtexTextureBase tex(filename, encoding, scale);
 
         Ptex::String error;
         PtexTexture* texture = cache->get(filename.c_str(), error);
@@ -489,7 +334,9 @@ namespace spectra {
         for (int i = 0; i < nFaces; ++i) {
             Float filterWidth = 0.75f;
             TextureEvalContext ctx(Point3f(), Vector3f(), Vector3f(), Normal3f(), Point2f(0.5f, 0.5f), filterWidth, filterWidth, filterWidth, filterWidth, i);
-            faceValues[i] = Evaluate(ctx);
+            float result[3];
+            int nc        = tex.SampleTexture(ctx, result);
+            faceValues[i] = nc == 1 ? result[0] : (result[0] + result[1] + result[2]) / 3;
         }
     }
 
@@ -522,7 +369,7 @@ namespace spectra {
 
 
     GPUSpectrumPtexTexture::GPUSpectrumPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, SpectrumType spectrumType, Allocator alloc) : spectrumType(spectrumType), faceValues(alloc) {
-        SpectrumPtexTexture tex(filename, encoding, scale, spectrumType);
+        PtexTextureBase tex(filename, encoding, scale);
 
         Ptex::String error;
         PtexTexture* texture = cache->get(filename.c_str(), error);
@@ -539,8 +386,6 @@ namespace spectra {
             int nc = tex.SampleTexture(ctx, result);
             if (nc == 1)
                 result[1] = result[2] = result[0];
-            else
-                DCHECK_EQ(3, nc);
 
             faceValues[i] = RGB(result[0], result[1], result[2]);
         }
@@ -585,10 +430,6 @@ namespace spectra {
                 Float cs = cscale->Evaluate({});
                 if (cs == 1) {
                     return tex;
-                } else if (FloatImageTexture* image = tex.CastOrNullptr<FloatImageTexture>()) {
-                    FloatImageTexture* imageCopy = alloc.new_object<FloatImageTexture>(*image);
-                    imageCopy->MultiplyScale(cs);
-                    return imageCopy;
                 } else if (GPUFloatImageTexture* gimage = tex.CastOrNullptr<GPUFloatImageTexture>()) {
                     GPUFloatImageTexture* gimageCopy = alloc.new_object<GPUFloatImageTexture>(*gimage);
                     gimageCopy->MultiplyScale(cs);
@@ -611,10 +452,6 @@ namespace spectra {
             Float cs = cscale->Evaluate({});
             if (cs == 1) {
                 return tex;
-            } else if (SpectrumImageTexture* image = tex.CastOrNullptr<SpectrumImageTexture>()) {
-                SpectrumImageTexture* imageCopy = alloc.new_object<SpectrumImageTexture>(*image);
-                imageCopy->MultiplyScale(cs);
-                return imageCopy;
             } else if (GPUSpectrumImageTexture* gimage = tex.CastOrNullptr<GPUSpectrumImageTexture>()) {
                 GPUSpectrumImageTexture* gimageCopy = alloc.new_object<GPUSpectrumImageTexture>(*gimage);
                 gimageCopy->MultiplyScale(cs);
@@ -681,8 +518,6 @@ namespace spectra {
             ptexFloatTextureCache.clear();
             ptexSpectrumTextureCache.clear();
         }
-        ImageTextureBase::ClearCache();
-
         textureObjects.clear();
         luminanceTextures.clear();
         rgbTextures.clear();

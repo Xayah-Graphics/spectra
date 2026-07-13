@@ -341,7 +341,6 @@ namespace spectra::scene {
             .world_to_clip = multiply_camera_matrix(world_to_view, view_to_clip),
             .clip_to_world = multiply_camera_matrix(clip_to_view, view_to_world),
             .frame = frame,
-            .far_plane = far_plane,
         };
     }
 

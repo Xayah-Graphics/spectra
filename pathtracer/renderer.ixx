@@ -2,33 +2,30 @@ module;
 
 export module spectra.pathtracer.renderer;
 
-export import spectra.pathtracer.host;
+export import spectra.renderer.host;
 export import spectra.scene;
 export import vulkan;
 
 import std;
 
-extern "C++" {
-    namespace pstd::pmr {
-        class memory_resource;
-    }
-
-    namespace spectra::pathtracer {
-        class CompiledScene;
-        struct RenderConfig;
-    } // namespace spectra::pathtracer
-}
-
 namespace spectra::pathtracer {
+    struct SceneSupportReport {
+        bool supported{true};
+        std::vector<scene::Scene::Diagnostic> diagnostics{};
+    };
+
+    [[nodiscard]] SceneSupportReport AnalyzeSceneSupport(const scene::Scene::ResolvedScene& scene);
+
     export {
-        struct SceneSupportReport {
-            std::string target{};
-            bool supported{true};
-            std::vector<scene::Scene::Diagnostic> diagnostics{};
+        struct OfflineRenderRequest {
+            std::string output_file{};
+            std::optional<int> pixel_samples{};
+            int seed{0};
+            std::optional<int> cuda_device{};
+            bool quiet{false};
         };
 
-        [[nodiscard]] SceneSupportReport AnalyzeSceneSupport(const scene::Scene::ResolvedScene& scene);
-        [[nodiscard]] std::unique_ptr<CompiledScene> CompileScene(const scene::Scene::ResolvedScene& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource);
+        void RenderScene(const scene::Scene::ResolvedScene& scene, OfflineRenderRequest request);
 
         class Renderer final {
         public:
@@ -41,7 +38,6 @@ namespace spectra::pathtracer {
             Renderer& operator=(Renderer&& other) noexcept;
 
             [[nodiscard]] static std::string_view name();
-            void set_scene(std::shared_ptr<scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
             void attach(HostView host);
             template <Host HostType>
             void attach(HostType& host) {
@@ -51,20 +47,9 @@ namespace spectra::pathtracer {
             void before_imgui_shutdown() noexcept;
             void after_imgui_created();
             [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
-            template <Host HostType, typename HostFrameContext>
-                requires requires(const HostFrameContext& frame) {
-                    { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
-                    { frame.image_index } -> std::convertible_to<std::uint32_t>;
-                    { frame.frame_number } -> std::convertible_to<std::uint64_t>;
-                    { frame.delta_seconds } -> std::convertible_to<double>;
-                }
-            [[nodiscard]] FrameResult begin_frame(HostType& host, const HostFrameContext& frame) {
-                return this->begin_frame(HostView{host}, FrameContext{
-                    .frame_index   = static_cast<std::uint32_t>(frame.frame_slot_index),
-                    .image_index   = static_cast<std::uint32_t>(frame.image_index),
-                    .frame_number  = static_cast<std::uint64_t>(frame.frame_number),
-                    .delta_seconds = static_cast<double>(frame.delta_seconds),
-                });
+            template <Host HostType>
+            [[nodiscard]] FrameResult begin_frame(HostType& host, const FrameContext& frame) {
+                return this->begin_frame(HostView{host}, frame);
             }
             void record_frame(const vk::raii::CommandBuffer& command_buffer);
 

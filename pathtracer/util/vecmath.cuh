@@ -54,7 +54,6 @@ namespace spectra {
 
         Tuple2() = default;
         __host__ __device__ Tuple2(T x, T y) : x(x), y(y) {
-            DCHECK(!HasNaN());
         }
 
         __host__ __device__ bool HasNaN() const {
@@ -63,13 +62,11 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator+(Child<U> c) const -> Child<decltype(T{} + U{})> {
-            DCHECK(!c.HasNaN());
             return {x + c.x, y + c.y};
         }
 
         template <typename U>
         __host__ __device__ Child<T>& operator+=(Child<U> c) {
-            DCHECK(!c.HasNaN());
             x += c.x;
             y += c.y;
             return static_cast<Child<T>&>(*this);
@@ -77,13 +74,11 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator-(Child<U> c) const -> Child<decltype(T{} - U{})> {
-            DCHECK(!c.HasNaN());
             return {x - c.x, y - c.y};
         }
 
         template <typename U>
         __host__ __device__ Child<T>& operator-=(Child<U> c) {
-            DCHECK(!c.HasNaN());
             x -= c.x;
             y -= c.y;
             return static_cast<Child<T>&>(*this);
@@ -104,7 +99,6 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ Child<T>& operator*=(U s) {
-            DCHECK(!IsNaN(s));
             x *= s;
             y *= s;
             return static_cast<Child<T>&>(*this);
@@ -112,14 +106,11 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator/(U d) const -> Child<decltype(T{} / U{})> {
-            DCHECK(d != 0 && !IsNaN(d));
             return {x / d, y / d};
         }
 
         template <typename U>
         __host__ __device__ Child<T>& operator/=(U d) {
-            DCHECK_NE(d, 0);
-            DCHECK(!IsNaN(d));
             x /= d;
             y /= d;
             return static_cast<Child<T>&>(*this);
@@ -130,12 +121,10 @@ namespace spectra {
         }
 
         __host__ __device__ T operator[](int i) const {
-            DCHECK(i >= 0 && i <= 1);
             return (i == 0) ? x : y;
         }
 
         __host__ __device__ T& operator[](int i) {
-            DCHECK(i >= 0 && i <= 1);
             return (i == 0) ? x : y;
         }
 
@@ -146,7 +135,6 @@ namespace spectra {
     // Tuple2 Inline Functions
     template <template <class> class C, typename T, typename U>
     __host__ __device__ auto operator*(U s, Tuple2<C, T> t) -> C<decltype(T{} * U{})> {
-        DCHECK(!t.HasNaN());
         return t * s;
     }
 
@@ -235,7 +223,6 @@ namespace spectra {
         // Tuple3 Public Methods
         Tuple3() = default;
         __host__ __device__ Tuple3(T x, T y, T z) : x(x), y(y), z(z) {
-            DCHECK(!HasNaN());
         }
 
         __host__ __device__ bool HasNaN() const {
@@ -243,14 +230,12 @@ namespace spectra {
         }
 
         __host__ __device__ T operator[](int i) const {
-            DCHECK(i >= 0 && i <= 2);
             if (i == 0) return x;
             if (i == 1) return y;
             return z;
         }
 
         __host__ __device__ T& operator[](int i) {
-            DCHECK(i >= 0 && i <= 2);
             if (i == 0) return x;
             if (i == 1) return y;
             return z;
@@ -258,7 +243,6 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator+(Child<U> c) const -> Child<decltype(T{} + U{})> {
-            DCHECK(!c.HasNaN());
             return {x + c.x, y + c.y, z + c.z};
         }
 
@@ -266,7 +250,6 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ Child<T>& operator+=(Child<U> c) {
-            DCHECK(!c.HasNaN());
             x += c.x;
             y += c.y;
             z += c.z;
@@ -275,13 +258,11 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator-(Child<U> c) const -> Child<decltype(T{} - U{})> {
-            DCHECK(!c.HasNaN());
             return {x - c.x, y - c.y, z - c.z};
         }
 
         template <typename U>
         __host__ __device__ Child<T>& operator-=(Child<U> c) {
-            DCHECK(!c.HasNaN());
             x -= c.x;
             y -= c.y;
             z -= c.z;
@@ -303,7 +284,6 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ Child<T>& operator*=(U s) {
-            DCHECK(!IsNaN(s));
             x *= s;
             y *= s;
             z *= s;
@@ -312,13 +292,11 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator/(U d) const -> Child<decltype(T{} / U{})> {
-            DCHECK_NE(d, 0);
             return {x / d, y / d, z / d};
         }
 
         template <typename U>
         __host__ __device__ Child<T>& operator/=(U d) {
-            DCHECK_NE(d, 0);
             x /= d;
             y /= d;
             z /= d;
@@ -526,13 +504,11 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator+(Vector2<U> v) const -> Point2<decltype(T{} + U{})> {
-            DCHECK(!v.HasNaN());
             return {x + v.x, y + v.y};
         }
 
         template <typename U>
         __host__ __device__ Point2<T>& operator+=(Vector2<U> v) {
-            DCHECK(!v.HasNaN());
             x += v.x;
             y += v.y;
             return *this;
@@ -547,19 +523,16 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator-(Point2<U> p) const -> Vector2<decltype(T{} - U{})> {
-            DCHECK(!p.HasNaN());
             return {x - p.x, y - p.y};
         }
 
         template <typename U>
         __host__ __device__ auto operator-(Vector2<U> v) const -> Point2<decltype(T{} - U{})> {
-            DCHECK(!v.HasNaN());
             return {x - v.x, y - v.y};
         }
 
         template <typename U>
         __host__ __device__ Point2<T>& operator-=(Vector2<U> v) {
-            DCHECK(!v.HasNaN());
             x -= v.x;
             y -= v.y;
             return *this;
@@ -598,13 +571,11 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator+(Vector3<U> v) const -> Point3<decltype(T{} + U{})> {
-            DCHECK(!v.HasNaN());
             return {x + v.x, y + v.y, z + v.z};
         }
 
         template <typename U>
         __host__ __device__ Point3<T>& operator+=(Vector3<U> v) {
-            DCHECK(!v.HasNaN());
             x += v.x;
             y += v.y;
             z += v.z;
@@ -613,13 +584,11 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator-(Vector3<U> v) const -> Point3<decltype(T{} - U{})> {
-            DCHECK(!v.HasNaN());
             return {x - v.x, y - v.y, z - v.z};
         }
 
         template <typename U>
         __host__ __device__ Point3<T>& operator-=(Vector3<U> v) {
-            DCHECK(!v.HasNaN());
             x -= v.x;
             y -= v.y;
             z -= v.z;
@@ -628,7 +597,6 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ auto operator-(Point3<U> p) const -> Vector3<decltype(T{} - U{})> {
-            DCHECK(!p.HasNaN());
             return {x - p.x, y - p.y, z - p.z};
         }
     };
@@ -710,13 +678,11 @@ namespace spectra {
         // Meh--can't seem to get these from Point3 via using declarations...
         template <typename U>
         __host__ __device__ Point3fi operator+(Vector3<U> v) const {
-            DCHECK(!v.HasNaN());
             return {x + v.x, y + v.y, z + v.z};
         }
 
         template <typename U>
         __host__ __device__ Point3fi& operator+=(Vector3<U> v) {
-            DCHECK(!v.HasNaN());
             x += v.x;
             y += v.y;
             z += v.z;
@@ -729,19 +695,16 @@ namespace spectra {
 
         template <typename U>
         __host__ __device__ Point3fi operator-(Point3<U> p) const {
-            DCHECK(!p.HasNaN());
             return {x - p.x, y - p.y, z - p.z};
         }
 
         template <typename U>
         __host__ __device__ Point3fi operator-(Vector3<U> v) const {
-            DCHECK(!v.HasNaN());
             return {x - v.x, y - v.y, z - v.z};
         }
 
         template <typename U>
         __host__ __device__ Point3fi& operator-=(Vector3<U> v) {
-            DCHECK(!v.HasNaN());
             x -= v.x;
             y -= v.y;
             z -= v.z;
@@ -816,14 +779,12 @@ namespace spectra {
         }
 
         __host__ __device__ Quaternion& operator/=(Float f) {
-            DCHECK_NE(0, f);
             v /= f;
             w /= f;
             return *this;
         }
 
         __host__ __device__ Quaternion operator/(Float f) const {
-            DCHECK_NE(0, f);
             return {v / f, w / f};
         }
 
@@ -840,13 +801,11 @@ namespace spectra {
 
     template <typename T>
     __host__ __device__ auto Dot(Vector2<T> v1, Vector2<T> v2) -> TupleLength<T>::type {
-        DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return SumOfProducts(v1.x, v2.x, v1.y, v2.y);
     }
 
     template <typename T>
     __host__ __device__ auto AbsDot(Vector2<T> v1, Vector2<T> v2) -> TupleLength<T>::type {
-        DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return std::abs(Dot(v1, v2));
     }
 
@@ -883,13 +842,11 @@ namespace spectra {
 
     template <typename T>
     __host__ __device__ Vector3<T> Cross(Vector3<T> v1, Normal3<T> v2) {
-        DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return {DifferenceOfProducts(v1.y, v2.z, v1.z, v2.y), DifferenceOfProducts(v1.z, v2.x, v1.x, v2.z), DifferenceOfProducts(v1.x, v2.y, v1.y, v2.x)};
     }
 
     template <typename T>
     __host__ __device__ Vector3<T> Cross(Normal3<T> v1, Vector3<T> v2) {
-        DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return {DifferenceOfProducts(v1.y, v2.z, v1.z, v2.y), DifferenceOfProducts(v1.z, v2.x, v1.x, v2.z), DifferenceOfProducts(v1.x, v2.y, v1.y, v2.x)};
     }
 
@@ -911,7 +868,6 @@ namespace spectra {
 
     template <typename T>
     __host__ __device__ T Dot(Vector3<T> v, Vector3<T> w) {
-        DCHECK(!v.HasNaN() && !w.HasNaN());
         return v.x * w.x + v.y * w.y + v.z * w.z;
     }
 
@@ -927,7 +883,6 @@ namespace spectra {
 
     template <typename T>
     __host__ __device__ T AbsDot(Vector3<T> v1, Vector3<T> v2) {
-        DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return std::abs(Dot(v1, v2));
     }
 
@@ -946,7 +901,6 @@ namespace spectra {
 
     template <typename T>
     __host__ __device__ Vector3<T> Cross(Vector3<T> v, Vector3<T> w) {
-        DCHECK(!v.HasNaN() && !w.HasNaN());
         return {DifferenceOfProducts(v.y, w.z, v.z, w.y), DifferenceOfProducts(v.z, w.x, v.x, w.z), DifferenceOfProducts(v.x, w.y, v.y, w.x)};
     }
 
@@ -1002,39 +956,33 @@ namespace spectra {
 
     template <typename T>
     __host__ __device__ auto Dot(Normal3<T> n, Vector3<T> v) -> TupleLength<T>::type {
-        DCHECK(!n.HasNaN() && !v.HasNaN());
         return FMA(n.x, v.x, SumOfProducts(n.y, v.y, n.z, v.z));
     }
 
     template <typename T>
     __host__ __device__ auto Dot(Vector3<T> v, Normal3<T> n) -> TupleLength<T>::type {
-        DCHECK(!v.HasNaN() && !n.HasNaN());
         return FMA(n.x, v.x, SumOfProducts(n.y, v.y, n.z, v.z));
     }
 
     template <typename T>
     __host__ __device__ auto Dot(Normal3<T> n1, Normal3<T> n2) -> TupleLength<T>::type {
-        DCHECK(!n1.HasNaN() && !n2.HasNaN());
         return FMA(n1.x, n2.x, SumOfProducts(n1.y, n2.y, n1.z, n2.z));
     }
 
     template <typename T>
     __host__ __device__ auto AbsDot(Normal3<T> n, Vector3<T> v) -> TupleLength<T>::type {
-        DCHECK(!n.HasNaN() && !v.HasNaN());
         return std::abs(Dot(n, v));
     }
 
     template <typename T>
     __host__ __device__ auto AbsDot(Vector3<T> v, Normal3<T> n) -> TupleLength<T>::type {
         using std::abs;
-        DCHECK(!v.HasNaN() && !n.HasNaN());
         return abs(Dot(v, n));
     }
 
     template <typename T>
     __host__ __device__ auto AbsDot(Normal3<T> n1, Normal3<T> n2) -> TupleLength<T>::type {
         using std::abs;
-        DCHECK(!n1.HasNaN() && !n2.HasNaN());
         return abs(Dot(n1, n2));
     }
 
@@ -1072,7 +1020,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline Quaternion Normalize(Quaternion q) {
-        DCHECK_GT(Length(q), 0);
         return q / Length(q);
     }
 
@@ -1144,12 +1091,10 @@ namespace spectra {
         }
 
         __host__ __device__ Point2<T> operator[](int i) const {
-            DCHECK(i == 0 || i == 1);
             return (i == 0) ? pMin : pMax;
         }
 
         __host__ __device__ Point2<T>& operator[](int i) {
-            DCHECK(i == 0 || i == 1);
             return (i == 0) ? pMin : pMax;
         }
 
@@ -1162,7 +1107,6 @@ namespace spectra {
         }
 
         __host__ __device__ Point2<T> Corner(int corner) const {
-            DCHECK(corner >= 0 && corner < 4);
             return Point2<T>((*this)[(corner & 1)].x, (*this)[(corner & 2) ? 1 : 0].y);
         }
 
@@ -1204,17 +1148,14 @@ namespace spectra {
         __host__ __device__ Bounds3(Point3<T> p1, Point3<T> p2) : pMin(Min(p1, p2)), pMax(Max(p1, p2)) {}
 
         __host__ __device__ Point3<T> operator[](int i) const {
-            DCHECK(i == 0 || i == 1);
             return (i == 0) ? pMin : pMax;
         }
 
         __host__ __device__ Point3<T>& operator[](int i) {
-            DCHECK(i == 0 || i == 1);
             return (i == 0) ? pMin : pMax;
         }
 
         __host__ __device__ Point3<T> Corner(int corner) const {
-            DCHECK(corner >= 0 && corner < 8);
             return Point3<T>((*this)[(corner & 1)].x, (*this)[(corner & 2) ? 1 : 0].y, (*this)[(corner & 4) ? 1 : 0].z);
         }
 
@@ -1557,8 +1498,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline Vector3f SphericalDirection(Float sinTheta, Float cosTheta, Float phi) {
-        DCHECK(sinTheta >= -1.0001 && sinTheta <= 1.0001);
-        DCHECK(cosTheta >= -1.0001 && cosTheta <= 1.0001);
         return Vector3f(Clamp(sinTheta, -1, 1) * std::cos(phi), Clamp(sinTheta, -1, 1) * std::sin(phi), Clamp(cosTheta, -1, 1));
     }
 
@@ -1658,7 +1597,7 @@ namespace spectra {
     private:
         // OctahedralVector Private Methods
         __host__ __device__ static Float Sign(Float v) {
-            return std::copysign(1.f, v);
+            return pstd::copysign(1.f, v);
         }
 
         __host__ __device__ static uint16_t Encode(Float f) {
@@ -1714,7 +1653,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline Vector3f DirectionCone::ClosestVectorInCone(Vector3f wp) const {
-        DCHECK(!IsEmpty());
         wp = Normalize(wp);
         // Return provided vector if it is inside the cone
         if (Dot(wp, w) > cosTheta) return wp;
@@ -1801,12 +1739,6 @@ namespace spectra {
 
     // Frame Inline Functions
     __host__ __device__ inline Frame::Frame(Vector3f x, Vector3f y, Vector3f z) : x(x), y(y), z(z) {
-        DCHECK_LT(std::abs(LengthSquared(x) - 1), 1e-4);
-        DCHECK_LT(std::abs(LengthSquared(y) - 1), 1e-4);
-        DCHECK_LT(std::abs(LengthSquared(z) - 1), 1e-4);
-        DCHECK_LT(std::abs(Dot(x, y)), 1e-4);
-        DCHECK_LT(std::abs(Dot(y, z)), 1e-4);
-        DCHECK_LT(std::abs(Dot(z, x)), 1e-4);
     }
 } // namespace spectra
 

@@ -241,7 +241,6 @@ namespace spectra {
             if (DistanceSquared(pOrigin, pCenter) <= Sqr(radius)) {
                 // Sample shape by area and compute incident direction _wi_
                 pstd::optional<ShapeSample> ss = Sample(u);
-                DCHECK(ss.has_value());
                 ss->intr.time = ctx.time;
                 Vector3f wi   = ss->intr.p() - ctx.p();
                 if (LengthSquared(wi) == 0) return {};
@@ -294,7 +293,6 @@ namespace spectra {
             if (spherePhi < 0) spherePhi += 2 * Pi;
             Point2f uv(spherePhi / phiMax, (theta - thetaZMin) / (thetaZMax - thetaZMin));
 
-            DCHECK_NE(oneMinusCosThetaMax, 0); // very small far away sphere
             return ShapeSample{Interaction(Point3fi(p, pError), n, ctx.time, uv), 1 / (2 * Pi * oneMinusCosThetaMax)};
         }
 
@@ -432,7 +430,6 @@ namespace spectra {
         __host__ __device__ pstd::optional<ShapeSample> Sample(const ShapeSampleContext& ctx, Point2f u) const {
             // Sample shape by area and compute incident direction _wi_
             pstd::optional<ShapeSample> ss = Sample(u);
-            DCHECK(ss.has_value());
             ss->intr.time = ctx.time;
             Vector3f wi   = ss->intr.p() - ctx.p();
             if (LengthSquared(wi) == 0) return {};
@@ -627,7 +624,6 @@ namespace spectra {
         __host__ __device__ pstd::optional<ShapeSample> Sample(const ShapeSampleContext& ctx, Point2f u) const {
             // Sample shape by area and compute incident direction _wi_
             pstd::optional<ShapeSample> ss = Sample(u);
-            DCHECK(ss.has_value());
             ss->intr.time = ctx.time;
             Vector3f wi   = ss->intr.p() - ctx.p();
             if (LengthSquared(wi) == 0) return {};
@@ -870,7 +866,6 @@ namespace spectra {
             if (solidAngle < MinSphericalSampleArea || solidAngle > MaxSphericalSampleArea) {
                 // Sample shape by area and compute incident direction _wi_
                 pstd::optional<ShapeSample> ss = Sample(u);
-                DCHECK(ss.has_value());
                 ss->intr.time = ctx.time;
                 Vector3f wi   = ss->intr.p() - ctx.p();
                 if (LengthSquared(wi) == 0) return {};
@@ -893,7 +888,6 @@ namespace spectra {
                 pstd::array<Float, 4> w = pstd::array<Float, 4>{std::max<Float>(0.01, AbsDot(ctx.ns, wi[1])), std::max<Float>(0.01, AbsDot(ctx.ns, wi[1])), std::max<Float>(0.01, AbsDot(ctx.ns, wi[0])), std::max<Float>(0.01, AbsDot(ctx.ns, wi[2]))};
 
                 u = SampleBilinear(u, w);
-                DCHECK(u[0] >= 0 && u[0] < 1 && u[1] >= 0 && u[1] < 1);
                 pdf = BilinearPDF(u, w);
             }
 
@@ -1159,7 +1153,6 @@ namespace spectra {
                 // Set _dpdu_ and _dpdv_ to updated partial derivatives
                 if (Cross(dpds, dpdt) != Vector3f(0, 0, 0)) {
                     if (Dot(Cross(dpdu, dpdv), Cross(dpds, dpdt)) < 0) dpdt = -dpdt;
-                    DCHECK_GE(Dot(Normalize(Cross(dpdu, dpdv)), Normalize(Cross(dpds, dpdt))), -1e-3);
                     dpdu = dpds;
                     dpdv = dpdt;
                 }

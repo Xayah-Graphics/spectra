@@ -382,106 +382,6 @@ namespace spectra {
         int octaves;
     };
 
-    // TexInfo Definition
-    struct TexInfo {
-        // TexInfo Public Methods
-        TexInfo(const std::string& f, MIPMapFilterOptions filterOptions, WrapMode wm, ColorEncoding encoding) : filename(f), filterOptions(filterOptions), wrapMode(wm), encoding(encoding) {}
-
-        bool operator<(const TexInfo& t) const {
-            return std::tie(filename, filterOptions, encoding, wrapMode) < std::tie(t.filename, t.filterOptions, t.encoding, t.wrapMode);
-        }
-
-
-        std::string filename;
-        MIPMapFilterOptions filterOptions;
-        WrapMode wrapMode;
-        ColorEncoding encoding;
-    };
-
-    // ImageTextureBase Definition
-    class ImageTextureBase {
-    public:
-        // ImageTextureBase Public Methods
-        ImageTextureBase(TextureMapping2D mapping, std::string filename, MIPMapFilterOptions filterOptions, WrapMode wrapMode, Float scale, bool invert, ColorEncoding encoding, Allocator alloc) : mapping(mapping), filename(filename), scale(scale), invert(invert) {
-            // Get _MIPMap_ from texture cache if present
-            TexInfo texInfo(filename, filterOptions, wrapMode, encoding);
-            std::unique_lock<std::mutex> lock(textureCacheMutex);
-            if (auto iter = textureCache.find(texInfo); iter != textureCache.end()) {
-                mipmap = iter->second;
-                return;
-            }
-            lock.unlock();
-
-            // Create _MIPMap_ for _filename_ and add to texture cache
-            mipmap = MIPMap::CreateFromFile(filename, filterOptions, wrapMode, encoding, alloc);
-            lock.lock();
-            // This is actually ok, but if it hits, it means we've wastefully
-            // loaded this texture. (Note that in that case, should just return
-            // the one that's already in there and not replace it.)
-            CHECK(textureCache.find(texInfo) == textureCache.end());
-            textureCache[texInfo] = mipmap;
-        }
-
-        static void ClearCache() {
-            std::unique_lock<std::mutex> lock(textureCacheMutex);
-            textureCache.clear();
-        }
-
-        void MultiplyScale(Float s) {
-            scale *= s;
-        }
-
-    protected:
-        // ImageTextureBase Protected Members
-        TextureMapping2D mapping;
-        std::string filename;
-        Float scale;
-        bool invert;
-        MIPMap* mipmap;
-
-    private:
-        // ImageTextureBase Private Members
-        static std::mutex textureCacheMutex;
-        static std::map<TexInfo, MIPMap*> textureCache;
-    };
-
-    // FloatImageTexture Definition
-    class FloatImageTexture : public ImageTextureBase {
-    public:
-        FloatImageTexture(TextureMapping2D m, const std::string& filename, MIPMapFilterOptions filterOptions, WrapMode wm, Float scale, bool invert, ColorEncoding encoding, Allocator alloc) : ImageTextureBase(m, filename, filterOptions, wm, scale, invert, encoding, alloc) {}
-
-        __host__ __device__ Float Evaluate(TextureEvalContext ctx) const {
-#if defined(__CUDA_ARCH__)
-            assert(!"Should not be called in GPU code");
-            return 0;
-#else
-            TexCoord2D c = mapping.Map(ctx);
-            // Texture coordinates are (0,0) in the lower left corner, but
-            // image coordinates are (0,0) in the upper left.
-            c.st[1] = 1 - c.st[1];
-            Float v = scale * mipmap->Filter<Float>(c.st, {c.dsdx, c.dtdx}, {c.dsdy, c.dtdy});
-            return invert ? std::max<Float>(0, 1 - v) : v;
-#endif
-        }
-
-        static FloatImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
-    };
-
-    // SpectrumImageTexture Definition
-    class SpectrumImageTexture : public ImageTextureBase {
-    public:
-        // SpectrumImageTexture Public Methods
-        SpectrumImageTexture(TextureMapping2D mapping, std::string filename, MIPMapFilterOptions filterOptions, WrapMode wrapMode, Float scale, bool invert, ColorEncoding encoding, SpectrumType spectrumType, Allocator alloc) : ImageTextureBase(mapping, filename, filterOptions, wrapMode, scale, invert, encoding, alloc), spectrumType(spectrumType) {}
-
-        __host__ __device__ SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const;
-
-        static SpectrumImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
-
-    private:
-        // SpectrumImageTexture Private Members
-        SpectrumType spectrumType;
-    };
-
 #if defined(__NVCC__)
     class GPUSpectrumImageTexture {
     public:
@@ -700,32 +600,10 @@ namespace spectra {
 
         int SampleTexture(TextureEvalContext ctx, float* result) const;
 
-    protected:
     private:
-        bool valid;
         std::string filename;
         ColorEncoding encoding;
         Float scale;
-    };
-
-    class FloatPtexTexture : public PtexTextureBase {
-    public:
-        FloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale) : PtexTextureBase(filename, encoding, scale) {}
-
-        __host__ __device__ Float Evaluate(TextureEvalContext ctx) const;
-        static FloatPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
-    };
-
-    class SpectrumPtexTexture : public PtexTextureBase {
-    public:
-        SpectrumPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, SpectrumType spectrumType) : PtexTextureBase(filename, encoding, scale), spectrumType(spectrumType) {}
-
-        __host__ __device__ SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const;
-
-        static SpectrumPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
-
-    private:
-        SpectrumType spectrumType;
     };
 
     class GPUFloatPtexTexture {
@@ -733,7 +611,6 @@ namespace spectra {
         GPUFloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, Allocator alloc);
 
         __host__ __device__ Float Evaluate(TextureEvalContext ctx) const {
-            DCHECK(ctx.faceIndex >= 0 && ctx.faceIndex < faceValues.size());
             return faceValues[ctx.faceIndex];
         }
 
@@ -872,11 +749,11 @@ namespace spectra {
         __host__ __device__ bool CanEvaluate(std::initializer_list<FloatTexture> ftex, std::initializer_list<SpectrumTexture> stex) const {
             // Return _false_ if any _FloatTexture_s cannot be evaluated
             for (FloatTexture f : ftex)
-                if (f && !f.Is<FloatConstantTexture>() && !f.Is<FloatImageTexture>() && !f.Is<GPUFloatPtexTexture>() && !f.Is<GPUFloatImageTexture>()) return false;
+                if (f && !f.Is<FloatConstantTexture>() && !f.Is<GPUFloatPtexTexture>() && !f.Is<GPUFloatImageTexture>()) return false;
 
             // Return _false_ if any _SpectrumTexture_s cannot be evaluated
             for (SpectrumTexture s : stex)
-                if (s && !s.Is<SpectrumConstantTexture>() && !s.Is<SpectrumImageTexture>() && !s.Is<GPUSpectrumPtexTexture>() && !s.Is<GPUSpectrumImageTexture>()) return false;
+                if (s && !s.Is<SpectrumConstantTexture>() && !s.Is<GPUSpectrumPtexTexture>() && !s.Is<GPUSpectrumImageTexture>()) return false;
 
             return true;
         }
@@ -884,8 +761,6 @@ namespace spectra {
         __host__ __device__ Float operator()(FloatTexture tex, TextureEvalContext ctx) {
             if (tex.Is<FloatConstantTexture>())
                 return tex.Cast<FloatConstantTexture>()->Evaluate(ctx);
-            else if (tex.Is<FloatImageTexture>())
-                return tex.Cast<FloatImageTexture>()->Evaluate(ctx);
             else if (tex.Is<GPUFloatImageTexture>())
                 return tex.Cast<GPUFloatImageTexture>()->Evaluate(ctx);
             else if (tex.Is<GPUFloatPtexTexture>())
@@ -899,8 +774,6 @@ namespace spectra {
         __host__ __device__ SampledSpectrum operator()(SpectrumTexture tex, TextureEvalContext ctx, SampledWavelengths lambda) {
             if (tex.Is<SpectrumConstantTexture>())
                 return tex.Cast<SpectrumConstantTexture>()->Evaluate(ctx, lambda);
-            else if (tex.Is<SpectrumImageTexture>())
-                return tex.Cast<SpectrumImageTexture>()->Evaluate(ctx, lambda);
             else if (tex.Is<GPUSpectrumImageTexture>())
                 return tex.Cast<GPUSpectrumImageTexture>()->Evaluate(ctx, lambda);
             else if (tex.Is<GPUSpectrumPtexTexture>())

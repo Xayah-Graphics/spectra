@@ -93,16 +93,6 @@ namespace spectra {
         return DispatchCPU(is);
     }
 
-    RayMajorantIterator Medium::SampleRay(Ray ray, Float tMax, const SampledWavelengths& lambda, ScratchBuffer& buf) const {
-        auto sample = [ray, tMax, lambda, &buf](auto medium) {
-            typename std::remove_reference_t<decltype(*medium)>::MajorantIterator* iter = (typename std::remove_reference_t<decltype(*medium)>::MajorantIterator*) buf.Alloc(sizeof(typename std::remove_reference_t<decltype(*medium)>::MajorantIterator), alignof(typename std::remove_reference_t<decltype(*medium)>::MajorantIterator));
-            *iter                                                                       = medium->SampleRay(ray, tMax, lambda);
-            return RayMajorantIterator(iter);
-        };
-        return DispatchCPU(sample);
-    }
-
-
     // HomogeneousMedium Method Definitions
     HomogeneousMedium* HomogeneousMedium::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
         Spectrum sig_a = nullptr, sig_s = nullptr;

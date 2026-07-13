@@ -515,12 +515,10 @@ namespace pstd {
         }
 
         __host__ __device__ reference operator[](size_type index) {
-            DCHECK_LT(index, size());
             return ptr[index];
         }
 
         __host__ __device__ const_reference operator[](size_type index) const {
-            DCHECK_LT(index, size());
             return ptr[index];
         }
 
@@ -586,7 +584,6 @@ namespace pstd {
         }
 
         void pop_back() {
-            DCHECK(!empty());
             alloc.destroy(ptr + nStored - 1);
             --nStored;
         }

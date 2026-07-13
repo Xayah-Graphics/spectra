@@ -65,7 +65,6 @@ namespace spectra {
         Float sum  = 0;
         while (sum + weights[offset] <= up) {
             sum += weights[offset++];
-            DCHECK_LT(offset, weights.size());
         }
 
         // Compute PMF and remapped _u_ value, if necessary
@@ -76,13 +75,11 @@ namespace spectra {
     }
 
     __host__ __device__ inline Float LinearPDF(Float x, Float a, Float b) {
-        DCHECK(a >= 0 && b >= 0);
         if (x < 0 || x > 1) return 0;
         return 2 * Lerp(x, a, b) / (a + b);
     }
 
     __host__ __device__ inline Float SampleLinear(Float u, Float a, Float b) {
-        DCHECK(a >= 0 && b >= 0);
         if (u == 0 && a == 0) return 0;
         Float x = u * (a + b) / (a + std::sqrt(Lerp(u, Sqr(a), Sqr(b))));
         return std::min(x, OneMinusEpsilon);
@@ -93,14 +90,12 @@ namespace spectra {
     }
 
     __host__ __device__ inline Float BilinearPDF(Point2f p, pstd::span<const Float> w) {
-        DCHECK_EQ(4, w.size());
         if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return 0;
         if (w[0] + w[1] + w[2] + w[3] == 0) return 1;
         return 4 * ((1 - p[0]) * (1 - p[1]) * w[0] + p[0] * (1 - p[1]) * w[1] + (1 - p[0]) * p[1] * w[2] + p[0] * p[1] * w[3]) / (w[0] + w[1] + w[2] + w[3]);
     }
 
     __host__ __device__ inline Point2f SampleBilinear(Point2f u, pstd::span<const Float> w) {
-        DCHECK_EQ(4, w.size());
         Point2f p;
         // Sample $y$ for bilinear marginal distribution
         p.y = SampleLinear(u[1], w[0] + w[1], w[2] + w[3]);
@@ -166,17 +161,14 @@ namespace spectra {
     }
 
     __host__ __device__ inline Float ExponentialPDF(Float x, Float a) {
-        DCHECK_GT(a, 0);
         return a * std::exp(-a * x);
     }
 
     __host__ __device__ inline Float SampleExponential(Float u, Float a) {
-        DCHECK_GT(a, 0);
         return -std::log(1 - u) / a;
     }
 
     __host__ __device__ inline Float InvertExponentialSample(Float x, Float a) {
-        DCHECK_GT(a, 0);
         return 1 - std::exp(-a * x);
     }
 
@@ -217,28 +209,23 @@ namespace spectra {
     }
 
     __host__ __device__ inline Float SampleTrimmedLogistic(Float u, Float s, Float a, Float b) {
-        DCHECK_LT(a, b);
         auto P  = [&](Float x) { return InvertLogisticSample(x, s); };
         u       = Lerp(u, P(a), P(b));
         Float x = SampleLogistic(u, s);
-        DCHECK(!IsNaN(x));
         return Clamp(x, a, b);
     }
 
     __host__ __device__ inline Float InvertTrimmedLogisticSample(Float x, Float s, Float a, Float b) {
-        DCHECK(a <= x && x <= b);
         auto P = [&](Float x) { return InvertLogisticSample(x, s); };
         return (P(x) - P(a)) / (P(b) - P(a));
     }
 
     __host__ __device__ inline Float SmoothStepPDF(Float x, Float a, Float b) {
         if (x < a || x > b) return 0;
-        DCHECK_LT(a, b);
         return (2 / (b - a)) * SmoothStep(x, a, b);
     }
 
     __host__ __device__ inline Float SampleSmoothStep(Float u, Float a, Float b) {
-        DCHECK_LT(a, b);
         auto cdfMinusU = [=](Float x) -> std::pair<Float, Float> {
             Float t      = (x - a) / (b - a);
             Float P      = 2 * Pow<3>(t) - Pow<4>(t);
@@ -388,7 +375,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline Float InvertTrimmedExponentialSample(Float x, Float c, Float xMax) {
-        DCHECK(x >= 0 && x <= xMax);
         return (1 - std::exp(-c * x)) / (1 - std::exp(-c * xMax));
     }
 
@@ -475,7 +461,6 @@ namespace spectra {
                 reservoirWeight = weight;
                 return true;
             }
-            DCHECK_LT(weightSum, 1e80);
             return false;
         }
 
@@ -489,7 +474,6 @@ namespace spectra {
                 reservoirWeight = weight;
                 return true;
             }
-            DCHECK_LT(weightSum, 1e80);
             return false;
         }
 
@@ -520,7 +504,6 @@ namespace spectra {
         }
 
         __host__ __device__ void Merge(const WeightedReservoirSampler& wrs) {
-            DCHECK_LE(weightSum + wrs.WeightSum(), 1e80);
             if (wrs.HasSample() && Add(wrs.reservoir, wrs.weightSum)) reservoirWeight = wrs.reservoirWeight;
         }
 
@@ -584,7 +567,6 @@ namespace spectra {
             // Compute offset along CDF segment
             Float du = u - cdf[o];
             if (cdf[o + 1] - cdf[o] > 0) du /= cdf[o + 1] - cdf[o];
-            DCHECK(!IsNaN(du));
 
             // Compute PDF for sampled offset
             if (pdf) *pdf = (funcInt > 0) ? func[o] / funcInt : 0;
@@ -598,7 +580,6 @@ namespace spectra {
             if (x < min || x > max) return {};
             Float c    = (x - min) / (max - min) * func.size();
             int offset = Clamp(int(c), 0, func.size() - 1);
-            DCHECK(offset >= 0 && offset + 1 < cdf.size());
 
             // Linearly interpolate between adjacent CDF values to find sample value
             Float delta = c - offset;
@@ -829,8 +810,6 @@ namespace spectra {
         __host__ __device__ static Float SampleBisection(CDF P, Float u, Float min, Float max, int n) {
             // Apply bisection to bracket _u_
             while (pstd::ceil(n * max) - pstd::floor(n * min) > 1) {
-                DCHECK_LE(P(min), u);
-                DCHECK_GE(P(max), u);
                 Float mid = (min + max) / 2;
                 if (P(mid) > u)
                     max = mid;

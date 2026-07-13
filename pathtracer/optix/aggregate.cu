@@ -335,26 +335,13 @@ namespace spectra::optix {
             totalIndexTriplets += meshes[meshIndex]->nTriangles;
         }
 
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        // OptiX geometry is float-only, so double-precision vertices are staged as float3.
-        std::vector<float> vertexStaging(3 * totalVertices);
-#else
         std::vector<Point3f> vertexStaging(totalVertices);
-#endif
         std::vector<int> indexStaging(3 * totalIndexTriplets);
         for (size_t meshIndex = 0; meshIndex < nMeshes; ++meshIndex) {
             const TriangleMesh* mesh        = meshes[meshIndex];
             const size_t vertexOffset       = vertexOffsets[meshIndex];
             const size_t indexTripletOffset = indexTripletOffsets[meshIndex];
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-            for (int vertexIndex = 0; vertexIndex < mesh->nVertices; ++vertexIndex) {
-                vertexStaging[3 * (vertexOffset + vertexIndex)]     = mesh->p[vertexIndex].x;
-                vertexStaging[3 * (vertexOffset + vertexIndex) + 1] = mesh->p[vertexIndex].y;
-                vertexStaging[3 * (vertexOffset + vertexIndex) + 2] = mesh->p[vertexIndex].z;
-            }
-#else
             std::memcpy(vertexStaging.data() + vertexOffset, mesh->p, mesh->nVertices * sizeof(Point3f));
-#endif
             std::memcpy(indexStaging.data() + 3 * indexTripletOffset, mesh->vertexIndices, mesh->nTriangles * 3 * sizeof(int));
         }
 
@@ -379,13 +366,8 @@ namespace spectra::optix {
 
                 input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
                 input.triangleArray.numVertices  = mesh->nVertices;
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-                input.triangleArray.vertexStrideInBytes = 3 * sizeof(float);
-                pDeviceDevicePtrs[meshIndex]      = vertexBuffer.device_ptr() + vertexOffsets[meshIndex] * 3 * sizeof(float);
-#else
                 input.triangleArray.vertexStrideInBytes = sizeof(Point3f);
                 pDeviceDevicePtrs[meshIndex]      = vertexBuffer.device_ptr() + vertexOffsets[meshIndex] * sizeof(Point3f);
-#endif
                 input.triangleArray.vertexBuffers = &pDeviceDevicePtrs[meshIndex];
 
                 input.triangleArray.indexFormat        = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
@@ -464,7 +446,6 @@ namespace spectra::optix {
         int degree = parameters.GetOneInt("degree", 3);
         if (degree != 2 && degree != 3) {
             throw std::runtime_error(diagnostics::Format(loc, "Invalid degree %d: only degree 2 and 3 curves are supported.", degree));
-            return {};
         }
 
         std::string basis = parameters.GetOneString("basis", "bezier");
@@ -473,7 +454,6 @@ namespace spectra::optix {
                 "Invalid basis \"%s\": only \"bezier\" and \"bspline\" are "
                 "supported.",
                 basis));
-            return {};
         }
 
         int nSegments;
@@ -488,7 +468,6 @@ namespace spectra::optix {
                     "Invalid number of control points %d: for the degree %d "
                     "Bezier basis %d + n * %d are required, for n >= 0.",
                     (int) cp.size(), degree, degree + 1, degree));
-                return {};
             }
             nSegments = (cp.size() - 1) / degree;
         } else {
@@ -497,7 +476,6 @@ namespace spectra::optix {
                     "Invalid number of control points %d: for the degree %d "
                     "b-spline basis, must have >= %d.",
                     int(cp.size()), degree, degree + 1));
-                return {};
             }
             nSegments = cp.size() - degree;
         }
@@ -524,13 +502,11 @@ namespace spectra::optix {
                     "Invalid number of normals %d: must provide %d normals for "
                     "ribbon curves with %d segments.",
                     int(n.size()), nSegments + 1, nSegments));
-                return {};
             }
             for (Normal3f& nn : n) Normalize(nn);
         } else if (type == CurveType::Ribbon) {
             throw std::runtime_error(diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
                                                               "curves."));
-            return {};
         }
 
         // Start dicing...
@@ -691,7 +667,6 @@ namespace spectra::optix {
 
         // Create build inputs
         BVH bvh(nMeshes);
-        int buildInputIndex = 0;
         std::vector<OptixBuildInput> optixBuildInputs(nMeshes);
         std::vector<OptixAabb> aabbs(nPatches);
         pathtracer::PathtracerDeviceBuffer deviceAABBs(sizeof(OptixAabb) * nPatches);
@@ -881,7 +856,7 @@ namespace spectra::optix {
         static std::mutex mutex;
         std::lock_guard<std::mutex> lock(mutex);
 
-        int sbtOffset = intersectHGRecords.size();
+        int sbtOffset = static_cast<int>(intersectHGRecords.size());
         intersectHGRecords.insert(intersectHGRecords.end(), bvh.intersectHGRecords.begin(), bvh.intersectHGRecords.end());
         shadowHGRecords.insert(shadowHGRecords.end(), bvh.shadowHGRecords.begin(), bvh.shadowHGRecords.end());
         randomHitHGRecords.insert(randomHitHGRecords.end(), bvh.randomHitHGRecords.begin(), bvh.randomHitHGRecords.end());

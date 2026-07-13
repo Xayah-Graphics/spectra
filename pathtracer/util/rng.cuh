@@ -42,10 +42,11 @@ namespace spectra {
 
         template <typename T>
         __host__ __device__ std::enable_if_t<std::is_integral_v<T>, T> Uniform(T b) {
-            T threshold = (~b + 1u) % b;
+            const std::make_unsigned_t<T> bound = static_cast<std::make_unsigned_t<T>>(b);
+            const std::make_unsigned_t<T> threshold = (std::make_unsigned_t<T>{0} - bound) % bound;
             while (true) {
-                T r = Uniform<T>();
-                if (r >= threshold) return r % b;
+                const std::make_unsigned_t<T> random = static_cast<std::make_unsigned_t<T>>(Uniform<T>());
+                if (random >= threshold) return static_cast<T>(random % bound);
             }
         }
 
@@ -70,8 +71,8 @@ namespace spectra {
     __host__ __device__ inline uint32_t RNG::Uniform<uint32_t>() {
         uint64_t oldstate   = state;
         state               = oldstate * PCG32_MULT + inc;
-        uint32_t xorshifted = (uint32_t) (((oldstate >> 18u) ^ oldstate) >> 27u);
-        uint32_t rot        = (uint32_t) (oldstate >> 59u);
+        uint32_t xorshifted = static_cast<uint32_t>(((oldstate >> 18u) ^ oldstate) >> 27u);
+        uint32_t rot        = static_cast<uint32_t>(oldstate >> 59u);
         return (xorshifted >> rot) | (xorshifted << ((~rot + 1u) & 31));
     }
 
@@ -85,20 +86,18 @@ namespace spectra {
     __host__ __device__ inline int32_t RNG::Uniform<int32_t>() {
         // https://stackoverflow.com/a/13208789
         uint32_t v = Uniform<uint32_t>();
-        if (v <= (uint32_t) std::numeric_limits<int32_t>::max()) return int32_t(v);
-        DCHECK_GE(v, (uint32_t) std::numeric_limits<int32_t>::min());
-        return int32_t(v - std::numeric_limits<int32_t>::min()) + std::numeric_limits<int32_t>::min();
+        if (v <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) return static_cast<int32_t>(v);
+        return -1 - static_cast<int32_t>(std::numeric_limits<uint32_t>::max() - v);
     }
 
     template <>
     __host__ __device__ inline int64_t RNG::Uniform<int64_t>() {
         // https://stackoverflow.com/a/13208789
         uint64_t v = Uniform<uint64_t>();
-        if (v <= (uint64_t) std::numeric_limits<int64_t>::max())
+        if (v <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
             // Safe to type convert directly.
-            return int64_t(v);
-        DCHECK_GE(v, (uint64_t) std::numeric_limits<int64_t>::min());
-        return int64_t(v - std::numeric_limits<int64_t>::min()) + std::numeric_limits<int64_t>::min();
+            return static_cast<int64_t>(v);
+        return -1 - static_cast<int64_t>(std::numeric_limits<uint64_t>::max() - v);
     }
 
     __host__ __device__ inline void RNG::SetSequence(uint64_t sequenceIndex, uint64_t seed) {
@@ -121,7 +120,7 @@ namespace spectra {
 
     __host__ __device__ inline void RNG::Advance(int64_t idelta) {
         uint64_t curMult = PCG32_MULT, curPlus = inc, accMult = 1u;
-        uint64_t accPlus = 0u, delta = (uint64_t) idelta;
+        uint64_t accPlus = 0u, delta = static_cast<uint64_t>(idelta);
         while (delta > 0) {
             if (delta & 1) {
                 accMult *= curMult;
@@ -148,7 +147,7 @@ namespace spectra {
             curPlus = (curMult + 1ULL) * curPlus;
             curMult *= curMult;
         }
-        return (int64_t) distance;
+        return static_cast<int64_t>(distance);
     }
 } // namespace spectra
 

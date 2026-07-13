@@ -525,7 +525,7 @@ namespace spectra::pathtracer {
     void WavefrontIntegrator::GenerateCameraRays(int y0, Transform movingFromCamera, int sampleIndex) {
         // Define _generateRays_ lambda function
         auto generateRays = [=, this](auto sampler) {
-            if constexpr (!std::is_same_v<std::remove_reference_t<decltype(*sampler)>, MLTSampler>) GenerateCameraRays<std::remove_reference_t<decltype(*sampler)>>(y0, movingFromCamera, sampleIndex);
+            GenerateCameraRays<std::remove_reference_t<decltype(*sampler)>>(y0, movingFromCamera, sampleIndex);
         };
 
         sampler.DispatchCPU(generateRays);
@@ -583,7 +583,7 @@ namespace spectra::pathtracer {
 
     void WavefrontIntegrator::GenerateRaySamples(int wavefrontDepth, int sampleIndex) {
         auto generateSamples = [=, this](auto sampler) {
-            if constexpr (!std::is_same_v<std::remove_reference_t<decltype(*sampler)>, MLTSampler>) GenerateRaySamples<std::remove_reference_t<decltype(*sampler)>>(wavefrontDepth, sampleIndex);
+            GenerateRaySamples<std::remove_reference_t<decltype(*sampler)>>(wavefrontDepth, sampleIndex);
         };
         sampler.DispatchCPU(generateSamples);
     }
@@ -969,34 +969,30 @@ namespace spectra::pathtracer {
             }
 
             Material material = w.material;
-
             const MixMaterial* mix = material.CastOrNullptr<MixMaterial>();
             while (mix) {
                 SurfaceInteraction intr(w.pi, w.uv, w.wo, w.dpdus, w.dpdvs, w.dndus, w.dndvs, ray.time, false /* flip normal */);
                 intr.faceIndex = w.faceIndex;
                 MaterialEvalContext ctx(intr);
                 material = mix->ChooseMaterial(BasicTextureEvaluator(), ctx);
-                mix      = material.CastOrNullptr<MixMaterial>();
+                mix = material.CastOrNullptr<MixMaterial>();
             }
 
             if (!material) {
                 Interaction intr(w.pi, w.n);
                 intr.mediumInterface = &w.mediumInterface;
-                Ray newRay           = intr.SpawnRay(ray.d);
+                const Ray newRay = intr.SpawnRay(ray.d);
                 nextRayQueue->PushIndirectRay(newRay, w.depth, w.prevIntrCtx, beta, r_u, r_l, lambda, w.etaScale, w.specularBounce, w.anyNonSpecularBounces, w.pixelIndex);
                 return;
             }
 
-            if (w.areaLight) {
-                hitAreaLightQueue->Push(HitAreaLightWorkItem{w.areaLight, Point3f(w.pi), w.n, w.uv, -ray.d, lambda, w.depth, beta, r_u, r_l, w.prevIntrCtx, w.specularBounce, w.pixelIndex});
-            }
+            if (w.areaLight) hitAreaLightQueue->Push(HitAreaLightWorkItem{w.areaLight, Point3f(w.pi), w.n, w.uv, -ray.d, lambda, w.depth, beta, r_u, r_l, w.prevIntrCtx, w.specularBounce, w.pixelIndex});
 
-            FloatTexture displacement = material.GetDisplacement();
-
-            MaterialEvalQueue* q = (material.CanEvaluateTextures(BasicTextureEvaluator()) && (!displacement || BasicTextureEvaluator().CanEvaluate({displacement}, {}))) ? basicEvalMaterialQueue : universalEvalMaterialQueue;
-
-
-            auto enqueue = [=](auto ptr) { q->Push<MaterialEvalWorkItem<std::remove_reference_t<decltype(*ptr)>>>(spectra::MaterialEvalWorkItem<std::remove_reference_t<decltype(*ptr)>>{ptr, w.pi, w.n, w.dpdu, w.dpdv, ray.time, w.depth, w.ns, w.dpdus, w.dpdvs, w.dndus, w.dndvs, w.uv, w.faceIndex, lambda, w.pixelIndex, w.anyNonSpecularBounces, -ray.d, beta, r_u, w.etaScale, w.mediumInterface}); };
+            const FloatTexture displacement = material.GetDisplacement();
+            MaterialEvalQueue* queue = material.CanEvaluateTextures(BasicTextureEvaluator()) && (!displacement || BasicTextureEvaluator().CanEvaluate({displacement}, {})) ? basicEvalMaterialQueue : universalEvalMaterialQueue;
+            auto enqueue = [=](auto pointer) {
+                queue->Push(spectra::MaterialEvalWorkItem<std::remove_pointer_t<decltype(pointer)>>{pointer, w.pi, w.n, w.dpdu, w.dpdv, ray.time, w.depth, w.ns, w.dpdus, w.dpdvs, w.dndus, w.dndvs, w.uv, w.faceIndex, lambda, w.pixelIndex, w.anyNonSpecularBounces, -ray.d, beta, r_u, w.etaScale, w.mediumInterface});
+            };
             material.Dispatch(enqueue);
         });
 

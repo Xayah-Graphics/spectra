@@ -75,8 +75,6 @@ namespace spectra {
             return {RadicalInverse(0, haltonIndex >> baseExponents[0]), RadicalInverse(1, haltonIndex / baseScales[1])};
         }
 
-        Sampler Clone(Allocator alloc);
-
     private:
         // HaltonSampler Private Methods
         static uint64_t multiplicativeInverse(int64_t a, int64_t n) {
@@ -103,7 +101,6 @@ namespace spectra {
             else if (randomize == RandomizeStrategy::PermuteDigits)
                 return ScrambledRadicalInverse(dimension, haltonIndex, (*digitPermutations)[dimension]);
             else {
-                DCHECK_EQ(randomize, RandomizeStrategy::Owen);
                 return OwenScrambledRadicalInverse(dimension, haltonIndex, MixBits(1 + (dimension << 4)));
             }
         }
@@ -148,7 +145,7 @@ namespace spectra {
             uint64_t hash = Hash(pixel, dimension, seed);
             int index     = PermutationElement(sampleIndex, samplesPerPixel, hash);
 
-            int dim = dimension++;
+            ++dimension;
             // Return randomized 1D van der Corput sample for dimension _dim_
             return SampleDimension(0, index, hash >> 32);
         }
@@ -158,7 +155,6 @@ namespace spectra {
             uint64_t hash = Hash(pixel, dimension, seed);
             int index     = PermutationElement(sampleIndex, samplesPerPixel, hash);
 
-            int dim = dimension;
             dimension += 2;
             // Return randomized 2D Sobol\+$'$ sample
             return Point2f(SampleDimension(0, index, uint32_t(hash)), SampleDimension(1, index, hash >> 32));
@@ -171,8 +167,6 @@ namespace spectra {
         __host__ __device__ RandomizeStrategy GetRandomizeStrategy() const {
             return randomize;
         }
-
-        Sampler Clone(Allocator alloc);
 
     private:
         // PaddedSobolSampler Private Methods
@@ -255,8 +249,6 @@ namespace spectra {
         __host__ __device__ Point2f GetPixel2D() {
             return Get2D();
         }
-
-        Sampler Clone(Allocator alloc);
 
         __host__ __device__ uint64_t GetSampleIndex() const {
             // Define the full set of 4-way permutations in _permutations_
@@ -358,8 +350,6 @@ namespace spectra {
             return {std::min(u.x, OneMinusEpsilon), std::min(u.y, OneMinusEpsilon)};
         }
 
-        Sampler Clone(Allocator alloc);
-
     private:
         // PMJ02BNSampler Private Members
         int samplesPerPixel, seed;
@@ -400,8 +390,6 @@ namespace spectra {
         __host__ __device__ Point2f GetPixel2D() {
             return Get2D();
         }
-
-        Sampler Clone(Allocator alloc);
 
     private:
         // IndependentSampler Private Members
@@ -458,8 +446,6 @@ namespace spectra {
 
             return u;
         }
-
-        Sampler Clone(Allocator alloc);
 
     private:
         // SobolSampler Private Methods
@@ -534,8 +520,6 @@ namespace spectra {
             return Get2D();
         }
 
-        Sampler Clone(Allocator alloc);
-
     private:
         // StratifiedSampler Private Members
         int xPixelSamples, yPixelSamples, seed;
@@ -543,78 +527,6 @@ namespace spectra {
         RNG rng;
         Point2i pixel;
         int sampleIndex = 0, dimension = 0;
-    };
-
-    // MLTSampler Definition
-    class MLTSampler {
-    public:
-        // MLTSampler Public Methods
-        MLTSampler(int mutationsPerPixel, int rngSequenceIndex, Float sigma, Float largeStepProbability, int streamCount) : mutationsPerPixel(mutationsPerPixel), rng(MixBits(rngSequenceIndex) ^ MixBits(pathtracer::CurrentKernelConfig().seed)), sigma(sigma), largeStepProbability(largeStepProbability), streamCount(streamCount) {}
-
-        __host__ __device__ void StartIteration();
-
-        __host__ __device__ void Reject();
-
-        __host__ __device__ void StartStream(int index);
-
-        __host__ __device__ int GetNextIndex() {
-            return streamIndex + streamCount * sampleIndex++;
-        }
-
-        __host__ __device__ int SamplesPerPixel() const {
-            return mutationsPerPixel;
-        }
-
-        __host__ __device__ void StartPixelSample(Point2i p, int sampleIndex, int dim) {
-            rng.SetSequence(Hash(p));
-            rng.Advance(sampleIndex * 65536 + dim * 8192);
-        }
-
-        __host__ __device__ Float Get1D();
-
-        __host__ __device__ Point2f Get2D();
-
-        __host__ __device__ Point2f GetPixel2D();
-
-        Sampler Clone(Allocator alloc);
-
-        __host__ __device__ void Accept();
-
-    protected:
-        // MLTSampler Private Declarations
-        struct PrimarySample {
-            Float value = 0;
-            // PrimarySample Public Methods
-            __host__ __device__ void Backup() {
-                valueBackup  = value;
-                modifyBackup = lastModificationIteration;
-            }
-
-            __host__ __device__ void Restore() {
-                value                     = valueBackup;
-                lastModificationIteration = modifyBackup;
-            }
-
-
-            // PrimarySample Public Members
-            int64_t lastModificationIteration = 0;
-            Float valueBackup                 = 0;
-            int64_t modifyBackup              = 0;
-        };
-
-        // MLTSampler Private Methods
-        __host__ __device__ void EnsureReady(int index);
-
-        // MLTSampler Private Members
-        int mutationsPerPixel;
-        RNG rng;
-        Float sigma, largeStepProbability;
-        int streamCount;
-        pstd::vector<PrimarySample> X;
-        int64_t currentIteration       = 0;
-        bool largeStep                 = true;
-        int64_t lastLargeStepIteration = 0;
-        int streamIndex, sampleIndex;
     };
 
     __host__ __device__ inline void Sampler::StartPixelSample(Point2i p, int sampleIndex, int dimension) {

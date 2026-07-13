@@ -62,7 +62,4 @@ namespace spectra {
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
-    void GPUMemset(void* ptr, int byte, size_t bytes) {
-        CUDA_CHECK(cudaMemset(ptr, byte, bytes));
-    }
 } // namespace spectra

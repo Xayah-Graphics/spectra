@@ -84,8 +84,6 @@ namespace spectra {
             return params;
         }
 
-        void FreeParameters();
-
         Float GetOneFloat(const std::string& name, Float def) const;
         int GetOneInt(const std::string& name, int def) const;
         bool GetOneBool(const std::string& name, bool def) const;
@@ -132,7 +130,6 @@ namespace spectra {
         // ParameterDictionary Private Members
         ParsedParameterVector params;
         const RGBColorSpace* colorSpace = nullptr;
-        int nOwnedParams;
     };
 
     // TextureParameterDictionary Definition

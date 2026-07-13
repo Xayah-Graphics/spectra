@@ -907,8 +907,7 @@ namespace spectra::scene {
         ImGuiIO& io = ImGui::GetIO();
         if (io.WantTextInput) return;
         if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
-        const std::shared_ptr<const Scene::Document> document = scene_instance.document();
-        if (!document->update.enabled) return;
+        if (!scene_instance.update_clock().descriptor.enabled) return;
         if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) scene_instance.toggle_update_running();
     }
 
@@ -919,7 +918,6 @@ namespace spectra::scene {
         });
         application.register_file_drop_handler(FileDropHandler{
             .id = "scene.file-drop",
-            .title = "Scene File Drop",
             .owner_renderer = {},
             .handle = [application = &application, state](const std::span<const std::filesystem::path> paths) {
                 try {
@@ -943,7 +941,6 @@ namespace spectra::scene {
         });
         application.register_viewport_overlay(ViewportOverlay{
             .id = "scene.controls-overlay",
-            .title = "Scene Controls Overlay",
             .owner_renderer = {},
             .draw = [state](const ImVec2 viewport_position, const ImVec2 viewport_size) {
                 handle_timeline_shortcuts(*state->scene_instance);

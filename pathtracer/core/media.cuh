@@ -94,12 +94,10 @@ namespace spectra {
         MajorantGrid(Bounds3f bounds, Point3i res, Allocator alloc) : bounds(bounds), voxels(res.x * res.y * res.z, alloc), res(res) {}
 
         __host__ __device__ Float Lookup(int x, int y, int z) const {
-            DCHECK(x >= 0 && x < res.x && y >= 0 && y < res.y && z >= 0 && z < res.z);
             return voxels[x + res.x * (y + res.y * z)];
         }
 
         __host__ __device__ void Set(int x, int y, int z, Float v) {
-            DCHECK(x >= 0 && x < res.x && y >= 0 && y < res.y && z >= 0 && z < res.z);
             voxels[x + res.x * (y + res.y * z)] = v;
         }
 
@@ -271,7 +269,6 @@ namespace spectra {
             ray = renderFromMedium.ApplyInverse(ray, &raytMax);
             Float tMin, tMax;
             if (!bounds.IntersectP(ray.o, ray.d, raytMax, &tMin, &tMax)) return {};
-            DCHECK_LE(tMax, raytMax);
 
             // Sample spectra for grid medium $\sigmaa$ and $\sigmas$
             SampledSpectrum sigma_a = sigma_a_spec.Sample(lambda);
@@ -335,7 +332,6 @@ namespace spectra {
             ray = renderFromMedium.ApplyInverse(ray, &raytMax);
             Float tMin, tMax;
             if (!bounds.IntersectP(ray.o, ray.d, raytMax, &tMin, &tMax)) return {};
-            DCHECK_LE(tMax, raytMax);
 
             SampledSpectrum sigma_t(1);
             return DDAMajorantIterator(ray, tMin, tMax, &majorantGrid, sigma_t);
@@ -383,7 +379,6 @@ namespace spectra {
             ray = renderFromMedium.ApplyInverse(ray, &raytMax);
             Float tMin, tMax;
             if (!bounds.IntersectP(ray.o, ray.d, raytMax, &tMin, &tMax)) return {};
-            DCHECK_LE(tMax, raytMax);
 
             // Compute $\sigmat$ bound for cloud medium and initialize majorant iterator
             SampledSpectrum sigma_a = sigma_a_spec.Sample(lambda);
@@ -546,7 +541,6 @@ namespace spectra {
             ray = renderFromMedium.ApplyInverse(ray, &raytMax);
             Float tMin, tMax;
             if (!bounds.IntersectP(ray.o, ray.d, raytMax, &tMin, &tMax)) return {};
-            DCHECK_LE(tMax, raytMax);
 
             // Sample spectra for grid $\sigmaa$ and $\sigmas$
             SampledSpectrum sigma_a = sigma_a_spec.Sample(lambda);

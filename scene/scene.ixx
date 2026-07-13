@@ -77,7 +77,6 @@ namespace spectra::scene {
     export struct GpuBufferRequest {
         std::uint32_t kind{};
         std::uint64_t byte_size{};
-        std::string debug_name{};
     };
 
     export struct GpuBufferAllocation {
@@ -200,13 +199,6 @@ namespace spectra::scene {
             std::uint64_t value{};
 
             friend auto operator<=>(const Revision&, const Revision&) = default;
-        };
-
-        enum class DirtyFlags : std::uint32_t {
-            None     = 0,
-            Document = 1u << 0u,
-            Timeline = 1u << 1u,
-            Frame    = 1u << 2u,
         };
 
         struct SourceLocation {
@@ -426,7 +418,6 @@ namespace spectra::scene {
             std::vector<std::array<float, 2>> uvs{};
             std::string material_name{};
             Transform transform{};
-            bool dynamic{false};
             SourceLocation source{};
         };
 
@@ -435,7 +426,6 @@ namespace spectra::scene {
             float radius{1.0f};
             std::string material_name{};
             Transform transform{};
-            bool dynamic{false};
             SourceLocation source{};
         };
 
@@ -452,18 +442,15 @@ namespace spectra::scene {
 
             std::string name{};
             std::vector<Vector3> positions{};
-            std::vector<Vector3> normals{};
             std::vector<Vector4> colors{};
             std::vector<float> radii{};
             SourceKind source_kind{SourceKind::Values};
             std::uint64_t point_count{};
             std::uint64_t buffer_id{};
             std::uint64_t source_byte_size{};
-            std::uint64_t revision{};
             std::string material_name{};
             Transform transform{};
             std::optional<PointCloudBounds> bounds{};
-            bool dynamic{true};
             SourceLocation source{};
         };
 
@@ -486,7 +473,6 @@ namespace spectra::scene {
 
         struct VolumeChannel {
             std::string name{};
-            std::array<std::uint32_t, 3> dimensions{};
             std::vector<float> values{};
             VolumeChannelFormat format{VolumeChannelFormat::Float32};
             VolumeChannelSourceKind source_kind{VolumeChannelSourceKind::Values};
@@ -494,7 +480,6 @@ namespace spectra::scene {
             std::uint64_t buffer_id{};
             std::uintptr_t external_device_pointer{};
             std::uint64_t source_byte_size{};
-            std::uint64_t revision{};
         };
 
         struct VolumeGrid {
@@ -504,7 +489,6 @@ namespace spectra::scene {
             Vector3 voxel_size{1.0f, 1.0f, 1.0f};
             std::vector<VolumeChannel> channels{};
             std::string material_name{};
-            bool dynamic{true};
             SourceLocation source{};
         };
 
@@ -578,12 +562,10 @@ namespace spectra::scene {
             std::uint64_t segment_count{};
             std::uint64_t buffer_id{};
             std::uint64_t source_byte_size{};
-            std::uint64_t revision{};
             float width{2.0f};
             ViewportSegmentWidthMode width_mode{ViewportSegmentWidthMode::Screen};
             ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};
             Transform transform{};
-            bool dynamic{true};
             SourceLocation source{};
         };
 
@@ -601,8 +583,6 @@ namespace spectra::scene {
             std::uint64_t buffer_id{};
             std::uint64_t source_byte_size{};
             std::uint64_t index_count{};
-            std::uint64_t revision{};
-            bool dynamic{true};
             SourceLocation source{};
         };
 
@@ -721,13 +701,11 @@ namespace spectra::scene {
             std::optional<Document> document_replacement{};
             std::optional<Timeline> timeline_replacement{};
             std::optional<FrameSnapshot> frame_replacement{};
-            DirtyFlags dirty{DirtyFlags::None};
 
             friend class Scene;
         };
 
         struct FrameInfo {
-            double delta_seconds{};
             double time_seconds{};
             std::uint64_t frame_index{};
         };
@@ -749,7 +727,7 @@ namespace spectra::scene {
         [[nodiscard]] ResolvedScene resolved_scene() const;
         [[nodiscard]] ResolvedScene resolved_scene(std::move_only_function<std::vector<float>(const VolumeGrid&, const VolumeChannel&)> external_volume_materializer) const;
         [[nodiscard]] Info info() const;
-        [[nodiscard]] DirtyFlags commit(Edit edit);
+        void commit(Edit edit);
         [[nodiscard]] Kind kind() const;
         [[nodiscard]] bool has_descriptor() const;
         [[nodiscard]] const Descriptor& descriptor() const;
@@ -759,6 +737,7 @@ namespace spectra::scene {
         [[nodiscard]] std::shared_ptr<HostServiceRouter> host_services() const;
         [[nodiscard]] ControlState control_state() const;
         [[nodiscard]] UpdateClock update_clock() const;
+        [[nodiscard]] std::optional<ViewportNavigationTarget> navigation_target() const;
         void close();
         void open_static_scene(std::string id, std::string title, Scene scene);
         void open_pbrt_file(const std::filesystem::path& scene_path);
@@ -773,14 +752,6 @@ namespace spectra::scene {
 
         [[nodiscard]] static Scene parse_pbrt(std::string_view scene_id);
         [[nodiscard]] static Scene parse_pbrt_file(const std::filesystem::path& scene_path);
-
-        [[nodiscard]] static constexpr DirtyFlags combine_dirty_flags(const DirtyFlags lhs, const DirtyFlags rhs) {
-            return static_cast<DirtyFlags>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
-        }
-
-        [[nodiscard]] static constexpr bool has_dirty_flag(const DirtyFlags flags, const DirtyFlags flag) {
-            return (static_cast<std::uint32_t>(flags) & static_cast<std::uint32_t>(flag)) != 0u;
-        }
 
         [[nodiscard]] static FrameCursor make_frame_cursor(const FrameInfo& info);
 
@@ -819,6 +790,16 @@ namespace spectra::scene {
         std::shared_ptr<HostServiceRouter> host{std::make_shared<HostServiceRouter>()};
         DriverRuntime driver_runtime{};
     };
+
+    export [[nodiscard]] constexpr std::uint32_t volume_channel_component_count(const Scene::VolumeChannelFormat format) {
+        switch (format) {
+        case Scene::VolumeChannelFormat::Float32: return 1u;
+        case Scene::VolumeChannelFormat::Float32x2: return 2u;
+        case Scene::VolumeChannelFormat::Float32x3: return 3u;
+        case Scene::VolumeChannelFormat::Float32x4: return 4u;
+        }
+        throw std::runtime_error("Unknown Spectra volume channel format");
+    }
 
     export [[nodiscard]] bool is_plugin_file(const std::filesystem::path& path);
     export [[nodiscard]] PluginInfo inspect_plugin(const std::filesystem::path& plugin_path);

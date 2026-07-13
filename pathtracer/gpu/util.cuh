@@ -78,7 +78,6 @@ namespace spectra {
     [[nodiscard]] int GPUInit(std::optional<int> cudaDevice);
     void GPUThreadInit(int cudaDevice);
 
-    void GPUMemset(void* ptr, int byte, size_t bytes);
 } // namespace spectra
 
 #endif // SPECTRA_PATHTRACER_GPU_UTIL_H

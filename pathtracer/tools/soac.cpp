@@ -375,17 +375,14 @@ int main(int argc, char* argv[]) {
 
         printf("    __host__ __device__\n");
         printf("    GetSetIndirector operator[](int i) {\n");
-        printf("        DCHECK_LT(i, nAlloc);\n");
         printf("        return GetSetIndirector{this, i};\n");
         printf("    }\n");
         printf("    __host__ __device__\n");
         if (!soa.templateType.empty()) {
             printf("    %s<%s> operator[](int i) const {\n", soa.type.c_str(), soa.templateType.c_str());
-            printf("        DCHECK_LT(i, nAlloc);\n");
             printf("        %s<%s> r;\n", soa.type.c_str(), soa.templateType.c_str());
         } else {
             printf("    %s operator[](int i) const {\n", soa.type.c_str());
-            printf("        DCHECK_LT(i, nAlloc);\n");
             printf("        %s r;\n", soa.type.c_str());
         }
         for (const auto& member : soa.members)

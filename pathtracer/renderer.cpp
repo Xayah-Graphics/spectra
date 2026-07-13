@@ -11,6 +11,7 @@ module;
 
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
+#include <lodepng/lodepng.h>
 #include <material_symbols/IconsMaterialSymbols.h>
 #include <pathtracer/base/film.cuh>
 #include <pathtracer/base/sampler.cuh>
@@ -28,7 +29,7 @@ module;
 module spectra.pathtracer.renderer;
 
 import imgui_impl_vulkan;
-import spectra.pathtracer.host;
+import spectra.renderer.host;
 import spectra.scene;
 import std;
 import vulkan;
@@ -96,93 +97,14 @@ namespace {
         return pixels;
     }
 
-    void append_u32_be(std::vector<std::uint8_t>& data, const std::uint32_t value) {
-        data.push_back(static_cast<std::uint8_t>((value >> 24u) & 0xffu));
-        data.push_back(static_cast<std::uint8_t>((value >> 16u) & 0xffu));
-        data.push_back(static_cast<std::uint8_t>((value >> 8u) & 0xffu));
-        data.push_back(static_cast<std::uint8_t>(value & 0xffu));
-    }
-
-    [[nodiscard]] std::uint32_t png_crc32_update(std::uint32_t crc, const std::uint8_t byte) {
-        crc ^= byte;
-        for (int bit = 0; bit < 8; ++bit) crc = (crc & 1u) != 0u ? (crc >> 1u) ^ 0xedb88320u : crc >> 1u;
-        return crc;
-    }
-
-    [[nodiscard]] std::uint32_t png_crc32(const char* type, const std::vector<std::uint8_t>& data) {
-        std::uint32_t crc = 0xffffffffu;
-        for (std::size_t index = 0; index < 4u; ++index) crc = png_crc32_update(crc, static_cast<std::uint8_t>(type[index]));
-        for (const std::uint8_t byte : data) crc = png_crc32_update(crc, byte);
-        return ~crc;
-    }
-
-    void append_png_chunk(std::vector<std::uint8_t>& png, const char* type, const std::vector<std::uint8_t>& data) {
-        append_u32_be(png, static_cast<std::uint32_t>(data.size()));
-        for (std::size_t index = 0; index < 4u; ++index) png.push_back(static_cast<std::uint8_t>(type[index]));
-        png.insert(png.end(), data.begin(), data.end());
-        append_u32_be(png, png_crc32(type, data));
-    }
-
-    [[nodiscard]] std::uint32_t adler32(const std::vector<std::uint8_t>& data) {
-        constexpr std::uint32_t modulus = 65521u;
-        std::uint32_t a                 = 1u;
-        std::uint32_t b                 = 0u;
-        for (const std::uint8_t byte : data) {
-            a = (a + byte) % modulus;
-            b = (b + a) % modulus;
-        }
-        return (b << 16u) | a;
-    }
-
-    [[nodiscard]] std::vector<std::uint8_t> zlib_store(const std::vector<std::uint8_t>& data) {
-        std::vector<std::uint8_t> compressed{};
-        compressed.reserve(data.size() + data.size() / 65535u * 5u + 16u);
-        compressed.push_back(0x78u);
-        compressed.push_back(0x01u);
-        std::size_t offset = 0;
-        while (offset < data.size()) {
-            const std::size_t block_size = std::min<std::size_t>(65535u, data.size() - offset);
-            const bool final_block       = offset + block_size == data.size();
-            compressed.push_back(final_block ? 0x01u : 0x00u);
-            const std::uint16_t length  = static_cast<std::uint16_t>(block_size);
-            const std::uint16_t nlength = static_cast<std::uint16_t>(~length);
-            compressed.push_back(static_cast<std::uint8_t>(length & 0xffu));
-            compressed.push_back(static_cast<std::uint8_t>((length >> 8u) & 0xffu));
-            compressed.push_back(static_cast<std::uint8_t>(nlength & 0xffu));
-            compressed.push_back(static_cast<std::uint8_t>((nlength >> 8u) & 0xffu));
-            compressed.insert(compressed.end(), data.begin() + static_cast<std::ptrdiff_t>(offset), data.begin() + static_cast<std::ptrdiff_t>(offset + block_size));
-            offset += block_size;
-        }
-        append_u32_be(compressed, adler32(data));
-        return compressed;
-    }
-
     void write_png_rgba8(const std::filesystem::path& path, const vk::Extent2D extent, const std::vector<std::uint8_t>& pixels) {
         if (extent.width == 0 || extent.height == 0) throw std::runtime_error("Cannot write an empty Spectra pathtracer screenshot");
         const std::size_t expected_size = static_cast<std::size_t>(extent.width) * static_cast<std::size_t>(extent.height) * 4u;
         if (pixels.size() != expected_size) throw std::runtime_error("Spectra pathtracer screenshot pixel buffer has an invalid size");
 
-        std::vector<std::uint8_t> raw{};
-        raw.reserve(static_cast<std::size_t>(extent.height) * (static_cast<std::size_t>(extent.width) * 4u + 1u));
-        for (std::uint32_t y = 0; y < extent.height; ++y) {
-            raw.push_back(0u);
-            const std::size_t row_begin = static_cast<std::size_t>(y) * static_cast<std::size_t>(extent.width) * 4u;
-            raw.insert(raw.end(), pixels.begin() + static_cast<std::ptrdiff_t>(row_begin), pixels.begin() + static_cast<std::ptrdiff_t>(row_begin + static_cast<std::size_t>(extent.width) * 4u));
-        }
-
-        std::vector<std::uint8_t> png{0x89u, 0x50u, 0x4eu, 0x47u, 0x0du, 0x0au, 0x1au, 0x0au};
-        std::vector<std::uint8_t> ihdr{};
-        append_u32_be(ihdr, extent.width);
-        append_u32_be(ihdr, extent.height);
-        ihdr.push_back(8u);
-        ihdr.push_back(6u);
-        ihdr.push_back(0u);
-        ihdr.push_back(0u);
-        ihdr.push_back(0u);
-        append_png_chunk(png, "IHDR", ihdr);
-        append_png_chunk(png, "IDAT", zlib_store(raw));
-        const std::vector<std::uint8_t> empty_chunk{};
-        append_png_chunk(png, "IEND", empty_chunk);
+        std::vector<std::uint8_t> png{};
+        const unsigned int error = lodepng::encode(png, pixels, extent.width, extent.height, LCT_RGBA, 8u);
+        if (error != 0u) throw std::runtime_error(std::format("Failed to encode Spectra pathtracer screenshot: {}", lodepng_error_text(error)));
 
         std::filesystem::create_directories(path.parent_path());
         std::ofstream output{path, std::ios::binary};
@@ -255,6 +177,32 @@ namespace {
 namespace spectra::pathtracer {
     [[nodiscard]] std::unique_ptr<CompiledScene> CompileScene(const scene::Scene::ResolvedScene& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride);
 
+    void RenderScene(const scene::Scene::ResolvedScene& scene, OfflineRenderRequest request) {
+        RuntimeConfig runtime_config{};
+        if (request.cuda_device.has_value()) runtime_config.cuda_device = *request.cuda_device;
+
+        RenderConfig render_config{};
+        render_config.rendering_space = RenderingSpace::CameraWorld;
+        render_config.output_file = std::move(request.output_file);
+        render_config.seed = request.seed;
+        render_config.quiet = request.quiet;
+        if (request.pixel_samples.has_value()) render_config.pixel_samples = *request.pixel_samples;
+
+        GpuRuntime runtime(runtime_config);
+        runtime.UploadKernelConfig(KernelConfigFrom(render_config));
+
+        PathtracerMemoryScope scene_memory_scope(PathtracerMemoryScopeKind::Scene, "spectra_pathtracer offline scene");
+        std::unique_ptr<CompiledScene> compiled_scene = CompileScene(scene, render_config, &scene_memory_scope, {});
+        WavefrontIntegrator integrator(&scene_memory_scope, *compiled_scene, render_config);
+        const Float seconds = integrator.Render();
+
+        ImageMetadata metadata{};
+        integrator.camera.InitMetadata(&metadata);
+        metadata.renderTimeSeconds = seconds;
+        metadata.samplesPerPixel = integrator.sampler.SamplesPerPixel();
+        integrator.film.WriteImage(metadata);
+    }
+
     struct RenderPipelineSceneResources {
         std::unique_ptr<CompiledScene> compiled_scene{};
         std::unique_ptr<WavefrontIntegrator> integrator{};
@@ -280,7 +228,6 @@ namespace spectra::pathtracer {
             vk::raii::DeviceMemory image_memory{nullptr};
             vk::raii::Image image{nullptr};
             vk::raii::ImageView image_view{nullptr};
-            vk::raii::Sampler sampler{nullptr};
             VkDescriptorSet imgui_descriptor{};
             vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
         };
@@ -315,8 +262,6 @@ namespace spectra::pathtracer {
         std::unique_ptr<PathtracerMemoryScope> scene_memory_scope{};
         std::unique_ptr<CompiledScene> compiled_scene{};
         std::unique_ptr<WavefrontIntegrator> integrator{};
-        RenderConfig render_config{};
-        scene::Scene::Revision scene_revision{};
         Bounds2i pixel_bounds{};
         Vector2i resolution{};
         Transform render_from_camera{};
@@ -369,7 +314,7 @@ namespace {
     void create_pipeline_viewport_descriptors(spectra::pathtracer::RenderPipeline& pipeline) {
         for (spectra::pathtracer::RenderPipeline::FrameResource& frame : pipeline.frames) {
             if (frame.imgui_descriptor != VkDescriptorSet{}) throw std::runtime_error("Spectra pathtracer viewport descriptor is already allocated");
-            frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(*frame.sampler, *frame.image_view, static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
+            frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(*frame.image_view, static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
             if (frame.imgui_descriptor == VkDescriptorSet{}) throw std::runtime_error("Failed to allocate Spectra pathtracer viewport descriptor");
         }
     }
@@ -484,26 +429,6 @@ namespace {
             {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         };
         frame.image_view = vk::raii::ImageView{device, image_view_create_info};
-
-        const vk::SamplerCreateInfo sampler_create_info{
-            {},
-            vk::Filter::eNearest,
-            vk::Filter::eNearest,
-            vk::SamplerMipmapMode::eNearest,
-            vk::SamplerAddressMode::eClampToEdge,
-            vk::SamplerAddressMode::eClampToEdge,
-            vk::SamplerAddressMode::eClampToEdge,
-            0.0f,
-            vk::False,
-            1.0f,
-            vk::False,
-            vk::CompareOp::eNever,
-            0.0f,
-            0.0f,
-            vk::BorderColor::eFloatOpaqueBlack,
-            vk::False,
-        };
-        frame.sampler = vk::raii::Sampler{device, sampler_create_info};
     }
 
     void create_pipeline_frame_resources(spectra::pathtracer::RenderPipeline& pipeline, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
@@ -625,8 +550,6 @@ namespace spectra::pathtracer {
             pipeline.physical_device = &physical_device;
             pipeline.device          = &device;
             pipeline.frame_count     = frame_count;
-            pipeline.render_config   = render_config;
-            pipeline.scene_revision  = scene.revision;
 
             pipeline.scene_memory_scope        = create_scene_memory_scope();
             RenderPipelineSceneResources resources = create_runtime_resources(scene, render_config, resolution, pipeline.scene_memory_scope.get());
@@ -956,7 +879,7 @@ namespace spectra::pathtracer {
         return part1by2(x) | (part1by2(y) << 1u) | (part1by2(z) << 2u);
     }
 
-    [[nodiscard]] std::uint32_t volume_channel_component_count(const scene::Scene::VolumeChannelFormat format) {
+    [[nodiscard]] std::uint32_t pathtracer_volume_channel_component_count(const scene::Scene::VolumeChannelFormat format) {
         switch (format) {
         case scene::Scene::VolumeChannelFormat::Float32: return 1u;
         case scene::Scene::VolumeChannelFormat::Float32x3: return 3u;
@@ -966,7 +889,7 @@ namespace spectra::pathtracer {
 
     [[nodiscard]] std::vector<float> linearize_volume_snapshot_values(const std::vector<float>& raw_values, const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannel& channel) {
         const std::uint64_t cell_count = checked_volume_cell_count(volume);
-        const std::uint32_t component_count = volume_channel_component_count(channel.format);
+        const std::uint32_t component_count = pathtracer_volume_channel_component_count(channel.format);
         if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" value count overflows uint64", volume.name, channel.name));
         const std::uint64_t value_count = cell_count * component_count;
         const auto canonical_value = [&channel](const float value) {
@@ -1063,19 +986,12 @@ namespace spectra::pathtracer {
 
 
 namespace spectra::pathtracer {
-    [[nodiscard]] SceneSupportReport analyze_scene(const scene::Scene::ResolvedScene& document) {
-        SceneSupportReport report = AnalyzeSceneSupport(document);
-        if (report.target.empty()) report.target = std::string{Renderer::name()};
-        return report;
-    }
-
     class Renderer::Impl {
     public:
         Impl(std::shared_ptr<scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
         ~Impl() noexcept;
 
         void attach(HostView host);
-        void set_scene(std::shared_ptr<scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
@@ -1083,10 +999,6 @@ namespace spectra::pathtracer {
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
     private:
-        struct Status {
-            std::string state{};
-        };
-
         struct RollingFloatAverage {
             static constexpr std::size_t sample_count{100};
 
@@ -1156,7 +1068,7 @@ namespace spectra::pathtracer {
         void reset_camera();
         void clear_throughput_statistics();
         void update_frame_statistics(std::uint32_t frame_index, std::uint32_t image_index, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
-        [[nodiscard]] Status pipeline_status() const;
+        [[nodiscard]] std::string pipeline_status() const;
         [[nodiscard]] bool process_camera_input();
 
         const vk::raii::PhysicalDevice* physical_device{};
@@ -1251,10 +1163,6 @@ namespace spectra::pathtracer {
 
     Renderer& Renderer::operator=(Renderer&& other) noexcept = default;
 
-    void Renderer::set_scene(std::shared_ptr<scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
-        this->impl->set_scene(std::move(source_scene), std::move(camera_workspace));
-    }
-
     std::string_view Renderer::name() {
         return "Spectra Pathtracer";
     }
@@ -1322,16 +1230,6 @@ namespace spectra::pathtracer {
         this->destroy_screenshot_resources_noexcept();
     }
 
-    void Renderer::Impl::set_scene(std::shared_ptr<scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
-        if (source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
-        if (camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
-        if (this->source_scene == source_scene && this->camera_workspace == camera_workspace) return;
-        this->unload_pipeline_noexcept();
-        this->unload_scene_noexcept();
-        this->source_scene = std::move(source_scene);
-        this->camera_workspace = std::move(camera_workspace);
-    }
-
     void Renderer::Impl::detach_noexcept() noexcept {
         this->unload_pipeline_noexcept();
         this->unload_scene_noexcept();
@@ -1375,7 +1273,7 @@ namespace spectra::pathtracer {
         if (channel.source_byte_size == 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source has no byte size", volume.name, channel.name));
         if (channel.source_byte_size % sizeof(float) != 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source byte size is not float aligned", volume.name, channel.name));
         const std::uint64_t cell_count = checked_volume_cell_count(volume);
-        const std::uint32_t component_count = volume_channel_component_count(channel.format);
+        const std::uint32_t component_count = pathtracer_volume_channel_component_count(channel.format);
         if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" value count overflows uint64", volume.name, channel.name));
         const std::uint64_t value_count = cell_count * component_count;
         if (value_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" byte count overflows uint64", volume.name, channel.name));
@@ -1402,7 +1300,7 @@ namespace spectra::pathtracer {
             scene::Scene::ResolvedScene source_snapshot = this->source_scene->resolved_scene([this](const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannel& channel) {
                 return this->materialize_external_volume_channel(volume, channel);
             });
-            const SceneSupportReport report = analyze_scene(source_snapshot);
+            const SceneSupportReport report = AnalyzeSceneSupport(source_snapshot);
             if (!report.supported) {
                 this->scene_status_state = "Unsupported";
                 this->scene_status_detail = std::format("{} cannot translate scene \"{}\"", name(), source_snapshot.name);
@@ -1696,10 +1594,7 @@ namespace spectra::pathtracer {
     }
 
     std::optional<scene::ViewportNavigationTarget> Renderer::Impl::explicit_viewport_navigation_target() const {
-        const std::shared_ptr<const scene::Scene::Document> document = this->source_scene->document();
-        if (!document->navigation_target.has_value()) return std::nullopt;
-        scene::validate_viewport_navigation_target(*document->navigation_target, "Spectra pathtracer document");
-        return *document->navigation_target;
+        return this->source_scene->navigation_target();
     }
 
     scene::ViewportNavigationTarget Renderer::Impl::fallback_viewport_navigation_target(const scene::CameraPose pose) const {
@@ -1798,31 +1693,14 @@ namespace spectra::pathtracer {
         }
     }
 
-    [[nodiscard]] Renderer::Impl::Status Renderer::Impl::pipeline_status() const {
-        Status status{};
+    [[nodiscard]] std::string Renderer::Impl::pipeline_status() const {
         const std::array<int, 2> sample_range = this->sample_range();
-        if (!this->scene_snapshot.has_value()) {
-            status.state = this->scene_status_state;
-            return status;
-        }
-        if (this->render_resolution_sync.rebuilding) {
-            status.state = "Rebuilding";
-            return status;
-        }
-        if (!this->render_resolution_sync.pipeline_created) {
-            status.state = this->render_resolution_sync.candidate_known ? "Pending Resolution" : "Waiting for Viewport";
-            return status;
-        }
-        if (this->render_pipeline == nullptr) {
-            status.state = "Unavailable";
-            return status;
-        }
-        if (this->sample_config_rebuild_requested) {
-            status.state = "Rebuild Pending";
-            return status;
-        }
-        status.state = sample_range[0] >= sample_range[1] ? "Completed" : "Sampling";
-        return status;
+        if (!this->scene_snapshot.has_value()) return this->scene_status_state;
+        if (this->render_resolution_sync.rebuilding) return "Rebuilding";
+        if (!this->render_resolution_sync.pipeline_created) return this->render_resolution_sync.candidate_known ? "Pending Resolution" : "Waiting for Viewport";
+        if (this->render_pipeline == nullptr) return "Unavailable";
+        if (this->sample_config_rebuild_requested) return "Rebuild Pending";
+        return sample_range[0] >= sample_range[1] ? "Completed" : "Sampling";
     }
 
     bool Renderer::Impl::process_camera_input() {
@@ -2075,7 +1953,7 @@ namespace spectra::pathtracer {
     }
 
     void Renderer::Impl::draw_render_session_panel() {
-        const Status status = this->pipeline_status();
+        const std::string status = this->pipeline_status();
         std::array<int, 2> render_resolution{0, 0};
         if (this->render_resolution_sync.pipeline_created) render_resolution = this->render_resolution_sync.active_resolution;
         else if (this->render_resolution_sync.candidate_known) render_resolution = this->render_resolution_sync.candidate_resolution;
@@ -2086,7 +1964,7 @@ namespace spectra::pathtracer {
         const std::string progress_label = samples[1] > 0 ? std::format("{} / {}", samples[0], samples[1]) : "Pending";
 
         draw_inspector_section("Render Session");
-        draw_statistics_row("State", status.state);
+        draw_statistics_row("State", status);
         draw_statistics_row("Resolution", resolution_text(render_resolution));
         draw_statistics_row("Render SPP", positive_int_text(this->scene_sampler_sample_count));
         draw_statistics_row("SPP Source", this->sample_source_text());
@@ -2202,7 +2080,7 @@ namespace spectra::pathtracer {
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
         ImGui::PushClipRect(image_min, image_max, true);
-        const Status status = this->pipeline_status();
+        const std::string status = this->pipeline_status();
         std::string scene_title{this->scene_status_state};
         if (this->scene_info.has_value()) {
             const scene::Scene::Info& scene = this->active_scene_info();
@@ -2220,10 +2098,10 @@ namespace spectra::pathtracer {
             const ImVec2 hud_padding{10.0f, 7.0f};
             const float hud_text_width = std::max(0.0f, image_size.x - 24.0f - hud_padding.x * 2.0f);
             const std::string hud = fitting_overlay_text({
-                std::format("{} | {} | {} | {} | render {}", scene_title, status.state, sample_text, progress_text, render_resolution),
-                std::format("{} | {} | {} | render {}", status.state, sample_text, progress_text, render_resolution),
-                std::format("{} | render {}", status.state, render_resolution),
-                status.state,
+                std::format("{} | {} | {} | {} | render {}", scene_title, status, sample_text, progress_text, render_resolution),
+                std::format("{} | {} | {} | render {}", status, sample_text, progress_text, render_resolution),
+                std::format("{} | render {}", status, render_resolution),
+                status,
             }, hud_text_width);
             if (!hud.empty()) {
                 const ImVec2 hud_size = ImGui::CalcTextSize(hud.c_str());

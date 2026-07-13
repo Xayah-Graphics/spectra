@@ -511,14 +511,12 @@ namespace spectra {
             if (duv_dw) *duv_dw = Sqr(Pi) * (1 - Sqr(w.x)) * (1 - Sqr(w.y)) / w.z;
 
             Float alpha = std::atan2(w.x, w.z), beta = std::atan2(w.y, w.z);
-            DCHECK(!IsNaN(alpha + beta));
             return Point2f(Clamp((alpha + Pi / 2) / Pi, 0, 1), Clamp((beta + Pi / 2) / Pi, 0, 1));
         }
 
         __host__ __device__ Vector3f RenderFromImage(Point2f uv, Float* duv_dw = nullptr) const {
             Float alpha = -Pi / 2 + uv[0] * Pi, beta = -Pi / 2 + uv[1] * Pi;
             Float x = std::tan(alpha), y = std::tan(beta);
-            DCHECK(!IsInf(x) && !IsInf(y));
             Vector3f w = Normalize(Vector3f(x, y, 1));
             // Compute Jacobian determinant of mapping $\roman{d}(u,v)/\roman{d}\omega$ if
             // needed

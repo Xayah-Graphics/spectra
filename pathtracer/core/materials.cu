@@ -395,10 +395,7 @@ namespace spectra {
 
     MeasuredMaterial* MeasuredMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, const FileLoc* loc, Allocator alloc) {
         std::string filename = parameters.GetOneString("filename", "");
-        if (filename.empty()) {
-            throw std::runtime_error(diagnostics::Format("Filename must be provided for MeasuredMaterial"));
-            return nullptr;
-        }
+        if (filename.empty()) throw std::runtime_error(diagnostics::Format("Filename must be provided for MeasuredMaterial"));
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
 
         return alloc.new_object<MeasuredMaterial>(filename, displacement, normalMap, measuredBxDFData, alloc);
@@ -406,12 +403,9 @@ namespace spectra {
 
 
     Material Material::Create(const std::string& name, const TextureParameterDictionary& parameters, Image* normalMap,
-        /*const */ std::map<std::string, Material>& namedMaterials, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, const FileLoc* loc, Allocator alloc) {
+        const std::map<std::string, Material>& namedMaterials, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, const FileLoc* loc, Allocator alloc) {
         Material material;
-        if (name.empty() || name == "none") {
-            diagnostics::PrintWarning(loc, "Material \"%s\" is deprecated; use \"interface\" instead.", name.c_str());
-            return nullptr;
-        } else if (name == "interface")
+        if (name == "interface")
             return nullptr;
         else if (name == "diffuse")
             material = DiffuseMaterial::Create(parameters, normalMap, loc, alloc);

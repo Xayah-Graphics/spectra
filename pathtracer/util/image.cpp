@@ -29,7 +29,6 @@
 #include <cmath>
 #include <format>
 #include <lodepng/lodepng.h>
-#include <numeric>
 #include <string_view>
 #include <system_error>
 
@@ -112,50 +111,6 @@ namespace spectra {
         return false;
     }
 
-    Image Image::GaussianFilter(const ImageChannelDesc& desc, int halfWidth, Float sigma) const {
-        // Compute filter weights
-        std::vector<Float> wts(2 * halfWidth + 1, Float(0));
-        for (int d = 0; d < 2 * halfWidth + 1; ++d) wts[d] = Gaussian(d - halfWidth, 0, sigma);
-
-        // Normalize weights
-        Float wtSum = std::accumulate(wts.begin(), wts.end(), Float(0));
-        for (Float& w : wts) w /= wtSum;
-
-        // Separable blur; first blur in x into blurx, selecting out the
-        // desired channels along the way.
-        Image blurx(PixelFormat::Float, resolution, ChannelNames(desc));
-        int nc = desc.size();
-        ParallelFor(0, resolution.y, [&](int64_t y0, int64_t y1) {
-            for (int y = y0; y < y1; ++y) {
-                for (int x = 0; x < resolution.x; ++x) {
-                    ImageChannelValues result(desc.size());
-                    for (int r = -halfWidth; r <= halfWidth; ++r) {
-                        ImageChannelValues cv = GetChannels({x + r, y}, desc);
-                        for (int c = 0; c < nc; ++c) result[c] += wts[r + halfWidth] * cv[c];
-                    }
-                    blurx.SetChannels({x, y}, result);
-                }
-            }
-        });
-
-        // Now blur in y from blur x to the result; blurx has just the
-        // channels we want already.
-        Image blury(PixelFormat::Float, resolution, ChannelNames(desc));
-        ParallelFor(0, resolution.y, [&](int64_t y0, int64_t y1) {
-            for (int y = y0; y < y1; ++y) {
-                for (int x = 0; x < resolution.x; ++x) {
-                    ImageChannelValues result(desc.size());
-                    for (int r = -halfWidth; r <= halfWidth; ++r) {
-                        ImageChannelValues cv = blurx.GetChannels({x, y + r});
-                        for (int c = 0; c < nc; ++c) result[c] += wts[r + halfWidth] * cv[c];
-                    }
-                    blury.SetChannels({x, y}, result);
-                }
-            }
-        });
-        return blury;
-    }
-
     std::vector<ResampleWeight> Image::ResampleWeights(int oldRes, int newRes) {
         CHECK_GE(newRes, oldRes);
         std::vector<ResampleWeight> wt(newRes);
@@ -204,17 +159,12 @@ namespace spectra {
             for (int yOut = inExtent.pMin.y; yOut < inExtent.pMax.y; ++yOut) {
                 for (int xOut = outExtent.pMin.x; xOut < outExtent.pMax.x; ++xOut) {
                     // Resample image pixel _(xOut, yOut)_
-                    DCHECK(xOut >= 0 && xOut < xWeights.size());
                     const ResampleWeight& rsw = xWeights[xOut];
                     // Compute _inOffset_ into _inBuf_ for _(xOut, yOut)_
                     // w.r.t. inBuf
                     int xIn = rsw.firstPixel - inExtent.pMin.x;
-                    DCHECK_GE(xIn, 0);
-                    DCHECK_LT(xIn + 3, nxIn);
                     int yIn      = yOut - inExtent.pMin.y;
                     int inOffset = NChannels() * (xIn + yIn * nxIn);
-                    DCHECK_GE(inOffset, 0);
-                    DCHECK_LT(inOffset + 3 * NChannels(), inBuf.size());
 
                     for (int c = 0; c < NChannels(); ++c, ++xBufOffset, ++inOffset) xBuf[xBufOffset] = rsw.weight[0] * inBuf[inOffset] + rsw.weight[1] * inBuf[inOffset + NChannels()] + rsw.weight[2] * inBuf[inOffset + 2 * NChannels()] + rsw.weight[3] * inBuf[inOffset + 3 * NChannels()];
                 }
@@ -225,14 +175,10 @@ namespace spectra {
             for (int x = 0; x < nxOut; ++x) {
                 for (int y = 0; y < nyOut; ++y) {
                     int yOut = y + outExtent[0][1];
-                    DCHECK(yOut >= 0 && yOut < yWeights.size());
                     const ResampleWeight& rsw = yWeights[yOut];
 
-                    DCHECK_GE(rsw.firstPixel - inExtent[0][1], 0);
                     int xBufOffset = NChannels() * (x + nxOut * (rsw.firstPixel - inExtent[0][1]));
-                    DCHECK_GE(xBufOffset, 0);
                     int step = NChannels() * nxOut;
-                    DCHECK_LT(xBufOffset + 3 * step, xBuf.size());
 
                     int outOffset = NChannels() * (x + y * nxOut);
                     for (int c = 0; c < NChannels(); ++c, ++outOffset, ++xBufOffset) outBuf[outOffset] = std::max<Float>(0, (rsw.weight[0] * xBuf[xBufOffset] + rsw.weight[1] * xBuf[xBufOffset + step] + rsw.weight[2] * xBuf[xBufOffset + 2 * step] + rsw.weight[3] * xBuf[xBufOffset + 3 * step]));
@@ -425,88 +371,6 @@ namespace spectra {
         return names;
     }
 
-    ImageChannelValues Image::MAE(const ImageChannelDesc& desc, const Image& ref, Image* errorImage) const {
-        std::vector<double> sumError(desc.size(), 0.);
-
-        ImageChannelDesc refDesc = ref.GetChannelDesc(ChannelNames(desc));
-        CHECK((bool) refDesc);
-        CHECK_EQ(Resolution(), ref.Resolution());
-
-        if (errorImage) *errorImage = Image(PixelFormat::Float, Resolution(), ChannelNames());
-
-        for (int y = 0; y < Resolution().y; ++y)
-            for (int x = 0; x < Resolution().x; ++x) {
-                ImageChannelValues v    = GetChannels({x, y}, desc);
-                ImageChannelValues vref = ref.GetChannels({x, y}, refDesc);
-
-                for (int c = 0; c < desc.size(); ++c) {
-                    double error = std::abs(double(v[c]) - double(vref[c]));
-                    if (IsInf(error)) continue;
-                    sumError[c] += error;
-                    if (errorImage) errorImage->SetChannel({x, y}, c, error);
-                }
-            }
-
-        ImageChannelValues error(desc.size());
-        for (int c = 0; c < desc.size(); ++c) error[c] = sumError[c] / (Float(Resolution().x) * Float(Resolution().y));
-        return error;
-    }
-
-    ImageChannelValues Image::MSE(const ImageChannelDesc& desc, const Image& ref, Image* mseImage) const {
-        std::vector<double> sumSE(desc.size(), 0.);
-
-        ImageChannelDesc refDesc = ref.GetChannelDesc(ChannelNames(desc));
-        if (!refDesc) throw std::runtime_error(diagnostics::Format("Channels not found in image: %s", ChannelNames(desc)));
-
-        CHECK_EQ(Resolution(), ref.Resolution());
-
-        if (mseImage) *mseImage = Image(PixelFormat::Float, Resolution(), ChannelNames());
-
-        for (int y = 0; y < Resolution().y; ++y)
-            for (int x = 0; x < Resolution().x; ++x) {
-                ImageChannelValues v    = GetChannels({x, y}, desc);
-                ImageChannelValues vref = ref.GetChannels({x, y}, refDesc);
-
-                for (int c = 0; c < desc.size(); ++c) {
-                    double se = Sqr(double(v[c]) - double(vref[c]));
-                    if (IsInf(se)) continue;
-                    sumSE[c] += se;
-                    if (mseImage) mseImage->SetChannel({x, y}, c, se);
-                }
-            }
-
-        ImageChannelValues mse(desc.size());
-        for (int c = 0; c < desc.size(); ++c) mse[c] = sumSE[c] / (Float(Resolution().x) * Float(Resolution().y));
-        return mse;
-    }
-
-    ImageChannelValues Image::MRSE(const ImageChannelDesc& desc, const Image& ref, Image* mrseImage) const {
-        std::vector<double> sumRSE(desc.size(), 0.);
-
-        ImageChannelDesc refDesc = ref.GetChannelDesc(ChannelNames(desc));
-        CHECK((bool) refDesc);
-        CHECK_EQ(Resolution(), ref.Resolution());
-
-        if (mrseImage) *mrseImage = Image(PixelFormat::Float, Resolution(), ChannelNames());
-
-        for (int y = 0; y < Resolution().y; ++y)
-            for (int x = 0; x < Resolution().x; ++x) {
-                ImageChannelValues v    = GetChannels({x, y}, desc);
-                ImageChannelValues vref = ref.GetChannels({x, y}, refDesc);
-
-                for (int c = 0; c < desc.size(); ++c) {
-                    double rse = Sqr(double(v[c]) - double(vref[c])) / Sqr(vref[c] + 0.01);
-                    if (IsInf(rse)) continue;
-                    sumRSE[c] += rse;
-                    if (mrseImage) mrseImage->SetChannel({x, y}, c, rse);
-                }
-            }
-
-        ImageChannelValues mrse(desc.size());
-        for (int c = 0; c < desc.size(); ++c) mrse[c] = sumRSE[c] / (Float(Resolution().x) * Float(Resolution().y));
-        return mrse;
-    }
-
     ImageChannelValues Image::Average(const ImageChannelDesc& desc) const {
         std::vector<double> sum(desc.size(), 0.);
 
@@ -533,26 +397,12 @@ namespace spectra {
                 for (int y = extent.pMin.y; y < extent.pMax.y; ++y) {
                     // Convert scanlines all at once.
                     size_t offset = PixelOffset({extent.pMin.x, y});
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-                    for (int i = 0; i < count; ++i) {
-                        Float v;
-                        encoding.ToLinear({&p8[offset + i], 1}, {&v, 1});
-                        *bufIter++ = v;
-                    }
-#else
                     encoding.ToLinear({&p8[offset], count}, {&*bufIter, count});
                     bufIter += count;
-#endif
                 }
             } else {
                 ForExtent(extent, wrapMode, *this, [&bufIter, this](int offset) {
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-                    Float v;
-                    encoding.ToLinear({&p8[offset], 1}, {&v, 1});
-                    *bufIter = v;
-#else
                     encoding.ToLinear({&p8[offset], 1}, {&*bufIter, 1});
-#endif
                     ++bufIter;
                 });
             }
@@ -578,15 +428,8 @@ namespace spectra {
                 for (int y = extent.pMin.y; y < extent.pMax.y; ++y) {
                     // Convert scanlines all at once.
                     size_t offset = PixelOffset({extent.pMin.x, y});
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-                    for (int i = 0; i < count; ++i) {
-                        Float v = *bufIter++;
-                        encoding.FromLinear({&v, 1}, {&p8[offset + i], 1});
-                    }
-#else
                     encoding.FromLinear({&*bufIter, count}, {&p8[offset], count});
                     bufIter += count;
-#endif
                 }
             } else
                 ForExtent(extent, WrapMode::Clamp, *this, [&bufIter, this](int offset) {
@@ -656,48 +499,6 @@ namespace spectra {
         }
     }
 
-    Image Image::JointBilateralFilter(const ImageChannelDesc& toFilterDesc, int halfWidth, const Float xySigma[2], const ImageChannelDesc& jointDesc, const ImageChannelValues& jointSigma) const {
-        CHECK_EQ(jointDesc.size(), jointSigma.size());
-        Image result(PixelFormat::Float, resolution, ChannelNames(toFilterDesc));
-
-        std::vector<Float> fx, fy;
-        for (int i = 0; i <= halfWidth; ++i) {
-            fx.push_back(Gaussian(i, 0, xySigma[0]));
-            fy.push_back(Gaussian(i, 0, xySigma[1]));
-        }
-
-        ParallelFor(0, resolution.y, [&](int64_t y0, int64_t y1) {
-            for (int y = y0; y < y1; ++y) {
-                for (int x = 0; x < resolution.x; ++x) {
-                    ImageChannelValues jointPixelChannels = GetChannels({x, y}, jointDesc);
-                    ImageChannelValues filteredSum(toFilterDesc.size(), Float(0));
-                    Float weightSum = 0;
-
-                    for (int dy = -halfWidth + 1; dy < halfWidth; ++dy) {
-                        if (y + dy < 0 || y + dy >= resolution.y) continue;
-                        for (int dx = -halfWidth + 1; dx < halfWidth; ++dx) {
-                            for (int dx = -halfWidth + 1; dx < halfWidth; ++dx) {
-                                if (x + dx < 0 || x + dx >= resolution.x) continue;
-                                ImageChannelValues jointOtherChannels = GetChannels({x + dx, y + dy}, jointDesc);
-                                Float weight                          = fx[std::abs(dx)] * fy[std::abs(dy)];
-                                for (int c = 0; c < jointDesc.size(); ++c) weight *= Gaussian(jointPixelChannels[c], jointOtherChannels[c], jointSigma[c]);
-                                weightSum += weight;
-
-                                ImageChannelValues filterChannels = GetChannels({x + dx, y + dy}, toFilterDesc);
-                                for (int c = 0; c < filterChannels.size(); ++c) filteredSum[c] += weight * filterChannels[c];
-                            }
-                        }
-                    }
-                    if (weightSum > 0)
-                        for (int c = 0; c < filteredSum.size(); ++c) filteredSum[c] /= weightSum;
-                    result.SetChannels({x, y}, filteredSum);
-                }
-            }
-        });
-
-        return result;
-    }
-
     // ImageIO Local Declarations
     static ImageAndMetadata ReadEXR(const std::string& name, Allocator alloc);
     static ImageAndMetadata ReadPNG(const std::string& name, Allocator alloc, ColorEncoding encoding);
@@ -755,7 +556,7 @@ namespace spectra {
         case 1:
             // all good; onward
             break;
-        case 2: throw std::runtime_error(diagnostics::Format("%s: unable to write a 2 channel image in this format.", name)); return false;
+        case 2: throw std::runtime_error(diagnostics::Format("%s: unable to write a 2 channel image in this format.", name));
         case 3:
             {
                 ImageChannelDesc desc = outImage.GetChannelDesc({"R", "G", "B"});
@@ -789,7 +590,6 @@ namespace spectra {
                     throw std::runtime_error(diagnostics::Format("%s: multi-channel image does not have R, G, and B. Unable to write to "
                                                                  "this format.",
                         name));
-                    return false;
                 } else {
                     std::string err = std::format("{}: ignoring additional channels for this "
                                                   "image format: ",
@@ -830,7 +630,6 @@ namespace spectra {
             return outImage.WriteQOI(name, outMetadata);
         else {
             throw std::runtime_error(diagnostics::Format("%s: no support for writing images with this extension", name));
-            return false;
         }
     }
 
@@ -954,8 +753,6 @@ namespace spectra {
         } catch (const std::exception& e) {
             throw std::runtime_error(diagnostics::Format("Unable to read image file \"%s\": %s", name, e.what()));
         }
-
-        return {};
     }
 
     bool Image::WriteEXR(const std::string& name, const ImageMetadata& metadata) const {
@@ -1016,7 +813,6 @@ namespace spectra {
             file.writePixels(resolution.y);
         } catch (const std::exception& exc) {
             throw std::runtime_error(diagnostics::Format("%s: error writing EXR: %s", name.c_str(), exc.what()));
-            return false;
         }
 
         return true;
@@ -1056,7 +852,6 @@ namespace spectra {
                             v       = encoding.ToFloatLinear(v);
                             image.SetChannel(Point2i(x, y), 0, v);
                         }
-                    DCHECK(bufIter == buf.end());
                 } else {
                     image = Image(PixelFormat::U256, Point2i(width, height), {"Y"}, encoding);
                     std::copy(buf.begin(), buf.end(), (uint8_t*) image.RawPointer({0, 0}));
@@ -1080,7 +875,6 @@ namespace spectra {
                         auto bufIter = buf.begin();
                         for (unsigned int y = 0; y < height; ++y)
                             for (unsigned int x = 0; x < width; ++x, bufIter += 8) {
-                                DCHECK(bufIter < buf.end());
                                 // Convert from little endian.
                                 Float rgba[4] = {(((int) bufIter[0] << 8) + (int) bufIter[1]) / 65535.f, (((int) bufIter[2] << 8) + (int) bufIter[3]) / 65535.f, (((int) bufIter[4] << 8) + (int) bufIter[5]) / 65535.f, (((int) bufIter[6] << 8) + (int) bufIter[7]) / 65535.f};
                                 for (int c = 0; c < 4; ++c) {
@@ -1088,13 +882,11 @@ namespace spectra {
                                     image.SetChannel(Point2i(x, y), c, rgba[c]);
                                 }
                             }
-                        DCHECK(bufIter == buf.end());
                     } else {
                         image        = Image(PixelFormat::Half, Point2i(width, height), {"R", "G", "B"});
                         auto bufIter = buf.begin();
                         for (unsigned int y = 0; y < height; ++y)
                             for (unsigned int x = 0; x < width; ++x, bufIter += 6) {
-                                DCHECK(bufIter < buf.end());
                                 // Convert from little endian.
                                 Float rgb[3] = {(((int) bufIter[0] << 8) + (int) bufIter[1]) / 65535.f, (((int) bufIter[2] << 8) + (int) bufIter[3]) / 65535.f, (((int) bufIter[4] << 8) + (int) bufIter[5]) / 65535.f};
                                 for (int c = 0; c < 3; ++c) {
@@ -1102,7 +894,6 @@ namespace spectra {
                                     image.SetChannel(Point2i(x, y), c, rgb[c]);
                                 }
                             }
-                        DCHECK(bufIter == buf.end());
                     }
                 } else if (hasAlpha) {
                     image = Image(PixelFormat::U256, Point2i(width, height), {"R", "G", "B", "A"}, encoding);
@@ -1207,11 +998,9 @@ namespace spectra {
             std::string encodedPNG(png, png + pngSize);
             if (!WriteFileContents(filename, encodedPNG)) {
                 throw std::runtime_error(diagnostics::Format("%s: error writing PNG.", filename));
-                return false;
             }
         } else {
             throw std::runtime_error(diagnostics::Format("%s: %s", filename, lodepng_error_text(error)));
-            return false;
         }
 
         free(png);
@@ -1230,7 +1019,6 @@ namespace spectra {
         desc.channels = NChannels();
         if (Encoding() && !Encoding().Is<LinearColorEncoding>() && !Encoding().Is<sRGBColorEncoding>()) {
             throw std::runtime_error(diagnostics::Format("%s: only linear and sRGB encodings are supported by QOI.", filename));
-            return false;
         }
         desc.colorspace = Encoding().Is<LinearColorEncoding>() ? QOI_LINEAR : QOI_SRGB;
 
@@ -1245,7 +1033,6 @@ namespace spectra {
             if (desc) image = SelectChannels(desc);
         } else {
             throw std::runtime_error(diagnostics::Format("%s: only 3 and 4 channel images are supported for QOI", filename));
-            return false;
         }
 
         if (format == PixelFormat::U256)
@@ -1273,27 +1060,8 @@ namespace spectra {
      * (http://people.csail.mit.edu/jiawen/)
      */
 
-    static constexpr bool hostLittleEndian =
-#if defined(__BYTE_ORDER__)
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-        true
-#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-        false
-#else
-#error "__BYTE_ORDER__ defined but has unexpected value"
-#endif
-#else
-#if defined(__LITTLE_ENDIAN__) || defined(__i386__) || defined(__x86_64__) || defined(_WIN32) || defined(WIN32)
-        true
-#elif defined(__BIG_ENDIAN__)
-        false
-#elif defined(__sparc) || defined(__sparc__)
-        false
-#else
-#error "Can't detect machine endian-ness at compile-time."
-#endif
-#endif
-        ;
+    static_assert(std::endian::native == std::endian::little, "Spectra pathtracer requires a little-endian host");
+    static constexpr bool hostLittleEndian = true;
 
 #define BUFFER_SIZE 80
 

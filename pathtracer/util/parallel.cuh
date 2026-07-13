@@ -156,7 +156,7 @@ namespace spectra {
     public:
         // AtomicDouble Public Methods
         __host__ __device__ explicit AtomicDouble(double v = 0) {
-#if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 600)
+#if defined(__CUDA_ARCH__)
             value = v;
 #else
             bits = FloatToBits(v);
@@ -164,7 +164,7 @@ namespace spectra {
         }
 
         __host__ __device__ operator double() const {
-#if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 600)
+#if defined(__CUDA_ARCH__)
             return value;
 #else
             return BitsToFloat(bits);
@@ -172,7 +172,7 @@ namespace spectra {
         }
 
         __host__ __device__ double operator=(double v) {
-#if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 600)
+#if defined(__CUDA_ARCH__)
             value = v;
             return value;
 #else
@@ -182,15 +182,8 @@ namespace spectra {
         }
 
         __host__ __device__ void Add(double v) {
-#if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 600)
+#if defined(__CUDA_ARCH__)
             atomicAdd(&value, v);
-#elif defined(__CUDA_ARCH__)
-            uint64_t old = bits, assumed;
-
-            do {
-                assumed = old;
-                old     = atomicCAS((unsigned long long int*) &bits, assumed, __double_as_longlong(v + __longlong_as_double(assumed)));
-            } while (assumed != old);
 #else
             uint64_t oldBits = bits, newBits;
             do {
@@ -201,10 +194,8 @@ namespace spectra {
 
     private:
         // AtomicDouble Private Data
-#if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 600)
+#if defined(__CUDA_ARCH__)
         double value;
-#elif defined(__CUDA_ARCH__)
-        uint64_t bits;
 #else
         std::atomic<uint64_t> bits;
 #endif
@@ -251,7 +242,6 @@ namespace spectra {
     public:
         // ParallelJob Public Methods
         virtual ~ParallelJob() {
-            DCHECK(removed);
         }
 
         virtual bool HaveWork() const                            = 0;

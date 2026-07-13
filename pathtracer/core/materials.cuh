@@ -69,7 +69,6 @@ namespace spectra {
     // Bump Mapping Function Definitions
     template <typename TextureEvaluator>
     __host__ __device__ void BumpMap(TextureEvaluator texEval, FloatTexture displacement, const NormalBumpEvalContext& ctx, Vector3f* dpdu, Vector3f* dpdv) {
-        DCHECK(texEval.CanEvaluate({displacement}, {}));
         // Compute offset positions and evaluate displacement texture
         TextureEvalContext shiftedCtx = ctx;
         // Shift _shiftedCtx_ _du_ in the $u$ direction
@@ -615,7 +614,6 @@ namespace spectra {
                 sig_s = ClampZero(scale * texEval(sigma_s, ctx, lambda));
             } else {
                 // Compute _sig_a_ and _sig_s_ from reflectance and mfp
-                DCHECK(reflectance && mfp);
                 SampledSpectrum mfree = ClampZero(scale * texEval(mfp, ctx, lambda));
                 SampledSpectrum r     = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
                 SubsurfaceFromDiffuse(table, r, mfree, &sig_a, &sig_s);

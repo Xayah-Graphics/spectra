@@ -42,7 +42,7 @@ namespace spectra {
         using TaggedPointer::TaggedPointer;
 
         static Material Create(const std::string& name, const TextureParameterDictionary& parameters, Image* normalMap,
-            /*const */ std::map<std::string, Material>& namedMaterials, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, const FileLoc* loc, Allocator alloc);
+            const std::map<std::string, Material>& namedMaterials, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, const FileLoc* loc, Allocator alloc);
 
 
         template <typename TextureEvaluator>

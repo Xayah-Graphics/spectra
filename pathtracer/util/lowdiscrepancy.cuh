@@ -43,8 +43,6 @@ namespace spectra {
         }
 
         __host__ __device__ int Permute(int digitIndex, int digitValue) const {
-            DCHECK_LT(digitIndex, nDigits);
-            DCHECK_LT(digitValue, base);
             return permutations[digitIndex * base + digitValue];
         }
 
@@ -150,8 +148,6 @@ namespace spectra {
 
     template <typename R>
     __host__ __device__ Float SobolSample(int64_t a, int dimension, R randomizer) {
-        DCHECK_LT(dimension, NSobolDimensions);
-        DCHECK(a >= 0 && a < (1ull << SobolMatrixSize));
         // Compute initial Sobol\+$'$ sample _v_ using generator matrices
         uint32_t v = 0;
         for (int i = dimension * SobolMatrixSize; a != 0; a >>= 1, i++)

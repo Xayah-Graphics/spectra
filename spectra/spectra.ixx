@@ -5,54 +5,11 @@ module;
 export module spectra;
 
 export import imgui;
+export import spectra.renderer.host;
 export import vulkan;
 import std;
 
 namespace spectra {
-    export struct Panel {
-        std::string id{};
-        std::string title{};
-        std::string icon{};
-        std::string owner_renderer{};
-        std::string shortcut_label{};
-        ImGuiKey shortcut_key{ImGuiKey_None};
-        ImGuiWindowFlags window_flags{0};
-        bool visible{true};
-        bool closable{true};
-        bool zero_window_padding{false};
-        std::move_only_function<void()> draw{};
-    };
-
-    export struct CommandPopover {
-        std::string id{};
-        std::string title{};
-        std::string icon{};
-        std::string owner_renderer{};
-        std::string shortcut_label{};
-        ImGuiKey shortcut_key{ImGuiKey_None};
-        std::move_only_function<void()> draw{};
-    };
-
-    export struct ViewportOverlay {
-        std::string id{};
-        std::string title{};
-        std::string owner_renderer{};
-        std::int32_t priority{};
-        std::move_only_function<void(ImVec2, ImVec2)> draw{};
-    };
-
-    export struct ToolbarAction {
-        std::string id{};
-        std::string title{};
-        std::string icon{};
-        std::string owner_renderer{};
-        std::string shortcut_label{};
-        ImGuiKey shortcut_key{ImGuiKey_None};
-        std::move_only_function<bool()> enabled{};
-        std::move_only_function<bool()> active{};
-        std::move_only_function<void()> trigger{};
-    };
-
     export struct WorkspaceTitle {
         std::string detail{};
         std::string tooltip{};
@@ -60,93 +17,17 @@ namespace spectra {
         bool status_error{};
     };
 
-    export struct Rgba8ImageSource {
-        const std::uint8_t* data{};
-        std::uint64_t byte_size{};
-        std::uint32_t width{};
-        std::uint32_t height{};
-        std::uint64_t revision{};
-    };
-
     export struct FileDropHandler {
         std::string id{};
-        std::string title{};
         std::string owner_renderer{};
         std::move_only_function<bool(std::span<const std::filesystem::path>)> handle{};
-    };
-
-    export struct FrameContext {
-        std::uint32_t frame_slot_index{};
-        std::uint32_t image_index{};
-        std::uint64_t frame_number{};
-        double delta_seconds{};
-    };
-
-    export struct FrameResult {
-        std::optional<vk::Semaphore> completion_semaphore{};
-        bool close_requested{false};
-    };
-
-    export template <typename PanelContribution>
-    concept PanelLike = requires(PanelContribution panel) {
-        std::string{std::move(panel.id)};
-        std::string{std::move(panel.title)};
-        std::string{std::move(panel.icon)};
-        std::string{std::move(panel.owner_renderer)};
-        std::string{std::move(panel.shortcut_label)};
-        static_cast<ImGuiKey>(panel.shortcut_key);
-        static_cast<ImGuiWindowFlags>(panel.window_flags);
-        { panel.visible } -> std::convertible_to<bool>;
-        { panel.closable } -> std::convertible_to<bool>;
-        { panel.zero_window_padding } -> std::convertible_to<bool>;
-        std::move_only_function<void()>{std::move(panel.draw)};
-    };
-
-    export template <typename CommandPopoverContribution>
-    concept CommandPopoverLike = requires(CommandPopoverContribution popover) {
-        std::string{std::move(popover.id)};
-        std::string{std::move(popover.title)};
-        std::string{std::move(popover.icon)};
-        std::string{std::move(popover.owner_renderer)};
-        std::string{std::move(popover.shortcut_label)};
-        static_cast<ImGuiKey>(popover.shortcut_key);
-        std::move_only_function<void()>{std::move(popover.draw)};
-    };
-
-    export template <typename ViewportOverlayContribution>
-    concept ViewportOverlayLike = requires(ViewportOverlayContribution overlay) {
-        std::string{std::move(overlay.id)};
-        std::string{std::move(overlay.title)};
-        std::string{std::move(overlay.owner_renderer)};
-        static_cast<std::int32_t>(overlay.priority);
-        std::move_only_function<void(ImVec2, ImVec2)>{std::move(overlay.draw)};
-    };
-
-    export template <typename ToolbarActionContribution>
-    concept ToolbarActionLike = requires(ToolbarActionContribution action) {
-        std::string{std::move(action.id)};
-        std::string{std::move(action.title)};
-        std::string{std::move(action.icon)};
-        std::string{std::move(action.owner_renderer)};
-        std::string{std::move(action.shortcut_label)};
-        static_cast<ImGuiKey>(action.shortcut_key);
-        std::move_only_function<bool()>{std::move(action.enabled)};
-        std::move_only_function<bool()>{std::move(action.active)};
-        std::move_only_function<void()>{std::move(action.trigger)};
     };
 
     export template <typename FileDropHandlerContribution>
     concept FileDropHandlerLike = requires(FileDropHandlerContribution handler) {
         std::string{std::move(handler.id)};
-        std::string{std::move(handler.title)};
         std::string{std::move(handler.owner_renderer)};
         std::move_only_function<bool(std::span<const std::filesystem::path>)>{std::move(handler.handle)};
-    };
-
-    export template <typename FrameResultContribution>
-    concept FrameResultLike = requires(FrameResultContribution result) {
-        std::optional<vk::Semaphore>{std::move(result.completion_semaphore)};
-        { result.close_requested } -> std::convertible_to<bool>;
     };
 
     export template <typename Renderer, typename Host>
@@ -160,7 +41,7 @@ namespace spectra {
         { renderer.record_frame(commandBuffer) } -> std::same_as<void>;
     };
 
-    export class Spectra {
+    export class Spectra final {
     public:
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
@@ -198,14 +79,12 @@ namespace spectra {
         void open_command_popover(std::string id);
         void close_command_popover(const std::string& id);
         void draw_viewport_overlays(ImVec2 viewport_position, ImVec2 viewport_size);
-        void draw_imgui_rgba8_image(std::string_view cache_key, const Rgba8ImageSource& source, ImVec2 display_size);
-        void clear_imgui_rgba8_images(std::string_view cache_key_prefix = {});
         void set_workspace_title_provider(std::move_only_function<WorkspaceTitle()> provider);
         template <typename FileDropHandlerContribution>
             requires FileDropHandlerLike<FileDropHandlerContribution>
         void register_file_drop_handler(FileDropHandlerContribution handler);
 
-    protected:
+    private:
         struct FrameState;
 
         void initialize_glfw();
@@ -226,6 +105,7 @@ namespace spectra {
         void end_frame(FrameState& frame);
 
         void recreate_swapchain();
+        void recreate_surface_and_swapchain();
 
         void shutdown_runtime() noexcept;
         void detach_renderers() noexcept;
@@ -238,7 +118,6 @@ namespace spectra {
         void destroy_vulkan_context() noexcept;
         void terminate_glfw() noexcept;
 
-    private:
         struct RendererSlot {
             template <typename Renderer>
                 requires std::movable<std::remove_cvref_t<Renderer>> && RendererFor<Renderer, Spectra>
@@ -292,31 +171,6 @@ namespace spectra {
         void draw_command_popover();
         void draw_registered_panels();
 
-        struct ImGuiRgba8TextureSource {
-            std::uintptr_t data{};
-            std::uint64_t byte_size{};
-            std::uint32_t width{};
-            std::uint32_t height{};
-            std::uint64_t revision{};
-
-            friend auto operator<=>(const ImGuiRgba8TextureSource&, const ImGuiRgba8TextureSource&) = default;
-        };
-
-        struct ImGuiRgba8Texture {
-            ImGuiRgba8TextureSource source{};
-            vk::raii::Image image{nullptr};
-            vk::raii::DeviceMemory memory{nullptr};
-            vk::raii::ImageView view{nullptr};
-            vk::raii::Sampler sampler{nullptr};
-            ImTextureID descriptor{};
-            vk::ImageLayout layout{vk::ImageLayout::eUndefined};
-        };
-
-        void destroy_imgui_rgba8_texture(ImGuiRgba8Texture& texture) const noexcept;
-        void destroy_imgui_rgba8_textures() noexcept;
-        [[nodiscard]] ImGuiRgba8Texture& ensure_imgui_rgba8_texture(std::string_view cache_key, const Rgba8ImageSource& source);
-        void upload_imgui_rgba8_texture(ImGuiRgba8Texture& texture, const std::uint8_t* data) const;
-
         struct {
             vk::raii::Context context{};
             vk::raii::Instance instance{nullptr};
@@ -347,8 +201,6 @@ namespace spectra {
         } swapchain;
 
         struct {
-            vk::raii::DescriptorPool descriptor_pool{nullptr};
-            std::map<std::string, ImGuiRgba8Texture> rgba8_textures{};
             bool initialized{false};
             bool renderers_notified_before_shutdown{false};
         } imgui;
@@ -377,7 +229,7 @@ namespace spectra {
         struct {
             std::vector<RendererSlot> slots{};
             std::optional<std::string> registering_name{};
-            std::size_t active_index{0};
+            std::size_t active_index{};
         } renderer_registry;
 
         struct {
@@ -410,9 +262,7 @@ namespace spectra {
         this->store_panel(Panel{
             .id                  = std::string{std::move(panel.id)},
             .title               = std::string{std::move(panel.title)},
-            .icon                = std::string{std::move(panel.icon)},
             .owner_renderer      = this->resolve_contribution_owner(std::string{std::move(panel.owner_renderer)}),
-            .shortcut_label      = std::string{std::move(panel.shortcut_label)},
             .shortcut_key        = static_cast<ImGuiKey>(panel.shortcut_key),
             .window_flags        = static_cast<ImGuiWindowFlags>(panel.window_flags),
             .visible             = static_cast<bool>(panel.visible),
@@ -457,7 +307,6 @@ namespace spectra {
     void Spectra::register_file_drop_handler(FileDropHandlerContribution handler) {
         this->store_file_drop_handler(FileDropHandler{
             .id             = std::string{std::move(handler.id)},
-            .title          = std::string{std::move(handler.title)},
             .owner_renderer = this->resolve_contribution_owner(std::string{std::move(handler.owner_renderer)}),
             .handle         = std::move(handler.handle),
         });
@@ -468,7 +317,6 @@ namespace spectra {
     void Spectra::register_viewport_overlay(ViewportOverlayContribution overlay) {
         this->store_viewport_overlay(ViewportOverlay{
             .id             = std::string{std::move(overlay.id)},
-            .title          = std::string{std::move(overlay.title)},
             .owner_renderer = this->resolve_contribution_owner(std::string{std::move(overlay.owner_renderer)}),
             .priority       = static_cast<std::int32_t>(overlay.priority),
             .draw           = std::move(overlay.draw),

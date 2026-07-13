@@ -149,7 +149,6 @@ namespace spectra {
 
             // Return final importance at reference point
             Float importance = phi * cosThetap / d2;
-            DCHECK_GE(importance, -1e-3);
             // Account for $\cos\theta_\roman{i}$ in importance at surfaces
             if (n != Normal3f(0, 0, 0)) {
                 Float cosTheta_i  = AbsDot(wi, n);
@@ -256,7 +255,6 @@ namespace spectra {
                         nodeIndex = (child == 0) ? (nodeIndex + 1) : node.childOrLightIndex;
                     } else {
                         // Confirm light has nonzero importance before returning light sample
-                        if (nodeIndex > 0) DCHECK_GT(node.lightBounds.Importance(p, n, allLightBounds), 0);
                         if (nodeIndex > 0 || node.lightBounds.Importance(p, n, allLightBounds) > 0) return SampledLight{lights[node.childOrLightIndex], pmf};
                         return {};
                     }
@@ -282,14 +280,12 @@ namespace spectra {
             while (true) {
                 const LightBVHNode* node = &nodes[nodeIndex];
                 if (node->isLeaf) {
-                    DCHECK_EQ(light, lights[node->childOrLightIndex]);
                     return pmf;
                 }
                 // Compute child importances and update PMF for current node
                 const LightBVHNode* child0 = &nodes[nodeIndex + 1];
                 const LightBVHNode* child1 = &nodes[node->childOrLightIndex];
                 Float ci[2]                = {child0->lightBounds.Importance(p, n, allLightBounds), child1->lightBounds.Importance(p, n, allLightBounds)};
-                DCHECK_GT(ci[bitTrail & 1], 0);
                 pmf *= ci[bitTrail & 1] / (ci[0] + ci[1]);
 
                 // Use _bitTrail_ to find next node index and update its value

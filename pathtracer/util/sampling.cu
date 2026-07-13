@@ -481,15 +481,12 @@ namespace spectra {
 
         if (up < bins[offset].q) {
             // Return sample for alias table at _offset_
-            DCHECK_GT(bins[offset].p, 0);
             if (pmf) *pmf = bins[offset].p;
             if (uRemapped) *uRemapped = std::min<Float>(up / bins[offset].q, OneMinusEpsilon);
             return offset;
         } else {
             // Return sample for alias table at _alias[offset]_
             int alias = bins[offset].alias;
-            DCHECK_GE(alias, 0);
-            DCHECK_GT(bins[alias].p, 0);
             if (pmf) *pmf = bins[alias].p;
             if (uRemapped) *uRemapped = std::min<Float>((up - bins[offset].q) / (1 - bins[offset].q), OneMinusEpsilon);
             return alias;

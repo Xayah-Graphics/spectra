@@ -9,10 +9,6 @@ project(spectra VERSION 1.1.1 LANGUAGES C CXX CUDA)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API ON)
-set(CMAKE_CXX_SCAN_FOR_MODULES ON)
-
-
 # ============================================================================
 # CUDA Configuration
 # ============================================================================
@@ -35,43 +31,15 @@ set(SPECTRA_SCENES_ROOT "${SPECTRA_ROOT_DIR}/scenes")
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
 
-function(spectra_download_if_needed url out_path)
-    if (EXISTS "${out_path}")
-        message(STATUS "Using cached file: ${out_path}")
-        return()
-    endif ()
-
-    get_filename_component(out_dir "${out_path}" DIRECTORY)
-    file(MAKE_DIRECTORY "${out_dir}")
-
-    message(STATUS "Downloading ${url}")
-    set(tmp_path "${out_path}.download")
-    file(REMOVE "${tmp_path}")
-    file(DOWNLOAD
-            "${url}"
-            "${tmp_path}"
-            TLS_VERIFY ON
-            STATUS dl_status
-    )
-
-    list(GET dl_status 0 dl_code)
-    list(GET dl_status 1 dl_msg)
-    if (NOT dl_code EQUAL 0)
-        file(REMOVE "${tmp_path}")
-        message(FATAL_ERROR "Failed to download ${url}: [${dl_code}] ${dl_msg}")
-    endif ()
-    file(RENAME "${tmp_path}" "${out_path}")
-endfunction()
-
-function(spectra_download_archive_if_needed url out_path sha256)
+function(spectra_download_if_needed url out_path sha256)
     string(TOLOWER "${sha256}" expected_sha256)
     if (EXISTS "${out_path}")
         file(SHA256 "${out_path}" existing_sha256)
         string(TOLOWER "${existing_sha256}" existing_sha256)
         if (NOT existing_sha256 STREQUAL expected_sha256)
-            message(FATAL_ERROR "Cached archive hash mismatch for ${out_path}: expected ${expected_sha256}, got ${existing_sha256}")
+            message(FATAL_ERROR "Cached dependency hash mismatch for ${out_path}: expected ${expected_sha256}, got ${existing_sha256}")
         endif ()
-        message(STATUS "Using cached archive: ${out_path}")
+        message(STATUS "Using cached file: ${out_path}")
         return()
     endif ()
 
@@ -103,7 +71,7 @@ function(spectra_prepare_archive_dependency out_source_dir owner repository comm
     set(archive_path "${cache_dir}/${cache_name}.zip")
     set(extract_dir "${cache_dir}/source")
     set(source_dir "${extract_dir}/${repository}-${commit}")
-    spectra_download_archive_if_needed(
+    spectra_download_if_needed(
             "https://codeload.github.com/${owner}/${repository}/zip/${commit}"
             "${archive_path}"
             "${archive_sha256}"
@@ -124,10 +92,12 @@ set(SPECTRA_XCLI_VENDOR_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/util/${SPEC
 spectra_download_if_needed(
         "https://raw.githubusercontent.com/Xayah-Graphics/util/${SPECTRA_XCLI_COMMIT}/xcli.ixx"
         "${SPECTRA_XCLI_VENDOR_DIR}/xcli.ixx"
+        "2F80115AA7B739BDE4BF990EC1C0D0AFD85CF6B5610AF9A9D22A8C6686898F8D"
 )
 spectra_download_if_needed(
         "https://raw.githubusercontent.com/Xayah-Graphics/util/${SPECTRA_XCLI_COMMIT}/xcli.cpp"
         "${SPECTRA_XCLI_VENDOR_DIR}/xcli.cpp"
+        "A1386CE6782CF267CD9AFB002FA66E70B7BF019CFA19ADC9C5EF0470BE445E69"
 )
 
 add_library(xayah-util-xcli)
@@ -143,13 +113,16 @@ set_property(TARGET xayah-util-xcli PROPERTY CXX_MODULE_STD ON)
 
 set(SPECTRA_LODEPNG_COMMIT "ed6fe5825c6a4fbb7f58ab35a4231c7543cd452a")
 set(SPECTRA_LODEPNG_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/lodepng/${SPECTRA_LODEPNG_COMMIT}")
-foreach (lodepng_file IN ITEMS
-        lodepng.cpp
-        lodepng.h
+set(lodepng_files lodepng.cpp lodepng.h)
+set(lodepng_sha256s
+        D98E1F40D303C1038A096EBF93B413A565A91CF2C72B9D2FA5C625C4279C3CB6
+        23C27ABB06883ED98184D16D0B20771B526DCA1E8E13236C2397316769C0DC8B
 )
+foreach (lodepng_file lodepng_sha256 IN ZIP_LISTS lodepng_files lodepng_sha256s)
     spectra_download_if_needed(
             "https://raw.githubusercontent.com/lvandeve/lodepng/${SPECTRA_LODEPNG_COMMIT}/${lodepng_file}"
             "${SPECTRA_LODEPNG_DIR}/lodepng/${lodepng_file}"
+            "${lodepng_sha256}"
     )
 endforeach ()
 
@@ -162,6 +135,7 @@ set(SPECTRA_STB_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/stb/${SPECTRA_STB_C
 spectra_download_if_needed(
         "https://raw.githubusercontent.com/nothings/stb/${SPECTRA_STB_COMMIT}/stb_image.h"
         "${SPECTRA_STB_DIR}/stb/stb_image.h"
+        "594C2FE35D49488B4382DBFAEC8F98366DEFCA819D916AC95BECF3E75F4200B3"
 )
 
 set(SPECTRA_QOI_COMMIT "97bacc86a9c4abf5a2d452102dc26546c4c670b9")
@@ -169,6 +143,7 @@ set(SPECTRA_QOI_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/qoi/${SPECTRA_QOI_C
 spectra_download_if_needed(
         "https://raw.githubusercontent.com/phoboslab/qoi/${SPECTRA_QOI_COMMIT}/qoi.h"
         "${SPECTRA_QOI_DIR}/qoi/qoi.h"
+        "7DE6FCA1A285B1C20D38F2723DEC8B774EB9F144EDB9710800A95FEEEA09375A"
 )
 
 set(SPECTRA_NVPRO_CORE2_COMMIT "eb7c2f25859b0ff279e3bbd8376a8418528da556")
@@ -176,14 +151,17 @@ set(SPECTRA_UI_ASSET_INCLUDE_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/nvpro_
 spectra_download_if_needed(
         "https://raw.githubusercontent.com/nvpro-samples/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}/third_party/roboto/roboto_regular.h"
         "${SPECTRA_UI_ASSET_INCLUDE_DIR}/roboto/roboto_regular.h"
+        "B71F0558B23A776641C1AF56BD0B4D015F2C8B9D378B57006B5493AD573B72F9"
 )
 spectra_download_if_needed(
         "https://raw.githubusercontent.com/nvpro-samples/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}/third_party/material_symbols/material_symbols_rounded_regular.h"
         "${SPECTRA_UI_ASSET_INCLUDE_DIR}/material_symbols/material_symbols_rounded_regular.h"
+        "6011F816D224842B554D9E03159C36E2B118B357A4C8AA0DA94D53DE00820629"
 )
 spectra_download_if_needed(
         "https://raw.githubusercontent.com/nvpro-samples/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}/nvgui/IconsMaterialSymbols.h"
         "${SPECTRA_UI_ASSET_INCLUDE_DIR}/material_symbols/IconsMaterialSymbols.h"
+        "C5C13FC3DB46576F77A1F41BDB322BFCE1D024D59F307E078BDA6F7599666B62"
 )
 
 set(SPECTRA_GLFW_COMMIT "7b6aead9fb88b3623e3b3725ebb42670cbe4c579")
@@ -240,24 +218,20 @@ add_subdirectory("${SPECTRA_ZLIB_SOURCE_DIR}" "${SPECTRA_ZLIB_BINARY_DIR}")
 if (NOT TARGET zlibstatic)
     message(FATAL_ERROR "Downloaded zlib did not define the zlibstatic target.")
 endif ()
-if (NOT TARGET ZLIB::ZLIB)
-    add_library(ZLIB::ZLIB ALIAS zlibstatic)
-endif ()
-set(ZLIB_LIBRARIES ZLIB::ZLIB CACHE STRING "zlib target" FORCE)
-set(ZLIB_INCLUDE_DIRS "${SPECTRA_ZLIB_SOURCE_DIR}" "${SPECTRA_ZLIB_BINARY_DIR}" CACHE STRING "zlib include dirs" FORCE)
-set(ZLIB_LIBRARY ZLIB::ZLIB CACHE STRING "zlib target" FORCE)
-set(ZLIB_INCLUDE_DIR "${SPECTRA_ZLIB_SOURCE_DIR}" "${SPECTRA_ZLIB_BINARY_DIR}" CACHE STRING "zlib include dir" FORCE)
-set(ZLIB_FOUND TRUE CACHE BOOL "zlib found" FORCE)
+add_library(ZLIB::ZLIB ALIAS zlibstatic)
 
 set(SPECTRA_RPLY_COMMIT "5f7a606806a4ac7b939131ded9d7a30ebd02416e")
 set(SPECTRA_RPLY_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/rply/${SPECTRA_RPLY_COMMIT}")
-foreach (rply_file IN ITEMS
-        rply.cpp
-        rply.h
+set(rply_files rply.cpp rply.h)
+set(rply_sha256s
+        EBD62DF552247C6132B0178B8127D1C9574DFCD4E5C66430F5D659CC1B3FED2E
+        EEA61D8C7F6C7C87BE4B472618236E1CC8FE0590ED597A58E80D7E08D0CB4A11
 )
+foreach (rply_file rply_sha256 IN ZIP_LISTS rply_files rply_sha256s)
     spectra_download_if_needed(
             "https://raw.githubusercontent.com/mmp/pbrt-v4/${SPECTRA_RPLY_COMMIT}/src/ext/rply/${rply_file}"
             "${SPECTRA_RPLY_DIR}/rply/${rply_file}"
+            "${rply_sha256}"
     )
 endforeach ()
 add_library(spectra_rply STATIC "${SPECTRA_RPLY_DIR}/rply/rply.cpp")
@@ -386,19 +360,27 @@ set(SPECTRA_IMGUI_SOURCE_COMMIT "b61e56346a92cfcaf1f43a545ca37b0b32239654")
 set(SPECTRA_IMGUI_MODULE_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/imgui-module/${SPECTRA_IMGUI_MODULE_COMMIT}")
 set(SPECTRA_IMGUI_SOURCE_DIR "${SPECTRA_IMGUI_MODULE_DIR}/imgui/${SPECTRA_IMGUI_SOURCE_COMMIT}")
 
-foreach (imgui_module_file IN ITEMS
+set(imgui_module_files
         generated/imgui.cppm
         generated/imgui_internal.cppm
         generated/backends/imgui_impl_glfw.cppm
         generated/backends/imgui_impl_vulkan.cppm
 )
+set(imgui_module_sha256s
+        77EF07F938F9B82E16C570114BD11FD83D29C40207094C41637419837D717EEB
+        396D47952D0D530E9CA944F8DBFA5CF1689A0BB16834A146A8D8447C193E2859
+        A0FC5757EDC87C3CE5B6E833F0DCE52E52D212266FD19D247986F27AE19EDA30
+        C8F0EB29D99DD83DB8B5A01C7D0B7745E0E9A8DBF8236BF4AE02E5E5308CE382
+)
+foreach (imgui_module_file imgui_module_sha256 IN ZIP_LISTS imgui_module_files imgui_module_sha256s)
     spectra_download_if_needed(
             "https://raw.githubusercontent.com/stripe2933/imgui-module/${SPECTRA_IMGUI_MODULE_COMMIT}/${imgui_module_file}"
             "${SPECTRA_IMGUI_MODULE_DIR}/${imgui_module_file}"
+            "${imgui_module_sha256}"
     )
 endforeach ()
 
-foreach (imgui_source_file IN ITEMS
+set(imgui_source_files
         imgui.cpp
         imgui_draw.cpp
         imgui_tables.cpp
@@ -414,9 +396,27 @@ foreach (imgui_source_file IN ITEMS
         backends/imgui_impl_vulkan.cpp
         backends/imgui_impl_vulkan.h
 )
+set(imgui_source_sha256s
+        49CCA8475198925B69B128985148F29EB37DB689A49C7C6F0DBA6D2FAC5415BD
+        6814299D0618749A6FC73B0259A42BD6C2EABF5B55C0BFEF293BFDCDA68155AF
+        33B5146F5EB362605A166E532B336D1955579743EAB719D96241A163A21222EB
+        7B46CA08CA95E046AA57A88D2838933843851348A42F3A738D57EBDAA2F5C682
+        DA6D77803FC8963CA6A6826D6D6D08E3BE74FDD7F527841B90858E3E545BB478
+        F72EC91731B9114A6CEE203F575582B9859825A4F66836CF32CC7E70488C7AA6
+        1353BFA59DA16EEC481723FD4E5D910356F0406B79E3C4142E0C9867BAFFFAB5
+        889B396795202D1457560A797A7242E96F6F132D4B88CA2D69BE58BF05E1771F
+        A985F5FA0ED97353D493B497961E9EEF52082EDCD045CF6954B69990EC9D0741
+        C51A0F7E7EA760F2366BD3752635EC58E21FCCFEC4A832501639990BA6CE0528
+        2B6A3465AE69B21E22727CA95E39D335E84240A503057DD8C055A6168876DBB4
+        8A78AC98DC05F8B71EF817118D984537B4EF5CD570A84AB9AD99EED221DFE937
+        FF4A9B986F3E5CDDAA6B5B1C288D02FA2FDDC4B8D98942C07195D71E4878145A
+        4A22EDBD5589A7E6DB7BA4DF452CE7264CBFF1F1467568EA848A75FD8738D3B4
+)
+foreach (imgui_source_file imgui_source_sha256 IN ZIP_LISTS imgui_source_files imgui_source_sha256s)
     spectra_download_if_needed(
             "https://raw.githubusercontent.com/ocornut/imgui/${SPECTRA_IMGUI_SOURCE_COMMIT}/${imgui_source_file}"
             "${SPECTRA_IMGUI_SOURCE_DIR}/${imgui_source_file}"
+            "${imgui_source_sha256}"
     )
 endforeach ()
 
@@ -446,6 +446,21 @@ set_property(TARGET spectra_imgui PROPERTY CXX_MODULE_STD ON)
 
 
 # ============================================================================
+# Renderer Host Contract
+# ============================================================================
+add_library(spectra_renderer_host)
+add_library(spectra::renderer_host ALIAS spectra_renderer_host)
+target_sources(
+        spectra_renderer_host
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        renderer/host.ixx
+)
+target_link_libraries(spectra_renderer_host PUBLIC spectra::vulkan spectra::imgui)
+set_property(TARGET spectra_renderer_host PROPERTY CXX_MODULE_STD ON)
+
+
+# ============================================================================
 # Spectra Core
 # ============================================================================
 add_library(spectra_core)
@@ -458,7 +473,7 @@ target_sources(
         PRIVATE
         spectra/spectra.cpp
 )
-target_link_libraries(spectra_core PUBLIC spectra::vulkan spectra::imgui PRIVATE glfw)
+target_link_libraries(spectra_core PUBLIC spectra::renderer_host PRIVATE glfw)
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_link_libraries(spectra_core PRIVATE comctl32 dwmapi)
 endif ()
@@ -469,44 +484,54 @@ set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 # ============================================================================
 # Scene
 # ============================================================================
-add_library(spectra_scene)
-add_library(spectra::scene ALIAS spectra_scene)
+add_library(spectra_scene_model)
 target_sources(
-        spectra_scene
+        spectra_scene_model
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         scene/math.ixx
         scene/spatial.ixx
         scene/scene.ixx
         PRIVATE
-        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
-        scene/plugin_abi.ixx
+        scene/spatial.cpp
+)
+set_property(TARGET spectra_scene_model PROPERTY CXX_MODULE_STD ON)
+
+add_library(spectra_scene_plugin_runtime)
+target_sources(
+        spectra_scene_plugin_runtime
+        PUBLIC
+        FILE_SET runtime_cxx_modules TYPE CXX_MODULES FILES
         scene/plugin_host.ixx
         PRIVATE
-        scene/spatial.cpp
-        scene/scene.cpp
+        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
+        scene/plugin_abi.ixx
+        PRIVATE
         scene/plugin_host.cpp
 )
-target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTRA_SCENES_ROOT}\"")
-target_link_libraries(spectra_scene PRIVATE ZLIB::ZLIB spectra::lodepng ${CMAKE_DL_LIBS})
-set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
+target_link_libraries(spectra_scene_plugin_runtime PRIVATE spectra_scene_model ${CMAKE_DL_LIBS})
+set_property(TARGET spectra_scene_plugin_runtime PROPERTY CXX_MODULE_STD ON)
 
+add_library(spectra_scene)
+add_library(spectra::scene ALIAS spectra_scene)
+target_sources(spectra_scene PRIVATE scene/scene.cpp)
+target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTRA_SCENES_ROOT}\"")
+target_link_libraries(spectra_scene PUBLIC spectra_scene_model PRIVATE spectra_scene_plugin_runtime ZLIB::ZLIB spectra::lodepng)
+set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 
 # ============================================================================
 # Pathtracer Configuration
 # ============================================================================
-option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for the Spectra pathtracer" OFF)
 set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX SDK for the Spectra pathtracer")
-set(SPECTRA_OPTIX_GPU_ARCH "" CACHE STRING "CUDA architecture used when compiling spectra OptiX PTX")
 set(SPECTRA_OPTIX_CACHE_DIR "${SPECTRA_BINARY_ROOT_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for the Spectra pathtracer")
 set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for the Spectra pathtracer")
 
-find_package(CUDAToolkit REQUIRED)
-if (CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 13.0)
-    message(FATAL_ERROR "spectra requires CUDA compiler 13.0 or newer; found ${CMAKE_CUDA_COMPILER_VERSION}.")
+find_package(CUDAToolkit 13.2 EXACT REQUIRED)
+if (NOT CMAKE_CUDA_COMPILER_VERSION MATCHES "^13\\.2($|\\.)")
+    message(FATAL_ERROR "spectra requires CUDA compiler 13.2; found ${CMAKE_CUDA_COMPILER_VERSION}.")
 endif ()
-if (CUDAToolkit_VERSION VERSION_LESS 13.0)
-    message(FATAL_ERROR "spectra requires CUDA Toolkit 13.0 or newer; found ${CUDAToolkit_VERSION}.")
+if (NOT CUDAToolkit_VERSION MATCHES "^13\\.2($|\\.)")
+    message(FATAL_ERROR "spectra requires CUDA Toolkit 13.2; found ${CUDAToolkit_VERSION}.")
 endif ()
 
 if (SPECTRA_OPTIX_PATH STREQUAL "")
@@ -534,26 +559,13 @@ endif ()
 if (SPECTRA_OPTIX_PATH STREQUAL "")
     message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to an OptiX SDK root; no default installation was found.")
 endif ()
-if (SPECTRA_OPTIX_GPU_ARCH STREQUAL "")
-    list(GET CMAKE_CUDA_ARCHITECTURES 0 SPECTRA_OPTIX_DERIVED_GPU_ARCH)
-    if (SPECTRA_OPTIX_DERIVED_GPU_ARCH MATCHES "^([0-9]+)")
-        set(SPECTRA_OPTIX_GPU_ARCH "sm_${CMAKE_MATCH_1}")
-        if (CMAKE_MATCH_1 GREATER_EQUAL 100)
-            set(SPECTRA_OPTIX_GPU_ARCH "sm_80")
-        endif ()
-    else ()
-        message(FATAL_ERROR "Unable to derive SPECTRA_OPTIX_GPU_ARCH from CMAKE_CUDA_ARCHITECTURES='${CMAKE_CUDA_ARCHITECTURES}'.")
-    endif ()
-endif ()
-message(STATUS "Spectra OptiX PTX CUDA Architecture: ${SPECTRA_OPTIX_GPU_ARCH}")
+set(SPECTRA_OPTIX_IR_ARCH compute_75)
+message(STATUS "Spectra OptiX-IR CUDA Architecture: ${SPECTRA_OPTIX_IR_ARCH}")
 math(EXPR SPECTRA_OPTIX_CACHE_SIZE_BYTES "${SPECTRA_OPTIX_CACHE_SIZE_MB} * 1024 * 1024")
 
 set(SPECTRA_PATHTRACER_DEFINITIONS
         PTEX_STATIC
 )
-if (SPECTRA_FLOAT_AS_DOUBLE)
-    list(APPEND SPECTRA_PATHTRACER_DEFINITIONS SPECTRA_FLOAT_AS_DOUBLE)
-endif ()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     if (NOT MSVC)
@@ -564,16 +576,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
             SPECTRA_IS_MSVC
             NOMINMAX
             _CRT_SECURE_NO_WARNINGS
-            _ENABLE_EXTENDED_ALIGNED_STORAGE
             SPECTRA_HAS_INTRIN_H
-            "SPECTRA_NOINLINE=__declspec(noinline)"
             "SPECTRA_RESTRICT=__restrict"
             SPECTRA_HAVE__ALIGNED_MALLOC
     )
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND SPECTRA_PATHTRACER_DEFINITIONS
-            SPECTRA_IS_LINUX
-            "SPECTRA_NOINLINE=__attribute__((noinline))"
             "SPECTRA_RESTRICT=__restrict__"
             SPECTRA_HAVE_POSIX_MEMALIGN
     )
@@ -581,23 +589,8 @@ else ()
     message(FATAL_ERROR "Only Linux/WSL and Windows/MSVC are supported by the Spectra pathtracer.")
 endif ()
 
-set(SPECTRA_PATHTRACER_CUDA_WARNING_OPTIONS
+set(SPECTRA_PATHTRACER_CUDA_PLATFORM_OPTIONS
         "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/Zc:preprocessor>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4244>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4267>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4305>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4552>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4838>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4843>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd26451>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd26495>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4334>"
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4146>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=partial_override>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=virtual_function_decl_hidden>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=integer_sign_change>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=declared_but_not_referenced>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=implicit_return_from_non_void_function>"
 )
 set(SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS
         "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:--forward-slash-prefix-opts>>"
@@ -644,7 +637,8 @@ set(SPECTRA_PATHTRACER_INCLUDE_DIRS
         ${SPECTRA_UI_ASSET_INCLUDE_DIR}
         ${SPECTRA_STB_DIR}
         ${SPECTRA_QOI_DIR}
-        ${ZLIB_INCLUDE_DIRS}
+        ${SPECTRA_ZLIB_SOURCE_DIR}
+        ${SPECTRA_ZLIB_BINARY_DIR}
         ${PTEX_INCLUDE}
         ${NANOVDB_INCLUDE}
         ${SPECTRA_BINARY_ROOT_DIR}
@@ -775,7 +769,6 @@ set(SPECTRA_PATHTRACER_UTIL_SOURCE
         pathtracer/util/loopsubdiv.cu
         pathtracer/util/lowdiscrepancy.cu
         pathtracer/util/math.cu
-        pathtracer/util/memory.cu
         pathtracer/util/mesh.cu
         pathtracer/util/mipmap.cu
         pathtracer/util/noise.cu
@@ -797,7 +790,7 @@ set(SPECTRA_PATHTRACER_DEVICE_SOURCE
 )
 
 add_library(spectra_pathtracer_optix_input OBJECT pathtracer/optix/optix.cu)
-set_property(TARGET spectra_pathtracer_optix_input PROPERTY CUDA_PTX_COMPILATION ON)
+set_property(TARGET spectra_pathtracer_optix_input PROPERTY CUDA_OPTIX_COMPILATION ON)
 set_property(TARGET spectra_pathtracer_optix_input PROPERTY CUDA_ARCHITECTURES OFF)
 target_compile_definitions(spectra_pathtracer_optix_input PRIVATE ${SPECTRA_PATHTRACER_DEFINITIONS} CCCL_DISABLE_INT128_SUPPORT)
 target_include_directories(spectra_pathtracer_optix_input PRIVATE ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
@@ -805,10 +798,9 @@ target_compile_options(
         spectra_pathtracer_optix_input
         PRIVATE
         ${SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS}
-        ${SPECTRA_PATHTRACER_CUDA_WARNING_OPTIONS}
-        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${SPECTRA_OPTIX_GPU_ARCH}>"
+        ${SPECTRA_PATHTRACER_CUDA_PLATFORM_OPTIONS}
+        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${SPECTRA_OPTIX_IR_ARCH}>"
         "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --display_error_number>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=20044>"
 )
 add_dependencies(spectra_pathtracer_optix_input spectra_pathtracer_soa_generated)
 
@@ -831,14 +823,20 @@ add_custom_command(
 )
 add_library(spectra_pathtracer_embedded_optix_input STATIC ${SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT})
 
+add_library(spectra_pathtracer_api)
+target_sources(
+        spectra_pathtracer_api
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        pathtracer/renderer.ixx
+)
+target_link_libraries(spectra_pathtracer_api PUBLIC spectra::vulkan spectra::scene spectra::renderer_host)
+set_property(TARGET spectra_pathtracer_api PROPERTY CXX_MODULE_STD ON)
+
 add_library(spectra_pathtracer)
 add_library(spectra::pathtracer ALIAS spectra_pathtracer)
 target_sources(
         spectra_pathtracer
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        pathtracer/host.ixx
-        pathtracer/renderer.ixx
         PRIVATE
         ${SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES}
         ${SPECTRA_PATHTRACER_SOA_GENERATED}
@@ -850,23 +848,24 @@ target_sources(
         pathtracer/optix/aggregate.cu
         pathtracer/integrator.cu
 )
-add_dependencies(spectra_pathtracer spectra_pathtracer_soa_generated)
-target_compile_definitions(spectra_pathtracer PUBLIC ${SPECTRA_PATHTRACER_DEFINITIONS})
-target_include_directories(spectra_pathtracer PUBLIC ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
+target_compile_definitions(spectra_pathtracer PRIVATE ${SPECTRA_PATHTRACER_DEFINITIONS})
+target_include_directories(spectra_pathtracer PRIVATE ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
 target_compile_options(
         spectra_pathtracer
-        PUBLIC
+        PRIVATE
         "$<$<COMPILE_LANG_AND_ID:CXX,Clang>:-ffp-contract=off>"
         ${SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS}
-        ${SPECTRA_PATHTRACER_CUDA_WARNING_OPTIONS}
+        ${SPECTRA_PATHTRACER_CUDA_PLATFORM_OPTIONS}
 )
 target_link_libraries(
         spectra_pathtracer
         PUBLIC
+        spectra_pathtracer_api
+        PRIVATE
         spectra::vulkan
         spectra::imgui
         spectra::scene
-        PRIVATE
+        spectra::renderer_host
         spectra::lodepng
         spectra::rply
         OpenEXR::OpenEXR
@@ -877,17 +876,14 @@ target_link_libraries(
         Threads::Threads
         spectra_pathtracer_embedded_optix_input
 )
-set_property(TARGET spectra_pathtracer PROPERTY CXX_MODULE_STD ON)
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_link_libraries(spectra_pathtracer PRIVATE dbghelp shell32 wsock32 ws2_32)
-endif ()
 set_property(TARGET spectra_pathtracer PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET spectra_pathtracer PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
 add_executable(spectra_pathtracer_cli pathtracer/pathtracer_cli.cpp)
-add_executable(spectra::pathtracer_cli ALIAS spectra_pathtracer_cli)
 target_link_libraries(spectra_pathtracer_cli PRIVATE spectra::pathtracer xayah-util-xcli Threads::Threads)
-set_property(TARGET spectra_pathtracer_cli PROPERTY CXX_MODULE_STD ON)
+target_compile_definitions(spectra_pathtracer_cli PRIVATE ${SPECTRA_PATHTRACER_DEFINITIONS})
+target_include_directories(spectra_pathtracer_cli PRIVATE ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
+target_compile_options(spectra_pathtracer_cli PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(spectra_pathtracer_cli PRIVATE -rdynamic "LINKER:--no-as-needed")
 endif ()
@@ -906,16 +902,50 @@ find_program(SLANGC_EXECUTABLE NAMES slangc REQUIRED)
 set(SPECTRA_RASTERIZER_SOURCE_DIR ${SPECTRA_ROOT_DIR}/rasterizer)
 set(SPECTRA_RASTERIZER_GENERATED_DIR ${SPECTRA_BINARY_ROOT_DIR}/rasterizer/generated)
 
-file(GLOB SPECTRA_RASTERIZER_SHADER_FILES CONFIGURE_DEPENDS "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/*.slang")
-file(GLOB SPECTRA_RASTERIZER_SHADER_INCLUDE_FILES CONFIGURE_DEPENDS "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/*.slangh")
-if (NOT SPECTRA_RASTERIZER_SHADER_FILES)
-    message(FATAL_ERROR "Spectra rasterizer requires at least one Slang shader in ${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders")
-endif ()
+set(SPECTRA_RASTERIZER_SHADER_MANIFEST
+        "mesh.slang|vertex_main|vertex|mesh_vertex"
+        "mesh.slang|fragment_main|fragment|mesh_fragment"
+        "mesh_pick.slang|vertex_main|vertex|mesh_pick_vertex"
+        "mesh_pick.slang|fragment_main|fragment|mesh_pick_fragment"
+        "mesh_selection_mask.slang|vertex_main|vertex|mesh_selection_mask_vertex"
+        "mesh_selection_mask.slang|fragment_main|fragment|mesh_selection_mask_fragment"
+        "point_cloud.slang|vertex_main|vertex|point_cloud_vertex"
+        "point_cloud.slang|fragment_main|fragment|point_cloud_fragment"
+        "point_cloud_pick.slang|vertex_main|vertex|point_cloud_pick_vertex"
+        "point_cloud_pick.slang|fragment_main|fragment|point_cloud_pick_fragment"
+        "point_cloud_selection_mask.slang|vertex_main|vertex|point_cloud_selection_mask_vertex"
+        "point_cloud_selection_mask.slang|fragment_main|fragment|point_cloud_selection_mask_fragment"
+        "selection_outline.slang|vertex_main|vertex|selection_outline_vertex"
+        "selection_outline.slang|fragment_main|fragment|selection_outline_fragment"
+        "viewport_grid.slang|vertex_main|vertex|viewport_grid_vertex"
+        "viewport_grid.slang|fragment_main|fragment|viewport_grid_fragment"
+        "viewport_image_plane.slang|vertex_main|vertex|viewport_image_plane_vertex"
+        "viewport_image_plane.slang|fragment_main|fragment|viewport_image_plane_fragment"
+        "viewport_segment.slang|vertex_main|vertex|viewport_segment_vertex"
+        "viewport_segment.slang|fragment_main|fragment|viewport_segment_fragment"
+        "viewport_voxel_grid.slang|vertex_main|vertex|viewport_voxel_grid_vertex"
+        "viewport_voxel_grid.slang|fragment_main|fragment|viewport_voxel_grid_fragment"
+        "volume.slang|vertex_main|vertex|volume_vertex"
+        "volume.slang|fragment_main|fragment|volume_fragment"
+        "volume_pick.slang|vertex_main|vertex|volume_pick_vertex"
+        "volume_pick.slang|fragment_main|fragment|volume_pick_fragment"
+        "volume_selection_mask.slang|vertex_main|vertex|volume_selection_mask_vertex"
+        "volume_selection_mask.slang|fragment_main|fragment|volume_selection_mask_fragment"
+        "viewport_voxel_grid_compact.slang|compute_main|compute|viewport_voxel_grid_compact_compute"
+        "volume_color_upload.slang|compute_main|compute|volume_color_upload_compute"
+        "volume_upload.slang|compute_main|compute|volume_upload_compute"
+)
+set(SPECTRA_RASTERIZER_SHADER_INCLUDE_FILES
+        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/camera_uniform.slangh"
+        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/mesh_selection.slangh"
+        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/point_cloud_selection.slangh"
+        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/volume_selection.slangh"
+        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/volume_upload.slangh"
+)
 
-function(spectra_rasterizer_shader_stage output_variable shader_file shader_name stage)
-    set(entry "${stage}_main")
-    set(embed_name "spectra_rasterizer_${shader_name}_${stage}_spv")
-    set(output_file "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_${shader_name}_${stage}_spv.h")
+function(spectra_rasterizer_shader_stage output_variable shader_file entry stage output_name)
+    set(embed_name "spectra_rasterizer_${output_name}_spv")
+    set(output_file "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_${output_name}_spv.h")
     add_custom_command(
             OUTPUT "${output_file}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_RASTERIZER_GENERATED_DIR}"
@@ -928,19 +958,17 @@ endfunction()
 
 set(SPECTRA_RASTERIZER_SHADER_HEADERS)
 set(SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT)
-foreach (shader_file IN LISTS SPECTRA_RASTERIZER_SHADER_FILES)
-    get_filename_component(shader_name "${shader_file}" NAME_WE)
-    if (shader_name STREQUAL "viewport_voxel_grid_compact" OR shader_name STREQUAL "volume_upload" OR shader_name STREQUAL "volume_color_upload")
-        set(shader_stages compute)
-    else ()
-        set(shader_stages vertex fragment)
-    endif ()
-    foreach (stage IN LISTS shader_stages)
-        spectra_rasterizer_shader_stage(shader_header "${shader_file}" "${shader_name}" "${stage}")
-        list(APPEND SPECTRA_RASTERIZER_SHADER_HEADERS "${shader_header}")
-        get_filename_component(shader_header_name "${shader_header}" NAME)
-        string(APPEND SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT "#include <${shader_header_name}>\n")
-    endforeach ()
+foreach (shader_spec IN LISTS SPECTRA_RASTERIZER_SHADER_MANIFEST)
+    string(REPLACE "|" ";" shader_fields "${shader_spec}")
+    list(GET shader_fields 0 shader_source)
+    list(GET shader_fields 1 shader_entry)
+    list(GET shader_fields 2 shader_stage)
+    list(GET shader_fields 3 shader_output_name)
+    set(shader_file "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/${shader_source}")
+    spectra_rasterizer_shader_stage(shader_header "${shader_file}" "${shader_entry}" "${shader_stage}" "${shader_output_name}")
+    list(APPEND SPECTRA_RASTERIZER_SHADER_HEADERS "${shader_header}")
+    get_filename_component(shader_header_name "${shader_header}" NAME)
+    string(APPEND SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT "#include <${shader_header_name}>\n")
 endforeach ()
 
 set(SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_shaders_spv.h")
@@ -952,7 +980,6 @@ target_sources(
         spectra_rasterizer
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        rasterizer/host.ixx
         rasterizer/renderer.ixx
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
@@ -962,7 +989,7 @@ target_sources(
         "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}"
         ${SPECTRA_RASTERIZER_SHADER_HEADERS}
 )
-target_link_libraries(spectra_rasterizer PUBLIC spectra::vulkan spectra::imgui spectra::scene)
+target_link_libraries(spectra_rasterizer PUBLIC spectra::vulkan spectra::imgui spectra::scene spectra::renderer_host PRIVATE spectra::lodepng)
 target_include_directories(spectra_rasterizer PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}" "${SPECTRA_RASTERIZER_GENERATED_DIR}")
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 
@@ -971,7 +998,6 @@ set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 # GUI
 # ============================================================================
 add_executable(spectra main.cpp)
-add_executable(spectra::gui ALIAS spectra)
 if (WIN32)
     target_sources(spectra PRIVATE spectra.rc)
 endif ()

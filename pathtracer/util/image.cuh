@@ -219,7 +219,6 @@ namespace spectra {
         }
 
         __host__ __device__ size_t PixelOffset(Point2i p) const {
-            DCHECK(InsideExclusive(p, Bounds2i({0, 0}, resolution)));
             return NChannels() * (p.y * resolution.x + p.x);
         }
 
@@ -286,12 +285,6 @@ namespace spectra {
         bool HasAnyInfinitePixels() const;
         bool HasAnyNaNPixels() const;
 
-        ImageChannelValues MAE(const ImageChannelDesc& desc, const Image& ref, Image* errorImage = nullptr) const;
-        ImageChannelValues MSE(const ImageChannelDesc& desc, const Image& ref, Image* mseImage = nullptr) const;
-        ImageChannelValues MRSE(const ImageChannelDesc& desc, const Image& ref, Image* mrseImage = nullptr) const;
-
-        Image GaussianFilter(const ImageChannelDesc& desc, int halfWidth, Float sigma) const;
-
         template <typename F>
         Array2D<Float> GetSamplingDistribution(F dxdA, const Bounds2f& domain = Bounds2f(Point2f(0, 0), Point2f(1, 1)), Allocator alloc = {});
 
@@ -345,8 +338,6 @@ namespace spectra {
         __host__ __device__ void* RawPointer(Point2i p) {
             return const_cast<void*>(((const Image*) this)->RawPointer(p));
         }
-
-        Image JointBilateralFilter(const ImageChannelDesc& toFilter, int halfWidth, const Float xySigma[2], const ImageChannelDesc& joint, const ImageChannelValues& jointSigma) const;
 
     private:
         // Image Private Methods

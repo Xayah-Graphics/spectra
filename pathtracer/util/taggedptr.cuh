@@ -13,52 +13,44 @@ namespace spectra {
     namespace detail {
         template <typename F, typename R, typename T>
         __host__ __device__ R Dispatch(F&& func, const void* ptr, int index) {
-            DCHECK_EQ(0, index);
             return func(reinterpret_cast<const T*>(ptr));
         }
 
         template <typename F, typename R, typename T>
         __host__ __device__ R Dispatch(F&& func, void* ptr, int index) {
-            DCHECK_EQ(0, index);
             return func(reinterpret_cast<T*>(ptr));
         }
 
         template <typename F, typename R, typename T, typename Next, typename... Rest>
         __host__ __device__ R Dispatch(F&& func, const void* ptr, int index) {
-            DCHECK_GE(index, 0);
             if (index == 0) return func(reinterpret_cast<const T*>(ptr));
             return Dispatch<F, R, Next, Rest...>(std::forward<F>(func), ptr, index - 1);
         }
 
         template <typename F, typename R, typename T, typename Next, typename... Rest>
         __host__ __device__ R Dispatch(F&& func, void* ptr, int index) {
-            DCHECK_GE(index, 0);
             if (index == 0) return func(reinterpret_cast<T*>(ptr));
             return Dispatch<F, R, Next, Rest...>(std::forward<F>(func), ptr, index - 1);
         }
 
         template <typename F, typename R, typename T>
         R DispatchHost(F&& func, const void* ptr, int index) {
-            DCHECK_EQ(0, index);
             return func(reinterpret_cast<const T*>(ptr));
         }
 
         template <typename F, typename R, typename T>
         R DispatchHost(F&& func, void* ptr, int index) {
-            DCHECK_EQ(0, index);
             return func(reinterpret_cast<T*>(ptr));
         }
 
         template <typename F, typename R, typename T, typename Next, typename... Rest>
         R DispatchHost(F&& func, const void* ptr, int index) {
-            DCHECK_GE(index, 0);
             if (index == 0) return func(reinterpret_cast<const T*>(ptr));
             return DispatchHost<F, R, Next, Rest...>(std::forward<F>(func), ptr, index - 1);
         }
 
         template <typename F, typename R, typename T, typename Next, typename... Rest>
         R DispatchHost(F&& func, void* ptr, int index) {
-            DCHECK_GE(index, 0);
             if (index == 0) return func(reinterpret_cast<T*>(ptr));
             return DispatchHost<F, R, Next, Rest...>(std::forward<F>(func), ptr, index - 1);
         }
@@ -114,7 +106,6 @@ namespace spectra {
         template <typename T>
         __host__ __device__ TaggedPointer(T* ptr) {
             uint64_t iptr = reinterpret_cast<uint64_t>(ptr);
-            DCHECK_EQ(iptr & ptrMask, iptr);
             constexpr unsigned int type = TypeIndex<T>();
             bits                        = iptr | ((uint64_t) type << tagShift);
         }
@@ -164,13 +155,11 @@ namespace spectra {
 
         template <typename T>
         __host__ __device__ T* Cast() {
-            DCHECK(Is<T>());
             return reinterpret_cast<T*>(ptr());
         }
 
         template <typename T>
         __host__ __device__ const T* Cast() const {
-            DCHECK(Is<T>());
             return reinterpret_cast<const T*>(ptr());
         }
 
@@ -208,28 +197,24 @@ namespace spectra {
 
         template <typename F>
         __host__ __device__ decltype(auto) Dispatch(F&& func) {
-            DCHECK(ptr());
             using R = detail::ReturnType<F, Ts...>::type;
             return detail::Dispatch<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
         __host__ __device__ decltype(auto) Dispatch(F&& func) const {
-            DCHECK(ptr());
             using R = detail::ReturnTypeConst<F, Ts...>::type;
             return detail::Dispatch<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
         decltype(auto) DispatchCPU(F&& func) {
-            DCHECK(ptr());
             using R = detail::ReturnType<F, Ts...>::type;
             return detail::DispatchHost<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
         decltype(auto) DispatchCPU(F&& func) const {
-            DCHECK(ptr());
             using R = detail::ReturnTypeConst<F, Ts...>::type;
             return detail::DispatchHost<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }

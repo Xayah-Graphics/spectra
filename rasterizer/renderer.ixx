@@ -2,7 +2,7 @@ module;
 
 export module spectra.rasterizer.renderer;
 
-export import spectra.rasterizer.host;
+export import spectra.renderer.host;
 export import spectra.scene;
 export import vulkan;
 
@@ -22,8 +22,6 @@ namespace spectra::rasterizer {
         Renderer& operator=(Renderer&& other) = delete;
 
         [[nodiscard]] static std::string_view name();
-        void set_scene(std::shared_ptr<scene::Scene> scene_instance, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
-
         void attach(HostView host);
         template <Host HostType>
         void attach(HostType& host) {
@@ -33,20 +31,9 @@ namespace spectra::rasterizer {
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
         [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
-        template <Host HostType, typename HostFrameContext>
-            requires requires(const HostFrameContext& frame) {
-                { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
-                { frame.image_index } -> std::convertible_to<std::uint32_t>;
-                { frame.frame_number } -> std::convertible_to<std::uint64_t>;
-                { frame.delta_seconds } -> std::convertible_to<double>;
-            }
-        [[nodiscard]] FrameResult begin_frame(HostType& host, const HostFrameContext& frame) {
-            return this->begin_frame(HostView{host}, FrameContext{
-                .frame_index   = static_cast<std::uint32_t>(frame.frame_slot_index),
-                .image_index   = static_cast<std::uint32_t>(frame.image_index),
-                .frame_number  = static_cast<std::uint64_t>(frame.frame_number),
-                .delta_seconds = static_cast<double>(frame.delta_seconds),
-            });
+        template <Host HostType>
+        [[nodiscard]] FrameResult begin_frame(HostType& host, const FrameContext& frame) {
+            return this->begin_frame(HostView{host}, frame);
         }
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
@@ -126,7 +113,6 @@ namespace spectra::rasterizer {
 
         struct SceneVolumeChannelSummary {
             std::string name{};
-            std::array<std::uint32_t, 3> dimensions{};
             std::size_t value_count{};
         };
 
@@ -135,7 +121,6 @@ namespace spectra::rasterizer {
             std::string material_name{};
             scene::Transform transform{};
             scene::Scene::SourceLocation source{};
-            bool dynamic{};
             std::size_t vertex_count{};
             std::size_t index_count{};
             std::size_t point_count{};
@@ -194,6 +179,7 @@ namespace spectra::rasterizer {
             scene::Vector3 sortPoint{};
             scene::Transform transform{};
             scene::Scene::PreviewMaterial material{};
+            std::uint32_t textureFlags{};
         };
 
         struct PointCloudDrawCommand {
@@ -209,7 +195,10 @@ namespace spectra::rasterizer {
         struct VolumeDrawCommand {
             ObjectKey objectKey{};
             std::uint32_t objectId{};
-            scene::Scene::VolumeGrid volume{};
+            std::string name{};
+            std::array<std::uint32_t, 3> dimensions{};
+            scene::Vector3 origin{};
+            scene::Vector3 voxelSize{};
             scene::Scene::PreviewMaterial material{};
         };
 
@@ -237,6 +226,16 @@ namespace spectra::rasterizer {
             GpuBuffer indexBuffer{};
             scene::Scene::Revision uploadedRevision{};
             std::vector<RenderDrawCommand> drawCommands{};
+        };
+
+        struct MeshTextureResource {
+            GpuBuffer stagingBuffer{};
+            GpuImage2D image{};
+            bool uploadPending{};
+        };
+
+        struct MeshMaterialResource {
+            vk::raii::DescriptorSets descriptorSets{nullptr};
         };
 
         struct FramePointCloudResources {
@@ -395,7 +394,7 @@ namespace spectra::rasterizer {
         [[nodiscard]] scene::GpuResourceHandleKind external_storage_handle_kind() const;
         [[nodiscard]] ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context);
         [[nodiscard]] const ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context) const;
-        [[nodiscard]] scene::GpuBufferAllocation request_external_storage_buffer(std::uint32_t kind, std::uint64_t byte_size, std::string_view debug_name, std::string_view context);
+        [[nodiscard]] scene::GpuBufferAllocation request_external_storage_buffer(std::uint32_t kind, std::uint64_t byte_size, std::string_view context);
         void release_external_storage_buffer(std::uint64_t resource_id, std::string_view context);
         [[nodiscard]] scene::GpuBufferAllocation request_scene_gpu_buffer(const scene::GpuBufferRequest& request);
         void release_scene_gpu_buffer(std::uint64_t resource_id);
@@ -409,6 +408,7 @@ namespace spectra::rasterizer {
         void destroy_volume_image(GpuImage3D& image) noexcept;
         void destroy_camera_resources() noexcept;
         void destroy_mesh_resources() noexcept;
+        void rebuild_mesh_material_resources();
         void destroy_viewport_grid_resources() noexcept;
         void destroy_point_cloud_resources() noexcept;
         void destroy_viewport_segment_resources() noexcept;
@@ -432,6 +432,7 @@ namespace spectra::rasterizer {
         [[nodiscard]] scene::Scene::PreviewMaterial resolve_material(std::string_view material_name) const;
         [[nodiscard]] const scene::Scene::VolumeGrid* select_render_volume_grid(std::span<const scene::Scene::VolumeGrid> volumes) const;
         void rebuild_scene_ui_cache_if_needed();
+        [[nodiscard]] const scene::Scene::ResolvedFrame& resolved_scene_frame() const;
         void prune_scene_selection_to_cache();
         [[nodiscard]] const SceneObjectRecord* scene_object_record(const SceneObjectKey& key) const;
         [[nodiscard]] std::optional<ObjectKey> renderable_key_for_scene_object(const SceneObjectKey& key) const;
@@ -465,6 +466,7 @@ namespace spectra::rasterizer {
         void upload_viewport_voxel_grid_resources(std::uint32_t frame_index);
         void upload_viewport_image_plane_resources(std::uint32_t frame_index);
         void upload_volume_resources(std::uint32_t frame_index);
+        void record_pending_mesh_texture_uploads(const vk::raii::CommandBuffer& command_buffer);
         void record_pending_viewport_image_plane_uploads(const vk::raii::CommandBuffer& command_buffer);
         void record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume);
         void update_camera_uniform(std::uint32_t frame_index);
@@ -550,6 +552,8 @@ namespace spectra::rasterizer {
             scene::CameraRevision observed_camera_revision{};
             std::string observed_camera_scene_id{};
             std::shared_ptr<scene::HostServiceRouter> host_services{};
+            mutable scene::Scene::Revision resolved_revision{};
+            mutable std::optional<scene::Scene::ResolvedFrame> resolved_frame{};
         } scene;
 
         struct {
@@ -565,7 +569,6 @@ namespace spectra::rasterizer {
             vk::raii::Image image{nullptr};
             vk::raii::DeviceMemory memory{nullptr};
             vk::raii::ImageView view{nullptr};
-            vk::raii::Sampler sampler{nullptr};
             ImTextureID imgui_descriptor{};
             vk::Format depth_format{vk::Format::eD32Sfloat};
             vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
@@ -605,10 +608,16 @@ namespace spectra::rasterizer {
 
         struct {
             std::uint32_t frame_count{};
+            vk::raii::DescriptorSetLayout material_descriptor_set_layout{nullptr};
+            vk::raii::DescriptorPool material_descriptor_pool{nullptr};
+            vk::raii::Sampler material_sampler{nullptr};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
             vk::raii::Pipeline transparent_pipeline{nullptr};
             std::vector<FrameSceneResources> frame_scenes{};
+            std::map<std::string, MeshTextureResource> texture_cache{};
+            std::map<std::string, MeshMaterialResource> material_cache{};
+            scene::Scene::Revision material_revision{};
         } mesh_pass;
 
         struct {

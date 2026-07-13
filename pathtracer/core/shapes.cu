@@ -156,7 +156,6 @@ namespace spectra {
         Float invDet = 1 / det;
         Float b0 = e0 * invDet, b1 = e1 * invDet, b2 = e2 * invDet;
         Float t = tScaled * invDet;
-        DCHECK(!IsNaN(t));
 
         // Ensure that computed triangle $t$ is conservatively greater than zero
         // Compute $\delta_z$ term for triangle $t$ error bounds
@@ -255,7 +254,6 @@ namespace spectra {
             else {
                 throw std::runtime_error(diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
                                                                   "triangle mesh."));
-                return {};
             }
         } else if ((vi.size() % 3) != 0u) {
             throw std::runtime_error(diagnostics::Format(loc, "Number of vertex indices %d not a multiple of 3.", int(vi.size())));
@@ -263,7 +261,6 @@ namespace spectra {
 
         if (P.empty()) {
             throw std::runtime_error(diagnostics::Format(loc, "Vertex positions \"P\" must be provided with triangle mesh."));
-            return {};
         }
 
         if (!uvs.empty() && uvs.size() != P.size()) {
@@ -291,7 +288,6 @@ namespace spectra {
                     "trianglemesh has out of-bounds vertex index %d (%d \"P\" "
                     "values were given. Discarding this mesh.",
                     vi[i], (int) P.size()));
-                return {};
             }
 
         std::vector<int> faceIndices = parameters.GetIntArray("faceIndices");
@@ -543,7 +539,6 @@ namespace spectra {
         int degree = parameters.GetOneInt("degree", 3);
         if (degree != 2 && degree != 3) {
             throw std::runtime_error(diagnostics::Format(loc, "Invalid degree %d: only degree 2 and 3 curves are supported.", degree));
-            return {};
         }
 
         std::string basis = parameters.GetOneString("basis", "bezier");
@@ -552,7 +547,6 @@ namespace spectra {
                 "Invalid basis \"%s\": only \"bezier\" and \"bspline\" are "
                 "supported.",
                 basis));
-            return {};
         }
 
         int nSegments;
@@ -566,7 +560,6 @@ namespace spectra {
                     "Invalid number of control points %d: for the degree %d "
                     "Bezier basis %d + n * %d are required, for n >= 0.",
                     (int) cp.size(), degree, degree + 1, degree));
-                return {};
             }
             nSegments = (cp.size() - 1) / degree;
         } else {
@@ -575,7 +568,6 @@ namespace spectra {
                     "Invalid number of control points %d: for the degree %d "
                     "b-spline basis, must have >= %d.",
                     int(cp.size()), degree, degree + 1));
-                return {};
             }
             nSegments = cp.size() - degree;
         }
@@ -603,12 +595,10 @@ namespace spectra {
                     "ribbon "
                     "curves with %d segments.",
                     int(n.size()), nSegments + 1, nSegments));
-                return {};
             }
         } else if (type == CurveType::Ribbon) {
             throw std::runtime_error(diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
                                                               "curves."));
-            return {};
         }
 
         // This is kind of a hack, but since we dice curves on the GPU we
@@ -618,7 +608,6 @@ namespace spectra {
         if (type == CurveType::Ribbon && n.empty()) {
             throw std::runtime_error(diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
                                                               "curves."));
-            return {};
         }
 
         pstd::vector<Shape> curves(alloc);
@@ -675,7 +664,6 @@ namespace spectra {
             else {
                 throw std::runtime_error(diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
                                                                   "bilinear patch mesh shape."));
-                return {};
             }
         } else if ((vertexIndices.size() % 4) != 0u) {
             throw std::runtime_error(diagnostics::Format(loc, "Number of vertex indices %d not a multiple of 4.", int(vertexIndices.size())));
@@ -684,7 +672,6 @@ namespace spectra {
         if (P.empty()) {
             throw std::runtime_error(diagnostics::Format(loc, "Vertex positions \"P\" must be provided with bilinear "
                                                               "patch mesh shape."));
-            return {};
         }
 
         if (!uv.empty() && uv.size() != P.size()) {
@@ -707,7 +694,6 @@ namespace spectra {
                     "\"P\" "
                     "values were given. Discarding this mesh.",
                     vertexIndices[i], (int) P.size()));
-                return {};
             }
 
         std::vector<int> faceIndices = parameters.GetIntArray("faceIndices");
@@ -968,7 +954,6 @@ namespace spectra {
         if (!IsRectangle(mesh) || mesh->imageDistribution || SphericalQuadArea(v00, v10, v11, v01) <= MinSphericalSampleArea) {
             // Sample shape by area and compute incident direction _wi_
             pstd::optional<ShapeSample> ss = Sample(u);
-            DCHECK(ss.has_value());
             ss->intr.time = ctx.time;
             Vector3f wi   = ss->intr.p() - ctx.p();
             if (LengthSquared(wi) == 0) return {};
@@ -1097,7 +1082,7 @@ namespace spectra {
                     },
                     edgeLength,
                     [&](Point3f* p, const Normal3f* n, const Point2f* uv, int nVertices) {
-                        ParallelFor(0, nVertices, [=](int i) {
+                        ParallelFor(0, nVertices, [=](int64_t i) {
                             TextureEvalContext ctx;
                             ctx.p   = p[i];
                             ctx.uv  = uv[i];

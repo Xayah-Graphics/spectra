@@ -295,7 +295,6 @@ namespace spectra {
             Point3f pCorner(-radius.x, -radius.y, 0.f);
             Vector3f wCornerCamera = Normalize(Vector3f(cameraFromRaster(pCorner)));
             cosTotalWidth          = wCornerCamera.z;
-            DCHECK_LT(.9999 * cosTotalWidth, std::cos(Radians(fov / 2)));
 
             // Compute image plane area at $z=1$ for _PerspectiveCamera_
             Point2i res  = film.FullResolution();
@@ -450,19 +449,11 @@ namespace spectra {
 
         __host__ __device__ Float TraceLensesFromScene(const Ray& rCamera, Ray* rOut) const;
 
-        void DrawLensSystem() const;
-        void DrawRayPathFromFilm(const Ray& r, bool arrow, bool toOpticalIntercept) const;
-        void DrawRayPathFromScene(const Ray& r, bool arrow, bool toOpticalIntercept) const;
-
         static void ComputeCardinalPoints(Ray rIn, Ray rOut, Float* p, Float* f);
         void ComputeThickLensApproximation(Float pz[2], Float f[2]) const;
         Float FocusThickLens(Float focusDistance);
         Bounds2f BoundExitPupil(Float filmX0, Float filmX1) const;
-        void RenderExitPupil(Float sx, Float sy, const char* filename) const;
-
         __host__ __device__ pstd::optional<ExitPupilSample> SampleExitPupil(Point2f pFilm, Point2f uLens) const;
-
-        void TestExitPupilBounds() const;
 
         // RealisticCamera Private Members
         Bounds2f physicalExtent;

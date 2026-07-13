@@ -147,10 +147,6 @@ namespace spectra {
 
     __host__ __device__ Transform Scale(Float x, Float y, Float z);
 
-    __host__ __device__ Transform RotateX(Float theta);
-    __host__ __device__ Transform RotateY(Float theta);
-    __host__ __device__ Transform RotateZ(Float theta);
-
     __host__ __device__ Transform LookAt(Point3f pos, Point3f look, Vector3f up);
 
     __host__ __device__ Transform Orthographic(Float znear, Float zfar);
@@ -397,7 +393,6 @@ namespace spectra {
             return startTransform.HasScale() || endTransform.HasScale();
         }
 
-
         __host__ __device__ Transform Interpolate(Float time) const;
 
         __host__ __device__ Ray operator()(const Ray& r, Float* tMax = nullptr) const;
@@ -405,37 +400,16 @@ namespace spectra {
         __host__ __device__ Point3f operator()(Point3f p, Float time) const;
         __host__ __device__ Vector3f operator()(Vector3f v, Float time) const;
 
-        __host__ __device__ Bounds3f MotionBounds(const Bounds3f& b) const;
-
-        __host__ __device__ Bounds3f BoundPointMotion(Point3f p) const;
-
         // AnimatedTransform Public Members
         Transform startTransform, endTransform;
         Float startTime = 0, endTime = 1;
 
     private:
-        // AnimatedTransform Private Methods
-        __host__ __device__ static void FindZeros(Float c1, Float c2, Float c3, Float c4, Float c5, Float theta, Interval tInterval, pstd::span<Float> zeros, int* nZeros, int depth = 8);
-
         // AnimatedTransform Private Members
         bool actuallyAnimated = false;
         Vector3f T[2];
         Quaternion R[2];
         SquareMatrix<4> S[2];
-        bool hasRotation;
-
-        struct DerivativeTerm {
-            __host__ __device__ DerivativeTerm() {}
-
-            __host__ __device__ DerivativeTerm(Float c, Float x, Float y, Float z) : kc(c), kx(x), ky(y), kz(z) {}
-
-            Float kc, kx, ky, kz;
-            __host__ __device__ Float Eval(Point3f p) const {
-                return kc + kx * p.x + ky * p.y + kz * p.z;
-            }
-        };
-
-        DerivativeTerm c1[3], c2[3], c3[3], c4[3], c5[3];
     };
 } // namespace spectra
 

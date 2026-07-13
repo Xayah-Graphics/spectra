@@ -100,7 +100,6 @@ namespace spectra {
         }
 
         __host__ __device__ friend SampledSpectrum operator-(Float a, const SampledSpectrum& s) {
-            DCHECK(!IsNaN(a));
             SampledSpectrum ret;
             for (int i = 0; i < NSpectrumSamples; ++i) ret.values[i] = a - s.values[i];
             return ret;
@@ -117,14 +116,12 @@ namespace spectra {
         }
 
         __host__ __device__ SampledSpectrum operator*(Float a) const {
-            DCHECK(!IsNaN(a));
             SampledSpectrum ret = *this;
             for (int i = 0; i < NSpectrumSamples; ++i) ret.values[i] *= a;
             return ret;
         }
 
         __host__ __device__ SampledSpectrum& operator*=(Float a) {
-            DCHECK(!IsNaN(a));
             for (int i = 0; i < NSpectrumSamples; ++i) values[i] *= a;
             return *this;
         }
@@ -135,7 +132,6 @@ namespace spectra {
 
         __host__ __device__ SampledSpectrum& operator/=(const SampledSpectrum& s) {
             for (int i = 0; i < NSpectrumSamples; ++i) {
-                DCHECK_NE(0, s.values[i]);
                 values[i] /= s.values[i];
             }
             return *this;
@@ -147,8 +143,6 @@ namespace spectra {
         }
 
         __host__ __device__ SampledSpectrum& operator/=(Float a) {
-            DCHECK_NE(a, 0);
-            DCHECK(!IsNaN(a));
             for (int i = 0; i < NSpectrumSamples; ++i) values[i] /= a;
             return *this;
         }
@@ -189,17 +183,14 @@ namespace spectra {
         }
 
         __host__ __device__ SampledSpectrum(pstd::span<const Float> v) {
-            DCHECK_EQ(NSpectrumSamples, v.size());
             for (int i = 0; i < NSpectrumSamples; ++i) values[i] = v[i];
         }
 
         __host__ __device__ Float operator[](int i) const {
-            DCHECK(i >= 0 && i < NSpectrumSamples);
             return values[i];
         }
 
         __host__ __device__ Float& operator[](int i) {
-            DCHECK(i >= 0 && i < NSpectrumSamples);
             return values[i];
         }
 
@@ -376,7 +367,6 @@ namespace spectra {
         }
 
         __host__ __device__ Float operator()(Float lambda) const {
-            DCHECK_GT(lambda, 0);
             int offset = std::lround(lambda) - lambda_min;
             if (offset < 0 || offset >= values.size()) return 0;
             return values[offset];
@@ -552,28 +542,24 @@ namespace spectra {
     __host__ __device__ SampledSpectrum Clamp(const SampledSpectrum& s, U low, V high) {
         SampledSpectrum ret;
         for (int i = 0; i < NSpectrumSamples; ++i) ret[i] = spectra::Clamp(s[i], low, high);
-        DCHECK(!ret.HasNaNs());
         return ret;
     }
 
     __host__ __device__ inline SampledSpectrum ClampZero(const SampledSpectrum& s) {
         SampledSpectrum ret;
         for (int i = 0; i < NSpectrumSamples; ++i) ret[i] = std::max<Float>(0, s[i]);
-        DCHECK(!ret.HasNaNs());
         return ret;
     }
 
     __host__ __device__ inline SampledSpectrum Sqrt(const SampledSpectrum& s) {
         SampledSpectrum ret;
         for (int i = 0; i < NSpectrumSamples; ++i) ret[i] = std::sqrt(s[i]);
-        DCHECK(!ret.HasNaNs());
         return ret;
     }
 
     __host__ __device__ inline SampledSpectrum SafeSqrt(const SampledSpectrum& s) {
         SampledSpectrum ret;
         for (int i = 0; i < NSpectrumSamples; ++i) ret[i] = SafeSqrt(s[i]);
-        DCHECK(!ret.HasNaNs());
         return ret;
     }
 
@@ -586,14 +572,12 @@ namespace spectra {
     __host__ __device__ inline SampledSpectrum Exp(const SampledSpectrum& s) {
         SampledSpectrum ret;
         for (int i = 0; i < NSpectrumSamples; ++i) ret[i] = std::exp(s[i]);
-        DCHECK(!ret.HasNaNs());
         return ret;
     }
 
     __host__ __device__ inline SampledSpectrum FastExp(const SampledSpectrum& s) {
         SampledSpectrum ret;
         for (int i = 0; i < NSpectrumSamples; ++i) ret[i] = FastExp(s[i]);
-        DCHECK(!ret.HasNaNs());
         return ret;
     }
 

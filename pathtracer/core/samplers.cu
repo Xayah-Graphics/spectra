@@ -8,12 +8,6 @@
 #include <vector>
 
 namespace spectra {
-    Sampler Sampler::Clone(Allocator alloc) {
-        auto clone = [&](auto ptr) { return ptr->Clone(alloc); };
-        return DispatchCPU(clone);
-    }
-
-
     // HaltonSampler Method Definitions
     HaltonSampler::HaltonSampler(int samplesPerPixel, Point2i fullRes, RandomizeStrategy randomize, int seed, Allocator alloc) : samplesPerPixel(samplesPerPixel), randomize(randomize) {
         if (randomize == RandomizeStrategy::PermuteDigits) digitPermutations = ComputeRadicalInversePermutations(seed, alloc);
@@ -34,11 +28,6 @@ namespace spectra {
         multInverse[1] = multiplicativeInverse(baseScales[0], baseScales[1]);
     }
 
-    Sampler HaltonSampler::Clone(Allocator alloc) {
-        return alloc.new_object<HaltonSampler>(*this);
-    }
-
-
     HaltonSampler* HaltonSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
         if (config.pixel_samples) nsamp = *config.pixel_samples;
@@ -58,15 +47,6 @@ namespace spectra {
             throw std::runtime_error(diagnostics::Format(loc, "%s: unknown randomization strategy given to HaltonSampler", s));
 
         return alloc.new_object<HaltonSampler>(nsamp, fullResolution, randomizer, seed, alloc);
-    }
-
-    Sampler SobolSampler::Clone(Allocator alloc) {
-        return alloc.new_object<SobolSampler>(*this);
-    }
-
-
-    Sampler PaddedSobolSampler::Clone(Allocator alloc) {
-        return alloc.new_object<PaddedSobolSampler>(*this);
     }
 
     PaddedSobolSampler* PaddedSobolSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
@@ -91,11 +71,6 @@ namespace spectra {
     }
 
     // ZSobolSampler Method Definitions
-    Sampler ZSobolSampler::Clone(Allocator alloc) {
-        return alloc.new_object<ZSobolSampler>(*this);
-    }
-
-
     ZSobolSampler* ZSobolSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
         if (config.pixel_samples) nsamp = *config.pixel_samples;
@@ -146,7 +121,6 @@ namespace spectra {
         }
 
         for (int i = 0; i < nStored.size(); ++i) CHECK_EQ(nStored[i], samplesPerPixel);
-        for (int c : nStored) DCHECK_EQ(c, samplesPerPixel);
     }
 
     PMJ02BNSampler* PMJ02BNSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
@@ -154,15 +128,6 @@ namespace spectra {
         if (config.pixel_samples) nsamp = *config.pixel_samples;
         int seed = parameters.GetOneInt("seed", config.seed);
         return alloc.new_object<PMJ02BNSampler>(nsamp, seed, alloc);
-    }
-
-    Sampler PMJ02BNSampler::Clone(Allocator alloc) {
-        return alloc.new_object<PMJ02BNSampler>(*this);
-    }
-
-
-    Sampler IndependentSampler::Clone(Allocator alloc) {
-        return alloc.new_object<IndependentSampler>(*this);
     }
 
     IndependentSampler* IndependentSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
@@ -198,10 +163,6 @@ namespace spectra {
 
     // StratifiedSampler Method Definitions
 
-    Sampler StratifiedSampler::Clone(Allocator alloc) {
-        return alloc.new_object<StratifiedSampler>(*this);
-    }
-
     StratifiedSampler* StratifiedSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         bool jitter  = parameters.GetOneBool("jitter", true);
         int xSamples = parameters.GetOneInt("xsamples", 4);
@@ -220,79 +181,6 @@ namespace spectra {
         int seed = parameters.GetOneInt("seed", config.seed);
 
         return alloc.new_object<StratifiedSampler>(xSamples, ySamples, jitter, seed);
-    }
-
-    // MLTSampler Method Definitions
-    __host__ __device__ Float MLTSampler::Get1D() {
-        int index = GetNextIndex();
-        EnsureReady(index);
-        return X[index].value;
-    }
-
-    __host__ __device__ Point2f MLTSampler::Get2D() {
-        return {Get1D(), Get1D()};
-    }
-
-    __host__ __device__ Point2f MLTSampler::GetPixel2D() {
-        return Get2D();
-    }
-
-    Sampler MLTSampler::Clone(Allocator alloc) {
-        SPECTRA_FATAL("MLTSampler::Clone() is not implemented");
-        return {};
-    }
-
-    __host__ __device__ void MLTSampler::StartIteration() {
-        currentIteration++;
-        largeStep = rng.Uniform<Float>() < largeStepProbability;
-    }
-
-    __host__ __device__ void MLTSampler::Accept() {
-        if (largeStep) lastLargeStepIteration = currentIteration;
-    }
-
-    __host__ __device__ void MLTSampler::EnsureReady(int index) {
-#if defined(__CUDA_ARCH__)
-        SPECTRA_FATAL("MLTSampler not supported on GPU--needs vector resize...");
-        return;
-#else
-        // Enlarge _MLTSampler::X_ if necessary and get current $\VEC{X}_i$
-        if (index >= X.size()) X.resize(index + 1);
-        PrimarySample& X_i = X[index];
-
-        // Reset $\VEC{X}_i$ if a large step took place in the meantime
-        if (X_i.lastModificationIteration < lastLargeStepIteration) {
-            X_i.value                     = rng.Uniform<Float>();
-            X_i.lastModificationIteration = lastLargeStepIteration;
-        }
-
-        // Apply remaining sequence of mutations to _sample_
-        X_i.Backup();
-        if (largeStep)
-            X_i.value = rng.Uniform<Float>();
-        else {
-            int64_t nSmall = currentIteration - X_i.lastModificationIteration;
-            // Apply _nSmall_ small step mutations to $\VEC{X}_i$
-            Float effSigma = sigma * std::sqrt((Float) nSmall);
-            Float delta    = SampleNormal(rng.Uniform<Float>(), 0, effSigma);
-            X_i.value += delta;
-            X_i.value -= pstd::floor(X_i.value);
-        }
-        X_i.lastModificationIteration = currentIteration;
-
-#endif
-    }
-
-    __host__ __device__ void MLTSampler::Reject() {
-        for (auto& X_i : X)
-            if (X_i.lastModificationIteration == currentIteration) X_i.Restore();
-        --currentIteration;
-    }
-
-    __host__ __device__ void MLTSampler::StartStream(int index) {
-        DCHECK_LT(index, streamCount);
-        streamIndex = index;
-        sampleIndex = 0;
     }
 
     // Sampler Method Definitions

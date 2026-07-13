@@ -107,7 +107,6 @@ namespace spectra {
         }
 
         __host__ __device__ Medium GetMedium() const {
-            if (mediumInterface) DCHECK_EQ(mediumInterface->inside, mediumInterface->outside);
             return mediumInterface ? mediumInterface->inside : medium;
         }
 
@@ -162,7 +161,6 @@ namespace spectra {
         __host__ __device__ void SetShadingGeometry(Normal3f ns, Vector3f dpdus, Vector3f dpdvs, Normal3f dndus, Normal3f dndvs, bool orientationIsAuthoritative) {
             // Compute _shading.n_ for _SurfaceInteraction_
             shading.n = ns;
-            DCHECK_NE(shading.n, Normal3f(0, 0, 0));
             if (orientationIsAuthoritative)
                 n = FaceForward(n, shading.n);
             else

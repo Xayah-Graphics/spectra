@@ -217,16 +217,6 @@ namespace spectra::scene {
             throw std::runtime_error(format_message("{} has an unsupported volume channel format value {}", context, static_cast<std::uint32_t>(format)));
         }
 
-        [[nodiscard]] std::uint32_t volume_channel_component_count(const Scene::VolumeChannelFormat format) {
-            switch (format) {
-            case Scene::VolumeChannelFormat::Float32: return 1u;
-            case Scene::VolumeChannelFormat::Float32x2: return 2u;
-            case Scene::VolumeChannelFormat::Float32x3: return 3u;
-            case Scene::VolumeChannelFormat::Float32x4: return 4u;
-            }
-            throw std::runtime_error("Unknown Spectra volume channel format");
-        }
-
         [[nodiscard]] std::uint64_t checked_volume_cell_count(const Scene::VolumeGrid& volume) {
             const std::uint64_t dim_x = volume.dimensions[0];
             const std::uint64_t dim_y = volume.dimensions[1];
@@ -261,7 +251,7 @@ namespace spectra::scene {
             if (!is_finite(transform.scale)) throw std::runtime_error(format_message("{} has a non-finite transform scale", context));
             if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(format_message("{} has a zero transform scale component", context));
             const float length_squared_value = transform.rotation.x * transform.rotation.x + transform.rotation.y * transform.rotation.y + transform.rotation.z * transform.rotation.z + transform.rotation.w * transform.rotation.w;
-            if (!std::isfinite(length_squared_value) || length_squared_value <= 1.0e-12f) throw std::runtime_error(format_message("{} has an invalid rotation quaternion", context));
+            if (!std::isfinite(length_squared_value) || std::abs(length_squared_value - 1.0f) > 1.0e-3f) throw std::runtime_error(format_message("{} rotation quaternion must be unit length", context));
         }
 
         void validate_viewport_annotation_color(const Vector4 color, const std::string_view context) {
@@ -315,30 +305,26 @@ namespace spectra::scene {
             };
             if (point_cloud.source_kind == Scene::PointCloud::SourceKind::Values) {
                 if (point_cloud.bounds.has_value()) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide explicit bounds", point_cloud.name));
-                if (!point_cloud.normals.empty() && point_cloud.normals.size() != point_cloud.positions.size()) throw std::runtime_error(format_message("Point cloud \"{}\" normal count does not match point count", point_cloud.name));
                 if (!point_cloud.colors.empty() && point_cloud.colors.size() != point_cloud.positions.size()) throw std::runtime_error(format_message("Point cloud \"{}\" color count does not match point count", point_cloud.name));
                 if (!point_cloud.radii.empty() && point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(format_message("Point cloud \"{}\" radius count does not match point count", point_cloud.name));
                 for (std::size_t index = 0u; index < point_cloud.positions.size(); ++index) {
                     if (!is_finite(point_cloud.positions.at(index))) throw std::runtime_error(format_message("Point cloud \"{}\" contains a non-finite position", point_cloud.name));
-                    if (!point_cloud.normals.empty() && !is_finite(point_cloud.normals.at(index))) throw std::runtime_error(format_message("Point cloud \"{}\" contains a non-finite normal", point_cloud.name));
                     if (!point_cloud.colors.empty()) validate_viewport_annotation_color(point_cloud.colors.at(index), format_message("Point cloud \"{}\" point #{}", point_cloud.name, index));
                     if (!point_cloud.radii.empty() && (!std::isfinite(point_cloud.radii.at(index)) || point_cloud.radii.at(index) <= 0.0f)) throw std::runtime_error(format_message("Point cloud \"{}\" contains an invalid radius", point_cloud.name));
                 }
                 if (point_cloud.point_count != 0u) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide an external point count", point_cloud.name));
                 if (point_cloud.buffer_id != 0u) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide a GPU buffer id", point_cloud.name));
                 if (point_cloud.source_byte_size != 0u) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide a GPU byte size", point_cloud.name));
-                if (point_cloud.revision != 0u) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide a GPU revision", point_cloud.name));
                 return;
             }
             if (!point_cloud.bounds.has_value()) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source must provide explicit bounds", point_cloud.name));
             validate_explicit_bounds();
-            if (!point_cloud.positions.empty() || !point_cloud.normals.empty() || !point_cloud.colors.empty() || !point_cloud.radii.empty()) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source must not provide CPU values", point_cloud.name));
+            if (!point_cloud.positions.empty() || !point_cloud.colors.empty() || !point_cloud.radii.empty()) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source must not provide CPU values", point_cloud.name));
             if (point_cloud.point_count == 0u) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source must contain at least one point", point_cloud.name));
             if (point_cloud.point_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(format_message("Point cloud \"{}\" point count exceeds uint32 draw range", point_cloud.name));
             if (point_cloud.buffer_id == 0u) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source has no buffer id", point_cloud.name));
             if (point_cloud.point_count > std::numeric_limits<std::uint64_t>::max() / PointCloudExternalPointBytes) throw std::runtime_error(format_message("Point cloud \"{}\" byte count exceeds uint64 range", point_cloud.name));
             if (point_cloud.source_byte_size < point_cloud.point_count * PointCloudExternalPointBytes) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source byte size is too small", point_cloud.name));
-            if (point_cloud.revision == 0u) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source revision must not be zero", point_cloud.name));
         }
 
         void validate_point_clouds(const std::vector<Scene::PointCloud>& point_clouds, const Scene::Document& document) {
@@ -360,7 +346,6 @@ namespace spectra::scene {
                 if (segment_set.buffer_id == 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" external GPU source has no buffer id", segment_set.name));
                 if (segment_set.segment_count > std::numeric_limits<std::uint64_t>::max() / ViewportSegmentExternalSegmentBytes) throw std::runtime_error(format_message("Viewport segment set \"{}\" byte count exceeds uint64 range", segment_set.name));
                 if (segment_set.source_byte_size < segment_set.segment_count * ViewportSegmentExternalSegmentBytes) throw std::runtime_error(format_message("Viewport segment set \"{}\" external GPU source byte size is too small", segment_set.name));
-                if (segment_set.revision == 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" external GPU source revision must not be zero", segment_set.name));
                 return;
             }
             if (!segment_set.widths.empty() && segment_set.widths.size() != segment_set.segments.size()) throw std::runtime_error(format_message("Viewport segment set \"{}\" width count does not match segment count", segment_set.name));
@@ -375,7 +360,6 @@ namespace spectra::scene {
             if (segment_set.segment_count != 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" CPU source must not provide an external segment count", segment_set.name));
             if (segment_set.buffer_id != 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" CPU source must not provide a GPU buffer id", segment_set.name));
             if (segment_set.source_byte_size != 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" CPU source must not provide a GPU byte size", segment_set.name));
-            if (segment_set.revision != 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" CPU source must not provide a GPU revision", segment_set.name));
         }
 
         void validate_viewport_segment_sets(const std::vector<Scene::ViewportSegmentSet>& segment_sets, const Scene::ResolvedFrame& frame, const Scene::Document& document) {
@@ -430,7 +414,6 @@ namespace spectra::scene {
             validate_volume_channel_format(channel.format, format_message("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
             validate_volume_channel_source_kind(channel.source_kind, format_message("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
             validate_volume_channel_index_encoding(channel.index_encoding, format_message("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
-            if (channel.dimensions != volume.dimensions) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" dimensions do not match", volume.name, channel.name));
             const std::uint64_t value_count = checked_volume_channel_value_count(volume, channel);
             if (channel.source_kind == Scene::VolumeChannelSourceKind::Values) {
                 if (channel.values.size() != value_count) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" value count does not match dimensions", volume.name, channel.name));
@@ -446,7 +429,6 @@ namespace spectra::scene {
             if (channel.external_device_pointer == 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source has no external device pointer", volume.name, channel.name));
             if (value_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" byte count exceeds uint64 range", volume.name, channel.name));
             if (channel.source_byte_size < value_count * sizeof(float)) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source byte size is too small", volume.name, channel.name));
-            if (channel.revision == 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source revision must not be zero", volume.name, channel.name));
         }
 
         void validate_volume_grid(const Scene::VolumeGrid& volume, const Scene::Document& document) {
@@ -558,22 +540,12 @@ namespace spectra::scene {
             throw std::runtime_error(format_message("{}: {}", scene_source_string(source), message));
         }
 
-        void require_supported_entity(const Scene::Entity& entity, const std::set<std::string>& supported, const std::string_view kind) {
+        void require_entity_type(const Scene::Entity& entity, const std::string_view kind) {
             if (entity.type.empty()) throw_scene_validation_error(entity.source, format_message("Scene {} type must not be empty", kind));
-            if (!contains_name(supported, entity.type)) throw_scene_validation_error(entity.source, format_message("Scene pathtracer backend does not support {} type \"{}\"", kind, entity.type));
         }
 
         void require_static_scene_transform(const SceneTransformSet& transform, const Scene::SourceLocation& source, const std::string_view owner) {
-            if (transform.animated) throw_scene_validation_error(source, format_message("{} uses animated transforms, which are not supported by the canonical pathtracer backend", owner));
-        }
-
-        [[nodiscard]] std::string scene_string_parameter(const std::vector<Scene::Parameter>& parameters, const std::string_view name) {
-            for (const Scene::Parameter& parameter : parameters) {
-                if (parameter.name != name) continue;
-                const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
-                if (values != nullptr && !values->empty()) return values->front();
-            }
-            return {};
+            if (transform.animated) throw_scene_validation_error(source, format_message("{} uses an animated transform, which this conversion does not support", owner));
         }
 
         void require_unique_canonical_name(std::set<std::string>* names, const std::string& name, const Scene::SourceLocation& source, const std::string_view kind) {
@@ -583,68 +555,46 @@ namespace spectra::scene {
         }
 
         void validate_canonical_scene(const Scene::ResolvedScene& scene) {
-            static const std::set<std::string> supported_filters{"box", "gaussian", "mitchell", "sinc", "triangle"};
-            static const std::set<std::string> supported_films{"rgb", "gbuffer", "spectral"};
-            static const std::set<std::string> supported_cameras{"perspective", "orthographic", "realistic", "spherical"};
-            static const std::set<std::string> supported_samplers{"zsobol", "paddedsobol", "halton", "sobol", "pmj02bn", "independent", "stratified"};
-            static const std::set<std::string> supported_integrators{"path", "volpath"};
-            static const std::set<std::string> supported_accelerators{"bvh"};
-            static const std::set<std::string> supported_materials{"none", "interface", "diffuse", "coateddiffuse", "coatedconductor", "diffusetransmission", "dielectric", "thindielectric", "hair", "conductor", "measured", "subsurface", "mix"};
-            static const std::set<std::string> supported_textures{"constant", "scale", "mix", "directionmix", "bilerp", "imagemap", "checkerboard", "dots", "fbm", "wrinkled", "windy", "marble", "ptex"};
-            static const std::set<std::string> supported_media{"homogeneous", "uniformgrid", "rgbgrid", "cloud", "nanovdb"};
-            static const std::set<std::string> supported_lights{"point", "spot", "goniometric", "projection", "distant", "infinite"};
-            static const std::set<std::string> supported_area_lights{"diffuse"};
-            static const std::set<std::string> supported_shapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
-            static const std::set<std::string> supported_light_samplers{"uniform", "power", "bvh", "exhaustive"};
-
             if (scene.revision.value == 0u) throw std::runtime_error("Scene canonical revision must not be zero");
             if (scene.name.empty()) throw std::runtime_error("Scene canonical name must not be empty");
             if (scene.title.empty()) throw std::runtime_error("Scene canonical title must not be empty");
             if (scene.source.empty()) throw std::runtime_error("Scene canonical source must not be empty");
 
-            require_supported_entity(scene.render_settings.filter, supported_filters, "pixel filter");
-            require_supported_entity(scene.render_settings.film, supported_films, "film");
-            require_supported_entity(scene.render_settings.camera, supported_cameras, "camera");
-            require_supported_entity(scene.render_settings.sampler, supported_samplers, "sampler");
-            require_supported_entity(scene.render_settings.integrator, supported_integrators, "integrator");
-            require_supported_entity(scene.render_settings.accelerator, supported_accelerators, "accelerator");
-            require_static_scene_transform(scene.render_settings.camera_transform, scene.render_settings.camera.source, "Scene camera");
-            if (!scene.render_settings.options.empty()) throw_scene_validation_error(scene.render_settings.options.front().source, format_message("Scene Option \"{}\" is represented but not supported by the canonical pathtracer backend", scene.render_settings.options.front().name));
-
-            const std::string light_sampler = scene_string_parameter(scene.render_settings.integrator.parameters, "lightsampler");
-            if (!light_sampler.empty() && !contains_name(supported_light_samplers, light_sampler)) throw_scene_validation_error(scene.render_settings.integrator.source, format_message("Scene pathtracer backend does not support light sampler \"{}\"", light_sampler));
+            require_entity_type(scene.render_settings.filter, "pixel filter");
+            require_entity_type(scene.render_settings.film, "film");
+            require_entity_type(scene.render_settings.camera, "camera");
+            require_entity_type(scene.render_settings.sampler, "sampler");
+            require_entity_type(scene.render_settings.integrator, "integrator");
+            require_entity_type(scene.render_settings.accelerator, "accelerator");
+            for (const Scene::Option& option : scene.render_settings.options)
+                if (option.name.empty()) throw_scene_validation_error(option.source, "Scene option name must not be empty");
 
             std::set<std::string> material_names{};
             for (const Scene::Material& material : scene.materials) {
                 require_unique_canonical_name(&material_names, material.name, material.entity.source, "material");
-                require_supported_entity(material.entity, supported_materials, "material");
+                require_entity_type(material.entity, "material");
             }
 
             std::set<std::string> medium_names{};
             for (const Scene::Medium& medium : scene.media) {
                 require_unique_canonical_name(&medium_names, medium.name, medium.entity.source, "medium");
-                require_supported_entity(medium.entity, supported_media, "medium");
-                require_static_scene_transform(medium.transform, medium.entity.source, format_message("Scene medium \"{}\"", medium.name));
+                require_entity_type(medium.entity, "medium");
             }
 
             std::set<std::string> texture_names{};
             for (const Scene::Texture& texture : scene.textures) {
                 require_unique_canonical_name(&texture_names, texture.name, texture.entity.source, "texture");
-                if (texture.kind != "float" && texture.kind != "spectrum") throw_scene_validation_error(texture.entity.source, format_message("Scene pathtracer backend does not support texture value kind \"{}\"", texture.kind));
-                require_supported_entity(texture.entity, supported_textures, "texture");
-                if (texture.kind == "float" && texture.entity.type == "marble") throw_scene_validation_error(texture.entity.source, "\"marble\" is only a spectrum texture in the canonical pathtracer backend");
-                if (texture.kind == "spectrum" && (texture.entity.type == "fbm" || texture.entity.type == "wrinkled" || texture.entity.type == "windy")) throw_scene_validation_error(texture.entity.source, format_message("\"{}\" is only a float texture in the canonical pathtracer backend", texture.entity.type));
-                require_static_scene_transform(texture.transform, texture.entity.source, format_message("Scene texture \"{}\"", texture.name));
+                if (texture.kind.empty()) throw_scene_validation_error(texture.entity.source, "Scene texture value kind must not be empty");
+                require_entity_type(texture.entity, "texture");
             }
 
             const auto validate_shape = [&material_names, &medium_names](const Scene::Shape& shape, const std::string_view owner) {
                 if (shape.name.empty()) throw_scene_validation_error(shape.entity.source, format_message("{} name must not be empty", owner));
-                require_supported_entity(shape.entity, supported_shapes, "shape");
-                require_static_scene_transform(shape.transform, shape.entity.source, owner);
+                require_entity_type(shape.entity, "shape");
                 if (shape.material_name.empty() || !contains_name(material_names, shape.material_name)) throw_scene_validation_error(shape.entity.source, format_message("{} references unknown material \"{}\"", owner, shape.material_name));
                 if (!shape.medium_interface.inside.empty() && !contains_name(medium_names, shape.medium_interface.inside)) throw_scene_validation_error(shape.entity.source, format_message("{} references unknown inside medium \"{}\"", owner, shape.medium_interface.inside));
                 if (!shape.medium_interface.outside.empty() && !contains_name(medium_names, shape.medium_interface.outside)) throw_scene_validation_error(shape.entity.source, format_message("{} references unknown outside medium \"{}\"", owner, shape.medium_interface.outside));
-                if (shape.area_light.has_value()) require_supported_entity(shape.area_light->entity, supported_area_lights, "area light");
+                if (shape.area_light.has_value()) require_entity_type(shape.area_light->entity, "area light");
             };
 
             std::set<std::string> shape_names{};
@@ -656,8 +606,7 @@ namespace spectra::scene {
             std::set<std::string> light_names{};
             for (const Scene::Light& light : scene.lights) {
                 require_unique_canonical_name(&light_names, light.name, light.entity.source, "light");
-                require_supported_entity(light.entity, supported_lights, "light");
-                require_static_scene_transform(light.transform, light.entity.source, format_message("Scene light \"{}\"", light.name));
+                require_entity_type(light.entity, "light");
                 if (!light.medium.empty() && !contains_name(medium_names, light.medium)) throw_scene_validation_error(light.entity.source, format_message("Scene light \"{}\" references unknown medium \"{}\"", light.name, light.medium));
             }
 
@@ -668,7 +617,6 @@ namespace spectra::scene {
                 for (const Scene::Shape& shape : definition.shapes) {
                     require_unique_canonical_name(&definition_shape_names, shape.name, shape.entity.source, "object definition shape");
                     validate_shape(shape, format_message("Scene object definition \"{}\" shape", definition.name));
-                    if (shape.area_light.has_value()) throw_scene_validation_error(shape.entity.source, format_message("Scene object definition \"{}\" contains an area light shape; instanced area lights are not supported by the canonical pathtracer backend", definition.name));
                 }
             }
 
@@ -676,7 +624,6 @@ namespace spectra::scene {
             for (const Scene::ObjectInstance& instance : scene.object_instances) {
                 require_unique_canonical_name(&object_instance_names, instance.name, instance.source, "object instance");
                 if (!contains_name(object_definition_names, instance.definition_name)) throw_scene_validation_error(instance.source, format_message("Scene object instance references unknown definition \"{}\"", instance.definition_name));
-                require_static_scene_transform(instance.transform, instance.source, format_message("Scene object instance \"{}\"", instance.name));
             }
         }
 
@@ -962,55 +909,6 @@ namespace spectra::scene {
             });
         }
 
-        [[nodiscard]] Scene::Mesh make_sphere_preview_mesh(const Scene::Sphere& sphere) {
-            if (sphere.name.empty()) throw std::runtime_error("Preview sphere name must not be empty when building rasterizer mesh");
-            if (sphere.material_name.empty()) throw std::runtime_error(format_message("Preview sphere \"{}\" material name must not be empty when building rasterizer mesh", sphere.name));
-            if (!std::isfinite(sphere.radius) || sphere.radius <= 0.0f) throw std::runtime_error(format_message("Preview sphere \"{}\" radius must be finite and positive when building rasterizer mesh", sphere.name));
-            static_cast<void>(make_preview_scene_transform(sphere.transform, format_message("Preview sphere \"{}\"", sphere.name)));
-            constexpr std::uint32_t latitude_segments = 32u;
-            constexpr std::uint32_t longitude_segments = 64u;
-            const std::uint32_t latitude_count = latitude_segments + 1u;
-            const std::uint32_t longitude_count = longitude_segments + 1u;
-            Scene::Mesh mesh{
-                .name = sphere.name,
-                .material_name = sphere.material_name,
-                .transform = sphere.transform,
-                .dynamic = sphere.dynamic,
-                .source = sphere.source,
-            };
-            mesh.positions.reserve(static_cast<std::size_t>(latitude_count) * static_cast<std::size_t>(longitude_count));
-            mesh.normals.reserve(mesh.positions.capacity());
-            for (std::uint32_t latitude = 0u; latitude <= latitude_segments; ++latitude) {
-                const float phi = std::numbers::pi_v<float> * static_cast<float>(latitude) / static_cast<float>(latitude_segments);
-                const float y = std::cos(phi);
-                const float ring = std::sin(phi);
-                for (std::uint32_t longitude = 0u; longitude <= longitude_segments; ++longitude) {
-                    const float theta = 2.0f * std::numbers::pi_v<float> * static_cast<float>(longitude) / static_cast<float>(longitude_segments);
-                    const Vector3 normal{ring * std::cos(theta), y, ring * std::sin(theta)};
-                    mesh.positions.push_back(Vector3{normal.x * sphere.radius, normal.y * sphere.radius, normal.z * sphere.radius});
-                    mesh.normals.push_back(normal);
-                }
-            }
-            mesh.indices.reserve(static_cast<std::size_t>(latitude_segments) * static_cast<std::size_t>(longitude_segments) * 6u);
-            for (std::uint32_t latitude = 0u; latitude < latitude_segments; ++latitude) {
-                for (std::uint32_t longitude = 0u; longitude < longitude_segments; ++longitude) {
-                    const std::uint32_t current = latitude * longitude_count + longitude;
-                    const std::uint32_t next = current + longitude_count;
-                    if (latitude != 0u) {
-                        mesh.indices.push_back(current);
-                        mesh.indices.push_back(next);
-                        mesh.indices.push_back(current + 1u);
-                    }
-                    if (latitude + 1u != latitude_segments) {
-                        mesh.indices.push_back(current + 1u);
-                        mesh.indices.push_back(next);
-                        mesh.indices.push_back(next + 1u);
-                    }
-                }
-            }
-            return mesh;
-        }
-
         void append_point_cloud_shapes(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::PointCloud& point_cloud) {
             if (point_cloud.name.empty()) throw std::runtime_error("Preview point cloud name must not be empty when building canonical scene");
             if (point_cloud.source_kind == Scene::PointCloud::SourceKind::ExternalGpuBuffer) throw std::runtime_error(format_message("Preview point cloud \"{}\" uses an external GPU source; canonical pathtracer scene construction requires CPU point values", point_cloud.name));
@@ -1236,10 +1134,6 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] SceneTransform make_look_at_transform(const Vector3 eye, const Vector3 target, const Vector3 up) {
-            return camera_world_from_camera(camera_pose_from_look_at(eye, target, up));
-        }
-
         [[nodiscard]] Scene::ResolvedScene make_resolved_scene_from_preview(const Scene::Document& document, const Scene::ResolvedFrame& frame, const Scene::Revision revision, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
             if (document.name.empty()) throw std::runtime_error("Preview document name must not be empty when building canonical scene");
             validate_cameras(frame.cameras, document.active_camera_name, format_message("Preview document \"{}\"", document.name));
@@ -1289,21 +1183,6 @@ namespace spectra::scene {
             validate_volumes(resolved.volumes, document);
             validate_debug_attachment_set(resolved.debug_attachments, resolved, document);
             return resolved;
-        }
-
-        [[nodiscard]] Scene::ResolvedFrame make_rasterizer_preview_frame(Scene::ResolvedFrame frame) {
-            std::set<std::string> mesh_names{};
-            for (const Scene::Mesh& mesh : frame.meshes) {
-                if (mesh.name.empty()) throw std::runtime_error("Rasterizer preview mesh name must not be empty");
-                if (!mesh_names.insert(mesh.name).second) throw std::runtime_error(format_message("Rasterizer preview mesh \"{}\" is duplicated", mesh.name));
-            }
-            frame.meshes.reserve(frame.meshes.size() + frame.spheres.size());
-            for (const Scene::Sphere& sphere : frame.spheres) {
-                if (!mesh_names.insert(sphere.name).second) throw std::runtime_error(format_message("Rasterizer preview sphere \"{}\" conflicts with a mesh name", sphere.name));
-                frame.meshes.push_back(make_sphere_preview_mesh(sphere));
-            }
-            frame.spheres.clear();
-            return frame;
         }
 
         void require_pbrt_export_color_space(const Scene::ColorSpace color_space, const std::string_view context) {
@@ -1409,7 +1288,7 @@ namespace spectra::scene {
         }
 
         void write_pbrt_named_material(std::ostream& output, const Scene::Material& material) {
-            static const std::set<std::string_view> supported_materials{"diffuse", "conductor", "dielectric", "coateddiffuse", "interface", "none"};
+            static const std::set<std::string_view> supported_materials{"diffuse", "conductor", "dielectric", "coateddiffuse", "interface"};
             require_pbrt_export_entity_type(material.entity, supported_materials, "material");
             output << "MakeNamedMaterial " << pbrt_export_quoted(material.name, "PBRT export material name") << '\n';
             write_pbrt_indent(output, 4u);
@@ -1571,17 +1450,14 @@ namespace spectra::scene {
 
     void Scene::Edit::replace_timeline(Timeline timeline) {
         this->timeline_replacement = std::move(timeline);
-        this->dirty = combine_dirty_flags(this->dirty, DirtyFlags::Timeline);
     }
 
     void Scene::Edit::replace_document(Document document) {
         this->document_replacement = std::move(document);
-        this->dirty = combine_dirty_flags(this->dirty, DirtyFlags::Document);
     }
 
     void Scene::Edit::replace_frame(FrameSnapshot frame) {
         this->frame_replacement = std::move(frame);
-        this->dirty = combine_dirty_flags(this->dirty, DirtyFlags::Frame);
     }
 
     namespace {
@@ -1639,44 +1515,25 @@ namespace spectra::scene {
             return 1.0 / descriptor.frame_rate;
         }
 
-        [[nodiscard]] Scene::FrameInfo frame_info_from_cursor(const Scene::FrameCursor& cursor, const double delta_seconds) {
+        [[nodiscard]] Scene::FrameInfo frame_info_from_cursor(const Scene::FrameCursor& cursor) {
             return Scene::FrameInfo{
-                .delta_seconds = delta_seconds,
                 .time_seconds = cursor.time_seconds,
                 .frame_index = cursor.frame_index,
             };
-        }
-
-        void commit_scene_frame(Scene& scene_instance, Scene::FrameSnapshot frame) {
-            Scene::Edit edit{};
-            edit.replace_frame(std::move(frame));
-            const Scene::DirtyFlags dirty = scene_instance.commit(std::move(edit));
-            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
-        }
-
-        void commit_scene_timeline(Scene& scene_instance, Scene::Timeline timeline) {
-            Scene::Edit edit{};
-            edit.replace_timeline(std::move(timeline));
-            const Scene::DirtyFlags dirty = scene_instance.commit(std::move(edit));
-            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
         }
 
         void commit_scene_timeline_and_frame(Scene& scene_instance, Scene::Timeline timeline, Scene::FrameSnapshot frame) {
             Scene::Edit edit{};
             edit.replace_timeline(std::move(timeline));
             edit.replace_frame(std::move(frame));
-            const Scene::DirtyFlags dirty = scene_instance.commit(std::move(edit));
-            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
-            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+            scene_instance.commit(std::move(edit));
         }
 
         void commit_scene_document_and_frame(Scene& scene_instance, Scene::Document document, Scene::FrameSnapshot frame) {
             Scene::Edit edit{};
             edit.replace_document(std::move(document));
             edit.replace_frame(std::move(frame));
-            const Scene::DirtyFlags dirty = scene_instance.commit(std::move(edit));
-            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Document)) throw std::runtime_error("Scene document commit did not mark the document dirty");
-            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+            scene_instance.commit(std::move(edit));
         }
 
         [[nodiscard]] std::string lowercase_ascii(std::string value) {
@@ -1838,7 +1695,7 @@ namespace spectra::scene {
     Scene::Scene() : Scene(make_empty_document()) {}
 
     Scene::Scene(Document document) {
-        if (document.revision.value == 0) document.revision = Revision{1};
+        if (document.revision.value == 0) throw std::runtime_error("Scene document revision must not be zero");
         validate_document_descriptors(document, "Scene document");
         this->current_revision = document.revision;
         this->current_document = std::make_shared<Document>(std::move(document));
@@ -1848,15 +1705,15 @@ namespace spectra::scene {
     }
 
     Scene::Scene(ResolvedScene scene) {
-        if (scene.revision.value == 0) scene.revision = Revision{1};
+        if (scene.revision.value == 0) throw std::runtime_error("Scene canonical revision must not be zero");
         validate_canonical_scene(scene);
         this->current_revision = scene.revision;
         this->canonical_scene = std::move(scene);
     }
 
     Scene::Scene(ResolvedScene scene, Document preview_document) {
-        if (scene.revision.value == 0) scene.revision = Revision{1};
-        if (preview_document.revision.value == 0) preview_document.revision = scene.revision;
+        if (scene.revision.value == 0) throw std::runtime_error("Scene canonical revision must not be zero");
+        if (preview_document.revision.value == 0) throw std::runtime_error("Scene preview document revision must not be zero");
         validate_document_descriptors(preview_document, "Scene preview document");
         validate_canonical_scene(scene);
         this->current_revision = scene.revision;
@@ -1891,11 +1748,18 @@ namespace spectra::scene {
         return this->current_update;
     }
 
+    std::optional<ViewportNavigationTarget> Scene::navigation_target() const {
+        if (this->current_document == nullptr) return std::nullopt;
+        if (!this->current_document->navigation_target.has_value()) return std::nullopt;
+        validate_viewport_navigation_target(*this->current_document->navigation_target, "Scene document");
+        return this->current_document->navigation_target;
+    }
+
     Scene::ResolvedFrame Scene::resolved_frame() const {
         const Document& document = this->preview_document();
         const FrameSnapshot empty_frame{};
         const FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
-        return make_rasterizer_preview_frame(resolve_document_frame(document, frame_value));
+        return resolve_document_frame(document, frame_value);
     }
 
     Scene::ResolvedScene Scene::resolved_scene() const {
@@ -2042,7 +1906,6 @@ namespace spectra::scene {
         if (document.title.empty()) throw std::runtime_error("Plugin-driven scene title must not be empty");
         Scene scene_instance{std::move(document)};
         FrameSnapshot snapshot = plugin->create_scene_frame(*instance, FrameInfo{
-            .delta_seconds = 0.0,
             .time_seconds = 0.0,
             .frame_index = 0u,
         });
@@ -2148,7 +2011,7 @@ namespace spectra::scene {
             .frame_index = frame_index,
             .time_seconds = static_cast<double>(frame_index) * fixed_delta_seconds,
         };
-        FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor, 0.0));
+        FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor));
         commit_scene_timeline_and_frame(*this, std::move(timeline), std::move(snapshot));
         this->driver_runtime.updated_frame_number.reset();
     }
@@ -2177,7 +2040,7 @@ namespace spectra::scene {
         validate_document_descriptors(document, "Plugin-driven scene document");
         const Timeline timeline = this->timeline();
         if (document.timeline.kind == TimelineKind::Indexed && timeline.cursor.frame_index >= document.timeline.frame_count) throw std::runtime_error("Plugin-driven scene document shrank indexed timeline below current frame");
-        FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor, 0.0));
+        FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor));
         commit_scene_document_and_frame(*this, std::move(document), std::move(snapshot));
         this->driver_runtime.observed_scene_revision = scene_revision;
     }
@@ -2206,9 +2069,9 @@ namespace spectra::scene {
         return *this->current_document;
     }
 
-    Scene::DirtyFlags Scene::commit(Edit edit) {
+    void Scene::commit(Edit edit) {
         if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Cannot edit an unloaded scene workspace");
-        if (edit.dirty == DirtyFlags::None) throw std::runtime_error("Cannot commit an empty scene edit");
+        if (!edit.document_replacement.has_value() && !edit.timeline_replacement.has_value() && !edit.frame_replacement.has_value()) throw std::runtime_error("Cannot commit an empty scene edit");
 
         this->current_revision = Revision{this->current_revision.value + 1};
         if (edit.document_replacement.has_value()) {
@@ -2229,8 +2092,6 @@ namespace spectra::scene {
             this->current_timeline.cursor = edit.frame_replacement->cursor;
             this->current_timeline.current_frame = std::move(*edit.frame_replacement);
         }
-
-        return edit.dirty;
     }
 
     Scene::FrameCursor Scene::make_frame_cursor(const FrameInfo& info) {
@@ -2247,8 +2108,6 @@ namespace spectra::scene {
     bool is_plugin_file(const std::filesystem::path& path) {
 #if defined(_WIN32)
         return path_extension_is(path, ".dll");
-#elif defined(__APPLE__)
-        return path_extension_is(path, ".dylib");
 #else
         return path_extension_is(path, ".so");
 #endif
@@ -2649,7 +2508,6 @@ namespace spectra::scene {
             Scene::Mesh mesh{
                 .name          = object_name,
                 .material_name = material_name,
-                .dynamic       = false,
                 .source        = source,
             };
             mesh.positions.reserve(vertex_count);
@@ -2731,50 +2589,6 @@ namespace spectra::scene {
             return names;
         }
 
-        [[nodiscard]] const Scene::Material& material_by_name(const Scene::ResolvedScene& scene, const std::string& name, const std::string_view context) {
-            for (const Scene::Material& material : scene.materials)
-                if (material.name == name) return material;
-            throw std::runtime_error(format_message("{} references unknown material \"{}\"", context, name));
-        }
-
-        [[nodiscard]] std::vector<std::string> optional_string_array_value(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
-            for (const Scene::Parameter& parameter : entity.parameters) {
-                if (parameter.type != "string" || parameter.name != name) continue;
-                const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
-                if (values == nullptr) throw std::runtime_error(format_message("{} parameter \"{}\" must contain string values", context, name));
-                for (const std::string& value : *values)
-                    if (value.empty()) throw std::runtime_error(format_message("{} parameter \"{}\" contains an empty string", context, name));
-                return *values;
-            }
-            return {};
-        }
-
-        struct TextureLookup {
-            std::map<std::string, const Scene::Texture*> float_textures{};
-            std::map<std::string, const Scene::Texture*> spectrum_textures{};
-        };
-
-        [[nodiscard]] TextureLookup make_texture_lookup(const Scene::ResolvedScene& scene) {
-            TextureLookup lookup{};
-            for (const Scene::Texture& texture : scene.textures) {
-                if (texture.name.empty()) throw std::runtime_error("PBRT preview texture name must not be empty");
-                if (texture.kind == "float") {
-                    if (!lookup.float_textures.emplace(texture.name, &texture).second) throw std::runtime_error(format_message("PBRT preview float texture \"{}\" is duplicated", texture.name));
-                } else if (texture.kind == "spectrum") {
-                    if (!lookup.spectrum_textures.emplace(texture.name, &texture).second) throw std::runtime_error(format_message("PBRT preview spectrum texture \"{}\" is duplicated", texture.name));
-                } else {
-                    throw std::runtime_error(format_message("PBRT preview texture \"{}\" has unsupported kind \"{}\"", texture.name, texture.kind));
-                }
-            }
-            return lookup;
-        }
-
-        [[nodiscard]] const Scene::Texture& find_texture(const std::map<std::string, const Scene::Texture*>& textures, const std::string& name, const std::string_view kind, const std::string_view context) {
-            const std::map<std::string, const Scene::Texture*>::const_iterator iter = textures.find(name);
-            if (iter == textures.end()) throw std::runtime_error(format_message("{} references unknown {} texture \"{}\"", context, kind, name));
-            return *iter->second;
-        }
-
         [[nodiscard]] Vector3 clamp_color(const Vector3 color) {
             return Vector3{
                 std::clamp(color.x, 0.0f, 1.0f),
@@ -2787,10 +2601,6 @@ namespace spectra::scene {
             return Vector3{left.x * right.x, left.y * right.y, left.z * right.z};
         }
 
-        [[nodiscard]] float preview_scalar(const Vector3 color) {
-            return std::clamp((color.x + color.y + color.z) / 3.0f, 0.0f, 1.0f);
-        }
-
         [[nodiscard]] Vector3 optional_spectrum_value(const Scene::Entity& entity, const std::string_view name, const Vector3 default_value, const std::string_view context) {
             const std::vector<float>* values = optional_float_values(entity, "rgb", name);
             if (values == nullptr) values = optional_float_values(entity, "spectrum", name);
@@ -2798,13 +2608,6 @@ namespace spectra::scene {
             if (values->size() == 1u) return Vector3{values->front(), values->front(), values->front()};
             if (values->size() != 3u) throw std::runtime_error(format_message("{} parameter \"{}\" must contain one or three spectrum values", context, name));
             return Vector3{values->at(0), values->at(1), values->at(2)};
-        }
-
-        [[nodiscard]] std::filesystem::path resolve_texture_asset_path(const Scene::Texture& texture, const std::string& value) {
-            std::filesystem::path path{value};
-            if (path.is_absolute()) return path;
-            if (texture.entity.source.filename.empty()) throw std::runtime_error(format_message("PBRT preview texture \"{}\" references relative asset \"{}\" without a source filename", texture.name, value));
-            return std::filesystem::path{texture.entity.source.filename}.parent_path() / path;
         }
 
         [[nodiscard]] std::filesystem::path resolve_entity_asset_path(const Scene::Entity& entity, const std::string& value, const std::string_view context) {
@@ -2890,141 +2693,7 @@ namespace spectra::scene {
             throw std::runtime_error(format_message("{} image \"{}\" has unsupported rasterizer preview image format \"{}\"", context, path.string(), extension));
         }
 
-        void require_texture_acyclic(const std::vector<std::string>& stack, const std::string& name, const std::string_view kind, const std::string_view context) {
-            for (const std::string& active : stack) {
-                if (active == name) throw std::runtime_error(format_message("{} has a recursive {} texture reference through \"{}\"", context, kind, name));
-            }
-        }
-
-        [[nodiscard]] float preview_float_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack);
-        [[nodiscard]] Vector3 preview_spectrum_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack);
-
-        [[nodiscard]] float preview_float_parameter(const TextureLookup& textures, const Scene::Entity& entity, const std::string_view name, const float default_value, const std::string_view context, std::vector<std::string>& stack) {
-            const std::string texture_name = optional_texture_reference_value(entity, name);
-            if (!texture_name.empty()) return preview_float_texture_value(textures, texture_name, stack);
-            return optional_one_float_value(entity, name, default_value);
-        }
-
-        [[nodiscard]] Vector3 preview_spectrum_parameter(const TextureLookup& textures, const Scene::Entity& entity, const std::string_view name, const Vector3 default_value, const std::string_view context, std::vector<std::string>& stack) {
-            const std::string texture_name = optional_texture_reference_value(entity, name);
-            if (!texture_name.empty()) return preview_spectrum_texture_value(textures, texture_name, stack);
-            return optional_spectrum_value(entity, name, default_value, context);
-        }
-
-        [[nodiscard]] float preview_float_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack) {
-            require_texture_acyclic(stack, name, "float", "PBRT preview texture graph");
-            const Scene::Texture& texture = find_texture(textures.float_textures, name, "float", "PBRT preview texture graph");
-            const std::string context = format_message("PBRT preview float texture \"{}\"", name);
-            stack.push_back(name);
-            float value = 1.0f;
-            if (texture.entity.type == "constant") {
-                value = optional_one_float_value(texture.entity, "value", 1.0f);
-            } else if (texture.entity.type == "scale") {
-                value = preview_float_parameter(textures, texture.entity, "tex", 1.0f, context, stack) * preview_float_parameter(textures, texture.entity, "scale", 1.0f, context, stack);
-            } else if (texture.entity.type == "mix") {
-                const float amount = std::clamp(preview_float_parameter(textures, texture.entity, "amount", 0.5f, context, stack), 0.0f, 1.0f);
-                value = preview_float_parameter(textures, texture.entity, "tex1", 0.0f, context, stack) * (1.0f - amount) + preview_float_parameter(textures, texture.entity, "tex2", 1.0f, context, stack) * amount;
-            } else if (texture.entity.type == "directionmix") {
-                const Vector3 dir = optional_vector3_value(texture.entity, "dir", Vector3{0.0f, 1.0f, 0.0f});
-                const float amount = std::clamp(0.5f + 0.5f * normalize(dir, context).y, 0.0f, 1.0f);
-                value = preview_float_parameter(textures, texture.entity, "tex1", 0.0f, context, stack) * (1.0f - amount) + preview_float_parameter(textures, texture.entity, "tex2", 1.0f, context, stack) * amount;
-            } else if (texture.entity.type == "bilerp") {
-                const float s = 0.37f;
-                const float t = 0.61f;
-                const float v00 = optional_one_float_value(texture.entity, "v00", 0.0f);
-                const float v01 = optional_one_float_value(texture.entity, "v01", 1.0f);
-                const float v10 = optional_one_float_value(texture.entity, "v10", 0.0f);
-                const float v11 = optional_one_float_value(texture.entity, "v11", 1.0f);
-                value = v00 * (1.0f - s) * (1.0f - t) + v10 * s * (1.0f - t) + v01 * (1.0f - s) * t + v11 * s * t;
-            } else if (texture.entity.type == "imagemap") {
-                const std::filesystem::path path = resolve_texture_asset_path(texture, required_string_value(texture.entity, "filename", context));
-                value = preview_scalar(read_preview_image_average_color(path, context)) * optional_one_float_value(texture.entity, "scale", 1.0f);
-                if (optional_one_int_value(texture.entity, "invert", 0, context) != 0) value = 1.0f - value;
-            } else if (texture.entity.type == "checkerboard") {
-                const int dimension = optional_one_int_value(texture.entity, "dimension", 2, context);
-                if (dimension != 2 && dimension != 3) throw std::runtime_error(format_message("{} checkerboard dimension must be 2 or 3", context));
-                const float selector = dimension == 2 ? 0.0f : 1.0f;
-                value = selector < 0.5f ? preview_float_parameter(textures, texture.entity, "tex1", 1.0f, context, stack) : preview_float_parameter(textures, texture.entity, "tex2", 0.0f, context, stack);
-            } else if (texture.entity.type == "dots") {
-                value = preview_float_parameter(textures, texture.entity, "inside", 1.0f, context, stack);
-            } else if (texture.entity.type == "fbm") {
-                value = std::clamp(0.38f + 0.045f * static_cast<float>(optional_one_int_value(texture.entity, "octaves", 8, context)) + 0.18f * optional_one_float_value(texture.entity, "roughness", 0.5f), 0.0f, 1.0f);
-            } else if (texture.entity.type == "wrinkled") {
-                value = std::clamp(0.62f + 0.025f * static_cast<float>(optional_one_int_value(texture.entity, "octaves", 8, context)) + 0.16f * optional_one_float_value(texture.entity, "roughness", 0.5f), 0.0f, 1.0f);
-            } else if (texture.entity.type == "windy") {
-                value = 0.54f;
-            } else {
-                throw std::runtime_error(format_message("{} uses unsupported float texture type \"{}\"", context, texture.entity.type));
-            }
-            stack.pop_back();
-            return std::clamp(value, 0.0f, 1.0f);
-        }
-
-        [[nodiscard]] Vector3 preview_spectrum_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack) {
-            require_texture_acyclic(stack, name, "spectrum", "PBRT preview texture graph");
-            const Scene::Texture& texture = find_texture(textures.spectrum_textures, name, "spectrum", "PBRT preview texture graph");
-            const std::string context = format_message("PBRT preview spectrum texture \"{}\"", name);
-            stack.push_back(name);
-            Vector3 value{1.0f, 1.0f, 1.0f};
-            if (texture.entity.type == "constant") {
-                value = optional_spectrum_value(texture.entity, "value", Vector3{1.0f, 1.0f, 1.0f}, context);
-            } else if (texture.entity.type == "scale") {
-                value = preview_spectrum_parameter(textures, texture.entity, "tex", Vector3{1.0f, 1.0f, 1.0f}, context, stack) * preview_float_parameter(textures, texture.entity, "scale", 1.0f, context, stack);
-            } else if (texture.entity.type == "mix") {
-                const float amount = std::clamp(preview_float_parameter(textures, texture.entity, "amount", 0.5f, context, stack), 0.0f, 1.0f);
-                value = preview_spectrum_parameter(textures, texture.entity, "tex1", Vector3{}, context, stack) * (1.0f - amount) + preview_spectrum_parameter(textures, texture.entity, "tex2", Vector3{1.0f, 1.0f, 1.0f}, context, stack) * amount;
-            } else if (texture.entity.type == "directionmix") {
-                const Vector3 dir = optional_vector3_value(texture.entity, "dir", Vector3{0.0f, 1.0f, 0.0f});
-                const float amount = std::clamp(0.5f + 0.5f * normalize(dir, context).y, 0.0f, 1.0f);
-                value = preview_spectrum_parameter(textures, texture.entity, "tex1", Vector3{}, context, stack) * (1.0f - amount) + preview_spectrum_parameter(textures, texture.entity, "tex2", Vector3{1.0f, 1.0f, 1.0f}, context, stack) * amount;
-            } else if (texture.entity.type == "bilerp") {
-                const float s = 0.37f;
-                const float t = 0.61f;
-                const Vector3 v00 = optional_spectrum_value(texture.entity, "v00", Vector3{}, context);
-                const Vector3 v01 = optional_spectrum_value(texture.entity, "v01", Vector3{1.0f, 1.0f, 1.0f}, context);
-                const Vector3 v10 = optional_spectrum_value(texture.entity, "v10", Vector3{}, context);
-                const Vector3 v11 = optional_spectrum_value(texture.entity, "v11", Vector3{1.0f, 1.0f, 1.0f}, context);
-                value = v00 * ((1.0f - s) * (1.0f - t)) + v10 * (s * (1.0f - t)) + v01 * ((1.0f - s) * t) + v11 * (s * t);
-            } else if (texture.entity.type == "imagemap") {
-                const std::filesystem::path path = resolve_texture_asset_path(texture, required_string_value(texture.entity, "filename", context));
-                value = read_preview_image_average_color(path, context) * optional_one_float_value(texture.entity, "scale", 1.0f);
-                if (optional_one_int_value(texture.entity, "invert", 0, context) != 0) value = Vector3{1.0f - value.x, 1.0f - value.y, 1.0f - value.z};
-            } else if (texture.entity.type == "checkerboard") {
-                const int dimension = optional_one_int_value(texture.entity, "dimension", 2, context);
-                if (dimension != 2 && dimension != 3) throw std::runtime_error(format_message("{} checkerboard dimension must be 2 or 3", context));
-                value = dimension == 2 ? preview_spectrum_parameter(textures, texture.entity, "tex1", Vector3{1.0f, 1.0f, 1.0f}, context, stack) : preview_spectrum_parameter(textures, texture.entity, "tex2", Vector3{}, context, stack);
-            } else if (texture.entity.type == "dots") {
-                value = preview_spectrum_parameter(textures, texture.entity, "inside", Vector3{1.0f, 1.0f, 1.0f}, context, stack);
-            } else if (texture.entity.type == "marble") {
-                const float variation = optional_one_float_value(texture.entity, "variation", 0.2f);
-                const float scale = optional_one_float_value(texture.entity, "scale", 1.0f);
-                const float amount = std::clamp(0.5f + 0.5f * std::sin(0.61f * scale + variation), 0.0f, 1.0f);
-                value = Vector3{0.30f, 0.30f, 0.45f} * (1.0f - amount) + Vector3{0.82f, 0.80f, 0.78f} * amount;
-            } else {
-                throw std::runtime_error(format_message("{} uses unsupported spectrum texture type \"{}\"", context, texture.entity.type));
-            }
-            stack.pop_back();
-            return clamp_color(value);
-        }
-
-        [[nodiscard]] Vector3 preview_material_color(const TextureLookup& textures, const Scene::Entity& entity) {
-            std::vector<std::string> texture_stack{};
-            if (entity.type == "diffuse" || entity.type == "coateddiffuse") return preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, "PBRT preview material", texture_stack);
-            if (entity.type == "conductor" || entity.type == "coatedconductor") return preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.9f, 0.72f, 0.38f}, "PBRT preview material", texture_stack);
-            if (entity.type == "diffusetransmission") {
-                const Vector3 reflectance = preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.35f, 0.45f, 0.65f}, "PBRT preview material", texture_stack);
-                const Vector3 transmittance = preview_spectrum_parameter(textures, entity, "transmittance", Vector3{0.35f, 0.55f, 0.80f}, "PBRT preview material", texture_stack);
-                return (reflectance + transmittance) * 0.5f;
-            }
-            if (entity.type == "subsurface") return preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.86f, 0.48f, 0.38f}, "PBRT preview material", texture_stack);
-            if (entity.type == "measured") return Vector3{0.78f, 0.76f, 0.70f};
-            if (entity.type == "dielectric" || entity.type == "thindielectric") return Vector3{0.82f, 0.9f, 1.0f};
-            if (entity.type == "hair") return preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.46f, 0.24f, 0.12f}, "PBRT preview material", texture_stack);
-            return Vector3{0.8f, 0.8f, 0.8f};
-        }
-
         [[nodiscard]] std::map<std::string, std::size_t> append_materials(const Scene::ResolvedScene& scene, const std::set<std::string>& referenced_material_names, Scene::Document& document) {
-            const TextureLookup texture_lookup = make_texture_lookup(scene);
             std::map<std::string, std::size_t> material_indices{};
             for (const Scene::Material& material : scene.materials) {
                 if (!referenced_material_names.contains(material.name)) continue;
@@ -3037,80 +2706,22 @@ namespace spectra::scene {
                     .pathtracer_material = material.entity,
                 };
                 if (material.entity.type == "diffuse") {
-                    std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
-                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
+                    const Vector3 reflectance = preview_material.base_color_texture.empty() ? optional_spectrum_value(material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, format_message("PBRT preview material \"{}\"", material.name)) : Vector3{1.0f, 1.0f, 1.0f};
+                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                 } else if (material.entity.type == "coateddiffuse") {
-                    std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
-                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "roughness", 0.35f, format_message("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
                     preview_material.roughness_texture = optional_texture_reference_value(material.entity, "roughness");
-                } else if (material.entity.type == "diffusetransmission") {
-                    const Vector3 color = preview_material_color(texture_lookup, material.entity);
-                    preview_material.base_color = Vector4{color.x, color.y, color.z, 0.62f};
-                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
-                    preview_material.roughness = 0.58f;
-                } else if (material.entity.type == "conductor") {
-                    std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.9f, 0.82f, 0.65f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
+                    const Vector3 reflectance = preview_material.base_color_texture.empty() ? optional_spectrum_value(material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, format_message("PBRT preview material \"{}\"", material.name)) : Vector3{1.0f, 1.0f, 1.0f};
                     preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
-                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "roughness", 0.28f, format_message("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
-                    preview_material.roughness_texture = optional_texture_reference_value(material.entity, "roughness");
-                    preview_material.metallic = 1.0f;
-                } else if (material.entity.type == "coatedconductor") {
-                    std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.92f, 0.70f, 0.34f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
-                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
-                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "conductor.roughness", 0.16f, format_message("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
-                    preview_material.roughness_texture = optional_texture_reference_value(material.entity, "conductor.roughness");
-                    preview_material.metallic = 1.0f;
-                } else if (material.entity.type == "dielectric") {
-                    preview_material.base_color = Vector4{0.82f, 0.9f, 1.0f, 0.42f};
-                    preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
-                    preview_material.roughness = 0.05f;
-                } else if (material.entity.type == "thindielectric") {
-                    preview_material.base_color = Vector4{0.88f, 0.94f, 1.0f, 0.28f};
-                    preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
-                    preview_material.roughness = 0.02f;
-                } else if (material.entity.type == "hair") {
-                    std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.46f, 0.24f, 0.12f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
-                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
-                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.roughness = std::clamp(optional_one_float_value(material.entity, "beta_m", 0.35f), 0.08f, 1.0f);
-                } else if (material.entity.type == "subsurface") {
-                    const Vector3 color = preview_material_color(texture_lookup, material.entity);
-                    preview_material.base_color = Vector4{color.x, color.y, color.z, 0.82f};
-                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
-                    preview_material.roughness = std::clamp(optional_one_float_value(material.entity, "roughness", 0.42f), 0.08f, 1.0f);
-                } else if (material.entity.type == "measured") {
-                    const Vector3 color = preview_material_color(texture_lookup, material.entity);
-                    preview_material.base_color = Vector4{color.x, color.y, color.z, 1.0f};
-                    preview_material.roughness = 0.46f;
-                } else if (material.entity.type == "mix") {
-                    const std::vector<std::string> material_names = optional_string_array_value(material.entity, "materials", format_message("PBRT preview material \"{}\"", material.name));
-                    if (material_names.size() != 2u) throw std::runtime_error(format_message("PBRT preview material \"{}\" mix requires exactly two material names", material.name));
-                    const Vector3 first = preview_material_color(texture_lookup, material_by_name(scene, material_names.at(0), format_message("PBRT preview material \"{}\"", material.name)).entity);
-                    const Vector3 second = preview_material_color(texture_lookup, material_by_name(scene, material_names.at(1), format_message("PBRT preview material \"{}\"", material.name)).entity);
-                    std::vector<std::string> texture_stack{};
-                    const float amount = std::clamp(preview_float_parameter(texture_lookup, material.entity, "amount", 0.5f, format_message("PBRT preview material \"{}\"", material.name), texture_stack), 0.0f, 1.0f);
-                    const Vector3 color = first * (1.0f - amount) + second * amount;
-                    preview_material.base_color = Vector4{color.x, color.y, color.z, 1.0f};
-                    preview_material.roughness = 0.42f;
-                } else if (material.entity.type == "interface" || material.entity.type == "none") {
+                    preview_material.roughness = preview_material.roughness_texture.empty() ? std::clamp(optional_one_float_value(material.entity, "roughness", 0.35f), 0.02f, 1.0f) : 1.0f;
+                } else if (material.entity.type == "interface") {
                     preview_material.surface_kind = Scene::PreviewSurfaceKind::UnlitSurface;
                     preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
                     preview_material.base_color = Vector4{0.62f, 0.7f, 0.78f, 0.18f};
                     preview_material.roughness = 1.0f;
                 } else {
-                    throw std::runtime_error(format_message("PBRT preview material \"{}\" uses unsupported type \"{}\"", material.name, material.entity.type));
+                    throw std::runtime_error(format_message("Rasterizer material \"{}\" PBRT type \"{}\" is outside the exact capability subset; supported types are diffuse, coateddiffuse, and interface", material.name, material.entity.type));
                 }
                 const bool inserted = material_indices.emplace(material.name, document.materials.size()).second;
                 if (!inserted) throw std::runtime_error(format_message("PBRT preview material \"{}\" is duplicated", material.name));
@@ -3180,7 +2791,6 @@ namespace spectra::scene {
             Scene::Mesh mesh{
                 .name         = object_name,
                 .material_name = shape.material_name,
-                .dynamic      = false,
                 .source       = shape.entity.source,
             };
             const auto append_vertex = [&mesh, &shape, &bounds](const Vector3 point, const Vector3 normal) {
@@ -3950,16 +3560,6 @@ namespace spectra::scene {
             throw ParseError(token.source, format_message("\"{}\" is not a Boolean value", token.text));
         }
 
-        [[nodiscard]] std::array<float, 16> MultiplyMatrix(const std::array<float, 16>& a, const std::array<float, 16>& b) {
-            std::array<float, 16> result{};
-            for (std::size_t row = 0; row < 4; ++row) {
-                for (std::size_t column = 0; column < 4; ++column) {
-                    for (std::size_t index = 0; index < 4; ++index) result[row * 4 + column] += a[row * 4 + index] * b[index * 4 + column];
-                }
-            }
-            return result;
-        }
-
         [[nodiscard]] std::array<float, 16> TransposeMatrix(const std::array<float, 16>& matrix) {
             return {
                 matrix[0],
@@ -4015,13 +3615,6 @@ namespace spectra::scene {
             for (int row = 0; row < 4; ++row)
                 for (int column = 0; column < 4; ++column) inverse[static_cast<std::size_t>(row * 4 + column)] = static_cast<float>(augmented[static_cast<std::size_t>(row)][static_cast<std::size_t>(4 + column)]);
             return inverse;
-        }
-
-        [[nodiscard]] SceneTransform Multiply(const SceneTransform& a, const SceneTransform& b) {
-            return SceneTransform{
-                .matrix  = MultiplyMatrix(a.matrix, b.matrix),
-                .inverse = MultiplyMatrix(b.inverse, a.inverse),
-            };
         }
 
         [[nodiscard]] SceneTransform Inverse(const SceneTransform& transform) {
@@ -4216,17 +3809,13 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] bool TransformDiffers(const SceneTransform& left, const SceneTransform& right) {
-            return left.matrix != right.matrix || left.inverse != right.inverse;
-        }
-
         void RefreshAnimatedFlag(SceneTransformSet* transform) {
-            transform->animated = TransformDiffers(transform->start, transform->end);
+            transform->animated = transform_differs(transform->start, transform->end);
         }
 
         void ApplyTransform(SceneTransformSet* transform, const SceneTransform& value, const bool startActive, const bool endActive) {
-            if (startActive) transform->start = Multiply(transform->start, value);
-            if (endActive) transform->end = Multiply(transform->end, value);
+            if (startActive) transform->start = multiply_transform(transform->start, value);
+            if (endActive) transform->end = multiply_transform(transform->end, value);
             RefreshAnimatedFlag(transform);
         }
 
@@ -4253,26 +3842,11 @@ namespace spectra::scene {
             return std::get_if<std::vector<std::string>>(&parameter.values);
         }
 
-        [[nodiscard]] const std::vector<float>* ParameterFloatValues(const Scene::Parameter& parameter) {
-            return std::get_if<std::vector<float>>(&parameter.values);
-        }
-
         [[nodiscard]] std::string OneStringParameter(const std::vector<Scene::Parameter>& parameters, const std::string& name, std::string default_value) {
             for (const Scene::Parameter& parameter : parameters) {
                 if (parameter.type != "string" || parameter.name != name) continue;
                 const std::vector<std::string>* values = ParameterStringValues(parameter);
                 if (values == nullptr || values->size() != 1) throw ParseError(parameter.source, format_message("PBRT string parameter \"{}\" must contain exactly one string value", name));
-                return values->front();
-            }
-            return default_value;
-        }
-
-        [[nodiscard]] float OneFloatParameter(const std::vector<Scene::Parameter>& parameters, const std::string& name, const float default_value) {
-            for (const Scene::Parameter& parameter : parameters) {
-                if (parameter.name != name) continue;
-                if (parameter.type != "float") throw ParseError(parameter.source, format_message("PBRT parameter \"{}\" must be declared as float", name));
-                const std::vector<float>* values = ParameterFloatValues(parameter);
-                if (values == nullptr || values->size() != 1) throw ParseError(parameter.source, format_message("PBRT float parameter \"{}\" must contain exactly one float value", name));
                 return values->front();
             }
             return default_value;

@@ -84,7 +84,6 @@ namespace spectra {
 
         // Return final importance at reference point
         Float importance = phi * cosThetap / d2;
-        DCHECK_GE(importance, -1e-3);
         // Account for $\cos\theta_\roman{i}$ in importance at surfaces
         if (n != Normal3f(0, 0, 0)) {
             Float cosTheta_i  = AbsDot(wi, n);
@@ -548,7 +547,6 @@ namespace spectra {
         ShapeSampleContext shapeCtx(ctx.pi, ctx.n, ctx.ns, 0 /* time */);
         pstd::optional<ShapeSample> ss = shape.Sample(shapeCtx, u);
         if (!ss || ss->pdf == 0 || LengthSquared(ss->intr.p() - ctx.p()) == 0) return {};
-        DCHECK(!IsNaN(ss->pdf));
         ss->intr.mediumInterface = &mediumInterface;
 
         // Check sampled point on shape against alpha texture, if present
@@ -869,7 +867,8 @@ namespace spectra {
 
         // Resample environment map into rectified image
         image = Image(PixelFormat::Float, equalAreaImage.Resolution(), {"R", "G", "B"}, equalAreaImage.Encoding(), alloc);
-        ParallelFor(0, image.Resolution().y, [&](int y) {
+        ParallelFor(0, image.Resolution().y, [&](int64_t y) {
+            const int imageY = static_cast<int>(y);
             for (int x = 0; x < image.Resolution().x; ++x) {
                 // Resample _equalAreaImage_ to compute rectified image pixel $(x,y)$
                 // Find $(u,v)$ coordinates in equal-area image for pixel
@@ -880,7 +879,7 @@ namespace spectra {
 
                 for (int c = 0; c < 3; ++c) {
                     Float v = equalAreaImage.BilerpChannel(uvEqui, c, WrapMode::OctahedralSphere);
-                    image.SetChannel({x, y}, c, v);
+                    image.SetChannel({x, imageY}, c, v);
                 }
             }
         });
@@ -1057,7 +1056,6 @@ namespace spectra {
         } else {
             // Sample spotlight falloff region
             Float cosTheta = SampleSmoothStep(u1[0], cosFalloffEnd, cosFalloffStart);
-            DCHECK(cosTheta >= cosFalloffEnd && cosTheta <= cosFalloffStart);
             Float sinTheta = SafeSqrt(1 - Sqr(cosTheta));
             Float phi      = u1[1] * 2 * Pi;
             wLight         = SphericalDirection(sinTheta, cosTheta, phi);

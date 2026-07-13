@@ -87,7 +87,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline uint32_t LeftShift3(uint32_t x) {
-        DCHECK_LE(x, (1u << 10));
         if (x == (1 << 10)) --x;
         x = (x | (x << 16)) & 0b00000011000000000000000011111111;
         // x = ---- --98 ---- ---- ---- ---- 7654 3210
@@ -101,9 +100,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline uint32_t EncodeMorton3(float x, float y, float z) {
-        DCHECK_GE(x, 0);
-        DCHECK_GE(y, 0);
-        DCHECK_GE(z, 0);
         return (LeftShift3(z) << 2) | (LeftShift3(y) << 1) | LeftShift3(x);
     }
 
@@ -251,18 +247,15 @@ namespace spectra {
 
     __host__ __device__ inline Float SmoothStep(Float x, Float a, Float b) {
         if (a == b) return (x < a) ? 0 : 1;
-        DCHECK_LT(a, b);
         Float t = Clamp((x - a) / (b - a), 0, 1);
         return t * t * (3 - 2 * t);
     }
 
     __host__ __device__ inline float SafeSqrt(float x) {
-        DCHECK_GE(x, -1e-3f); // not too negative
         return std::sqrt(std::max(0.f, x));
     }
 
     __host__ __device__ inline double SafeSqrt(double x) {
-        DCHECK_GE(x, -1e-3); // not too negative
         return std::sqrt(std::max(0., x));
     }
 
@@ -324,22 +317,18 @@ namespace spectra {
     }
 
     __host__ __device__ inline float SafeASin(float x) {
-        DCHECK(x >= -1.0001 && x <= 1.0001);
         return std::asin(Clamp(x, -1, 1));
     }
 
     __host__ __device__ inline float SafeACos(float x) {
-        DCHECK(x >= -1.0001 && x <= 1.0001);
         return std::acos(Clamp(x, -1, 1));
     }
 
     __host__ __device__ inline double SafeASin(double x) {
-        DCHECK(x >= -1.0001 && x <= 1.0001);
         return std::asin(Clamp(x, -1, 1));
     }
 
     __host__ __device__ inline double SafeACos(double x) {
-        DCHECK(x >= -1.0001 && x <= 1.0001);
         return std::acos(Clamp(x, -1, 1));
     }
 
@@ -349,7 +338,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline int Log2Int(float v) {
-        DCHECK_GT(v, 0);
         if (v < 1) return -Log2Int(1 / v);
         // https://graphics.stanford.edu/~seander/bithacks.html#IntegerLog
         // (With an additional check of the significant to get round-to-nearest
@@ -362,7 +350,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline int Log2Int(double v) {
-        DCHECK_GT(v, 0);
         if (v < 1) return -Log2Int(1 / v);
         // https://graphics.stanford.edu/~seander/bithacks.html#IntegerLog
         // (With an additional check of the significant to get round-to-nearest
@@ -449,7 +436,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline Float GaussianIntegral(Float x0, Float x1, Float mu = 0, Float sigma = 1) {
-        DCHECK_GT(sigma, 0);
         Float sigmaRoot2 = sigma * Float(1.414213562373095);
         return 0.5f * (std::erf((mu - x0) / sigmaRoot2) - std::erf((mu - x1) / sigmaRoot2));
     }
@@ -464,7 +450,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline Float TrimmedLogistic(Float x, Float s, Float a, Float b) {
-        DCHECK_LT(a, b);
         return Logistic(x, s) / (LogisticCDF(b, s) - LogisticCDF(a, s));
     }
 
@@ -619,7 +604,6 @@ namespace spectra {
     template <typename Func>
     __host__ __device__ Float NewtonBisection(Float x0, Float x1, Func f, Float xEps = 1e-6f, Float fEps = 1e-6f) {
         // Check function endpoints for roots
-        DCHECK_LT(x0, x1);
         Float fx0 = f(x0).first, fx1 = f(x1).first;
         if (std::abs(fx0) < fEps) return x0;
         if (std::abs(fx1) < fEps) return x1;
@@ -634,7 +618,6 @@ namespace spectra {
 
             // Evaluate function and narrow bracket range _[x0, x1]_
             std::pair<Float, Float> fxMid = f(xMid);
-            DCHECK(!IsNaN(fxMid.first));
             if (startIsNegative == (fxMid.first < 0))
                 x0 = xMid;
             else
@@ -669,8 +652,6 @@ namespace spectra {
     }
 
     // Math Function Declarations
-    int NextPrime(int x);
-
     // Permutation Inline Function Declarations
     __host__ __device__ inline int PermutationElement(uint32_t i, uint32_t n, uint32_t seed);
 
@@ -812,7 +793,6 @@ namespace spectra {
         }
 
         __host__ __device__ Float operator[](int i) const {
-            DCHECK(i == 0 || i == 1);
             return (i == 0) ? low : high;
         }
 
@@ -1054,7 +1034,6 @@ namespace spectra {
         // Invert cd Indices since it's subtracted...
         Float low  = DifferenceOfProducts(a[abLowIndex & 1], b[abLowIndex >> 1], c[cdHighIndex & 1], d[cdHighIndex >> 1]);
         Float high = DifferenceOfProducts(a[abHighIndex & 1], b[abHighIndex >> 1], c[cdLowIndex & 1], d[cdLowIndex >> 1]);
-        DCHECK_LE(low, high);
 
         return {NextFloatDown(NextFloatDown(low)), NextFloatUp(NextFloatUp(high))};
     }
@@ -1068,12 +1047,6 @@ namespace spectra {
     }
 
     __host__ __device__ inline Interval MulPow2(Interval i, Float s) {
-        Float as = std::abs(s);
-        if (as < 1)
-            DCHECK_EQ(1 / as, 1ull << Log2Int(1 / as));
-        else
-            DCHECK_EQ(as, 1ull << Log2Int(as));
-
         // Multiplication by powers of 2 is exaact
         return Interval(std::min(i.LowerBound() * s, i.UpperBound() * s), std::max(i.LowerBound() * s, i.UpperBound() * s));
     }
@@ -1157,7 +1130,6 @@ namespace spectra {
     }
 
     // Spline Interpolation Declarations
-    __host__ __device__ Float CatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> values, Float x);
     __host__ __device__ bool CatmullRomWeights(pstd::span<const Float> nodes, Float x, int* offset, pstd::span<Float> weights);
     __host__ __device__ Float IntegrateCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> values, pstd::span<Float> cdf);
     __host__ __device__ Float InvertCatmullRom(pstd::span<const Float> x, pstd::span<const Float> values, Float u);
@@ -1239,7 +1211,6 @@ namespace spectra {
         }
 
         __host__ __device__ SquareMatrix operator/(Float s) const {
-            DCHECK_NE(s, 0);
             SquareMatrix r = *this;
             for (int i = 0; i < N; ++i)
                 for (int j = 0; j < N; ++j) r.m[i][j] /= s;

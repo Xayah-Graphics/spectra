@@ -2,7 +2,6 @@
 #include <pathtracer/util/check.cuh>
 #include <pathtracer/util/math.cuh>
 #include <pathtracer/util/vecmath.cuh>
-#include <vector>
 
 namespace spectra {
     // General case
@@ -70,36 +69,8 @@ namespace spectra {
     template class SquareMatrix<3>;
     template class SquareMatrix<4>;
 
-    int NextPrime(int x) {
-        if (x == 2) return 3;
-        if ((x & 1) == 0) ++x; // make it odd
-
-        std::vector<int> smallPrimes{2};
-        // NOTE: isPrime w.r.t. smallPrims...
-        auto isPrime = [&smallPrimes](int n) {
-            for (int p : smallPrimes)
-                if (n != p && (n % p) == 0) return false;
-            return true;
-        };
-
-        // Initialize smallPrimes
-        // Up to about 2B, the biggest gap between primes:
-        // https://en.wikipedia.org/wiki/Prime_gap
-        const int maxPrimeGap = 320;
-        for (int n = 3; n < int(std::sqrt(x + maxPrimeGap)) + 1; n += 2)
-            if (isPrime(n)) smallPrimes.push_back(n);
-
-        while (!isPrime(x)) x += 2;
-
-        return x;
-    }
-
 #if !defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-    const Interval Interval::Pi(3.1415926535897931, 3.1415926535897936);
-#else
     const Interval Interval::Pi = Interval(3.1415925f, 3.14159274f);
-#endif
 #endif
 
 
@@ -146,28 +117,6 @@ namespace spectra {
         }
 
         return true;
-    }
-
-    __host__ __device__ Float CatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, Float x) {
-        CHECK_EQ(nodes.size(), f.size());
-        if (!(x >= nodes.front() && x <= nodes.back())) return 0;
-        int idx  = FindInterval(nodes.size(), [&](int i) { return nodes[i] <= x; });
-        Float x0 = nodes[idx], x1 = nodes[idx + 1];
-        Float f0 = f[idx], f1 = f[idx + 1];
-        Float width = x1 - x0;
-        Float d0, d1;
-        if (idx > 0)
-            d0 = width * (f1 - f[idx - 1]) / (x1 - nodes[idx - 1]);
-        else
-            d0 = f1 - f0;
-
-        if (idx + 2 < nodes.size())
-            d1 = width * (f[idx + 2] - f0) / (nodes[idx + 2] - x0);
-        else
-            d1 = f1 - f0;
-
-        Float t = (x - x0) / (x1 - x0), t2 = t * t, t3 = t2 * t;
-        return (2 * t3 - 3 * t2 + 1) * f0 + (-2 * t3 + 3 * t2) * f1 + (t3 - 2 * t2 + t) * d0 + (t3 - t2) * d1;
     }
 
     __host__ __device__ Float InvertCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, Float u) {
@@ -254,7 +203,6 @@ namespace spectra {
 
     // Via source code from Clarberg: Fast Equal-Area Mapping of the (Hemi)Sphere using SIMD
     __host__ __device__ Point2f EqualAreaSphereToSquare(Vector3f d) {
-        DCHECK(LengthSquared(d) > .999 && LengthSquared(d) < 1.001);
         Float x = std::abs(d.x), y = std::abs(d.y), z = std::abs(d.z);
 
         // Compute the radius r

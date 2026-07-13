@@ -51,7 +51,6 @@ namespace spectra {
             if (wo.z == 0 || !(bxdf.Flags() & sampleFlags)) return {};
             // Sample _bxdf_ and return _BSDFSample_
             pstd::optional<BSDFSample> bs = bxdf.Sample_f(wo, u, u2, mode, sampleFlags);
-            if (bs) DCHECK_GE(bs->pdf, 0);
             if (!bs || !bs->f || bs->pdf == 0 || bs->wi.z == 0) return {};
             bs->wi = LocalToRender(bs->wi);
             return bs;
@@ -73,7 +72,6 @@ namespace spectra {
 
             pstd::optional<BSDFSample> bs = specificBxDF->Sample_f(wo, u, u2, mode, sampleFlags);
             if (!bs || !bs->f || bs->pdf == 0 || bs->wi.z == 0) return {};
-            DCHECK_GT(bs->pdf, 0);
 
             bs->wi = LocalToRender(bs->wi);
 

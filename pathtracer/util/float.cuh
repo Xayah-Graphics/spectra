@@ -13,25 +13,14 @@
 #endif
 
 namespace spectra {
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-    typedef double Float;
-    typedef std::uint64_t FloatBits;
-#else
     typedef float Float;
     typedef std::uint32_t FloatBits;
-#endif
     static_assert(sizeof(Float) == sizeof(FloatBits), "Float and FloatBits must have the same size");
 
 #if defined(__CUDA_ARCH__)
 
-#define DoubleOneMinusEpsilon 0x1.fffffffffffffp-1
 #define FloatOneMinusEpsilon  float(0x1.fffffep-1)
-
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-#define OneMinusEpsilon DoubleOneMinusEpsilon
-#else
 #define OneMinusEpsilon FloatOneMinusEpsilon
-#endif
 
 #define Infinity       std::numeric_limits<Float>::infinity()
 #define MachineEpsilon std::numeric_limits<Float>::epsilon() * 0.5f
@@ -43,13 +32,8 @@ namespace spectra {
 
     static constexpr Float MachineEpsilon = std::numeric_limits<Float>::epsilon() * 0.5;
 
-    static constexpr double DoubleOneMinusEpsilon = 0x1.fffffffffffffp-1;
     static constexpr float FloatOneMinusEpsilon   = 0x1.fffffep-1;
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-    static constexpr double OneMinusEpsilon = DoubleOneMinusEpsilon;
-#else
     static constexpr float OneMinusEpsilon = FloatOneMinusEpsilon;
-#endif
 
 #endif // __CUDA_ARCH__
 
@@ -184,11 +168,7 @@ namespace spectra {
 
     inline __host__ __device__ Float AddRoundUp(Float a, Float b) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __dadd_ru(a, b);
-#else
         return __fadd_ru(a, b);
-#endif
 #else // CPU
         return NextFloatUp(a + b);
 #endif
@@ -196,11 +176,7 @@ namespace spectra {
 
     inline __host__ __device__ Float AddRoundDown(Float a, Float b) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __dadd_rd(a, b);
-#else
         return __fadd_rd(a, b);
-#endif
 #else // CPU
         return NextFloatDown(a + b);
 #endif
@@ -216,11 +192,7 @@ namespace spectra {
 
     inline __host__ __device__ Float MulRoundUp(Float a, Float b) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __dmul_ru(a, b);
-#else
         return __fmul_ru(a, b);
-#endif
 #else // CPU
         return NextFloatUp(a * b);
 #endif
@@ -228,11 +200,7 @@ namespace spectra {
 
     inline __host__ __device__ Float MulRoundDown(Float a, Float b) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __dmul_rd(a, b);
-#else
         return __fmul_rd(a, b);
-#endif
 #else // CPU
         return NextFloatDown(a * b);
 #endif
@@ -240,11 +208,7 @@ namespace spectra {
 
     inline __host__ __device__ Float DivRoundUp(Float a, Float b) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __ddiv_ru(a, b);
-#else
         return __fdiv_ru(a, b);
-#endif
 #else // CPU
         return NextFloatUp(a / b);
 #endif
@@ -252,11 +216,7 @@ namespace spectra {
 
     inline __host__ __device__ Float DivRoundDown(Float a, Float b) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __ddiv_rd(a, b);
-#else
         return __fdiv_rd(a, b);
-#endif
 #else // CPU
         return NextFloatDown(a / b);
 #endif
@@ -264,11 +224,7 @@ namespace spectra {
 
     inline __host__ __device__ Float SqrtRoundUp(Float a) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __dsqrt_ru(a);
-#else
         return __fsqrt_ru(a);
-#endif
 #else // CPU
         return NextFloatUp(std::sqrt(a));
 #endif
@@ -276,11 +232,7 @@ namespace spectra {
 
     inline __host__ __device__ Float SqrtRoundDown(Float a) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __dsqrt_rd(a);
-#else
         return __fsqrt_rd(a);
-#endif
 #else // CPU
         return std::max<Float>(0, NextFloatDown(std::sqrt(a)));
 #endif
@@ -288,11 +240,7 @@ namespace spectra {
 
     inline __host__ __device__ Float FMARoundUp(Float a, Float b, Float c) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __fma_ru(a, b, c); // FIXME: what to do here?
-#else
-        return __fma_ru(a, b, c);
-#endif
+        return __fmaf_ru(a, b, c);
 #else // CPU
         return NextFloatUp(FMA(a, b, c));
 #endif
@@ -300,11 +248,7 @@ namespace spectra {
 
     inline __host__ __device__ Float FMARoundDown(Float a, Float b, Float c) {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_FLOAT_AS_DOUBLE
-        return __fma_rd(a, b, c); // FIXME: what to do here?
-#else
-        return __fma_rd(a, b, c);
-#endif
+        return __fmaf_rd(a, b, c);
 #else // CPU
         return NextFloatDown(FMA(a, b, c));
 #endif

@@ -47,7 +47,6 @@ namespace spectra {
     }
 
     void ThreadPool::WorkOrWait(std::unique_lock<std::mutex>* lock, bool isEnqueuingThread) {
-        DCHECK(lock->owns_lock());
         // Return if this is a worker thread and the thread pool is disabled
         if (!isEnqueuingThread && disabled) {
             jobListCondition.wait(*lock);
@@ -61,7 +60,6 @@ namespace spectra {
             job->activeWorkers++;
             job->RunStep(lock);
             // Handle post-job-execution details
-            DCHECK(!lock->owns_lock());
             lock->lock();
             job->activeWorkers--;
             if (job->Finished()) jobListCondition.notify_all();
@@ -71,12 +69,10 @@ namespace spectra {
     }
 
     void ThreadPool::RemoveFromJobList(ParallelJob* job) {
-        DCHECK(!job->removed);
 
         if (job->prev)
             job->prev->next = job->next;
         else {
-            DCHECK(jobList == job);
             jobList = job->next;
         }
         if (job->next) job->next->prev = job->prev;
@@ -94,7 +90,6 @@ namespace spectra {
         // Execute work for _job_
         job->activeWorkers++;
         job->RunStep(&lock);
-        DCHECK(!lock.owns_lock());
         lock.lock();
         job->activeWorkers--;
         if (job->Finished()) jobListCondition.notify_all();

@@ -42,13 +42,11 @@ namespace spectra {
 
     template <>
     Float MIPMap::Texel(int level, Point2i st) const {
-        DCHECK(level >= 0 && level < pyramid.size());
         return pyramid[level].GetChannel(st, 0, wrapMode);
     }
 
     template <>
     RGB MIPMap::Texel(int level, Point2i st) const {
-        DCHECK(level >= 0 && level < pyramid.size());
         if (int nc = pyramid[level].NChannels(); nc == 3 || nc == 4)
             return RGB(pyramid[level].GetChannel(st, 0, wrapMode), pyramid[level].GetChannel(st, 1, wrapMode), pyramid[level].GetChannel(st, 2, wrapMode));
         else {
@@ -79,11 +77,9 @@ namespace spectra {
                 return Bilerp<T>(iLevel, st);
             } else {
                 // Return trilinear-filtered value at selected MIP level
-                DCHECK(options.filter == FilterFunction::Trilinear);
                 if (iLevel == 0)
                     return Bilerp<T>(0, st);
                 else {
-                    DCHECK_LE(level - iLevel, 1);
                     return Lerp(level - iLevel, Bilerp<T>(iLevel, st), Bilerp<T>(iLevel + 1, st));
                 }
             }
@@ -108,11 +104,9 @@ namespace spectra {
 
     template <>
     RGB MIPMap::Bilerp(int level, Point2f st) const {
-        DCHECK(level >= 0 && level < pyramid.size());
         if (int nc = pyramid[level].NChannels(); nc == 3 || nc == 4)
             return RGB(pyramid[level].BilerpChannel(st, 0, wrapMode), pyramid[level].BilerpChannel(st, 1, wrapMode), pyramid[level].BilerpChannel(st, 2, wrapMode));
         else {
-            DCHECK_EQ(1, pyramid[level].NChannels());
             Float v = pyramid[level].BilerpChannel(st, 0, wrapMode);
             return RGB(v, v, v);
         }

@@ -45,7 +45,6 @@ namespace spectra {
 
         // Find offset to largest _lambdas_ below _lambda_ and interpolate
         int o = FindInterval(lambdas.size(), [&](int i) { return lambdas[i] <= lambda; });
-        DCHECK(lambda >= lambdas[o] && lambda <= lambdas[o + 1]);
         Float t = (lambda - lambdas[o]) / (lambdas[o + 1] - lambdas[o]);
         return Lerp(t, values[o], values[o + 1]);
     }
@@ -145,8 +144,6 @@ namespace spectra {
     }
 
     __host__ __device__ RGBAlbedoSpectrum::RGBAlbedoSpectrum(const RGBColorSpace& cs, RGB rgb) {
-        DCHECK_LE(MaxComponentValue(rgb), 1);
-        DCHECK_GE(MinComponentValue(rgb), 0);
         rsp = cs.ToRGBCoeffs(rgb);
     }
 

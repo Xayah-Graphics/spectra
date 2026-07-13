@@ -53,17 +53,6 @@ namespace spectra {
         SampledSpectrum sigma_maj;
     };
 
-    // RayMajorantIterator Definition
-    class HomogeneousMajorantIterator;
-    class DDAMajorantIterator;
-
-    class RayMajorantIterator : public TaggedPointer<HomogeneousMajorantIterator, DDAMajorantIterator> {
-    public:
-        using TaggedPointer::TaggedPointer;
-
-        __host__ __device__ pstd::optional<RayMajorantSegment> Next();
-    };
-
     // Medium Definition
     class Medium : public TaggedPointer< // Medium Types
                        HomogeneousMedium, GridMedium, RGBGridMedium, CloudMedium, NanoVDBMedium
@@ -76,12 +65,10 @@ namespace spectra {
         static Medium Create(const std::string& name, const ParameterDictionary& parameters, const Transform& renderFromMedium, const FileLoc* loc, Allocator alloc);
 
 
-        __host__ __device__ bool IsEmissive() const;
+        bool IsEmissive() const;
 
         __host__ __device__ MediumProperties SamplePoint(Point3f p, const SampledWavelengths& lambda) const;
 
-        // Medium Public Methods
-        RayMajorantIterator SampleRay(Ray ray, Float tMax, const SampledWavelengths& lambda, ScratchBuffer& buf) const;
     };
 
     // MediumInterface Definition

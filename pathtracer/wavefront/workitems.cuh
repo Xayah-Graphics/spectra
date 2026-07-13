@@ -327,7 +327,6 @@ namespace spectra {
     // RayQueue Inline Methods
     __host__ __device__ inline int RayQueue::PushCameraRay(const Ray& ray, const SampledWavelengths& lambda, int pixelIndex) {
         int index = AllocateEntry();
-        DCHECK(!ray.HasNaN());
         this->ray[index]                   = ray;
         this->depth[index]                 = 0;
         this->pixelIndex[index]            = pixelIndex;
@@ -343,7 +342,6 @@ namespace spectra {
 
     __host__ __device__ inline int RayQueue::PushIndirectRay(const Ray& ray, int depth, const LightSampleContext& prevIntrCtx, const SampledSpectrum& beta, const SampledSpectrum& r_u, const SampledSpectrum& r_l, const SampledWavelengths& lambda, Float etaScale, bool specularBounce, bool anyNonSpecularBounces, int pixelIndex) {
         int index = AllocateEntry();
-        DCHECK(!ray.HasNaN());
         this->ray[index]                   = ray;
         this->depth[index]                 = depth;
         this->pixelIndex[index]            = pixelIndex;

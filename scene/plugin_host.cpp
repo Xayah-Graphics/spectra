@@ -134,7 +134,7 @@ namespace spectra::scene {
             };
             const float rotation_length_squared = result.rotation.x * result.rotation.x + result.rotation.y * result.rotation.y + result.rotation.z * result.rotation.z + result.rotation.w * result.rotation.w;
             if (std::abs(rotation_length_squared - 1.0f) > 1.0e-3f) throw std::runtime_error(std::format("{} rotation quaternion must be unit length", context));
-            if (result.scale.x <= 0.0f || result.scale.y <= 0.0f || result.scale.z <= 0.0f) throw std::runtime_error(std::format("{} scale must be positive", context));
+            if (result.scale.x == 0.0f || result.scale.y == 0.0f || result.scale.z == 0.0f) throw std::runtime_error(std::format("{} scale must not contain zero", context));
             return result;
         }
 
@@ -210,16 +210,6 @@ namespace spectra::scene {
             case 3u: return Scene::VolumeChannelFormat::Float32x4;
             }
             throw std::runtime_error(std::format("{} has invalid volume channel format {}", context, value));
-        }
-
-        [[nodiscard]] std::uint32_t volume_channel_component_count(const Scene::VolumeChannelFormat format) {
-            switch (format) {
-            case Scene::VolumeChannelFormat::Float32: return 1u;
-            case Scene::VolumeChannelFormat::Float32x2: return 2u;
-            case Scene::VolumeChannelFormat::Float32x3: return 3u;
-            case Scene::VolumeChannelFormat::Float32x4: return 4u;
-            }
-            throw std::runtime_error("Unknown Scene volume channel format");
         }
 
         [[nodiscard]] Scene::VolumeMaterialMode volume_material_mode_from_u32(const std::uint32_t value, const std::string_view context) {
@@ -418,13 +408,12 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] Scene::Mesh make_mesh(const SpectraSceneMesh& mesh, const bool dynamic) {
+        [[nodiscard]] Scene::Mesh make_mesh(const SpectraSceneMesh& mesh) {
             const std::string name = abi_string(mesh.name, "Scene mesh name", false);
             Scene::Mesh result{
                 .name = name,
                 .material_name = abi_string(mesh.material_name, std::format("Scene mesh \"{}\" material name", name), false),
                 .transform = make_transform(mesh.transform, std::format("Scene mesh \"{}\"", name)),
-                .dynamic = dynamic,
             };
             const std::span<const SpectraSceneMeshVertex> vertices = abi_span(mesh.vertices.data, mesh.vertices.count, std::format("Scene mesh \"{}\" vertices", name));
             result.positions.reserve(vertices.size());
@@ -442,7 +431,7 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] Scene::Sphere make_sphere(const SpectraSceneSphere& sphere, const bool dynamic) {
+        [[nodiscard]] Scene::Sphere make_sphere(const SpectraSceneSphere& sphere) {
             const std::string name = abi_string(sphere.name, "Scene sphere name", false);
             const float radius = finite_float(sphere.radius, std::format("Scene sphere \"{}\" radius", name));
             if (radius <= 0.0f) throw std::runtime_error(std::format("Scene sphere \"{}\" radius must be positive", name));
@@ -451,11 +440,10 @@ namespace spectra::scene {
                 .radius = radius,
                 .material_name = abi_string(sphere.material_name, std::format("Scene sphere \"{}\" material name", name), false),
                 .transform = make_transform(sphere.transform, std::format("Scene sphere \"{}\"", name)),
-                .dynamic = dynamic,
             };
         }
 
-        [[nodiscard]] Scene::PointCloud make_point_cloud(const SpectraScenePointCloud& point_cloud, const bool dynamic) {
+        [[nodiscard]] Scene::PointCloud make_point_cloud(const SpectraScenePointCloud& point_cloud) {
             const std::string name = abi_string(point_cloud.name, "Scene point cloud name", false);
             if (point_cloud.bounds_valid > 1u) throw std::runtime_error(std::format("Scene point cloud \"{}\" bounds_valid must be 0 or 1", name));
             Scene::PointCloud result{
@@ -464,11 +452,9 @@ namespace spectra::scene {
                 .point_count = point_cloud.point_count,
                 .buffer_id = point_cloud.buffer_id,
                 .source_byte_size = point_cloud.source_byte_size,
-                .revision = point_cloud.revision,
                 .material_name = abi_string(point_cloud.material_name, std::format("Scene point cloud \"{}\" material name", name), false),
                 .transform = make_transform(point_cloud.transform, std::format("Scene point cloud \"{}\"", name)),
                 .bounds = {},
-                .dynamic = dynamic,
             };
             if (point_cloud.bounds_valid == 1u) {
                 result.bounds = Scene::PointCloudBounds{
@@ -478,12 +464,10 @@ namespace spectra::scene {
             }
             const std::span<const SpectraScenePoint> points = abi_span(point_cloud.points.data, point_cloud.points.count, std::format("Scene point cloud \"{}\" points", name));
             result.positions.reserve(points.size());
-            result.normals.reserve(points.size());
             result.colors.reserve(points.size());
             result.radii.reserve(points.size());
             for (std::size_t index = 0u; index < points.size(); ++index) {
                 result.positions.push_back(make_vector3(points[index].position, std::format("Scene point cloud \"{}\" point #{} position", name, index)));
-                result.normals.push_back(make_vector3(points[index].normal, std::format("Scene point cloud \"{}\" point #{} normal", name, index)));
                 result.colors.push_back(make_vector4(points[index].color, std::format("Scene point cloud \"{}\" point #{} color", name, index)));
                 const float radius = finite_float(points[index].radius, std::format("Scene point cloud \"{}\" point #{} radius", name, index));
                 if (radius <= 0.0f) throw std::runtime_error(std::format("Scene point cloud \"{}\" point #{} radius must be positive", name, index));
@@ -492,7 +476,7 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] Scene::VolumeGrid make_volume(const SpectraSceneVolume& volume, const bool dynamic) {
+        [[nodiscard]] Scene::VolumeGrid make_volume(const SpectraSceneVolume& volume) {
             const std::string name = abi_string(volume.name, "Scene volume name", false);
             Scene::VolumeGrid result{
                 .name = name,
@@ -500,7 +484,6 @@ namespace spectra::scene {
                 .origin = make_vector3(volume.origin, std::format("Scene volume \"{}\" origin", name)),
                 .voxel_size = make_vector3(volume.voxel_size, std::format("Scene volume \"{}\" voxel size", name)),
                 .material_name = abi_string(volume.material_name, std::format("Scene volume \"{}\" material name", name), false),
-                .dynamic = dynamic,
             };
             if (result.dimensions[0] == 0u || result.dimensions[1] == 0u || result.dimensions[2] == 0u) throw std::runtime_error(std::format("Scene volume \"{}\" dimensions must be positive", name));
             const std::span<const SpectraSceneVolumeChannel> channels = abi_span(volume.channels.data, volume.channels.count, std::format("Scene volume \"{}\" channels", name));
@@ -508,17 +491,14 @@ namespace spectra::scene {
                 const std::string channel_name = abi_string(channel.name, std::format("Scene volume \"{}\" channel name", name), false);
                 Scene::VolumeChannel converted{
                     .name = channel_name,
-                    .dimensions = {channel.dimensions[0], channel.dimensions[1], channel.dimensions[2]},
                     .format = volume_channel_format_from_u32(channel.format, std::format("Scene volume \"{}\" channel \"{}\"", name, channel_name)),
                     .source_kind = volume_channel_source_kind_from_u32(channel.source_kind, std::format("Scene volume \"{}\" channel \"{}\"", name, channel_name)),
                     .index_encoding = volume_channel_index_encoding_from_u32(channel.index_encoding, std::format("Scene volume \"{}\" channel \"{}\"", name, channel_name)),
                     .buffer_id = channel.buffer_id,
                     .external_device_pointer = channel.external_device_pointer,
                     .source_byte_size = channel.source_byte_size,
-                    .revision = channel.revision,
                 };
-                if (converted.dimensions != result.dimensions) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" dimensions do not match", name, converted.name));
-                const std::uint64_t cell_count = static_cast<std::uint64_t>(converted.dimensions[0]) * static_cast<std::uint64_t>(converted.dimensions[1]) * static_cast<std::uint64_t>(converted.dimensions[2]);
+                const std::uint64_t cell_count = static_cast<std::uint64_t>(result.dimensions[0]) * static_cast<std::uint64_t>(result.dimensions[1]) * static_cast<std::uint64_t>(result.dimensions[2]);
                 const std::uint32_t component_count = volume_channel_component_count(converted.format);
                 if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" value count exceeds uint64 range", name, converted.name));
                 const std::uint64_t expected_count = cell_count * component_count;
@@ -537,14 +517,13 @@ namespace spectra::scene {
                     if (converted.source_byte_size < expected_count * sizeof(float)) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" external GPU source byte size is too small", name, converted.name));
                     if (converted.buffer_id == 0u) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" external GPU source has no buffer id", name, converted.name));
                     if (converted.external_device_pointer == 0u) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" external GPU source has no device pointer for pathtracer snapshot", name, converted.name));
-                    if (converted.revision == 0u) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" external GPU source revision must not be zero", name, converted.name));
                 }
                 result.channels.push_back(std::move(converted));
             }
             return result;
         }
 
-        [[nodiscard]] Scene::ViewportSegmentSet make_viewport_segment_set(const SpectraSceneViewportSegmentSet& segment_set, const bool dynamic) {
+        [[nodiscard]] Scene::ViewportSegmentSet make_viewport_segment_set(const SpectraSceneViewportSegmentSet& segment_set) {
             const std::string name = abi_string(segment_set.name, "Scene viewport segment set name", false);
             Scene::ViewportSegmentSet result{
                 .name = name,
@@ -553,12 +532,10 @@ namespace spectra::scene {
                 .segment_count = segment_set.segment_count,
                 .buffer_id = segment_set.buffer_id,
                 .source_byte_size = segment_set.source_byte_size,
-                .revision = segment_set.revision,
                 .width = finite_float(segment_set.width, std::format("Scene viewport segment set \"{}\" width", name)),
                 .width_mode = viewport_segment_width_mode_from_u32(segment_set.width_mode, std::format("Scene viewport segment set \"{}\"", name)),
                 .depth_mode = viewport_segment_depth_mode_from_u32(segment_set.depth_mode, std::format("Scene viewport segment set \"{}\"", name)),
                 .transform = make_transform(segment_set.transform, std::format("Scene viewport segment set \"{}\"", name)),
-                .dynamic = dynamic,
             };
 
             const std::span<const SpectraSceneViewportSegment> segments = abi_span(segment_set.segments, std::format("Scene viewport segment set \"{}\" segments", name));
@@ -582,7 +559,7 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] Scene::ViewportVoxelGrid make_viewport_voxel_grid(const SpectraSceneViewportVoxelGrid& voxel_grid, const bool dynamic) {
+        [[nodiscard]] Scene::ViewportVoxelGrid make_viewport_voxel_grid(const SpectraSceneViewportVoxelGrid& voxel_grid) {
             const std::string name = abi_string(voxel_grid.name, "Scene viewport voxel grid name", false);
             return Scene::ViewportVoxelGrid{
                 .name = name,
@@ -598,8 +575,6 @@ namespace spectra::scene {
                 .buffer_id = voxel_grid.buffer_id,
                 .source_byte_size = voxel_grid.source_byte_size,
                 .index_count = voxel_grid.index_count,
-                .revision = voxel_grid.revision,
-                .dynamic = dynamic,
             };
         }
 
@@ -627,11 +602,11 @@ namespace spectra::scene {
             if (!material_names.contains(primitive.material_name)) throw std::runtime_error(std::format("Scene {} \"{}\" references unknown material \"{}\"", kind, primitive.name, primitive.material_name));
         }
 
-        void append_debug_attachments(Scene::DebugAttachmentSet& attachments, const SpectraSceneItems& items, const bool dynamic, const std::string_view context) {
+        void append_debug_attachments(Scene::DebugAttachmentSet& attachments, const SpectraSceneItems& items, const std::string_view context) {
             for (const SpectraSceneViewportSegmentSet& segment_set_view : abi_span(items.viewport_segment_sets, std::format("{} viewport segment sets", context)))
-                attachments.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, dynamic));
+                attachments.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view));
             for (const SpectraSceneViewportVoxelGrid& voxel_grid_view : abi_span(items.viewport_voxel_grids, std::format("{} viewport voxel grids", context)))
-                attachments.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view, dynamic));
+                attachments.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view));
         }
 
         void append_document_view(Scene::Document& document, const SpectraSceneDocumentView& view, std::set<std::string>& material_names, std::set<std::string>& light_names) {
@@ -658,11 +633,11 @@ namespace spectra::scene {
                 document.lights.push_back(std::move(light));
             }
             for (const SpectraSceneCamera& camera_view : abi_span(view.items.cameras, "Scene document cameras")) document.cameras.push_back(make_camera(camera_view));
-            for (const SpectraSceneMesh& mesh_view : abi_span(view.items.meshes, "Scene document meshes")) document.meshes.push_back(make_mesh(mesh_view, false));
-            for (const SpectraSceneSphere& sphere_view : abi_span(view.items.spheres, "Scene document spheres")) document.spheres.push_back(make_sphere(sphere_view, false));
-            for (const SpectraScenePointCloud& point_cloud_view : abi_span(view.items.point_clouds, "Scene document point clouds")) document.point_clouds.push_back(make_point_cloud(point_cloud_view, false));
-            for (const SpectraSceneVolume& volume_view : abi_span(view.items.volumes, "Scene document volumes")) document.volumes.push_back(make_volume(volume_view, false));
-            append_debug_attachments(document.debug_attachments, view.items, false, "Scene document debug attachments");
+            for (const SpectraSceneMesh& mesh_view : abi_span(view.items.meshes, "Scene document meshes")) document.meshes.push_back(make_mesh(mesh_view));
+            for (const SpectraSceneSphere& sphere_view : abi_span(view.items.spheres, "Scene document spheres")) document.spheres.push_back(make_sphere(sphere_view));
+            for (const SpectraScenePointCloud& point_cloud_view : abi_span(view.items.point_clouds, "Scene document point clouds")) document.point_clouds.push_back(make_point_cloud(point_cloud_view));
+            for (const SpectraSceneVolume& volume_view : abi_span(view.items.volumes, "Scene document volumes")) document.volumes.push_back(make_volume(volume_view));
+            append_debug_attachments(document.debug_attachments, view.items, "Scene document debug attachments");
 
             for (std::size_t index = mesh_begin; index < document.meshes.size(); ++index) require_material_reference(document.meshes[index], material_names, "mesh");
             for (std::size_t index = sphere_begin; index < document.spheres.size(); ++index) require_material_reference(document.spheres[index], material_names, "sphere");
@@ -675,26 +650,26 @@ namespace spectra::scene {
             Scene::FrameSnapshot snapshot{.cursor = Scene::make_frame_cursor(frame)};
             for (const SpectraSceneCamera& camera_view : abi_span(view.items.cameras, "Scene frame cameras")) snapshot.cameras.push_back(make_camera(camera_view));
             for (const SpectraSceneMesh& mesh_view : abi_span(view.items.meshes, "Scene frame meshes")) {
-                Scene::Mesh mesh = make_mesh(mesh_view, true);
+                Scene::Mesh mesh = make_mesh(mesh_view);
                 require_material_reference(mesh, material_names, "mesh");
                 snapshot.meshes.push_back(std::move(mesh));
             }
             for (const SpectraSceneSphere& sphere_view : abi_span(view.items.spheres, "Scene frame spheres")) {
-                Scene::Sphere sphere = make_sphere(sphere_view, true);
+                Scene::Sphere sphere = make_sphere(sphere_view);
                 require_material_reference(sphere, material_names, "sphere");
                 snapshot.spheres.push_back(std::move(sphere));
             }
             for (const SpectraScenePointCloud& point_cloud_view : abi_span(view.items.point_clouds, "Scene frame point clouds")) {
-                Scene::PointCloud point_cloud = make_point_cloud(point_cloud_view, true);
+                Scene::PointCloud point_cloud = make_point_cloud(point_cloud_view);
                 require_material_reference(point_cloud, material_names, "point cloud");
                 snapshot.point_clouds.push_back(std::move(point_cloud));
             }
             for (const SpectraSceneVolume& volume_view : abi_span(view.items.volumes, "Scene frame volumes")) {
-                Scene::VolumeGrid volume = make_volume(volume_view, true);
+                Scene::VolumeGrid volume = make_volume(volume_view);
                 require_material_reference(volume, material_names, "volume");
                 snapshot.volumes.push_back(std::move(volume));
             }
-            append_debug_attachments(snapshot.debug_attachments, view.items, true, "Scene frame debug attachments");
+            append_debug_attachments(snapshot.debug_attachments, view.items, "Scene frame debug attachments");
             return snapshot;
         }
         [[nodiscard]] ControlOptionKind make_open_option_kind(const std::uint32_t kind, const std::string_view context) {
@@ -994,7 +969,6 @@ namespace spectra::scene {
             return GpuBufferRequest{
                 .kind = scene_gpu_buffer_kind_from_abi(request.kind, context),
                 .byte_size = request.byte_size,
-                .debug_name = abi_string(request.debug_name, std::format("{} GPU buffer debug name", context), true),
             };
         }
 
@@ -1271,7 +1245,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v17");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v18");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -1417,7 +1391,7 @@ namespace spectra::scene {
 
         [[nodiscard]] SpectraSceneFrameView frame(SpectraSceneInstance* instance, const Scene::FrameInfo& frame_info) const {
             SpectraSceneFrameView view{};
-            this->check_result(this->plugin->frame(instance, SpectraSceneFrameInfo{.delta_seconds = frame_info.delta_seconds, .time_seconds = frame_info.time_seconds, .frame_index = frame_info.frame_index}, &view), instance, "Scene plugin frame");
+            this->check_result(this->plugin->frame(instance, SpectraSceneFrameInfo{.time_seconds = frame_info.time_seconds, .frame_index = frame_info.frame_index}, &view), instance, "Scene plugin frame");
             return view;
         }
 

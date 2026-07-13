@@ -23,12 +23,10 @@ namespace spectra {
             // Return pointer to data if _buf_ contents are already in the cache
             Buffer lookupBuffer(buf.data(), buf.size());
             int shardIndex = uint32_t(lookupBuffer.hash) >> (32 - logShards);
-            DCHECK(shardIndex >= 0 && shardIndex < nShards);
             mutex[shardIndex].lock_shared();
             if (auto iter = cache[shardIndex].find(lookupBuffer); iter != cache[shardIndex].end()) {
                 const T* ptr = iter->ptr;
                 mutex[shardIndex].unlock_shared();
-                DCHECK(std::memcmp(buf.data(), iter->ptr, buf.size() * sizeof(T)) == 0);
                 return ptr;
             }
 

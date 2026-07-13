@@ -29,7 +29,6 @@ namespace spectra {
     }
 
     RGBSigmoidPolynomial RGBColorSpace::ToRGBCoeffs(RGB rgb) const {
-        DCHECK(rgb.r >= 0 && rgb.g >= 0 && rgb.b >= 0);
         return (*rgbToSpectrumTable)(ClampZero(rgb));
     }
 

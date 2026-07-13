@@ -99,7 +99,7 @@ namespace spectra {
         // Choose albedo values of the diffusion profile discretization
         for (int i = 0; i < t->rhoSamples.size(); ++i) t->rhoSamples[i] = (1 - FastExp(-8 * i / (Float) (t->rhoSamples.size() - 1))) / (1 - FastExp(-8));
 
-        ParallelFor(0, t->rhoSamples.size(), [&](int i) {
+        ParallelFor(0, t->rhoSamples.size(), [&](int64_t i) {
             // Compute the diffusion profile for the _i_th albedo sample
             // Compute scattering profile for chosen albedo $\rho$
             size_t nSamples = t->radiusSamples.size();

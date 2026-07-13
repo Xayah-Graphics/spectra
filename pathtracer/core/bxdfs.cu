@@ -66,7 +66,6 @@ namespace spectra {
                 // Compute PDF of rough dielectric reflection
                 pdf = mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm)) * pr / (pr + pt);
 
-                DCHECK(!IsNaN(pdf));
                 SampledSpectrum f(mfDistrib.D(wm) * mfDistrib.G(wo, wi) * R / (4 * CosTheta(wi) * CosTheta(wo)));
                 return BSDFSample(f, wi, pdf, GlossyReflection);
             } else {
@@ -177,7 +176,6 @@ namespace spectra {
 
         static const Float SqrtPiOver8 = 0.626657069f;
         s                              = SqrtPiOver8 * (0.265f * beta_n + 1.194f * Sqr(beta_n) + 5.372f * Pow<22>(beta_n));
-        DCHECK(!IsNaN(s));
 
         sin2kAlpha[0] = std::sin(Radians(alpha));
         cos2kAlpha[0] = SafeSqrt(1 - Sqr(sin2kAlpha[0]));
@@ -245,7 +243,6 @@ namespace spectra {
         fsum += Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * ap[pMax] / (2 * Pi);
 
         if (AbsCosTheta(wi) > 0) fsum /= AbsCosTheta(wi);
-        DCHECK(!IsInf(fsum.Average()) && !IsNaN(fsum.Average()));
         return fsum;
     }
 
@@ -659,7 +656,6 @@ namespace spectra {
 
                 jacobian.shape.size() == 1 && jacobian.shape[0] == 1 && jacobian.dtype == Tensor::UInt8)) {
             throw std::runtime_error(diagnostics::Format("%s: invalid BRDF file structure.", filename));
-            return nullptr;
         }
 
         MeasuredBxDFData* brdf = alloc.new_object<MeasuredBxDFData>(alloc);
@@ -811,7 +807,6 @@ namespace spectra {
     __host__ __device__ SampledSpectrum BxDF::rho(Vector3f wo, pstd::span<const Float> uc, pstd::span<const Point2f> u2) const {
         if (wo.z == 0) return {};
         SampledSpectrum r(0.);
-        DCHECK_EQ(uc.size(), u2.size());
         for (size_t i = 0; i < uc.size(); ++i) {
             // Compute estimate of $\rho_\roman{hd}$
             pstd::optional<BSDFSample> bs = Sample_f(wo, uc[i], u2[i]);
@@ -821,8 +816,6 @@ namespace spectra {
     }
 
     SampledSpectrum BxDF::rho(pstd::span<const Point2f> u1, pstd::span<const Float> uc, pstd::span<const Point2f> u2) const {
-        DCHECK_EQ(uc.size(), u1.size());
-        DCHECK_EQ(u1.size(), u2.size());
         SampledSpectrum r(0.f);
         for (size_t i = 0; i < uc.size(); ++i) {
             // Compute estimate of $\rho_\roman{hh}$

@@ -187,13 +187,6 @@ void LUPSolve(double** const A, const int* P, const double* b, int N, double* x)
     }
 }
 
-#if defined(_OPENMP)
-#define RGB2SPEC_USE_OPENMP 1
-#elif defined(__APPLE__)
-#define RGB2SPEC_USE_GCD 1
-#include <dispatch/dispatch.h>
-#endif
-
 /// Discretization of quadrature scheme
 #define CIE_FINE_SAMPLES ((CIE_SAMPLES - 1) * 3 + 1)
 #define RGB2SPEC_EPSILON 1e-4

@@ -65,7 +65,7 @@ namespace spectra {
             if (!lightBounds)
                 infiniteLights.push_back(light);
             else if (lightBounds->phi > 0) {
-                bvhLights.push_back(std::make_pair(i, *lightBounds));
+                bvhLights.emplace_back(static_cast<int>(i), *lightBounds);
                 allLightBounds = Union(allLightBounds, lightBounds->bounds);
             }
         }
@@ -73,10 +73,9 @@ namespace spectra {
     }
 
     std::pair<int, LightBounds> BVHLightSampler::buildBVH(std::vector<std::pair<int, LightBounds>>& bvhLights, int start, int end, uint32_t bitTrail, int depth) {
-        DCHECK_LT(start, end);
         // Initialize leaf node if only a single light remains
         if (end - start == 1) {
-            int nodeIndex = nodes.size();
+            int nodeIndex = static_cast<int>(nodes.size());
             CompactLightBounds cb(bvhLights[start].second, allLightBounds);
             int lightIndex = bvhLights[start].first;
             nodes.push_back(LightBVHNode::MakeLeaf(lightIndex, cb));
@@ -105,8 +104,6 @@ namespace spectra {
                 Point3f pc = bvhLights[i].second.Centroid();
                 int b      = nBuckets * centroidBounds.Offset(pc)[dim];
                 if (b == nBuckets) b = nBuckets - 1;
-                DCHECK_GE(b, 0);
-                DCHECK_LT(b, nBuckets);
                 bucketLightBounds[b] = Union(bucketLightBounds[b], bvhLights[i].second);
             }
 
@@ -140,13 +137,10 @@ namespace spectra {
             const auto* pmid = std::partition(&bvhLights[start], &bvhLights[end - 1] + 1, [=](const std::pair<int, LightBounds>& l) {
                 int b = nBuckets * centroidBounds.Offset(l.second.Centroid())[minCostSplitDim];
                 if (b == nBuckets) b = nBuckets - 1;
-                DCHECK_GE(b, 0);
-                DCHECK_LT(b, nBuckets);
                 return b <= minCostSplitBucket;
             });
             mid              = pmid - &bvhLights[0];
             if (mid == start || mid == end) mid = (start + end) / 2;
-            DCHECK(mid > start && mid < end);
         }
 
         // Allocate interior _LightBVHNode_ and recursively initialize children
@@ -154,7 +148,6 @@ namespace spectra {
         nodes.push_back(LightBVHNode());
         CHECK_LT(depth, 64);
         std::pair<int, LightBounds> child0 = buildBVH(bvhLights, start, mid, bitTrail, depth + 1);
-        DCHECK_EQ(nodeIndex + 1, child0.first);
         std::pair<int, LightBounds> child1 = buildBVH(bvhLights, mid, end, bitTrail | (1u << depth), depth + 1);
 
         // Initialize interior node and return node index and bounds

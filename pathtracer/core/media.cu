@@ -16,11 +16,6 @@ namespace spectra {
         return Dispatch(pdf);
     }
 
-    __host__ __device__ pstd::optional<RayMajorantSegment> RayMajorantIterator::Next() {
-        auto next = [](auto ptr) { return ptr->Next(); };
-        return Dispatch(next);
-    }
-
     __host__ __device__ MediumProperties Medium::SamplePoint(Point3f p, const SampledWavelengths& lambda) const {
         auto sample = [&](auto ptr) { return ptr->SamplePoint(p, lambda); };
         return Dispatch(sample);

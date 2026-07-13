@@ -232,14 +232,6 @@ namespace spectra::diagnostics {
 #define SPECTRA_CHECK_LT(A, B) SPECTRA_CHECK_IMPL(A, B, <)
 #define SPECTRA_CHECK_LE(A, B) SPECTRA_CHECK_IMPL(A, B, <=)
 
-#define SPECTRA_DCHECK(EXPR)    ((void) 0)
-#define SPECTRA_DCHECK_EQ(A, B) ((void) 0)
-#define SPECTRA_DCHECK_NE(A, B) ((void) 0)
-#define SPECTRA_DCHECK_GT(A, B) ((void) 0)
-#define SPECTRA_DCHECK_GE(A, B) ((void) 0)
-#define SPECTRA_DCHECK_LT(A, B) ((void) 0)
-#define SPECTRA_DCHECK_LE(A, B) ((void) 0)
-
 #define SPECTRA_CUDA_CHECK(EXPR)                                                                                                          \
     do {                                                                                                                                  \
         cudaError_t spectra_cuda_result = (EXPR);                                                                                         \

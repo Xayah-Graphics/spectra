@@ -576,10 +576,6 @@ namespace spectra {
                         continue;
                     }
                     z = Clamp(zp, 0, thickness);
-                    if (z == 0)
-                        DCHECK_LT(w.z, 0);
-                    else
-                        DCHECK_GT(w.z, 0);
                 } else {
                     // Advance to the other layer interface
                     z = (z == thickness) ? 0 : thickness;
@@ -782,7 +778,6 @@ namespace spectra {
         __host__ __device__ static Float Mp(Float cosTheta_i, Float cosTheta_o, Float sinTheta_i, Float sinTheta_o, Float v) {
             Float a = cosTheta_i * cosTheta_o / v, b = sinTheta_i * sinTheta_o / v;
             Float mp = (v <= .1) ? (FastExp(LogI0(a) - b - 1 / v + 0.6931f + std::log(1 / (2 * v)))) : (FastExp(-b) * I0(a)) / (std::sinh(1 / v) * 2 * v);
-            DCHECK(!IsInf(mp) && !IsNaN(mp));
             return mp;
         }
 

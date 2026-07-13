@@ -10,19 +10,7 @@
 #include <utility>
 
 #if defined(__CUDA_ARCH__)
-#if defined(SPECTRA_IS_WINDOWS)
-#if (__CUDA_ARCH__ < 700)
-#define SPECTRA_USE_LEGACY_CUDA_ATOMICS
-#endif
-#else
-#if (__CUDA_ARCH__ < 600)
-#define SPECTRA_USE_LEGACY_CUDA_ATOMICS
-#endif
-#endif // SPECTRA_IS_WINDOWS
-
-#ifndef SPECTRA_USE_LEGACY_CUDA_ATOMICS
 #include <cuda/atomic>
-#endif
 #endif // __CUDA_ARCH__
 
 namespace spectra {
@@ -37,21 +25,13 @@ namespace spectra {
 
         WorkQueue& operator=(const WorkQueue& w) {
             SOA<WorkItem>::operator=(w);
-#if defined(__CUDA_ARCH__) && defined(SPECTRA_USE_LEGACY_CUDA_ATOMICS)
-            size = w.size;
-#else
             size.store(w.size.load());
-#endif
             return *this;
         }
 
         __host__ __device__ int Size() const {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
-            return size;
-#else
             return size.load(cuda::std::memory_order_relaxed);
-#endif
 #else
             return size.load(std::memory_order_relaxed);
 #endif
@@ -59,11 +39,7 @@ namespace spectra {
 
         __host__ __device__ void Reset() {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
-            size = 0;
-#else
             size.store(0, cuda::std::memory_order_relaxed);
-#endif
 #else
             size.store(0, std::memory_order_relaxed);
 #endif
@@ -79,11 +55,7 @@ namespace spectra {
         // WorkQueue Protected Methods
         __host__ __device__ int AllocateEntry() {
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
-            return atomicAdd(&size, 1);
-#else
             return size.fetch_add(1, cuda::std::memory_order_relaxed);
-#endif
 #else
             return size.fetch_add(1, std::memory_order_relaxed);
 #endif
@@ -92,11 +64,7 @@ namespace spectra {
     private:
         // WorkQueue Private Members
 #if defined(__CUDA_ARCH__)
-#ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
-        int size = 0;
-#else
         cuda::atomic<int, cuda::thread_scope_device> size{0};
-#endif
 #else
         std::atomic<int> size{0};
 #endif // __CUDA_ARCH__

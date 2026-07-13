@@ -60,7 +60,6 @@ namespace pstd {
                 return upstream->allocate(bytes, align);
 
             if ((current_pos % align) != 0) current_pos += align - (current_pos % align);
-            DCHECK_EQ(0, current_pos % align);
 
             if (!current || current_pos + bytes > current->size) {
                 current     = allocate_block(block_size);

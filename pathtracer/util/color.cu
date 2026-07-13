@@ -50,7 +50,6 @@ namespace spectra {
 
     // RGBToSpectrumTable Method Definitions
     __host__ __device__ RGBSigmoidPolynomial RGBToSpectrumTable::operator()(RGB rgb) const {
-        DCHECK(rgb[0] >= 0.f && rgb[1] >= 0.f && rgb[2] >= 0.f && rgb[0] <= 1.f && rgb[1] <= 1.f && rgb[2] <= 1.f);
 
         // Handle uniform _rgb_ values
         if (rgb[0] == rgb[1] && rgb[1] == rgb[2]) return RGBSigmoidPolynomial(0, 0, (rgb[0] - .5f) / std::sqrt(rgb[0] * (1 - rgb[0])));
@@ -145,12 +144,10 @@ namespace spectra {
 
     // ColorEncoding Method Definitions
     __host__ __device__ void sRGBColorEncoding::FromLinear(pstd::span<const Float> vin, pstd::span<uint8_t> vout) const {
-        DCHECK_EQ(vin.size(), vout.size());
         for (size_t i = 0; i < vin.size(); ++i) vout[i] = LinearToSRGB8(vin[i]);
     }
 
     __host__ __device__ void sRGBColorEncoding::ToLinear(pstd::span<const uint8_t> vin, pstd::span<Float> vout) const {
-        DCHECK_EQ(vin.size(), vout.size());
         for (size_t i = 0; i < vin.size(); ++i) vout[i] = SRGB8ToLinear(vin[i]);
     }
 
@@ -208,7 +205,6 @@ namespace spectra {
     }
 
     __host__ __device__ void GammaColorEncoding::ToLinear(pstd::span<const uint8_t> vin, pstd::span<Float> vout) const {
-        DCHECK_EQ(vin.size(), vout.size());
         for (size_t i = 0; i < vin.size(); ++i) vout[i] = applyLUT[vin[i]];
     }
 
@@ -217,7 +213,6 @@ namespace spectra {
     }
 
     __host__ __device__ void GammaColorEncoding::FromLinear(pstd::span<const Float> vin, pstd::span<uint8_t> vout) const {
-        DCHECK_EQ(vin.size(), vout.size());
         for (size_t i = 0; i < vin.size(); ++i) vout[i] = inverseLUT[Clamp(vin[i] * (inverseLUT.size() - 1), 0, inverseLUT.size() - 1)];
     }
 

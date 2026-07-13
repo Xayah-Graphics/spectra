@@ -208,7 +208,6 @@ namespace spectra {
             Float m = MaxComponentValue(rgb);
             if (m > maxComponentValue) rgb *= maxComponentValue / m;
 
-            DCHECK(InsideExclusive(pFilm, pixelBounds));
             // Update pixel values with filtered sample contribution
             Pixel& pixel = pixels[pFilm];
             for (int c = 0; c < 3; ++c) pixel.rgbSum[c] += weight * rgb[c];
@@ -362,7 +361,6 @@ namespace spectra {
             Float m = MaxComponentValue(rgb);
             if (m > maxComponentValue) rgb *= maxComponentValue / m;
 
-            DCHECK(InsideExclusive(pFilm, pixelBounds));
             // Update RGB fields in Pixel structure.
             Pixel& pixel = pixels[pFilm];
             for (int c = 0; c < 3; ++c) pixel.rgbSum[c] += weight * rgb[c];

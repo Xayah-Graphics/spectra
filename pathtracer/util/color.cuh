@@ -67,12 +67,10 @@ namespace spectra {
         }
 
         __host__ __device__ RGB operator*(Float a) const {
-            DCHECK(!IsNaN(a));
             return {a * r, a * g, a * b};
         }
 
         __host__ __device__ RGB& operator*=(Float a) {
-            DCHECK(!IsNaN(a));
             r *= a;
             g *= a;
             b *= a;
@@ -96,8 +94,6 @@ namespace spectra {
         }
 
         __host__ __device__ RGB& operator/=(Float a) {
-            DCHECK(!IsNaN(a));
-            DCHECK_NE(a, 0);
             r /= a;
             g /= a;
             b /= a;
@@ -126,7 +122,6 @@ namespace spectra {
         }
 
         __host__ __device__ Float operator[](int c) const {
-            DCHECK(c >= 0 && c < 3);
             if (c == 0)
                 return r;
             else if (c == 1)
@@ -135,7 +130,6 @@ namespace spectra {
         }
 
         __host__ __device__ Float& operator[](int c) {
-            DCHECK(c >= 0 && c < 3);
             if (c == 0)
                 return r;
             else if (c == 1)
@@ -235,12 +229,10 @@ namespace spectra {
         }
 
         __host__ __device__ XYZ operator*(Float a) const {
-            DCHECK(!IsNaN(a));
             return {a * X, a * Y, a * Z};
         }
 
         __host__ __device__ XYZ& operator*=(Float a) {
-            DCHECK(!IsNaN(a));
             X *= a;
             Y *= a;
             Z *= a;
@@ -260,8 +252,6 @@ namespace spectra {
         }
 
         __host__ __device__ XYZ& operator/=(Float a) {
-            DCHECK(!IsNaN(a));
-            DCHECK_NE(a, 0);
             X /= a;
             Y /= a;
             Z /= a;
@@ -286,7 +276,6 @@ namespace spectra {
         }
 
         __host__ __device__ Float operator[](int c) const {
-            DCHECK(c >= 0 && c < 3);
             if (c == 0)
                 return X;
             else if (c == 1)
@@ -295,7 +284,6 @@ namespace spectra {
         }
 
         __host__ __device__ Float& operator[](int c) {
-            DCHECK(c >= 0 && c < 3);
             if (c == 0)
                 return X;
             else if (c == 1)
@@ -409,7 +397,6 @@ namespace spectra {
     class LinearColorEncoding {
     public:
         __host__ __device__ void ToLinear(pstd::span<const uint8_t> vin, pstd::span<Float> vout) const {
-            DCHECK_EQ(vin.size(), vout.size());
             for (size_t i = 0; i < vin.size(); ++i) vout[i] = vin[i] / 255.f;
         }
 
@@ -418,7 +405,6 @@ namespace spectra {
         }
 
         __host__ __device__ void FromLinear(pstd::span<const Float> vin, pstd::span<uint8_t> vout) const {
-            DCHECK_EQ(vin.size(), vout.size());
             for (size_t i = 0; i < vin.size(); ++i) vout[i] = uint8_t(Clamp(vin[i] * 255.f + 0.5f, 0, 255));
         }
     };

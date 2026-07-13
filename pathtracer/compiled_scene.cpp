@@ -149,7 +149,7 @@ namespace spectra::pathtracer {
 
         class SceneCompiler {
         public:
-            SceneCompiler(const scene::Scene::ResolvedScene& sourceScene, CompiledScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
+            SceneCompiler(const scene::Scene::ResolvedScene& sourceScene, CompiledScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride) {}
 
             void Compile() {
                 const SceneSupportReport supportReport = AnalyzeSceneSupport(this->source);
@@ -659,7 +659,6 @@ namespace spectra::pathtracer {
             CompiledScene& compiled;
             RenderConfig renderConfig;
             std::optional<Point2i> filmResolutionOverride{};
-            FileLoc location{};
             bool renderSettingsReady{false};
             Entity samplerEntity{};
             CameraEntity cameraEntity{};
@@ -693,7 +692,7 @@ namespace spectra::pathtracer {
         static const std::set<std::string> supportedSamplers{"zsobol", "paddedsobol", "halton", "sobol", "pmj02bn", "independent", "stratified"};
         static const std::set<std::string> supportedIntegrators{"path", "volpath"};
         static const std::set<std::string> supportedAccelerators{"bvh"};
-        static const std::set<std::string> supportedMaterials{"none", "interface", "diffuse", "coateddiffuse", "coatedconductor", "diffusetransmission", "dielectric", "thindielectric", "hair", "conductor", "measured", "subsurface", "mix"};
+        static const std::set<std::string> supportedMaterials{"interface", "diffuse", "coateddiffuse", "coatedconductor", "diffusetransmission", "dielectric", "thindielectric", "hair", "conductor", "measured", "subsurface", "mix"};
         static const std::set<std::string> supportedTextures{"constant", "scale", "mix", "directionmix", "bilerp", "imagemap", "checkerboard", "dots", "fbm", "wrinkled", "windy", "marble", "ptex"};
         static const std::set<std::string> supportedMedia{"homogeneous", "uniformgrid", "rgbgrid", "cloud", "nanovdb"};
         static const std::set<std::string> supportedLights{"point", "spot", "goniometric", "projection", "distant", "infinite"};
@@ -701,7 +700,7 @@ namespace spectra::pathtracer {
         static const std::set<std::string> supportedShapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
         static const std::set<std::string> supportedLightSamplers{"uniform", "power", "bvh", "exhaustive"};
 
-        SceneSupportReport report{.target = "Spectra Pathtracer"};
+        SceneSupportReport report{};
         ValidateEntityType(&report, scene.render_settings.filter, supportedFilters, "pixel filter");
         ValidateEntityType(&report, scene.render_settings.film, supportedFilms, "film");
         ValidateEntityType(&report, scene.render_settings.camera, supportedCameras, "camera");
@@ -777,7 +776,4 @@ namespace spectra::pathtracer {
         return compiled;
     }
 
-    std::unique_ptr<CompiledScene> CompileScene(const scene::Scene::ResolvedScene& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource) {
-        return CompileScene(scene, config, memoryResource, {});
-    }
 } // namespace spectra::pathtracer

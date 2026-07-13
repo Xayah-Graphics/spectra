@@ -589,7 +589,7 @@ namespace spectra {
         // Compute exit pupil bounds at sampled points on the film
         int nSamples = 64;
         exitPupilBounds.resize(nSamples);
-        ParallelFor(0, nSamples, [&](int i) {
+        ParallelFor(0, nSamples, [&](int64_t i) {
             Float r0           = (Float) i / nSamples * film.Diagonal() / 2;
             Float r1           = (Float) (i + 1) / nSamples * film.Diagonal() / 2;
             exitPupilBounds[i] = BoundExitPupil(r0, r1);
@@ -622,7 +622,6 @@ namespace spectra {
                 Float zCenter = elementZ + element.curvatureRadius;
                 if (!IntersectSphericalElement(radius, zCenter, rLens, &t, &n)) return 0;
             }
-            DCHECK_GE(t, 0);
 
             // Test intersection point against element aperture
             Point3f pHit = rLens(t);
@@ -813,255 +812,6 @@ namespace spectra {
         return 1;
     }
 
-    void RealisticCamera::DrawLensSystem() const {
-        Float sumz = -LensFrontZ();
-        Float z    = sumz;
-        for (size_t i = 0; i < elementInterfaces.size(); ++i) {
-            const LensElementInterface& element = elementInterfaces[i];
-            Float r                             = element.curvatureRadius;
-            if (r == 0) {
-                // stop
-                printf("{Thick, Line[{{%f, %f}, {%f, %f}}], ", z, element.apertureRadius, z, 2 * element.apertureRadius);
-                printf("Line[{{%f, %f}, {%f, %f}}]}, ", z, -element.apertureRadius, z, -2 * element.apertureRadius);
-            } else {
-                Float theta = std::abs(SafeASin(element.apertureRadius / r));
-                if (r > 0) {
-                    // convex as seen from front of lens
-                    Float t0 = Pi - theta;
-                    Float t1 = Pi + theta;
-                    printf("Circle[{%f, 0}, %f, {%f, %f}], ", z + r, r, t0, t1);
-                } else {
-                    // concave as seen from front of lens
-                    Float t0 = -theta;
-                    Float t1 = theta;
-                    printf("Circle[{%f, 0}, %f, {%f, %f}], ", z + r, -r, t0, t1);
-                }
-                if (element.eta != 0 && element.eta != 1) {
-                    // connect top/bottom to next element
-                    CHECK_LT(i + 1, elementInterfaces.size());
-                    Float nextApertureRadius = elementInterfaces[i + 1].apertureRadius;
-                    Float h                  = std::max(element.apertureRadius, nextApertureRadius);
-                    Float hlow               = std::min(element.apertureRadius, nextApertureRadius);
-
-                    Float zp0, zp1;
-                    if (r > 0) {
-                        zp0 = z + element.curvatureRadius - element.apertureRadius / std::tan(theta);
-                    } else {
-                        zp0 = z + element.curvatureRadius + element.apertureRadius / std::tan(theta);
-                    }
-
-                    Float nextCurvatureRadius = elementInterfaces[i + 1].curvatureRadius;
-                    Float nextTheta           = std::abs(SafeASin(nextApertureRadius / nextCurvatureRadius));
-                    if (nextCurvatureRadius > 0) {
-                        zp1 = z + element.thickness + nextCurvatureRadius - nextApertureRadius / std::tan(nextTheta);
-                    } else {
-                        zp1 = z + element.thickness + nextCurvatureRadius + nextApertureRadius / std::tan(nextTheta);
-                    }
-
-                    // Connect tops
-                    printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, h, zp1, h);
-                    printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, -h, zp1, -h);
-
-                    // vertical lines when needed to close up the element profile
-                    if (element.apertureRadius < nextApertureRadius) {
-                        printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, h, zp0, hlow);
-                        printf("Line[{{%f, %f}, {%f, %f}}], ", zp0, -h, zp0, -hlow);
-                    } else if (element.apertureRadius > nextApertureRadius) {
-                        printf("Line[{{%f, %f}, {%f, %f}}], ", zp1, h, zp1, hlow);
-                        printf("Line[{{%f, %f}, {%f, %f}}], ", zp1, -h, zp1, -hlow);
-                    }
-                }
-            }
-            z += element.thickness;
-        }
-
-        // 24mm height for 35mm film
-        printf("Line[{{0, -.012}, {0, .012}}], ");
-        // optical axis
-        printf("Line[{{0, 0}, {%f, 0}}] ", 1.2f * sumz);
-    }
-
-    void RealisticCamera::DrawRayPathFromFilm(const Ray& r, bool arrow, bool toOpticalIntercept) const {
-        Float elementZ = 0;
-        // Transform _ray_ from camera to lens system space
-        static const Transform LensFromCamera = Scale(1, 1, -1);
-        Ray ray                               = LensFromCamera(r);
-        printf("{ ");
-        if (TraceLensesFromFilm(r, nullptr) == 0) {
-            printf("Dashed, RGBColor[.8, .5, .5]");
-        } else
-            printf("RGBColor[.5, .5, .8]");
-
-        for (int i = elementInterfaces.size() - 1; i >= 0; --i) {
-            const LensElementInterface& element = elementInterfaces[i];
-            elementZ -= element.thickness;
-            bool isStop = (element.curvatureRadius == 0);
-            // Compute intersection of ray with lens element
-            Float t;
-            Normal3f n;
-            if (isStop)
-                t = -(ray.o.z - elementZ) / ray.d.z;
-            else {
-                Float radius  = element.curvatureRadius;
-                Float zCenter = elementZ + element.curvatureRadius;
-                if (!IntersectSphericalElement(radius, zCenter, ray, &t, &n)) goto done;
-            }
-            CHECK_GE(t, 0);
-
-            printf(", Line[{{%f, %f}, {%f, %f}}]", ray.o.z, ray.o.x, ray(t).z, ray(t).x);
-
-            // Test intersection point against element aperture
-            Point3f pHit          = ray(t);
-            Float r2              = pHit.x * pHit.x + pHit.y * pHit.y;
-            Float apertureRadius2 = element.apertureRadius * element.apertureRadius;
-            if (r2 > apertureRadius2) goto done;
-            ray.o = pHit;
-
-            // Update ray path for element interface interaction
-            if (!isStop) {
-                Vector3f wt;
-                Float eta_i = element.eta;
-                Float eta_t = (i > 0 && elementInterfaces[i - 1].eta != 0) ? elementInterfaces[i - 1].eta : 1;
-                if (!Refract(Normalize(-ray.d), n, eta_t / eta_i, nullptr, &wt)) goto done;
-                ray.d = wt;
-            }
-        }
-
-        ray.d = Normalize(ray.d);
-        {
-            Float ta = std::abs(elementZ / 4);
-            if (toOpticalIntercept) {
-                ta = -ray.o.x / ray.d.x;
-                printf(", Point[{%f, %f}]", ray(ta).z, ray(ta).x);
-            }
-            printf(", %s[{{%f, %f}, {%f, %f}}]", arrow ? "Arrow" : "Line", ray.o.z, ray.o.x, ray(ta).z, ray(ta).x);
-
-            // overdraw the optical axis if needed...
-            if (toOpticalIntercept) printf(", Line[{{%f, 0}, {%f, 0}}]", ray.o.z, ray(ta).z * 1.05f);
-        }
-
-    done:
-        printf("}");
-    }
-
-    void RealisticCamera::DrawRayPathFromScene(const Ray& r, bool arrow, bool toOpticalIntercept) const {
-        Float elementZ = LensFrontZ() * -1;
-
-        // Transform _ray_ from camera to lens system space
-        static const Transform LensFromCamera = Scale(1, 1, -1);
-        Ray ray                               = LensFromCamera(r);
-        for (size_t i = 0; i < elementInterfaces.size(); ++i) {
-            const LensElementInterface& element = elementInterfaces[i];
-            bool isStop                         = (element.curvatureRadius == 0);
-            // Compute intersection of ray with lens element
-            Float t;
-            Normal3f n;
-            if (isStop)
-                t = -(ray.o.z - elementZ) / ray.d.z;
-            else {
-                Float radius  = element.curvatureRadius;
-                Float zCenter = elementZ + element.curvatureRadius;
-                if (!IntersectSphericalElement(radius, zCenter, ray, &t, &n)) return;
-            }
-            CHECK_GE(t, 0.f);
-
-            printf("Line[{{%f, %f}, {%f, %f}}],", ray.o.z, ray.o.x, ray(t).z, ray(t).x);
-
-            // Test intersection point against element aperture
-            Point3f pHit          = ray(t);
-            Float r2              = pHit.x * pHit.x + pHit.y * pHit.y;
-            Float apertureRadius2 = element.apertureRadius * element.apertureRadius;
-            if (r2 > apertureRadius2) return;
-            ray.o = pHit;
-
-            // Update ray path for from-scene element interface interaction
-            if (!isStop) {
-                Vector3f wt;
-                Float eta_i = (i == 0 || elementInterfaces[i - 1].eta == 0.f) ? 1.f : elementInterfaces[i - 1].eta;
-                Float eta_t = (elementInterfaces[i].eta != 0.f) ? elementInterfaces[i].eta : 1.f;
-                if (!Refract(Normalize(-ray.d), n, eta_t / eta_i, nullptr, &wt)) return;
-                ray.d = wt;
-            }
-            elementZ += element.thickness;
-        }
-
-        // go to the film plane by default
-        {
-            Float ta = -ray.o.z / ray.d.z;
-            if (toOpticalIntercept) {
-                ta = -ray.o.x / ray.d.x;
-                printf("Point[{%f, %f}], ", ray(ta).z, ray(ta).x);
-            }
-            printf("%s[{{%f, %f}, {%f, %f}}]", arrow ? "Arrow" : "Line", ray.o.z, ray.o.x, ray(ta).z, ray(ta).x);
-        }
-    }
-
-    void RealisticCamera::RenderExitPupil(Float sx, Float sy, const char* filename) const {
-        Point3f pFilm(sx, sy, 0);
-
-        const int nSamples = 2048;
-        Image image(PixelFormat::Float, {nSamples, nSamples}, {"Y"});
-
-        for (int y = 0; y < nSamples; ++y) {
-            Float fy = (Float) y / (Float) (nSamples - 1);
-            Float ly = Lerp(fy, -RearElementRadius(), RearElementRadius());
-            for (int x = 0; x < nSamples; ++x) {
-                Float fx = (Float) x / (Float) (nSamples - 1);
-                Float lx = Lerp(fx, -RearElementRadius(), RearElementRadius());
-
-                Point3f pRear(lx, ly, LensRearZ());
-
-                if (lx * lx + ly * ly > RearElementRadius() * RearElementRadius())
-                    image.SetChannel({x, y}, 0, 1.);
-                else if (TraceLensesFromFilm(Ray(pFilm, pRear - pFilm), nullptr))
-                    image.SetChannel({x, y}, 0, 0.5);
-                else
-                    image.SetChannel({x, y}, 0, 0.);
-            }
-        }
-
-        image.Write(filename);
-    }
-
-    void RealisticCamera::TestExitPupilBounds() const {
-        Float filmDiagonal = film.Diagonal();
-
-        static RNG rng;
-
-        Float u = rng.Uniform<Float>();
-        Point3f pFilm(u * filmDiagonal / 2, 0, 0);
-
-        Float r              = pFilm.x / (filmDiagonal / 2);
-        int pupilIndex       = std::min<int>(exitPupilBounds.size() - 1, pstd::floor(r * (exitPupilBounds.size() - 1)));
-        Bounds2f pupilBounds = exitPupilBounds[pupilIndex];
-        if (pupilIndex + 1 < (int) exitPupilBounds.size()) pupilBounds = Union(pupilBounds, exitPupilBounds[pupilIndex + 1]);
-
-        // Now, randomly pick points on the aperture and see if any are outside
-        // of pupil bounds...
-        for (int i = 0; i < 1000; ++i) {
-            Point2f u2{rng.Uniform<Float>(), rng.Uniform<Float>()};
-            Point2f pd = SampleUniformDiskConcentric(u2);
-            pd *= RearElementRadius();
-
-            Ray testRay(pFilm, Point3f(pd.x, pd.y, 0.f) - pFilm);
-            Ray testOut;
-            if (!TraceLensesFromFilm(testRay, &testOut)) continue;
-
-            if (!Inside(pd, pupilBounds)) {
-                fprintf(stderr,
-                    "Aha! (%f,%f) went through, but outside bounds (%f,%f) - "
-                    "(%f,%f)\n",
-                    pd.x, pd.y, pupilBounds.pMin[0], pupilBounds.pMin[1], pupilBounds.pMax[0], pupilBounds.pMax[1]);
-                RenderExitPupil((Float) pupilIndex / exitPupilBounds.size() * filmDiagonal / 2.f, 0.f, "low.exr");
-                RenderExitPupil((Float) (pupilIndex + 1) / exitPupilBounds.size() * filmDiagonal / 2.f, 0.f, "high.exr");
-                RenderExitPupil(pFilm.x, 0.f, "mid.exr");
-                exit(0);
-            }
-        }
-        fprintf(stderr, ".");
-    }
-
-
     RealisticCamera* RealisticCamera::Create(const ParameterDictionary& parameters, const CameraTransform& cameraTransform, Film film, Medium medium, const FileLoc* loc, Allocator alloc) {
         CameraBaseParameters cameraBaseParameters(cameraTransform, film, medium, parameters, loc);
 
@@ -1072,20 +822,17 @@ namespace spectra {
 
         if (lensFile.empty()) {
             throw std::runtime_error(diagnostics::Format(loc, "No lens description file supplied!"));
-            return nullptr;
         }
         // Load element data from lens description file
         std::vector<Float> lensParameters = ReadFloatFile(lensFile);
         if (lensParameters.empty()) {
             throw std::runtime_error(diagnostics::Format(loc, "Error reading lens specification file \"%s\".", lensFile));
-            return nullptr;
         }
         if (lensParameters.size() % 4 != 0) {
             throw std::runtime_error(diagnostics::Format(loc,
                 "%s: excess values in lens specification file; "
                 "must be multiple-of-four values, read %d.",
                 lensFile, (int) lensParameters.size()));
-            return nullptr;
         }
 
         int builtinRes = 256;

@@ -16,8 +16,6 @@
 namespace spectra {
     typedef pstd::pmr::polymorphic_allocator<std::byte> Allocator;
 
-    size_t GetCurrentRSS();
-
     class TrackedMemoryResource : public pstd::pmr::memory_resource {
     public:
         TrackedMemoryResource(memory_resource* source = pstd::pmr::get_default_resource()) : source(source) {}

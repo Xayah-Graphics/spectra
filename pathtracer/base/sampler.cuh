@@ -31,11 +31,10 @@ namespace spectra {
     class SobolSampler;
     class StratifiedSampler;
     class ZSobolSampler;
-    class MLTSampler;
 
     // Sampler Definition
     class Sampler : public TaggedPointer< // Sampler Types
-                        PMJ02BNSampler, IndependentSampler, StratifiedSampler, HaltonSampler, PaddedSobolSampler, SobolSampler, ZSobolSampler, MLTSampler
+                        PMJ02BNSampler, IndependentSampler, StratifiedSampler, HaltonSampler, PaddedSobolSampler, SobolSampler, ZSobolSampler
 
                         > {
     public:
@@ -52,8 +51,6 @@ namespace spectra {
         __host__ __device__ Point2f Get2D();
 
         __host__ __device__ Point2f GetPixel2D();
-
-        Sampler Clone(Allocator alloc = {});
     };
 } // namespace spectra
 

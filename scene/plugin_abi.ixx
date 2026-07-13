@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 17u;
+    constexpr std::uint32_t plugin_abi_version = 18u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -146,7 +146,6 @@ export namespace spectra::scene {
         std::uint64_t struct_size{};
         std::uint32_t kind{};
         std::uint64_t byte_size{};
-        const char* debug_name{};
     };
 
     struct SpectraSceneGpuBufferAllocation {
@@ -303,7 +302,6 @@ export namespace spectra::scene {
 
     struct SpectraScenePoint {
         float position[3]{};
-        float normal[3]{};
         float color[4]{};
         float radius{};
     };
@@ -320,7 +318,6 @@ export namespace spectra::scene {
         std::uint64_t point_count{};
         std::uint64_t buffer_id{};
         std::uint64_t source_byte_size{};
-        std::uint64_t revision{};
         const char* material_name{};
         SpectraSceneTransform transform{};
         float bounds_min[3]{};
@@ -340,7 +337,6 @@ export namespace spectra::scene {
 
     struct SpectraSceneVolumeChannel {
         const char* name{};
-        std::uint32_t dimensions[3]{};
         SpectraSceneFloatSpan values{};
         std::uint32_t format{};
         std::uint32_t source_kind{};
@@ -348,7 +344,6 @@ export namespace spectra::scene {
         std::uint64_t buffer_id{};
         std::uintptr_t external_device_pointer{};
         std::uint64_t source_byte_size{};
-        std::uint64_t revision{};
     };
 
     struct SpectraSceneVolumeChannelSpan {
@@ -404,7 +399,6 @@ export namespace spectra::scene {
         std::uint64_t segment_count{};
         std::uint64_t buffer_id{};
         std::uint64_t source_byte_size{};
-        std::uint64_t revision{};
         float width{};
         std::uint32_t width_mode{};
         std::uint32_t depth_mode{};
@@ -430,7 +424,6 @@ export namespace spectra::scene {
         std::uint64_t buffer_id{};
         std::uint64_t source_byte_size{};
         std::uint64_t index_count{};
-        std::uint64_t revision{};
     };
 
     struct SpectraSceneViewportVoxelGridSpan {
@@ -480,7 +473,6 @@ export namespace spectra::scene {
     };
 
     struct SpectraSceneFrameInfo {
-        double delta_seconds{};
         double time_seconds{};
         std::uint64_t frame_index{};
     };

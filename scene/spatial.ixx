@@ -55,7 +55,6 @@ namespace spectra::scene {
         std::array<float, 16> world_to_clip{};
         std::array<float, 16> clip_to_world{};
         CameraFrame frame{};
-        float far_plane{};
     };
 
     export struct ViewportCameraDelta {

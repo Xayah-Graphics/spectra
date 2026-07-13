@@ -221,7 +221,6 @@ namespace spectra {
         }
 
         __host__ __device__ T& operator[](Point2i p) {
-            DCHECK(InsideExclusive(p, extent));
             p.x -= extent.pMin.x;
             p.y -= extent.pMin.y;
             return values[p.x + (extent.pMax.x - extent.pMin.x) * p.y];
@@ -235,7 +234,6 @@ namespace spectra {
             return (*this)[{x, y}];
         }
         __host__ __device__ const T& operator[](Point2i p) const {
-            DCHECK(InsideExclusive(p, extent));
             p.x -= extent.pMin.x;
             p.y -= extent.pMin.y;
             return values[p.x + (extent.pMax.x - extent.pMin.x) * p.y];
@@ -451,12 +449,10 @@ namespace spectra {
         }
 
         __host__ __device__ reference operator[](size_type index) {
-            DCHECK_LT(index, size());
             return begin()[index];
         }
 
         __host__ __device__ const_reference operator[](size_type index) const {
-            DCHECK_LT(index, size());
             return begin()[index];
         }
 
@@ -523,7 +519,6 @@ namespace spectra {
         }
 
         void pop_back() {
-            DCHECK(!empty());
             alloc.destroy(begin() + nStored - 1);
             --nStored;
         }
@@ -769,10 +764,15 @@ namespace spectra {
             Point3f ps[2] = {Point3f(bounds.pMin.x * nx - .5f, bounds.pMin.y * ny - .5f, bounds.pMin.z * nz - .5f), Point3f(bounds.pMax.x * nx - .5f, bounds.pMax.y * ny - .5f, bounds.pMax.z * nz - .5f)};
             Point3i pi[2] = {Max(Point3i(Floor(ps[0])), Point3i(0, 0, 0)), Min(Point3i(Floor(ps[1])) + Vector3i(1, 1, 1), Point3i(nx - 1, ny - 1, nz - 1))};
 
-            auto maxValue = Lookup(Point3i(pi[0]), convert);
+            const Bounds3i sampleBounds(Point3i(0, 0, 0), Point3i(nx, ny, nz));
+            const auto lookup = [&](const Point3i& p) {
+                if (!InsideExclusive(p, sampleBounds)) return convert(T{});
+                return convert(values[(p.z * ny + p.y) * nx + p.x]);
+            };
+            auto maxValue = lookup(Point3i(pi[0]));
             for (int z = pi[0].z; z <= pi[1].z; ++z)
                 for (int y = pi[0].y; y <= pi[1].y; ++y)
-                    for (int x = pi[0].x; x <= pi[1].x; ++x) maxValue = std::max(maxValue, Lookup(Point3i(x, y, z), convert));
+                    for (int x = pi[0].x; x <= pi[1].x; ++x) maxValue = std::max(maxValue, lookup(Point3i(x, y, z)));
 
             return maxValue;
         }
