@@ -1583,6 +1583,7 @@ namespace spectra::scene {
             if (allocation.resource_id == 0u) throw std::runtime_error("Scene GPU buffer backend returned a zero resource id");
             if (allocation.byte_size == 0u) throw std::runtime_error("Scene GPU buffer backend returned a zero byte size");
             if (allocation.kind != request.kind) throw std::runtime_error(format_message("Scene GPU buffer backend returned kind {} for request kind {}", allocation.kind, request.kind));
+            if (allocation.slots.empty()) throw std::runtime_error("Scene GPU buffer backend returned no frame slots");
             if (!this->gpu_buffer_allocations.emplace(allocation.resource_id, allocation).second) throw std::runtime_error(format_message("Scene GPU buffer resource {} already exists", allocation.resource_id));
             return allocation;
         } catch (const std::exception& error) {
@@ -1937,7 +1938,7 @@ namespace spectra::scene {
         this->plugin_info_valid = true;
     }
 
-    void Scene::advance(const std::uint64_t frame_number, const double delta_seconds) {
+    void Scene::advance(const std::uint64_t frame_number, const std::uint32_t frame_slot_index, const std::uint32_t frame_slot_count, const double delta_seconds) {
         if (this->kind() == Kind::Static) return;
         if (this->driver_runtime.updated_frame_number.has_value() && *this->driver_runtime.updated_frame_number == frame_number) return;
         PluginRuntime& runtime = this->active_plugin_runtime();
@@ -1950,21 +1951,19 @@ namespace spectra::scene {
         const auto mark_updated = [this, frame_number] {
             this->driver_runtime.updated_frame_number = frame_number;
         };
-        if (!update_tick) {
-            mark_updated();
-            return;
-        }
         const Timeline timeline = this->timeline();
         runtime.host->update(*runtime.instance, UpdateInfo{
             .wall_delta_seconds = delta_seconds,
-            .update_delta_seconds = update.step_requested ? update.descriptor.step_delta_seconds : delta_seconds,
+            .update_delta_seconds = update_tick ? (update.step_requested ? update.descriptor.step_delta_seconds : delta_seconds) : 0.0,
             .timeline_time_seconds = timeline.cursor.time_seconds,
             .timeline_frame_index = timeline.cursor.frame_index,
+            .frame_slot_index = frame_slot_index,
+            .frame_slot_count = frame_slot_count,
             .update_running = update.running,
         });
         this->commit_driver_revision("Scene update");
         update = this->update_clock();
-        if (update.step_requested) {
+        if (update_tick && update.step_requested) {
             update.running = false;
             update.step_requested = false;
             this->current_update = update;
@@ -1982,7 +1981,6 @@ namespace spectra::scene {
         update.step_requested = false;
         this->current_update = update;
         this->driver_runtime.updated_frame_number.reset();
-        this->sync_driver_update_state("Scene update clock");
     }
 
     void Scene::toggle_update_running() {
@@ -2043,21 +2041,6 @@ namespace spectra::scene {
         FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor));
         commit_scene_document_and_frame(*this, std::move(document), std::move(snapshot));
         this->driver_runtime.observed_scene_revision = scene_revision;
-    }
-
-    void Scene::sync_driver_update_state(const std::string_view context) {
-        if (this->kind() == Kind::Static) return;
-        PluginRuntime& runtime = this->active_plugin_runtime();
-        const Timeline timeline = this->timeline();
-        const UpdateClock update = this->update_clock();
-        runtime.host->update(*runtime.instance, UpdateInfo{
-            .wall_delta_seconds = 0.0,
-            .update_delta_seconds = 0.0,
-            .timeline_time_seconds = timeline.cursor.time_seconds,
-            .timeline_frame_index = timeline.cursor.frame_index,
-            .update_running = update.running,
-        });
-        this->commit_driver_revision(context);
     }
 
     const Scene::Document& Scene::preview_document() const {

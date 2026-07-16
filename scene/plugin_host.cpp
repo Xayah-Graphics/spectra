@@ -972,14 +972,22 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] SpectraSceneGpuBufferAllocation encode_gpu_buffer_allocation(const GpuBufferAllocation& allocation) {
+        [[nodiscard]] SpectraSceneGpuBufferAllocation encode_gpu_buffer_allocation(const GpuBufferAllocation& allocation, std::vector<SpectraSceneGpuBufferSlotAllocation>& slots) {
+            slots.reserve(allocation.slots.size());
+            for (const GpuBufferSlotAllocation& slot : allocation.slots)
+                slots.push_back(SpectraSceneGpuBufferSlotAllocation{
+                    .handle_kind = abi_gpu_resource_handle_kind(slot.handle_kind),
+                    .handle = slot.handle,
+                });
             return SpectraSceneGpuBufferAllocation{
                 .struct_size = sizeof(SpectraSceneGpuBufferAllocation),
                 .resource_id = allocation.resource_id,
                 .byte_size = allocation.byte_size,
                 .kind = abi_gpu_buffer_kind(allocation.kind),
-                .handle_kind = abi_gpu_resource_handle_kind(allocation.handle_kind),
-                .handle = allocation.handle,
+                .slots = SpectraSceneGpuBufferSlotAllocationSpan{
+                    .data = slots.data(),
+                    .count = static_cast<std::uint64_t>(slots.size()),
+                },
                 .device_identity = abi_gpu_device_identity(allocation.device_identity),
             };
         }
@@ -1092,6 +1100,7 @@ namespace spectra::scene {
         };
 
         thread_local std::string scene_host_service_callback_error{};
+        thread_local std::vector<SpectraSceneGpuBufferSlotAllocation> scene_host_service_callback_slots{};
 
         [[nodiscard]] SpectraSceneResult request_gpu_buffer(void* user_data, const SpectraSceneGpuBufferRequest* request, SpectraSceneGpuBufferAllocation* allocation) noexcept {
             try {
@@ -1101,7 +1110,8 @@ namespace spectra::scene {
                 if (allocation == nullptr) throw std::runtime_error("Scene GPU buffer allocation pointer is null");
                 HostServices& host = *static_cast<HostServices*>(user_data);
                 const GpuBufferAllocation allocated = host.request_gpu_buffer(decode_gpu_buffer_request(*request, "Scene host services"));
-                *allocation = encode_gpu_buffer_allocation(allocated);
+                scene_host_service_callback_slots.clear();
+                *allocation = encode_gpu_buffer_allocation(allocated, scene_host_service_callback_slots);
                 return SPECTRA_SCENE_RESULT_OK;
             } catch (const std::exception& error) {
                 scene_host_service_callback_error = error.what();
@@ -1245,7 +1255,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v18");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v19");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -1324,6 +1334,8 @@ namespace spectra::scene {
                 .update_delta_seconds = update.update_delta_seconds,
                 .timeline_time_seconds = update.timeline_time_seconds,
                 .timeline_frame_index = update.timeline_frame_index,
+                .frame_slot_index = update.frame_slot_index,
+                .frame_slot_count = update.frame_slot_count,
                 .update_running = update.update_running ? 1u : 0u,
             };
             this->check_result(this->plugin->update(instance, &update_info), instance, "Scene plugin update");

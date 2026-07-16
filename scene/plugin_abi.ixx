@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 18u;
+    constexpr std::uint32_t plugin_abi_version = 19u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -131,6 +131,8 @@ export namespace spectra::scene {
         double update_delta_seconds{};
         double timeline_time_seconds{};
         std::uint64_t timeline_frame_index{};
+        std::uint32_t frame_slot_index{};
+        std::uint32_t frame_slot_count{};
         std::uint32_t update_running{};
     };
 
@@ -148,13 +150,22 @@ export namespace spectra::scene {
         std::uint64_t byte_size{};
     };
 
+    struct SpectraSceneGpuBufferSlotAllocation {
+        std::uint32_t handle_kind{};
+        std::uintptr_t handle{};
+    };
+
+    struct SpectraSceneGpuBufferSlotAllocationSpan {
+        const SpectraSceneGpuBufferSlotAllocation* data{};
+        std::uint64_t count{};
+    };
+
     struct SpectraSceneGpuBufferAllocation {
         std::uint64_t struct_size{};
         std::uint64_t resource_id{};
         std::uint64_t byte_size{};
         std::uint32_t kind{};
-        std::uint32_t handle_kind{};
-        std::uintptr_t handle{};
+        SpectraSceneGpuBufferSlotAllocationSpan slots{};
         SpectraSceneGpuDeviceIdentity device_identity{};
     };
 

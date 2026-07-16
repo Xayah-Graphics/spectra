@@ -52,7 +52,7 @@ namespace spectra::rasterizer {
         };
 
         struct ExternalStorageBuffer {
-            ExternalGpuBuffer buffer{};
+            std::vector<ExternalGpuBuffer> slots{};
             std::uint64_t resource_id{};
             std::uint64_t byte_size{};
             std::uint32_t kind{};

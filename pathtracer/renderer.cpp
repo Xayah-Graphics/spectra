@@ -1351,7 +1351,7 @@ namespace spectra::pathtracer {
     }
 
     FrameResult Renderer::Impl::begin_frame(HostView host, const FrameContext& frame) {
-        this->source_scene->advance(frame.frame_number, frame.delta_seconds);
+        this->source_scene->advance(frame.frame_number, frame.frame_index, host.frame_count(), frame.delta_seconds);
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         this->consume_completed_screenshot(frame.frame_index);
         this->load_source_scene();

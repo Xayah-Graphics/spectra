@@ -1183,44 +1183,50 @@ namespace spectra::rasterizer {
         if (resource_id == 0u) throw std::runtime_error(std::format("{} resource id overflowed", context));
         ExternalStorageBuffer resource{
             .resource_id = resource_id,
-            .byte_size = byte_size,
             .kind = kind,
         };
-
-        const vk::ExternalMemoryBufferCreateInfo external_buffer_create_info{handle_type};
-        vk::BufferCreateInfo buffer_create_info{{}, static_cast<vk::DeviceSize>(byte_size), external_storage_buffer_usage(kind), vk::SharingMode::eExclusive};
-        buffer_create_info.setPNext(&external_buffer_create_info);
-        resource.buffer.buffer = vk::raii::Buffer{*this->host.device, buffer_create_info};
-
-        const vk::MemoryRequirements memory_requirements = resource.buffer.buffer.getMemoryRequirements();
-        const std::uint32_t memory_type = find_memory_type_index(*this->host.physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
-        vk::ExportMemoryAllocateInfo export_memory_allocate_info{handle_type};
-        vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
-        memory_allocate_info.setPNext(&export_memory_allocate_info);
-        resource.buffer.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
-        resource.buffer.buffer.bindMemory(*resource.buffer.memory, 0);
-        resource.buffer.capacity = static_cast<vk::DeviceSize>(byte_size);
-
-#if defined(_WIN32)
-        const vk::MemoryGetWin32HandleInfoKHR handle_info{*resource.buffer.memory, handle_type};
-        HANDLE exported_handle = this->host.device->getMemoryWin32HandleKHR(handle_info);
-        if (exported_handle == nullptr) throw std::runtime_error(std::format("Failed to export {} Win32 handle", context));
-        const std::uintptr_t exported_handle_value = reinterpret_cast<std::uintptr_t>(exported_handle);
-#else
-        const vk::MemoryGetFdInfoKHR handle_info{*resource.buffer.memory, handle_type};
-        int exported_handle = this->host.device->getMemoryFdKHR(handle_info);
-        if (exported_handle < 0) throw std::runtime_error(std::format("Failed to export {} file descriptor", context));
-        const std::uintptr_t exported_handle_value = static_cast<std::uintptr_t>(exported_handle);
-#endif
-
         scene::GpuBufferAllocation allocation{
             .resource_id = resource_id,
-            .byte_size = static_cast<std::uint64_t>(memory_requirements.size),
             .kind = kind,
-            .handle_kind = this->external_storage_handle_kind(),
-            .handle = exported_handle_value,
             .device_identity = make_scene_gpu_device_identity(*this->host.physical_device),
         };
+        resource.slots.reserve(this->host.frame_count);
+        allocation.slots.reserve(this->host.frame_count);
+        for (std::uint32_t frame_slot_index = 0u; frame_slot_index < this->host.frame_count; ++frame_slot_index) {
+            ExternalGpuBuffer slot{};
+            const vk::ExternalMemoryBufferCreateInfo external_buffer_create_info{handle_type};
+            vk::BufferCreateInfo buffer_create_info{{}, static_cast<vk::DeviceSize>(byte_size), external_storage_buffer_usage(kind), vk::SharingMode::eExclusive};
+            buffer_create_info.setPNext(&external_buffer_create_info);
+            slot.buffer = vk::raii::Buffer{*this->host.device, buffer_create_info};
+
+            const vk::MemoryRequirements memory_requirements = slot.buffer.getMemoryRequirements();
+            const std::uint32_t memory_type = find_memory_type_index(*this->host.physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            vk::ExportMemoryAllocateInfo export_memory_allocate_info{handle_type};
+            vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
+            memory_allocate_info.setPNext(&export_memory_allocate_info);
+            slot.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
+            slot.buffer.bindMemory(*slot.memory, 0);
+            slot.capacity = memory_requirements.size;
+            resource.byte_size = static_cast<std::uint64_t>(memory_requirements.size);
+            allocation.byte_size = resource.byte_size;
+
+#if defined(_WIN32)
+            const vk::MemoryGetWin32HandleInfoKHR handle_info{*slot.memory, handle_type};
+            HANDLE exported_handle = this->host.device->getMemoryWin32HandleKHR(handle_info);
+            if (exported_handle == nullptr) throw std::runtime_error(std::format("Failed to export {} Win32 handle", context));
+            const std::uintptr_t exported_handle_value = reinterpret_cast<std::uintptr_t>(exported_handle);
+#else
+            const vk::MemoryGetFdInfoKHR handle_info{*slot.memory, handle_type};
+            int exported_handle = this->host.device->getMemoryFdKHR(handle_info);
+            if (exported_handle < 0) throw std::runtime_error(std::format("Failed to export {} file descriptor", context));
+            const std::uintptr_t exported_handle_value = static_cast<std::uintptr_t>(exported_handle);
+#endif
+            allocation.slots.push_back(scene::GpuBufferSlotAllocation{
+                .handle_kind = this->external_storage_handle_kind(),
+                .handle = exported_handle_value,
+            });
+            resource.slots.push_back(std::move(slot));
+        }
         this->external_storage.buffers.emplace(resource_id, std::move(resource));
         return allocation;
     }
@@ -1230,7 +1236,7 @@ namespace spectra::rasterizer {
         const std::map<std::uint64_t, ExternalStorageBuffer>::iterator found = this->external_storage.buffers.find(resource_id);
         if (found == this->external_storage.buffers.end()) throw std::runtime_error(std::format("{} resource {} does not exist", context, resource_id));
         if (this->host.device != nullptr) this->host.device->waitIdle();
-        this->destroy_external_buffer(found->second.buffer);
+        for (ExternalGpuBuffer& slot : found->second.slots) this->destroy_external_buffer(slot);
         this->external_storage.buffers.erase(found);
     }
 
@@ -1297,14 +1303,21 @@ namespace spectra::rasterizer {
     void Renderer::ensure_viewport_voxel_buffer_descriptor(const std::uint64_t resource_id, ViewportVoxelBufferDescriptor& descriptor) {
         if (descriptor.descriptor_valid) return;
         const ExternalStorageBuffer& resource = this->external_storage_buffer(resource_id, "Scene viewport voxel buffer");
-        if (!*resource.buffer.buffer) throw std::runtime_error("Scene viewport voxel buffer has no Vulkan buffer");
+        if (resource.slots.size() != this->host.frame_count) throw std::runtime_error("Scene viewport voxel buffer frame slot count is invalid");
         if (!*this->viewport_voxel_grid_pass.descriptor_set_layout || !*this->viewport_voxel_grid_pass.descriptor_pool) return;
         const vk::DescriptorSetLayout descriptor_set_layout = *this->viewport_voxel_grid_pass.descriptor_set_layout;
-        const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->viewport_voxel_grid_pass.descriptor_pool, 1u, &descriptor_set_layout};
+        const std::vector<vk::DescriptorSetLayout> descriptor_set_layouts(resource.slots.size(), descriptor_set_layout);
+        const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->viewport_voxel_grid_pass.descriptor_pool, static_cast<std::uint32_t>(descriptor_set_layouts.size()), descriptor_set_layouts.data()};
         descriptor.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
-        if (descriptor.descriptor_sets.size() != 1u) throw std::runtime_error("Failed to allocate Scene viewport voxel buffer descriptor set");
-        const vk::DescriptorBufferInfo descriptor_buffer_info{*resource.buffer.buffer, 0u, resource.byte_size};
-        const std::array descriptor_writes{vk::WriteDescriptorSet{*descriptor.descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_info}};
+        if (descriptor.descriptor_sets.size() != resource.slots.size()) throw std::runtime_error("Failed to allocate Scene viewport voxel buffer descriptor sets");
+        std::vector<vk::DescriptorBufferInfo> descriptor_buffer_infos{};
+        std::vector<vk::WriteDescriptorSet> descriptor_writes{};
+        descriptor_buffer_infos.reserve(resource.slots.size());
+        descriptor_writes.reserve(resource.slots.size());
+        for (std::size_t frame_slot_index = 0u; frame_slot_index < resource.slots.size(); ++frame_slot_index) {
+            descriptor_buffer_infos.emplace_back(*resource.slots.at(frame_slot_index).buffer, 0u, resource.byte_size);
+            descriptor_writes.emplace_back(*descriptor.descriptor_sets.at(frame_slot_index), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_infos.back());
+        }
         this->host.device->updateDescriptorSets(descriptor_writes, {});
         descriptor.descriptor_valid = true;
     }
@@ -1351,7 +1364,7 @@ namespace spectra::rasterizer {
             const std::array descriptor_buffer_infos{
                 vk::DescriptorBufferInfo{*resource.compactedIndexBuffer.buffer, 0u, compacted_bytes},
                 vk::DescriptorBufferInfo{*resource.counterBuffer.buffer, 0u, sizeof(std::uint32_t)},
-                vk::DescriptorBufferInfo{*source.buffer.buffer, 0u, source.byte_size},
+                vk::DescriptorBufferInfo{*source.slots.at(draw_command.frameIndex).buffer, 0u, source.byte_size},
                 vk::DescriptorBufferInfo{*resource.indirectBuffer.buffer, 0u, sizeof(vk::DrawIndirectCommand)},
             };
             const std::array descriptor_writes{
@@ -1565,7 +1578,7 @@ namespace spectra::rasterizer {
             descriptor.second.descriptor_valid = false;
         }
         for (std::pair<const std::uint64_t, ExternalStorageBuffer>& resource : this->external_storage.buffers) {
-            this->destroy_external_buffer(resource.second.buffer);
+            for (ExternalGpuBuffer& slot : resource.second.slots) this->destroy_external_buffer(slot);
         }
         this->viewport_voxel_grid_pass.buffer_descriptors.clear();
         this->external_storage.buffers.clear();
@@ -3472,7 +3485,7 @@ namespace spectra::rasterizer {
             std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator descriptor = this->viewport_voxel_grid_pass.buffer_descriptors.find(voxel_grid.buffer_id);
             if (descriptor == this->viewport_voxel_grid_pass.buffer_descriptors.end()) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" references buffer {} that is not registered as viewport voxel debug data", voxel_grid.name, voxel_grid.buffer_id));
             this->ensure_viewport_voxel_buffer_descriptor(descriptor->first, descriptor->second);
-            if (!descriptor->second.descriptor_valid || descriptor->second.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" voxel buffer descriptor is invalid", voxel_grid.name));
+            if (!descriptor->second.descriptor_valid || descriptor->second.descriptor_sets.size() != this->host.frame_count) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" voxel buffer descriptor is invalid", voxel_grid.name));
             const std::uint64_t bitfield_byte_count = (cell_count + 7u) / 8u;
             if (bitfield_byte_count > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" bitfield byte count exceeds uint32 range", voxel_grid.name));
             ViewportVoxelGridDrawCommand draw_command{
@@ -3682,7 +3695,7 @@ namespace spectra::rasterizer {
                 resource.externalUploadDescriptorSets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
                 if (resource.externalUploadDescriptorSets.size() != 1u) throw std::runtime_error("Failed to allocate Spectra rasterizer volume external upload descriptor set");
             }
-            const vk::DescriptorBufferInfo source_buffer_info{*source.buffer.buffer, 0u, static_cast<vk::DeviceSize>(channel.source_byte_size)};
+            const vk::DescriptorBufferInfo source_buffer_info{*source.slots.at(frame_index).buffer, 0u, static_cast<vk::DeviceSize>(channel.source_byte_size)};
             const vk::DescriptorImageInfo image_info{{}, *resource.image.view, vk::ImageLayout::eGeneral};
             const std::array upload_descriptor_writes{
                 vk::WriteDescriptorSet{*resource.externalUploadDescriptorSets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &source_buffer_info, nullptr},
@@ -4165,7 +4178,7 @@ namespace spectra::rasterizer {
     }
 
     FrameResult Renderer::begin_frame(HostView host, const FrameContext& frame) {
-        this->scene.instance->advance(frame.frame_number, frame.delta_seconds);
+        this->scene.instance->advance(frame.frame_number, frame.frame_index, host.frame_count(), frame.delta_seconds);
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         if (frame.frame_index >= this->host.frame_count) throw std::runtime_error("Spectra rasterizer frame index is out of range");
         this->consume_completed_screenshot(frame.frame_index);
@@ -4304,8 +4317,8 @@ namespace spectra::rasterizer {
         const auto transition_external_buffer = [this, &command_buffer, &transitioned_buffers](const std::uint64_t buffer_id, const std::string_view context) {
             if (!transitioned_buffers.insert(buffer_id).second) return;
             const ExternalStorageBuffer& resource = this->external_storage_buffer(buffer_id, context);
-            if (!*resource.buffer.buffer) throw std::runtime_error(std::format("{} {} is invalid", context, buffer_id));
-            transition_buffer_access(command_buffer, *resource.buffer.buffer, vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eMemoryWrite, vk::PipelineStageFlagBits2::eVertexAttributeInput, vk::AccessFlagBits2::eVertexAttributeRead);
+            if (!*resource.slots.at(this->lifecycle.active_frame_index).buffer) throw std::runtime_error(std::format("{} {} is invalid", context, buffer_id));
+            transition_buffer_access(command_buffer, *resource.slots.at(this->lifecycle.active_frame_index).buffer, vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eMemoryWrite, vk::PipelineStageFlagBits2::eVertexAttributeInput, vk::AccessFlagBits2::eVertexAttributeRead);
         };
         const FramePointCloudResources& frame_point_cloud = this->point_cloud_pass.frame_point_clouds.at(this->lifecycle.active_frame_index);
         for (const PointCloudDrawCommand& draw_command : frame_point_cloud.drawCommands) {
@@ -4337,8 +4350,8 @@ namespace spectra::rasterizer {
                 command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
             } else {
                 const ExternalStorageBuffer& resource = this->external_storage_buffer(draw_command.bufferId, "Rasterizer point cloud external buffer");
-                if (!*resource.buffer.buffer) throw std::runtime_error(std::format("Rasterizer point cloud external buffer {} is invalid", draw_command.bufferId));
-                const std::array<vk::Buffer, 1> vertex_buffers{*resource.buffer.buffer};
+                if (!*resource.slots.at(this->lifecycle.active_frame_index).buffer) throw std::runtime_error(std::format("Rasterizer point cloud external buffer {} is invalid", draw_command.bufferId));
+                const std::array<vk::Buffer, 1> vertex_buffers{*resource.slots.at(this->lifecycle.active_frame_index).buffer};
                 command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
             }
             const PointCloudPushConstantsData push_constants = make_point_cloud_push_constants(draw_command.transform);
@@ -4371,7 +4384,7 @@ namespace spectra::rasterizer {
             if (draw_command.sourceKind == scene::Scene::ViewportVoxelGridSourceKind::IndexList) {
                 const std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::const_iterator descriptor = this->viewport_voxel_grid_pass.buffer_descriptors.find(draw_command.bufferId);
                 if (descriptor == this->viewport_voxel_grid_pass.buffer_descriptors.end()) throw std::runtime_error(std::format("Viewport voxel grid buffer {} was released before rendering", draw_command.bufferId));
-                if (!descriptor->second.descriptor_valid || descriptor->second.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Viewport voxel grid buffer {} descriptor is invalid", draw_command.bufferId));
+                if (!descriptor->second.descriptor_valid || descriptor->second.descriptor_sets.size() != this->host.frame_count) throw std::runtime_error(std::format("Viewport voxel grid buffer {} descriptor is invalid", draw_command.bufferId));
                 draw_descriptor_sets = &descriptor->second.descriptor_sets;
             } else {
                 const ViewportVoxelGridCompactionKey key{
@@ -4393,7 +4406,8 @@ namespace spectra::rasterizer {
                 command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
                 bound_depth_mode = draw_command.depthMode;
             }
-            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport_voxel_grid_pass.pipeline_layout, 1u, *draw_descriptor_sets->at(0), {});
+            const std::size_t descriptor_index = draw_command.sourceKind == scene::Scene::ViewportVoxelGridSourceKind::IndexList ? this->lifecycle.active_frame_index : 0u;
+            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport_voxel_grid_pass.pipeline_layout, 1u, *draw_descriptor_sets->at(descriptor_index), {});
             const ViewportVoxelGridPushConstantsData push_constants{
                 .originCellScale = draw_command.originCellScale,
                 .voxelSize = draw_command.voxelSize,
@@ -4429,7 +4443,7 @@ namespace spectra::rasterizer {
         command_buffer.fillBuffer(*compaction->second.counterBuffer.buffer, 0u, sizeof(std::uint32_t), 0u);
         command_buffer.fillBuffer(*compaction->second.indirectBuffer.buffer, 0u, sizeof(std::uint32_t), 36u);
         command_buffer.fillBuffer(*compaction->second.indirectBuffer.buffer, sizeof(std::uint32_t), sizeof(vk::DrawIndirectCommand) - sizeof(std::uint32_t), 0u);
-        transition_buffer_access(command_buffer, *source.buffer.buffer, vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eMemoryWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
+        transition_buffer_access(command_buffer, *source.slots.at(draw_command.frameIndex).buffer, vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eMemoryWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
         transition_buffer_access(command_buffer, *compaction->second.counterBuffer.buffer, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
         transition_buffer_access(command_buffer, *compaction->second.indirectBuffer.buffer, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
 
@@ -4495,8 +4509,8 @@ namespace spectra::rasterizer {
                 command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
             } else {
                 const ExternalStorageBuffer& resource = this->external_storage_buffer(draw_command.bufferId, "Rasterizer viewport segment external buffer");
-                if (!*resource.buffer.buffer) throw std::runtime_error(std::format("Rasterizer viewport segment external buffer {} is invalid", draw_command.bufferId));
-                const std::array<vk::Buffer, 1> vertex_buffers{*resource.buffer.buffer};
+                if (!*resource.slots.at(this->lifecycle.active_frame_index).buffer) throw std::runtime_error(std::format("Rasterizer viewport segment external buffer {} is invalid", draw_command.bufferId));
+                const std::array<vk::Buffer, 1> vertex_buffers{*resource.slots.at(this->lifecycle.active_frame_index).buffer};
                 command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
             }
             if (!bound_depth_mode.has_value() || *bound_depth_mode != draw_command.depthMode) {
@@ -4616,8 +4630,8 @@ namespace spectra::rasterizer {
                 command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
             } else {
                 const ExternalStorageBuffer& resource = this->external_storage_buffer(draw_command.bufferId, "Rasterizer point cloud external selection buffer");
-                if (!*resource.buffer.buffer) throw std::runtime_error(std::format("Rasterizer point cloud external selection buffer {} is invalid", draw_command.bufferId));
-                const std::array<vk::Buffer, 1> vertex_buffers{*resource.buffer.buffer};
+                if (!*resource.slots.at(this->lifecycle.active_frame_index).buffer) throw std::runtime_error(std::format("Rasterizer point cloud external selection buffer {} is invalid", draw_command.bufferId));
+                const std::array<vk::Buffer, 1> vertex_buffers{*resource.slots.at(this->lifecycle.active_frame_index).buffer};
                 command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
             }
             const PointCloudSelectionPushConstantsData push_constants = make_point_cloud_selection_push_constants(draw_command.transform, color, draw_command.objectId);

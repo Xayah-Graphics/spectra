@@ -79,12 +79,16 @@ namespace spectra::scene {
         std::uint64_t byte_size{};
     };
 
+    export struct GpuBufferSlotAllocation {
+        GpuResourceHandleKind handle_kind{GpuResourceHandleKind::OpaqueWin32};
+        std::uintptr_t handle{};
+    };
+
     export struct GpuBufferAllocation {
         std::uint64_t resource_id{};
         std::uint64_t byte_size{};
         std::uint32_t kind{};
-        GpuResourceHandleKind handle_kind{GpuResourceHandleKind::OpaqueWin32};
-        std::uintptr_t handle{};
+        std::vector<GpuBufferSlotAllocation> slots{};
         GpuDeviceIdentity device_identity{};
     };
 
@@ -163,6 +167,8 @@ namespace spectra::scene {
         double update_delta_seconds{};
         double timeline_time_seconds{};
         std::uint64_t timeline_frame_index{};
+        std::uint32_t frame_slot_index{};
+        std::uint32_t frame_slot_count{};
         bool update_running{};
     };
 
@@ -742,7 +748,7 @@ namespace spectra::scene {
         void open_static_scene(std::string id, std::string title, Scene scene);
         void open_pbrt_file(const std::filesystem::path& scene_path);
         void open_plugin(PluginOpenRequest request);
-        void advance(std::uint64_t frame_number, double delta_seconds);
+        void advance(std::uint64_t frame_number, std::uint32_t frame_slot_index, std::uint32_t frame_slot_count, double delta_seconds);
         void set_update_running(bool running);
         void toggle_update_running();
         void step_update();
@@ -776,7 +782,6 @@ namespace spectra::scene {
         void reset_driver_runtime();
         [[nodiscard]] PluginRuntime& active_plugin_runtime() const;
         void commit_driver_revision(std::string_view context);
-        void sync_driver_update_state(std::string_view context);
 
         Revision current_revision{};
         mutable std::shared_ptr<const Document> current_document{};
