@@ -31,6 +31,10 @@ namespace spectra {
     class SampledWavelengths;
     class XYZ;
 
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     // Spectrum Constants
     constexpr Float Lambda_min = 360, Lambda_max = 830;
 
@@ -380,6 +384,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         friend struct std::hash<DenselySampledSpectrum>;
         // DenselySampledSpectrum Private Members
         int lambda_min, lambda_max;
@@ -413,6 +418,7 @@ namespace spectra {
         static PiecewiseLinearSpectrum* FromInterleaved(pstd::span<const Float> samples, bool normalize, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // PiecewiseLinearSpectrum Private Members
         pstd::vector<Float> lambdas, values;
     };
@@ -525,6 +531,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // RGBIlluminantSpectrum Private Members
         Float scale;
         RGBSigmoidPolynomial rsp;
@@ -593,6 +600,7 @@ namespace spectra {
     namespace Spectra {
         void Init(Allocator alloc);
         void Reset();
+        void SetDeviceXYZ(const DenselySampledSpectrum* x, const DenselySampledSpectrum* y, const DenselySampledSpectrum* z);
 
         __host__ __device__ const DenselySampledSpectrum& X();
         __host__ __device__ const DenselySampledSpectrum& Y();

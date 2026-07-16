@@ -18,6 +18,10 @@
 #include <vector>
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     class RGBColorSpace;
 
     // PixelFormat Definition
@@ -340,6 +344,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // Image Private Methods
         static std::vector<ResampleWeight> ResampleWeights(int oldRes, int newRes);
         bool WriteEXR(const std::string& name, const ImageMetadata& metadata) const;

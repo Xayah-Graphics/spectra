@@ -23,6 +23,8 @@ module;
 #include <pathtracer/core/render_config.cuh>
 #include <pathtracer/core/samplers.cuh>
 #include <pathtracer/core/textures.cuh>
+#include <pathtracer/device_scene.cuh>
+#include <pathtracer/gpu/volume.cuh>
 #include <pathtracer/util/color.cuh>
 #include <pathtracer/util/colorspace.cuh>
 #include <pathtracer/util/file.h>
@@ -126,21 +128,21 @@ namespace spectra::pathtracer {
             if (!ContainsName(supported, entity.type)) AddDiagnostic(report, entity.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, entity.type));
         }
 
-        void AppendParameterValues(ParsedParameter* parsedParameter, const scene::Scene::Parameter& parameter) {
+        void AppendParameterValues(ParsedParameter& parsedParameter, const scene::Scene::Parameter& parameter) {
             if (const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values)) {
-                for (float value : *values) parsedParameter->AddFloat(value);
+                for (float value : *values) parsedParameter.AddFloat(value);
                 return;
             }
             if (const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values)) {
-                for (int value : *values) parsedParameter->AddInt(value);
+                for (int value : *values) parsedParameter.AddInt(value);
                 return;
             }
             if (const std::vector<std::uint8_t>* values = std::get_if<std::vector<std::uint8_t>>(&parameter.values)) {
-                for (std::uint8_t value : *values) parsedParameter->AddBool(value != 0);
+                for (std::uint8_t value : *values) parsedParameter.AddBool(value != 0);
                 return;
             }
             const std::vector<std::string>& values = std::get<std::vector<std::string>>(parameter.values);
-            for (const std::string& value : values) parsedParameter->AddString(value);
+            for (const std::string& value : values) parsedParameter.AddString(value);
         }
 
         [[nodiscard]] bool IsImageTexture(const std::string& type) {
@@ -149,7 +151,7 @@ namespace spectra::pathtracer {
 
         class SceneCompiler {
         public:
-            SceneCompiler(const scene::Scene::ResolvedScene& sourceScene, CompiledScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride) {}
+            SceneCompiler(const scene::Scene::ResolvedScene& sourceScene, CompiledScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride, cudaStream_t renderStream) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), renderStream(renderStream) {}
 
             void Compile() {
                 const SceneSupportReport supportReport = AnalyzeSceneSupport(this->source);
@@ -162,6 +164,8 @@ namespace spectra::pathtracer {
                 for (const scene::Scene::Medium& medium : this->source.media) this->AddMedium(medium);
 
                 this->compiled.media   = this->CreateMedia();
+                for (const std::pair<const std::string, Medium>& medium : this->compiled.media) this->compiled.haveEmissiveMedia |= medium.second.IsEmissive();
+                this->CreateDeviceVolumes();
                 this->compiled.sampler = this->CreateSampler();
                 this->compiled.camera  = this->CreateCamera();
 
@@ -183,20 +187,20 @@ namespace spectra::pathtracer {
 
         private:
             [[nodiscard]] ParameterDictionary MakeParameterDictionary(const std::vector<scene::Scene::Parameter>& parameters, scene::Scene::ColorSpace color_space) const {
-                ParsedParameterVector parsedParameters{};
+                InlinedVector<std::shared_ptr<ParsedParameter>, 8> parsedParameters{};
                 for (const scene::Scene::Parameter& parameter : parameters) {
                     if (parameter.type.empty()) throw std::runtime_error(std::format("{} scene parameter has an empty type.", this->source.source));
                     if (parameter.name.empty()) throw std::runtime_error(std::format("{} scene parameter has an empty name.", this->source.source));
-                    ParsedParameter* parsedParameter = new ParsedParameter(ToFileLoc(parameter.source, this->source.source));
-                    parsedParameter->type            = parameter.type;
-                    parsedParameter->name            = parameter.name;
-                    parsedParameter->mayBeUnused     = parameter.may_be_unused;
-                    parsedParameter->colorSpace      = ToColorSpace(parameter.color_space);
-                    AppendParameterValues(parsedParameter, parameter);
-                    parsedParameters.push_back(parsedParameter);
+                    auto parsedParameter         = std::make_shared<ParsedParameter>(ToFileLoc(parameter.source, this->source.source));
+                    parsedParameter->type        = parameter.type;
+                    parsedParameter->name        = parameter.name;
+                    parsedParameter->mayBeUnused = parameter.may_be_unused;
+                    parsedParameter->colorSpace  = ToColorSpace(parameter.color_space);
+                    AppendParameterValues(*parsedParameter, parameter);
+                    parsedParameters.push_back(std::move(parsedParameter));
                 }
 
-                return ParameterDictionary(std::move(parsedParameters), ToColorSpace(color_space));
+                return ParameterDictionary(std::move(parsedParameters), ToColorSpace(color_space), &this->compiled.spectrumFileCache);
             }
 
             [[nodiscard]] Entity MakeEntity(const scene::Scene::Entity& entity) const {
@@ -273,6 +277,16 @@ namespace spectra::pathtracer {
                     this->RequireUniqueName(this->mediumNames, "medium", medium.name);
                     this->mediumNames.insert(medium.name);
                 }
+                for (const scene::Scene::VolumeGrid& volume : this->source.volumes) {
+                    bool has_external_gpu_channel = false;
+                    for (const scene::Scene::VolumeChannel& channel : volume.channels)
+                        if (channel.source_kind == scene::Scene::VolumeChannelSourceKind::ExternalGpuBuffer) has_external_gpu_channel = true;
+                    if (!has_external_gpu_channel) continue;
+                    std::string medium_name = std::format("{}.__medium", volume.name);
+                    this->RequireUniqueName(this->mediumNames, "volume medium", medium_name);
+                    this->deviceVolumeMediumNames.insert(medium_name);
+                    this->mediumNames.insert(std::move(medium_name));
+                }
                 for (const scene::Scene::ObjectDefinition& definition : this->source.object_definitions) {
                     this->RequireUniqueName(this->objectDefinitionNames, "object definition", definition.name);
                     this->objectDefinitionNames.insert(definition.name);
@@ -335,9 +349,13 @@ namespace spectra::pathtracer {
                     this->OverrideIntegerParameter(&film, "yresolution", this->filmResolutionOverride->y);
                 }
                 Entity filmEntity   = this->MakeEntity(film);
-                this->samplerEntity                = this->MakeEntity(sampler);
-                this->compiled.integrator          = this->MakeEntity(settings.integrator);
-                this->compiled.accelerator         = this->MakeEntity(settings.accelerator);
+                this->samplerEntity = this->MakeEntity(sampler);
+                Entity integratorEntity = this->MakeEntity(settings.integrator);
+                this->compiled.integrator = IntegratorSettings{
+                    .lightSampler = integratorEntity.parameters.GetOneString("lightsampler", "bvh"),
+                    .maxDepth = integratorEntity.parameters.GetOneInt("maxdepth", 5),
+                    .regularize = integratorEntity.parameters.GetOneBool("regularize", false),
+                };
                 Entity cameraEntity = this->MakeEntity(settings.camera);
                 const Transform worldFromCamera    = this->scene_transform(settings.camera_transform, settings.camera.source);
                 this->cameraEntity                 = CameraEntity{
@@ -348,28 +366,43 @@ namespace spectra::pathtracer {
                     .medium          = settings.camera_medium,
                 };
 
-                this->compiled.filmColorSpace = filmEntity.parameters.ColorSpace();
-                this->renderSettingsReady     = true;
+                this->renderSettingsReady = true;
 
                 Allocator alloc       = this->compiled.threadAllocators.Get();
-                this->compiled.filter = Filter::Create(filterEntity.name, filterEntity.parameters, &filterEntity.loc, alloc);
+                this->compiled.filter = Filter::Create(filterEntity.name, filterEntity.parameters, &filterEntity.loc, alloc, this->compiled.deviceArena, this->renderStream);
 
                 Float exposureTime = this->cameraEntity.parameters.GetOneFloat("shutterclose", 1.0f) - this->cameraEntity.parameters.GetOneFloat("shutteropen", 0.0f);
                 if (exposureTime <= 0.0f) throw std::runtime_error(diagnostics::Format(&this->cameraEntity.loc, "The specified camera shutter times imply that the shutter does not open. A black image will result."));
 
-                this->compiled.film = Film::Create(filmEntity.name, filmEntity.parameters, exposureTime, this->cameraEntity.cameraTransform, this->compiled.filter, this->renderConfig, &filmEntity.loc, alloc);
+                this->compiled.film = Film::Create(filmEntity.name, filmEntity.parameters, exposureTime, this->cameraEntity.cameraTransform, this->compiled.filter, this->renderConfig, &filmEntity.loc, alloc, Allocator(&this->compiled.filmMemoryScope), this->renderStream, &this->compiled.outputFilename);
+                const PixelSensor* sensor = this->compiled.film.GetPixelSensor();
+                constexpr std::size_t sensor_sample_count = Lambda_max - Lambda_min + 1;
+                std::array<std::vector<Float>, 3> sensor_values{
+                    std::vector<Float>(sensor_sample_count),
+                    std::vector<Float>(sensor_sample_count),
+                    std::vector<Float>(sensor_sample_count),
+                };
+                for (int channel = 0; channel < 3; ++channel)
+                    for (int wavelength = Lambda_min; wavelength <= Lambda_max; ++wavelength) sensor_values[channel][wavelength - Lambda_min] = sensor->Response(channel, wavelength);
+                DevicePixelSensor device_sensor{
+                    .red = this->compiled.deviceArena.StoreArray(sensor_values[0].data(), sensor_values[0].size(), this->renderStream),
+                    .green = this->compiled.deviceArena.StoreArray(sensor_values[1].data(), sensor_values[1].size(), this->renderStream),
+                    .blue = this->compiled.deviceArena.StoreArray(sensor_values[2].data(), sensor_values[2].size(), this->renderStream),
+                    .imagingRatio = sensor->ImagingRatio(),
+                };
+                this->compiled.film.DispatchHost([&](auto* concrete) { concrete->SetDevicePixelSensor(device_sensor); });
             }
 
             [[nodiscard]] Sampler CreateSampler() const {
                 Allocator alloc = this->compiled.threadAllocators.Get();
                 Point2i res     = this->compiled.film.FullResolution();
-                return Sampler::Create(this->samplerEntity.name, this->samplerEntity.parameters, res, this->renderConfig, &this->samplerEntity.loc, alloc);
+                return Sampler::Create(this->samplerEntity.name, this->samplerEntity.parameters, res, this->renderConfig, &this->samplerEntity.loc, alloc, this->compiled.deviceArena, this->renderStream);
             }
 
             [[nodiscard]] Camera CreateCamera() const {
                 Allocator alloc     = this->compiled.threadAllocators.Get();
                 Medium camera_medium = this->FindMedium(this->cameraEntity.medium, &this->cameraEntity.loc);
-                return Camera::Create(this->cameraEntity.name, this->cameraEntity.parameters, camera_medium, this->cameraEntity.cameraTransform, this->compiled.film, &this->cameraEntity.loc, alloc);
+                return Camera::Create(this->cameraEntity.name, this->cameraEntity.parameters, camera_medium, this->cameraEntity.cameraTransform, this->compiled.film, &this->cameraEntity.loc, alloc, this->compiled.deviceArena, this->renderStream);
             }
 
             void AddMaterial(const scene::Scene::Material& material) {
@@ -428,7 +461,7 @@ namespace spectra::pathtracer {
                         Allocator alloc             = this->compiled.threadAllocators.Get();
                         Transform renderFromTexture = entity.renderFromObject;
                         TextureParameterDictionary textureParameters(&entity.parameters, nullptr);
-                        return FloatTexture::Create(entity.name, renderFromTexture, textureParameters, &entity.loc, alloc);
+                        return FloatTexture::Create(entity.name, renderFromTexture, textureParameters, &entity.loc, this->compiled.textureCache, alloc);
                     };
                     this->floatTextureJobs[texture.name] = RunAsync(create);
                 } else {
@@ -437,7 +470,7 @@ namespace spectra::pathtracer {
                         Allocator alloc             = this->compiled.threadAllocators.Get();
                         Transform renderFromTexture = entity.renderFromObject;
                         TextureParameterDictionary textureParameters(&entity.parameters, nullptr);
-                        return SpectrumTexture::Create(entity.name, renderFromTexture, textureParameters, SpectrumType::Albedo, &entity.loc, alloc);
+                        return SpectrumTexture::Create(entity.name, renderFromTexture, textureParameters, SpectrumType::Albedo, &entity.loc, this->compiled.textureCache, alloc);
                     };
                     this->spectrumTextureJobs[texture.name] = RunAsync(create);
                 }
@@ -513,17 +546,87 @@ namespace spectra::pathtracer {
                 });
             }
 
+            [[nodiscard]] const scene::Scene::PreviewMaterial& FindPreviewMaterial(const std::string& name) const {
+                for (const scene::Scene::PreviewMaterial& material : this->source.preview_materials)
+                    if (material.name == name) return material;
+                throw std::runtime_error(std::format("{} volume references unknown preview material \"{}\"", this->source.source, name));
+            }
+
+            [[nodiscard]] const scene::Scene::VolumeChannel& FindVolumeChannel(const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannelBinding& binding) const {
+                for (const scene::Scene::VolumeChannel& channel : volume.channels)
+                    if (channel.name == binding.channel_name) return channel;
+                throw std::runtime_error(std::format("{} volume \"{}\" references unknown channel \"{}\"", this->source.source, volume.name, binding.channel_name));
+            }
+
+            [[nodiscard]] static std::uint64_t SpreadMortonBits(std::uint32_t value) {
+                std::uint64_t result{};
+                for (std::uint32_t bit = 0u; bit < 21u; ++bit) result |= static_cast<std::uint64_t>((value >> bit) & 1u) << (3u * bit);
+                return result;
+            }
+
+            [[nodiscard]] DeviceVolumeChannelBuildInput MakeVolumeChannelInput(const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannelBinding& binding) const {
+                const scene::Scene::VolumeChannel& channel = this->FindVolumeChannel(volume, binding);
+                std::uint32_t component_count = scene::volume_channel_component_count(channel.format);
+                std::size_t source_value_count = channel.source_kind == scene::Scene::VolumeChannelSourceKind::Values ? channel.values.size() : static_cast<std::size_t>(channel.source_byte_size / sizeof(float));
+                if (channel.index_encoding == scene::Scene::VolumeChannelIndexEncoding::Morton3D) {
+                    std::uint64_t maximum_index = SpreadMortonBits(volume.dimensions[0] - 1u) | (SpreadMortonBits(volume.dimensions[1] - 1u) << 1u) | (SpreadMortonBits(volume.dimensions[2] - 1u) << 2u);
+                    if ((maximum_index + 1u) * component_count > source_value_count) throw std::runtime_error(std::format("{} volume \"{}\" channel \"{}\" Morton source does not cover its dimensions", this->source.source, volume.name, channel.name));
+                }
+                return DeviceVolumeChannelBuildInput{
+                    .host_values = channel.source_kind == scene::Scene::VolumeChannelSourceKind::Values ? channel.values.data() : nullptr,
+                    .device_values = channel.source_kind == scene::Scene::VolumeChannelSourceKind::ExternalGpuBuffer ? reinterpret_cast<const float*>(channel.external_device_pointer) : nullptr,
+                    .source_value_count = source_value_count,
+                    .component_count = component_count,
+                    .first_component = binding.component,
+                    .scale = binding.scale,
+                    .bias = binding.bias,
+                    .morton_encoded = channel.index_encoding == scene::Scene::VolumeChannelIndexEncoding::Morton3D,
+                    .ready_event = channel.source_kind == scene::Scene::VolumeChannelSourceKind::ExternalGpuBuffer ? reinterpret_cast<cudaEvent_t>(channel.external_ready_event) : nullptr,
+                };
+            }
+
+            void CreateDeviceVolumes() {
+                if (this->deviceVolumeMediumNames.empty()) return;
+                DeviceSceneBuilder device_builder(this->compiled.deviceArena, this->renderStream);
+                const RGBColorSpace* color_space = device_builder.CompileRGBColorSpace(RGBColorSpace::SRGB());
+                for (const scene::Scene::VolumeGrid& volume : this->source.volumes) {
+                    if (!this->deviceVolumeMediumNames.contains(std::format("{}.__medium", volume.name))) continue;
+                    const scene::Scene::PreviewMaterial& material = this->FindPreviewMaterial(volume.material_name);
+                    Vector3f extent{
+                        static_cast<Float>(volume.dimensions[0]) * volume.voxel_size.x,
+                        static_cast<Float>(volume.dimensions[1]) * volume.voxel_size.y,
+                        static_cast<Float>(volume.dimensions[2]) * volume.voxel_size.z,
+                    };
+                    Transform render_from_medium = this->RenderFromWorldTransform() * Translate(Vector3f{volume.origin.x, volume.origin.y, volume.origin.z}) * Scale(extent.x, extent.y, extent.z);
+                    DeviceVolumeMediumBuildInput input{
+                        .dimensions = Point3i{static_cast<int>(volume.dimensions[0]), static_cast<int>(volume.dimensions[1]), static_cast<int>(volume.dimensions[2])},
+                        .bounds = Bounds3f{Point3f{0.f, 0.f, 0.f}, Point3f{1.f, 1.f, 1.f}},
+                        .render_from_medium = render_from_medium,
+                        .color_space = color_space,
+                        .density = this->MakeVolumeChannelInput(volume, material.volume.density),
+                        .has_color = material.volume.color.enabled,
+                        .has_emission = material.volume.emission.enabled,
+                    };
+                    if (input.has_color) input.color = this->MakeVolumeChannelInput(volume, material.volume.color);
+                    if (input.has_emission) input.emission = this->MakeVolumeChannelInput(volume, material.volume.emission);
+                    std::unique_ptr<DeviceVolumeMediumStorage> storage = std::make_unique<DeviceVolumeMediumStorage>(input, this->renderStream);
+                    this->compiled.media[std::format("{}.__medium", volume.name)] = storage->medium();
+                    this->compiled.haveMedia = true;
+                    this->compiled.haveEmissiveMedia |= input.has_emission;
+                    this->compiled.deviceVolumeMedia.push_back(std::move(storage));
+                }
+            }
+
             [[nodiscard]] std::map<std::string, Medium> CreateMedia() {
                 std::map<std::string, Medium> mediaMap;
-                this->mediaMutex.lock();
-                for (std::pair<const std::string, AsyncJob<Medium>*>& mediumJob : this->mediumJobs) {
+                std::unique_lock<std::mutex> lock(this->mediaMutex);
+                for (const auto& mediumJob : this->mediumJobs) {
                     while (mediaMap.find(mediumJob.first) == mediaMap.end()) {
-                        pstd::optional<Medium> medium = mediumJob.second->TryGetResult(&this->mediaMutex);
+                        pstd::optional<Medium> medium = mediumJob.second->TryGetResult(lock);
                         if (medium) mediaMap[mediumJob.first] = *medium;
                     }
                 }
                 this->mediumJobs.clear();
-                this->mediaMutex.unlock();
                 return mediaMap;
             }
 
@@ -547,7 +650,7 @@ namespace spectra::pathtracer {
 
             void CreateMaterials() {
                 std::lock_guard<std::mutex> lock(this->materialMutex);
-                for (std::pair<const std::string, AsyncJob<Image*>*>& job : this->normalMapJobs) {
+                for (const auto& job : this->normalMapJobs) {
                     SPECTRA_CHECK(this->normalMaps.find(job.first) == this->normalMaps.end());
                     this->normalMaps[job.first] = job.second->GetResult();
                 }
@@ -574,9 +677,9 @@ namespace spectra::pathtracer {
                 NamedTextures textures;
 
                 this->textureMutex.lock();
-                for (std::pair<const std::string, AsyncJob<FloatTexture>*>& texture : this->floatTextureJobs) textures.floatTextures[texture.first] = texture.second->GetResult();
+                for (const auto& texture : this->floatTextureJobs) textures.floatTextures[texture.first] = texture.second->GetResult();
                 this->floatTextureJobs.clear();
-                for (std::pair<const std::string, AsyncJob<SpectrumTexture>*>& texture : this->spectrumTextureJobs) textures.albedoSpectrumTextures[texture.first] = texture.second->GetResult();
+                for (const auto& texture : this->spectrumTextureJobs) textures.albedoSpectrumTextures[texture.first] = texture.second->GetResult();
                 this->spectrumTextureJobs.clear();
                 this->textureMutex.unlock();
 
@@ -584,8 +687,8 @@ namespace spectra::pathtracer {
                 for (const std::pair<std::string, TransformedEntity>& texture : this->asyncSpectrumTextures) {
                     Transform renderFromTexture = texture.second.renderFromObject;
                     TextureParameterDictionary textureParameters(&texture.second.parameters, nullptr);
-                    SpectrumTexture unboundedTexture                   = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Unbounded, &texture.second.loc, alloc);
-                    SpectrumTexture illuminantTexture                  = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Illuminant, &texture.second.loc, alloc);
+                    SpectrumTexture unboundedTexture                   = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Unbounded, &texture.second.loc, this->compiled.textureCache, alloc);
+                    SpectrumTexture illuminantTexture                  = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Illuminant, &texture.second.loc, this->compiled.textureCache, alloc);
                     textures.unboundedSpectrumTextures[texture.first]  = unboundedTexture;
                     textures.illuminantSpectrumTextures[texture.first] = illuminantTexture;
                 }
@@ -594,16 +697,16 @@ namespace spectra::pathtracer {
                     Allocator alloc             = this->compiled.threadAllocators.Get();
                     Transform renderFromTexture = texture.second.renderFromObject;
                     TextureParameterDictionary textureParameters(&texture.second.parameters, &textures);
-                    textures.floatTextures[texture.first] = FloatTexture::Create(texture.second.name, renderFromTexture, textureParameters, &texture.second.loc, alloc);
+                    textures.floatTextures[texture.first] = FloatTexture::Create(texture.second.name, renderFromTexture, textureParameters, &texture.second.loc, this->compiled.textureCache, alloc);
                 }
 
                 for (const std::pair<std::string, TransformedEntity>& texture : this->serialSpectrumTextures) {
                     Allocator alloc             = this->compiled.threadAllocators.Get();
                     Transform renderFromTexture = texture.second.renderFromObject;
                     TextureParameterDictionary textureParameters(&texture.second.parameters, &textures);
-                    textures.albedoSpectrumTextures[texture.first]     = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Albedo, &texture.second.loc, alloc);
-                    textures.unboundedSpectrumTextures[texture.first]  = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Unbounded, &texture.second.loc, alloc);
-                    textures.illuminantSpectrumTextures[texture.first] = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Illuminant, &texture.second.loc, alloc);
+                    textures.albedoSpectrumTextures[texture.first]     = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Albedo, &texture.second.loc, this->compiled.textureCache, alloc);
+                    textures.unboundedSpectrumTextures[texture.first]  = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Unbounded, &texture.second.loc, this->compiled.textureCache, alloc);
+                    textures.illuminantSpectrumTextures[texture.first] = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Illuminant, &texture.second.loc, this->compiled.textureCache, alloc);
                 }
 
                 return textures;
@@ -639,7 +742,7 @@ namespace spectra::pathtracer {
                     pstd::vector<Shape> shapeObjects = Shape::Create(shape.name, shape.renderFromObject, shape.objectFromRender, shape.reverseOrientation, shape.parameters, this->compiled.textures.floatTextures, this->renderConfig, &shape.loc, this->compiled.meshBufferCache, alloc);
                     FloatTexture alphaTexture        = getAlphaTexture(shape.parameters, &shape.loc);
                     MediumInterface medium_interface(this->FindMedium(shape.insideMedium, &shape.loc), this->FindMedium(shape.outsideMedium, &shape.loc));
-                    pstd::vector<Light>* shapeLights = new pstd::vector<Light>(alloc);
+                    pstd::vector<Light>* shapeLights = alloc.new_object<pstd::vector<Light>>(alloc);
                     for (Shape shapeObject : shapeObjects) {
                         Light area_light = Light::CreateArea(shape.areaLight->name, shape.areaLight->parameters, *shape.renderFromObject, medium_interface, shapeObject, alphaTexture, &shape.areaLight->loc, this->compiled.lightSpectrumCache, alloc);
                         if (area_light) {
@@ -651,7 +754,7 @@ namespace spectra::pathtracer {
                 }
 
                 std::lock_guard<std::mutex> lock(this->lightMutex);
-                for (AsyncJob<Light>* job : this->lightJobs) lights.push_back(job->GetResult());
+                for (const std::unique_ptr<AsyncJob<Light>>& job : this->lightJobs) lights.push_back(job->GetResult());
                 return lights;
             }
 
@@ -659,26 +762,28 @@ namespace spectra::pathtracer {
             CompiledScene& compiled;
             RenderConfig renderConfig;
             std::optional<Point2i> filmResolutionOverride{};
+            cudaStream_t renderStream{};
             bool renderSettingsReady{false};
             Entity samplerEntity{};
             CameraEntity cameraEntity{};
             std::mutex mediaMutex;
-            std::map<std::string, AsyncJob<Medium>*> mediumJobs{};
+            std::map<std::string, std::unique_ptr<AsyncJob<Medium>>> mediumJobs{};
             std::mutex materialMutex;
-            std::map<std::string, AsyncJob<Image*>*> normalMapJobs{};
+            std::map<std::string, std::unique_ptr<AsyncJob<Image*>>> normalMapJobs{};
             std::map<std::string, Image*> normalMaps{};
             std::vector<std::pair<std::string, Entity>> materials{};
             std::mutex lightMutex;
-            std::vector<AsyncJob<Light>*> lightJobs{};
+            std::vector<std::unique_ptr<AsyncJob<Light>>> lightJobs{};
             std::mutex textureMutex;
             std::vector<std::pair<std::string, TransformedEntity>> serialFloatTextures{};
             std::vector<std::pair<std::string, TransformedEntity>> serialSpectrumTextures{};
             std::vector<std::pair<std::string, TransformedEntity>> asyncSpectrumTextures{};
             std::set<std::string> loadingTextureFilenames{};
-            std::map<std::string, AsyncJob<FloatTexture>*> floatTextureJobs{};
-            std::map<std::string, AsyncJob<SpectrumTexture>*> spectrumTextureJobs{};
+            std::map<std::string, std::unique_ptr<AsyncJob<FloatTexture>>> floatTextureJobs{};
+            std::map<std::string, std::unique_ptr<AsyncJob<SpectrumTexture>>> spectrumTextureJobs{};
             std::set<std::string> material_names{};
             std::set<std::string> mediumNames{};
+            std::set<std::string> deviceVolumeMediumNames{};
             std::set<std::string> floatTextureNames{};
             std::set<std::string> spectrumTextureNames{};
             std::set<std::string> objectDefinitionNames{};
@@ -726,6 +831,7 @@ namespace spectra::pathtracer {
             ValidateEntityType(&report, medium.entity, supportedMedia, "medium");
             ValidateTransform(&report, medium.transform, medium.entity.source, std::format("medium \"{}\"", medium.name));
         }
+        for (const scene::Scene::VolumeGrid& volume : scene.volumes) media.insert(std::format("{}.__medium", volume.name));
 
         for (const scene::Scene::Texture& texture : scene.textures) {
             if (texture.kind != "float" && texture.kind != "spectrum") AddDiagnostic(&report, texture.entity.source, std::format("GPU pathtracer does not support texture value kind \"{}\"", texture.kind));
@@ -769,10 +875,13 @@ namespace spectra::pathtracer {
         return report;
     }
 
-    std::unique_ptr<CompiledScene> CompileScene(const scene::Scene::ResolvedScene& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride) {
+    CompiledScene::~CompiledScene() noexcept = default;
+
+    std::unique_ptr<CompiledScene> CompileScene(const scene::Scene::ResolvedScene& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride, cudaStream_t renderStream) {
         std::unique_ptr<CompiledScene> compiled = std::make_unique<CompiledScene>(memoryResource);
-        SceneCompiler compiler(scene, *compiled, config, filmResolutionOverride);
+        SceneCompiler compiler(scene, *compiled, config, filmResolutionOverride, renderStream);
         compiler.Compile();
+        compiled->deviceArena.FinishUploads(renderStream);
         return compiled;
     }
 

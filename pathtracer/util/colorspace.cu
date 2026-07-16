@@ -100,6 +100,9 @@ namespace spectra {
         // ITU-R Rec BT.2020
         rec2020    = alloc.new_object<RGBColorSpace>(Point2f(.708, .292), Point2f(.170, .797), Point2f(.131, .046), GetNamedSpectrum("stdillum-D65"), RGBToSpectrumTable::Rec2020, alloc);
         aces2065_1 = alloc.new_object<RGBColorSpace>(Point2f(.7347, .2653), Point2f(0., 1.), Point2f(.0001, -.077), GetNamedSpectrum("illum-acesD60"), RGBToSpectrumTable::ACES2065_1, alloc);
+    }
+
+    void RGBColorSpace::SetDeviceSpaces(const RGBColorSpace* srgb, const RGBColorSpace* dciP3, const RGBColorSpace* rec2020, const RGBColorSpace* aces2065_1) {
         CUDA_CHECK(cudaMemcpyToSymbol(rgbColorSpaceSRGBDevice, &srgb, sizeof(srgb)));
         CUDA_CHECK(cudaMemcpyToSymbol(rgbColorSpaceDCIP3Device, &dciP3, sizeof(dciP3)));
         CUDA_CHECK(cudaMemcpyToSymbol(rgbColorSpaceRec2020Device, &rec2020, sizeof(rec2020)));
@@ -111,10 +114,6 @@ namespace spectra {
         dciP3                               = nullptr;
         rec2020                             = nullptr;
         aces2065_1                          = nullptr;
-        const RGBColorSpace* nullColorSpace = nullptr;
-        CUDA_CHECK(cudaMemcpyToSymbol(rgbColorSpaceSRGBDevice, &nullColorSpace, sizeof(nullColorSpace)));
-        CUDA_CHECK(cudaMemcpyToSymbol(rgbColorSpaceDCIP3Device, &nullColorSpace, sizeof(nullColorSpace)));
-        CUDA_CHECK(cudaMemcpyToSymbol(rgbColorSpaceRec2020Device, &nullColorSpace, sizeof(nullColorSpace)));
-        CUDA_CHECK(cudaMemcpyToSymbol(rgbColorSpaceACES2065_1Device, &nullColorSpace, sizeof(nullColorSpace)));
+        SetDeviceSpaces(nullptr, nullptr, nullptr, nullptr);
     }
 } // namespace spectra

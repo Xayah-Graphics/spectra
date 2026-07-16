@@ -3,6 +3,7 @@
 
 #include <initializer_list>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <pathtracer/base/texture.cuh>
 #include <pathtracer/core/interaction.cuh>
@@ -20,6 +21,37 @@
 #include <string>
 
 namespace spectra {
+    class GPUFloatImageTexture;
+    class GPUFloatPtexTexture;
+    class GPUSpectrumImageTexture;
+    class GPUSpectrumPtexTexture;
+    class PtexTextureBase;
+
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+
+        class PathtracerTextureCache {
+        public:
+            PathtracerTextureCache();
+            ~PathtracerTextureCache();
+
+            PathtracerTextureCache(const PathtracerTextureCache&)                = delete;
+            PathtracerTextureCache(PathtracerTextureCache&&) noexcept            = delete;
+            PathtracerTextureCache& operator=(const PathtracerTextureCache&)     = delete;
+            PathtracerTextureCache& operator=(PathtracerTextureCache&&) noexcept = delete;
+
+        private:
+            struct State;
+            std::unique_ptr<State> state;
+
+            friend class spectra::GPUFloatImageTexture;
+            friend class spectra::GPUFloatPtexTexture;
+            friend class spectra::GPUSpectrumImageTexture;
+            friend class spectra::GPUSpectrumPtexTexture;
+            friend class spectra::PtexTextureBase;
+        };
+    } // namespace pathtracer
+
     // TextureEvalContext Definition
     struct TextureEvalContext {
         // TextureEvalContext Public Methods
@@ -240,6 +272,7 @@ namespace spectra {
         static SpectrumConstantTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         Spectrum value;
     };
 
@@ -256,6 +289,7 @@ namespace spectra {
         static FloatBilerpTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // BilerpTexture Private Data
         TextureMapping2D mapping;
         Float v00, v01, v10, v11;
@@ -274,6 +308,7 @@ namespace spectra {
         static SpectrumBilerpTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // BilerpTexture Private Data
         TextureMapping2D mapping;
         Spectrum v00, v01, v10, v11;
@@ -296,6 +331,7 @@ namespace spectra {
         static FloatCheckerboardTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         TextureMapping2D map2D;
         TextureMapping3D map3D;
         FloatTexture tex[2];
@@ -319,6 +355,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // SpectrumCheckerboardTexture Private Members
         TextureMapping2D map2D;
         TextureMapping3D map3D;
@@ -339,6 +376,7 @@ namespace spectra {
         static FloatDotsTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // DotsTexture Private Data
         TextureMapping2D mapping;
         FloatTexture outsideDot, insideDot;
@@ -358,6 +396,7 @@ namespace spectra {
         static SpectrumDotsTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // SpectrumDotsTexture Private Members
         TextureMapping2D mapping;
         SpectrumTexture outsideDot, insideDot;
@@ -377,19 +416,19 @@ namespace spectra {
         static FBmTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         TextureMapping3D mapping;
         Float omega;
         int octaves;
     };
 
-#if defined(__NVCC__)
     class GPUSpectrumImageTexture {
     public:
-        GPUSpectrumImageTexture(std::string filename, TextureMapping2D mapping, cudaTextureObject_t texObj, Float scale, bool invert, bool isSingleChannel, const RGBColorSpace* colorSpace, SpectrumType spectrumType) : mapping(mapping), filename(filename), texObj(texObj), scale(scale), invert(invert), isSingleChannel(isSingleChannel), colorSpace(colorSpace), spectrumType(spectrumType) {}
+        GPUSpectrumImageTexture(TextureMapping2D mapping, cudaTextureObject_t texObj, Float scale, bool invert, bool isSingleChannel, const RGBColorSpace* colorSpace, SpectrumType spectrumType) : mapping(mapping), texObj(texObj), scale(scale), invert(invert), isSingleChannel(isSingleChannel), colorSpace(colorSpace), spectrumType(spectrumType) {}
 
         __host__ __device__ SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
 #if !defined(__CUDA_ARCH__)
-            SPECTRA_FATAL("GPUSpectrumImageTexture::Evaluate called from CPU");
+            SPECTRA_FATAL("GPUSpectrumImageTexture::Evaluate is device-only");
             return SampledSpectrum(0);
 #else
             // flip y coord since image has (0,0) at upper left, texture at lower
@@ -414,7 +453,7 @@ namespace spectra {
 #endif
         }
 
-        static GPUSpectrumImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
+        static GPUSpectrumImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc);
 
 
         void MultiplyScale(Float s) {
@@ -422,7 +461,6 @@ namespace spectra {
         }
 
         TextureMapping2D mapping;
-        std::string filename;
         cudaTextureObject_t texObj;
         Float scale;
         bool invert, isSingleChannel;
@@ -432,11 +470,11 @@ namespace spectra {
 
     class GPUFloatImageTexture {
     public:
-        GPUFloatImageTexture(std::string filename, TextureMapping2D mapping, cudaTextureObject_t texObj, Float scale, bool invert) : mapping(mapping), filename(filename), texObj(texObj), scale(scale), invert(invert) {}
+        GPUFloatImageTexture(TextureMapping2D mapping, cudaTextureObject_t texObj, Float scale, bool invert) : mapping(mapping), texObj(texObj), scale(scale), invert(invert) {}
 
         __host__ __device__ Float Evaluate(TextureEvalContext ctx) const {
 #if !defined(__CUDA_ARCH__)
-            SPECTRA_FATAL("GPUSpectrumImageTexture::Evaluate called from CPU");
+            SPECTRA_FATAL("GPUFloatImageTexture::Evaluate is device-only");
             return 0;
 #else
             TexCoord2D c = mapping.Map(ctx);
@@ -447,7 +485,7 @@ namespace spectra {
 #endif
         }
 
-        static GPUFloatImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static GPUFloatImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc);
 
 
         void MultiplyScale(Float s) {
@@ -455,41 +493,10 @@ namespace spectra {
         }
 
         TextureMapping2D mapping;
-        std::string filename;
         cudaTextureObject_t texObj;
         Float scale;
         bool invert;
     };
-
-#else // __NVCC__
-
-    class GPUSpectrumImageTexture {
-    public:
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
-            SPECTRA_FATAL("GPUSpectrumImageTexture::Evaluate called from CPU");
-            return SampledSpectrum(0);
-        }
-
-        static GPUSpectrumImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
-            SPECTRA_FATAL("GPUSpectrumImageTexture::Create called outside CUDA texture implementation.");
-            return nullptr;
-        }
-    };
-
-    class GPUFloatImageTexture {
-    public:
-        Float Evaluate(const TextureEvalContext&) const {
-            SPECTRA_FATAL("GPUFloatImageTexture::Evaluate called from CPU");
-            return 0;
-        }
-
-        static GPUFloatImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
-            SPECTRA_FATAL("GPUFloatImageTexture::Create called outside CUDA texture implementation.");
-            return nullptr;
-        }
-    };
-
-#endif // __NVCC__
 
     // MarbleTexture Definition
     class MarbleTexture {
@@ -502,6 +509,7 @@ namespace spectra {
         static MarbleTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // MarbleTexture Private Members
         TextureMapping3D mapping;
         int octaves;
@@ -525,6 +533,7 @@ namespace spectra {
         static FloatMixTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         FloatTexture tex1, tex2;
         FloatTexture amount;
     };
@@ -546,6 +555,7 @@ namespace spectra {
         static FloatDirectionMixTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // FloatDirectionMixTexture Private Members
         FloatTexture tex1, tex2;
         Vector3f dir;
@@ -567,6 +577,7 @@ namespace spectra {
         static SpectrumMixTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         SpectrumTexture tex1, tex2;
         FloatTexture amount;
     };
@@ -588,6 +599,7 @@ namespace spectra {
         static SpectrumDirectionMixTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // SpectrumDirectionMixTexture Private Members
         SpectrumTexture tex1, tex2;
         Vector3f dir;
@@ -596,7 +608,7 @@ namespace spectra {
     // PtexTexture Declarations
     class PtexTextureBase {
     public:
-        PtexTextureBase(const std::string& filename, ColorEncoding encoding, Float scale);
+        PtexTextureBase(const std::string& filename, ColorEncoding encoding, Float scale, pathtracer::PathtracerTextureCache& textureCache);
 
         int SampleTexture(TextureEvalContext ctx, float* result) const;
 
@@ -604,25 +616,27 @@ namespace spectra {
         std::string filename;
         ColorEncoding encoding;
         Float scale;
+        pathtracer::PathtracerTextureCache* textureCache;
     };
 
     class GPUFloatPtexTexture {
     public:
-        GPUFloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, Allocator alloc);
+        GPUFloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc);
 
         __host__ __device__ Float Evaluate(TextureEvalContext ctx) const {
             return faceValues[ctx.faceIndex];
         }
 
-        static GPUFloatPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static GPUFloatPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         pstd::vector<Float> faceValues;
     };
 
     class GPUSpectrumPtexTexture {
     public:
-        GPUSpectrumPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, SpectrumType spectrumType, Allocator alloc);
+        GPUSpectrumPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, SpectrumType spectrumType, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc);
 
         __host__ __device__ SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             CHECK(ctx.faceIndex >= 0 && ctx.faceIndex < faceValues.size());
@@ -637,9 +651,10 @@ namespace spectra {
                 return RGBIlluminantSpectrum(*sRGB, rgb).Sample(lambda);
         }
 
-        static GPUSpectrumPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
+        static GPUSpectrumPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         SpectrumType spectrumType;
         pstd::vector<RGB> faceValues;
     };
@@ -659,6 +674,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         FloatTexture tex, scale;
     };
 
@@ -676,6 +692,7 @@ namespace spectra {
         static SpectrumTexture Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         SpectrumTexture tex;
         FloatTexture scale;
     };
@@ -696,6 +713,7 @@ namespace spectra {
         static WindyTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         TextureMapping3D mapping;
     };
 
@@ -713,6 +731,7 @@ namespace spectra {
         static WrinkledTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // WrinkledTexture Private Data
         TextureMapping3D mapping;
         int octaves;
@@ -785,7 +804,6 @@ namespace spectra {
         }
     };
 
-    void ClearPathtracerTextureCaches();
 } // namespace spectra
 
 #endif // SPECTRA_PATHTRACER_CORE_TEXTURES_H

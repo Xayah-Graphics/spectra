@@ -4,6 +4,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <pathtracer/base/texture.cuh>
 #include <pathtracer/core/diagnostics.cuh>
 #include <pathtracer/util/containers.cuh>
@@ -40,14 +41,20 @@ namespace spectra {
         bool mayBeUnused                        = false;
     };
 
-    // ParsedParameterVector Definition
-    using ParsedParameterVector = InlinedVector<ParsedParameter*, 8>;
-
     // ParameterType Definition
     enum class ParameterType { Boolean, Float, Integer, Point2f, Vector2f, Point3f, Vector3f, Normal3f, Spectrum, String, Texture };
 
     // SpectrumType Definition
     enum class SpectrumType { Illuminant, Albedo, Unbounded };
+
+    class SpectrumFileCache {
+    public:
+        [[nodiscard]] Spectrum Lookup(const std::string& filename, Allocator alloc);
+
+    private:
+        std::mutex mutex{};
+        std::map<std::string, Spectrum> spectra{};
+    };
 
     // NamedTextures Definition
     struct NamedTextures {
@@ -65,9 +72,7 @@ namespace spectra {
     public:
         // ParameterDictionary Public Methods
         ParameterDictionary() = default;
-        ParameterDictionary(ParsedParameterVector params, const RGBColorSpace* colorSpace);
-
-        ParameterDictionary(ParsedParameterVector params0, const ParsedParameterVector& params1, const RGBColorSpace* colorSpace);
+        ParameterDictionary(InlinedVector<std::shared_ptr<ParsedParameter>, 8> params, const RGBColorSpace* colorSpace, SpectrumFileCache* spectrumFileCache);
 
         std::string GetTexture(const std::string& name) const;
 
@@ -79,10 +84,6 @@ namespace spectra {
 
 
         const FileLoc* loc(const std::string&) const;
-
-        const ParsedParameterVector& GetParameterVector() const {
-            return params;
-        }
 
         Float GetOneFloat(const std::string& name, Float def) const;
         int GetOneInt(const std::string& name, int def) const;
@@ -128,8 +129,9 @@ namespace spectra {
         void checkParameterTypes();
 
         // ParameterDictionary Private Members
-        ParsedParameterVector params;
+        InlinedVector<std::shared_ptr<ParsedParameter>, 8> params;
         const RGBColorSpace* colorSpace = nullptr;
+        SpectrumFileCache* spectrumFileCache = nullptr;
     };
 
     // TextureParameterDictionary Definition

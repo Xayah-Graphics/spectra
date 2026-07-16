@@ -8,6 +8,7 @@
 #include <pathtracer/core/filters.cuh>
 #include <pathtracer/core/kernel_config.cuh>
 #include <pathtracer/core/render_config.cuh>
+#include <pathtracer/memory/memory.cuh>
 #include <pathtracer/util/bluenoise.cuh>
 #include <pathtracer/util/check.cuh>
 #include <pathtracer/util/float.cuh>
@@ -26,13 +27,13 @@ namespace spectra {
     class HaltonSampler {
     public:
         // HaltonSampler Public Methods
-        HaltonSampler(int samplesPerPixel, Point2i fullResolution, RandomizeStrategy randomize = RandomizeStrategy::PermuteDigits, int seed = 0, Allocator alloc = {});
+        HaltonSampler(int samplesPerPixel, Point2i fullResolution, RandomizeStrategy randomize, int seed, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ static constexpr const char* Name() {
             return "HaltonSampler";
         }
 
-        static HaltonSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
+        static HaltonSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ int SamplesPerPixel() const {
             return samplesPerPixel;
@@ -99,7 +100,7 @@ namespace spectra {
             if (randomize == RandomizeStrategy::None)
                 return RadicalInverse(dimension, haltonIndex);
             else if (randomize == RandomizeStrategy::PermuteDigits)
-                return ScrambledRadicalInverse(dimension, haltonIndex, (*digitPermutations)[dimension]);
+                return ScrambledRadicalInverse(dimension, haltonIndex, digitPermutations[dimension]);
             else {
                 return OwenScrambledRadicalInverse(dimension, haltonIndex, MixBits(1 + (dimension << 4)));
             }
@@ -108,7 +109,7 @@ namespace spectra {
         // HaltonSampler Private Members
         int samplesPerPixel;
         RandomizeStrategy randomize;
-        pstd::vector<DigitPermutation>* digitPermutations = nullptr;
+        const DigitPermutation* digitPermutations = nullptr;
         static constexpr int MaxHaltonResolution          = 128;
         Point2i baseScales, baseExponents;
         int multInverse[2];
@@ -295,13 +296,13 @@ namespace spectra {
     class PMJ02BNSampler {
     public:
         // PMJ02BNSampler Public Methods
-        PMJ02BNSampler(int samplesPerPixel, int seed = 0, Allocator alloc = {});
+        PMJ02BNSampler(int samplesPerPixel, int seed, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ static constexpr const char* Name() {
             return "PMJ02BNSampler";
         }
 
-        static PMJ02BNSampler* Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
+        static PMJ02BNSampler* Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ int SamplesPerPixel() const {
             return samplesPerPixel;
@@ -326,7 +327,7 @@ namespace spectra {
         __host__ __device__ Point2f GetPixel2D() {
             int px = pixel.x % pixelTileSize, py = pixel.y % pixelTileSize;
             int offset = (px + py * pixelTileSize) * samplesPerPixel;
-            return (*pixelSamples)[offset + sampleIndex];
+            return pixelSamples[offset + sampleIndex];
         }
 
         __host__ __device__ Point2f Get2D() {
@@ -354,7 +355,7 @@ namespace spectra {
         // PMJ02BNSampler Private Members
         int samplesPerPixel, seed;
         int pixelTileSize;
-        pstd::vector<Point2f>* pixelSamples;
+        const Point2f* pixelSamples = nullptr;
         Point2i pixel;
         int sampleIndex, dimension;
     };

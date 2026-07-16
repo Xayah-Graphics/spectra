@@ -10,6 +10,10 @@
 #include <string>
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     // RGBColorSpace Definition
     class RGBColorSpace {
     public:
@@ -55,7 +59,9 @@ namespace spectra {
         static const RGBColorSpace* Lookup(Point2f r, Point2f g, Point2f b, Point2f w);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // RGBColorSpace Private Members
+        static void SetDeviceSpaces(const RGBColorSpace* srgb, const RGBColorSpace* dciP3, const RGBColorSpace* rec2020, const RGBColorSpace* aces2065_1);
         const RGBToSpectrumTable* rgbToSpectrumTable;
         static const RGBColorSpace *srgb, *dciP3, *rec2020, *aces2065_1;
     };

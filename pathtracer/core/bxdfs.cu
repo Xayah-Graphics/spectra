@@ -573,7 +573,7 @@ namespace spectra {
                 total_size *= shape[j];
             }
 
-            auto data = std::unique_ptr<uint8_t[]>(new uint8_t[total_size]);
+            auto data = std::make_unique<uint8_t[]>(total_size);
 
             long cur_pos = ftell(file);
             ASSERT(cur_pos != -1, "Unable to tell current cursor position.");
@@ -601,25 +601,6 @@ namespace spectra {
         CHECK(it != m_fields.end());
         return it->second;
     }
-
-    // MeasuredBxDFData Definition
-    struct MeasuredBxDFData {
-        // MeasuredBxDFData Public Members
-        pstd::vector<float> wavelengths;
-        PiecewiseLinear2D<3> spectra;
-        PiecewiseLinear2D<0> ndf;
-        PiecewiseLinear2D<2> vndf;
-        PiecewiseLinear2D<0> sigma;
-        bool isotropic;
-        PiecewiseLinear2D<2> luminance;
-
-        MeasuredBxDFData(Allocator alloc) : ndf(alloc), sigma(alloc), vndf(alloc), luminance(alloc), spectra(alloc), wavelengths(alloc) {}
-
-        static MeasuredBxDFData* Create(const std::string& filename, Allocator alloc);
-
-
-        std::string filename;
-    };
 
     MeasuredBxDFData* MeasuredBxDFData::Create(const std::string& filename, Allocator alloc) {
         Tensor tf         = Tensor(filename);
@@ -659,7 +640,6 @@ namespace spectra {
         }
 
         MeasuredBxDFData* brdf = alloc.new_object<MeasuredBxDFData>(alloc);
-        brdf->filename         = filename;
         brdf->isotropic        = phi_i.shape[0] <= 2;
 
         if (!brdf->isotropic) {

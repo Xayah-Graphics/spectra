@@ -1,6 +1,7 @@
 #ifndef SPECTRA_PATHTRACER_BASE_FILM_H
 #define SPECTRA_PATHTRACER_BASE_FILM_H
 
+#include <cuda_runtime_api.h>
 #include <pathtracer/base/filter.cuh>
 #include <pathtracer/util/float.cuh>
 #include <pathtracer/util/memory.cuh>
@@ -47,7 +48,7 @@ namespace spectra {
         __host__ __device__ Bounds2i PixelBounds() const;
         __host__ __device__ Float Diagonal() const;
 
-        void WriteImage(ImageMetadata metadata, Float splatScale = 1);
+        void WriteImage(ImageMetadata metadata, const std::string& filename, Float splatScale = 1);
 
         __host__ __device__ RGB ToOutputRGB(SampledSpectrum L, const SampledWavelengths& lambda) const;
 
@@ -56,12 +57,11 @@ namespace spectra {
         __host__ __device__ RGB GetPixelRGB(Point2i p, Float splatScale = 1) const;
 
         __host__ __device__ Filter GetFilter() const;
-        __host__ __device__ const PixelSensor* GetPixelSensor() const;
-        std::string GetFilename() const;
+        const PixelSensor* GetPixelSensor() const;
 
         using TaggedPointer::TaggedPointer;
 
-        static Film Create(const std::string& name, const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
+        static Film Create(const std::string& name, const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, Allocator pixelAlloc, cudaStream_t stream, std::string* outputFilename);
 
 
         __host__ __device__ void ResetPixel(Point2i p);

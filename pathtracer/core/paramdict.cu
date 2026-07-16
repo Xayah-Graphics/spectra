@@ -182,21 +182,14 @@ namespace spectra {
     ///////////////////////////////////////////////////////////////////////////
     // ParameterDictionary
 
-    ParameterDictionary::ParameterDictionary(ParsedParameterVector p, const RGBColorSpace* colorSpace) : params(std::move(p)), colorSpace(colorSpace) {
+    ParameterDictionary::ParameterDictionary(InlinedVector<std::shared_ptr<ParsedParameter>, 8> p, const RGBColorSpace* colorSpace, SpectrumFileCache* spectrumFileCache) : params(std::move(p)), colorSpace(colorSpace), spectrumFileCache(spectrumFileCache) {
         std::reverse(params.begin(), params.end());
         CHECK(colorSpace);
-        checkParameterTypes();
-    }
-
-    ParameterDictionary::ParameterDictionary(ParsedParameterVector p0, const ParsedParameterVector& params1, const RGBColorSpace* colorSpace) : params(std::move(p0)), colorSpace(colorSpace) {
-        std::reverse(params.begin(), params.end());
-        CHECK(colorSpace);
-        params.insert(params.end(), params1.rbegin(), params1.rend());
         checkParameterTypes();
     }
 
     void ParameterDictionary::checkParameterTypes() {
-        for (const ParsedParameter* p : params) {
+        for (const auto& p : params) {
             if (p->type == ParameterTypeTraits<ParameterType::Boolean>::typeName) {
                 if (p->bools.empty()) throw std::runtime_error(diagnostics::Format(&p->loc, "\"%s\": non-Boolean values provided for Boolean-valued parameter", p->name));
             } else if (p->type == ParameterTypeTraits<ParameterType::Float>::typeName || p->type == ParameterTypeTraits<ParameterType::Integer>::typeName || p->type == ParameterTypeTraits<ParameterType::Point2f>::typeName || p->type == ParameterTypeTraits<ParameterType::Vector2f>::typeName || p->type == ParameterTypeTraits<ParameterType::Point3f>::typeName || p->type == ParameterTypeTraits<ParameterType::Vector3f>::typeName || p->type == ParameterTypeTraits<ParameterType::Normal3f>::typeName || p->type == "rgb" || p->type == "blackbody") {
@@ -223,7 +216,7 @@ namespace spectra {
     typename ParameterTypeTraits<PT>::ReturnType ParameterDictionary::lookupSingle(const std::string& name, typename ParameterTypeTraits<PT>::ReturnType defaultValue) const {
         // Search _params_ for parameter _name_
         using traits = ParameterTypeTraits<PT>;
-        for (const ParsedParameter* p : params) {
+        for (const auto& p : params) {
             if (p->name != name || p->type != traits::typeName) continue;
             // Extract parameter values from _p_
             const auto& values = traits::GetValues(*p);
@@ -269,7 +262,7 @@ namespace spectra {
     }
 
     Spectrum ParameterDictionary::GetOneSpectrum(const std::string& name, Spectrum defaultValue, SpectrumType spectrumType, Allocator alloc) const {
-        for (const ParsedParameter* p : params) {
+        for (const auto& p : params) {
             if (p->name != name) continue;
 
             std::vector<Spectrum> s = extractSpectrumArray(*p, spectrumType, alloc);
@@ -300,7 +293,7 @@ namespace spectra {
 
     template <typename ReturnType, typename G, typename C>
     std::vector<ReturnType> ParameterDictionary::lookupArray(const std::string& name, ParameterType type, const char* typeName, int nPerItem, G getValues, C convert) const {
-        for (const ParsedParameter* p : params)
+        for (const auto& p : params)
             if (p->name == name && p->type == typeName) return returnArray<ReturnType>(getValues(*p), *p, nPerItem, convert);
 
         return {};
@@ -344,17 +337,12 @@ namespace spectra {
         return lookupArray<ParameterType::Normal3f>(name);
     }
 
-    static std::map<std::string, Spectrum> cachedSpectra;
-
-    // TODO: move this functionality (but not the caching?) to a Spectrum method.
-    static Spectrum readSpectrumFromFile(const std::string& filename, Allocator alloc) {
-        const std::string& fn = filename;
-        if (cachedSpectra.find(fn) != cachedSpectra.end()) return cachedSpectra[fn];
-
-        pstd::optional<Spectrum> pls = PiecewiseLinearSpectrum::Read(fn, alloc);
+    Spectrum SpectrumFileCache::Lookup(const std::string& filename, Allocator alloc) {
+        std::lock_guard lock(mutex);
+        if (const auto found = spectra.find(filename); found != spectra.end()) return found->second;
+        pstd::optional<Spectrum> pls = PiecewiseLinearSpectrum::Read(filename, alloc);
         if (!pls) return nullptr;
-
-        cachedSpectra[fn] = *pls;
+        spectra.emplace(filename, *pls);
         return *pls;
     }
 
@@ -398,12 +386,13 @@ namespace spectra {
                 return alloc.new_object<PiecewiseLinearSpectrum>(lambda, value, alloc);
             });
         } else if (param.type == "spectrum" && !param.strings.empty())
-            return returnArray<Spectrum>(param.strings, param, 1, [param, &alloc](const std::string* s, const FileLoc* loc) -> Spectrum {
+            return returnArray<Spectrum>(param.strings, param, 1, [this, &alloc](const std::string* s, const FileLoc* loc) -> Spectrum {
                 Spectrum spd = GetNamedSpectrum(*s);
                 if (spd) return spd;
 
-                spd = readSpectrumFromFile(*s, alloc);
-                if (!spd) throw std::runtime_error(diagnostics::Format(&param.loc, "%s: unable to read valid spectrum file", *s));
+                if (spectrumFileCache == nullptr) throw std::runtime_error(diagnostics::Format(loc, "Spectrum file parameter has no scene cache"));
+                spd = spectrumFileCache->Lookup(*s, alloc);
+                if (!spd) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to read valid spectrum file", *s));
                 return spd;
             });
 
@@ -411,7 +400,7 @@ namespace spectra {
     }
 
     std::vector<Spectrum> ParameterDictionary::GetSpectrumArray(const std::string& name, SpectrumType spectrumType, Allocator alloc) const {
-        for (const ParsedParameter* p : params) {
+        for (const auto& p : params) {
             if (p->name != name) continue;
 
             std::vector<Spectrum> s = extractSpectrumArray(*p, spectrumType, alloc);
@@ -425,7 +414,7 @@ namespace spectra {
     }
 
     std::string ParameterDictionary::GetTexture(const std::string& name) const {
-        for (const ParsedParameter* p : params) {
+        for (const auto& p : params) {
             if (p->name != name || p->type != "texture") continue;
 
             if (p->strings.empty()) throw std::runtime_error(diagnostics::Format(&p->loc, "No string values provided for parameter \"%s\".", name));
@@ -438,7 +427,7 @@ namespace spectra {
     }
 
     std::vector<RGB> ParameterDictionary::GetRGBArray(const std::string& name) const {
-        for (const ParsedParameter* p : params) {
+        for (const auto& p : params) {
             if (p->name == name && p->type == "rgb") {
                 if (p->floats.size() % 3)
                     throw std::runtime_error(diagnostics::Format(&p->loc, "Number of values given for \"rgb\" parameter %d "
@@ -458,7 +447,7 @@ namespace spectra {
         // type / name
         InlinedVector<std::pair<const std::string*, const std::string*>, 16> seen;
 
-        for (const ParsedParameter* p : params) {
+        for (const auto& p : params) {
             if (p->mayBeUnused) continue;
 
             bool haveSeen = std::find_if(seen.begin(), seen.end(), [&p](std::pair<const std::string*, const std::string*> p2) { return *p2.first == p->type && *p2.second == p->name; }) != seen.end();
@@ -476,7 +465,7 @@ namespace spectra {
 
 
     const FileLoc* ParameterDictionary::loc(const std::string& name) const {
-        for (const ParsedParameter* p : params)
+        for (const auto& p : params)
             if (p->name == name) return &p->loc;
         return nullptr;
     }
@@ -577,7 +566,7 @@ namespace spectra {
     SpectrumTexture TextureParameterDictionary::GetSpectrumTextureOrNull(std::string name, SpectrumType spectrumType, Allocator alloc) const {
         const auto& spectrumTextures = (spectrumType == SpectrumType::Unbounded) ? textures->unboundedSpectrumTextures : ((spectrumType == SpectrumType::Albedo) ? textures->albedoSpectrumTextures : textures->illuminantSpectrumTextures);
 
-        for (const ParsedParameter* p : dict->params) {
+        for (const auto& p : dict->params) {
             if (p->name != name) continue;
 
             if (p->type == "texture") {
@@ -622,7 +611,7 @@ namespace spectra {
     }
 
     FloatTexture TextureParameterDictionary::GetFloatTextureOrNull(const std::string& name, Allocator alloc) const {
-        for (const ParsedParameter* p : dict->params) {
+        for (const auto& p : dict->params) {
             if (p->name != name) continue;
 
             if (p->type == "texture") {

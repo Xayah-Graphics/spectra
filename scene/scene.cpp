@@ -421,12 +421,14 @@ namespace spectra::scene {
                     if (!std::isfinite(value)) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" contains a non-finite value", volume.name, channel.name));
                 if (channel.buffer_id != 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" CPU source must not provide a GPU buffer id", volume.name, channel.name));
                 if (channel.external_device_pointer != 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" CPU source must not provide an external device pointer", volume.name, channel.name));
+                if (channel.external_ready_event != 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" CPU source must not provide a CUDA readiness event", volume.name, channel.name));
                 if (channel.source_byte_size != 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" CPU source must not provide a GPU byte size", volume.name, channel.name));
                 return;
             }
             if (!channel.values.empty()) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source must not provide CPU values", volume.name, channel.name));
             if (channel.buffer_id == 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source has no buffer id", volume.name, channel.name));
             if (channel.external_device_pointer == 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source has no external device pointer", volume.name, channel.name));
+            if (channel.external_ready_event == 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source has no CUDA readiness event", volume.name, channel.name));
             if (value_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" byte count exceeds uint64 range", volume.name, channel.name));
             if (channel.source_byte_size < value_count * sizeof(float)) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source byte size is too small", volume.name, channel.name));
         }
@@ -579,6 +581,12 @@ namespace spectra::scene {
             for (const Scene::Medium& medium : scene.media) {
                 require_unique_canonical_name(&medium_names, medium.name, medium.entity.source, "medium");
                 require_entity_type(medium.entity, "medium");
+            }
+            for (const Scene::VolumeGrid& volume : scene.volumes) {
+                bool has_external_gpu_channel = false;
+                for (const Scene::VolumeChannel& channel : volume.channels)
+                    if (channel.source_kind == Scene::VolumeChannelSourceKind::ExternalGpuBuffer) has_external_gpu_channel = true;
+                if (has_external_gpu_channel) require_unique_canonical_name(&medium_names, format_message("{}.__medium", volume.name), volume.source, "volume medium");
             }
 
             std::set<std::string> texture_names{};
@@ -944,17 +952,10 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] std::vector<float> materialize_pathtracer_volume_channel(const Scene::VolumeGrid& volume, const Scene::VolumeChannel& channel, const std::uint64_t value_count, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
-            if (channel.source_kind == Scene::VolumeChannelSourceKind::Values) {
-                if (channel.values.size() != value_count) throw std::runtime_error(format_message("Preview volume \"{}\" channel \"{}\" count does not match dimensions", volume.name, channel.name));
-                return channel.values;
-            }
-            if (external_volume_materializer == nullptr || !*external_volume_materializer) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" uses an external GPU source; pathtracer scene construction requires an explicit static volume snapshot materializer", volume.name, channel.name));
-            std::vector<float> values = (*external_volume_materializer)(volume, channel);
-            if (values.size() != value_count) throw std::runtime_error(format_message("Pathtracer volume snapshot for \"{}\" channel \"{}\" produced {} values; expected {}", volume.name, channel.name, values.size(), value_count));
-            for (const float value : values)
-                if (!std::isfinite(value)) throw std::runtime_error(format_message("Pathtracer volume snapshot for \"{}\" channel \"{}\" contains a non-finite value", volume.name, channel.name));
-            return values;
+        [[nodiscard]] std::vector<float> materialize_pathtracer_volume_channel(const Scene::VolumeGrid& volume, const Scene::VolumeChannel& channel, const std::uint64_t value_count) {
+            if (channel.source_kind != Scene::VolumeChannelSourceKind::Values) throw std::runtime_error(format_message("Preview volume \"{}\" channel \"{}\" is not CPU-resident", volume.name, channel.name));
+            if (channel.values.size() != value_count) throw std::runtime_error(format_message("Preview volume \"{}\" channel \"{}\" count does not match dimensions", volume.name, channel.name));
+            return channel.values;
         }
 
         [[nodiscard]] const Scene::VolumeChannel& require_bound_volume_channel(const Scene::VolumeGrid& volume, const Scene::VolumeChannelBinding& binding, const std::string_view role) {
@@ -964,12 +965,12 @@ namespace spectra::scene {
             throw std::runtime_error(format_message("Preview volume \"{}\" material role \"{}\" references missing channel \"{}\"", volume.name, role, binding.channel_name));
         }
 
-        [[nodiscard]] std::vector<float> materialize_pathtracer_scalar_binding(const Scene::VolumeGrid& volume, const Scene::VolumeChannelBinding& binding, const std::string_view role, const std::uint64_t cell_count, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
+        [[nodiscard]] std::vector<float> materialize_pathtracer_scalar_binding(const Scene::VolumeGrid& volume, const Scene::VolumeChannelBinding& binding, const std::string_view role, const std::uint64_t cell_count) {
             const Scene::VolumeChannel& channel = require_bound_volume_channel(volume, binding, role);
             const std::uint32_t component_count = volume_channel_component_count(channel.format);
             if (binding.component >= component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material role \"{}\" component exceeds channel \"{}\" component count", volume.name, role, channel.name));
             if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material role \"{}\" value count exceeds uint64 range", volume.name, role));
-            std::vector<float> values = materialize_pathtracer_volume_channel(volume, channel, cell_count * component_count, external_volume_materializer);
+            std::vector<float> values = materialize_pathtracer_volume_channel(volume, channel, cell_count * component_count);
             std::vector<float> result{};
             result.reserve(static_cast<std::size_t>(cell_count));
             for (std::uint64_t index = 0u; index < cell_count; ++index) {
@@ -980,13 +981,13 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] std::vector<float> materialize_pathtracer_color_binding(const Scene::VolumeGrid& volume, const Scene::VolumeChannelBinding& binding, const std::uint64_t cell_count, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
+        [[nodiscard]] std::vector<float> materialize_pathtracer_color_binding(const Scene::VolumeGrid& volume, const Scene::VolumeChannelBinding& binding, const std::uint64_t cell_count) {
             const Scene::VolumeChannel& channel = require_bound_volume_channel(volume, binding, "color");
             const std::uint32_t component_count = volume_channel_component_count(channel.format);
             if (binding.component >= component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material color role component exceeds channel \"{}\" component count", volume.name, channel.name));
             if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material color role value count exceeds uint64 range", volume.name));
             if (component_count != 1u && binding.component + 2u >= component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material color role requires either a scalar channel or three contiguous components", volume.name));
-            std::vector<float> values = materialize_pathtracer_volume_channel(volume, channel, cell_count * component_count, external_volume_materializer);
+            std::vector<float> values = materialize_pathtracer_volume_channel(volume, channel, cell_count * component_count);
             std::vector<float> result{};
             if (cell_count > std::numeric_limits<std::uint64_t>::max() / 3u) throw std::runtime_error(format_message("Preview volume \"{}\" color value count exceeds uint64 range", volume.name));
             result.reserve(static_cast<std::size_t>(cell_count * 3u));
@@ -1008,51 +1009,56 @@ namespace spectra::scene {
             return result;
         }
 
-        void append_volume(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::VolumeGrid& volume, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
+        void append_volume(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::VolumeGrid& volume) {
             if (volume.name.empty()) throw std::runtime_error("Preview volume name must not be empty when building canonical scene");
             const Scene::PreviewMaterial* material = find_preview_material(document, volume.material_name);
             if (material == nullptr) throw std::runtime_error(format_message("Preview volume \"{}\" references unknown material \"{}\"", volume.name, volume.material_name));
             if (material->volume.mode != Scene::VolumeMaterialMode::Medium) throw std::runtime_error(format_message("Preview volume \"{}\" material mode is not convertible to a canonical path tracing medium", volume.name));
-            const std::uint64_t value_count = checked_volume_cell_count(volume);
-            std::vector<float> density_values = materialize_pathtracer_scalar_binding(volume, material->volume.density, "density", value_count, external_volume_materializer);
-            log_volume_pathtracer_stats(volume, *material, density_values);
-            const std::string medium_type = material->volume.color.enabled ? "rgbgrid" : "uniformgrid";
-            std::vector<Scene::Parameter> parameters{
-                string_parameter("type", {medium_type}, volume.source),
-                integer_parameter("nx", {static_cast<int>(volume.dimensions[0])}, volume.source),
-                integer_parameter("ny", {static_cast<int>(volume.dimensions[1])}, volume.source),
-                integer_parameter("nz", {static_cast<int>(volume.dimensions[2])}, volume.source),
-                float_parameter("scale", {1.0f}, volume.source),
-            };
-            if (!material->volume.color.enabled) {
-                parameters.push_back(float_parameter("density", std::move(density_values), volume.source));
-                parameters.push_back(float_parameter("temperaturescale", {1.0f}, volume.source));
-                parameters.push_back(rgb_parameter("sigma_a", Vector3{0.08f, 0.08f, 0.08f}, volume.source));
-                parameters.push_back(rgb_parameter("sigma_s", Vector3{0.92f, 0.92f, 0.92f}, volume.source));
-            } else {
-                std::vector<float> color_values = materialize_pathtracer_color_binding(volume, material->volume.color, value_count, external_volume_materializer);
-                std::vector<float> sigma_a(color_values.size(), 0.0f);
-                std::vector<float> sigma_s{};
-                sigma_s.reserve(color_values.size());
-                for (std::uint64_t index = 0u; index < value_count; ++index) {
-                    const float density_value = std::max(0.0f, density_values.at(static_cast<std::size_t>(index)));
-                    for (std::uint32_t component = 0u; component < 3u; ++component) {
-                        const float color_value = color_values.at(static_cast<std::size_t>(index * 3u + component));
-                        sigma_s.push_back(density_value * color_value);
-                    }
-                }
-                parameters.push_back(rgb_parameter("sigma_a", std::move(sigma_a), volume.source));
-                parameters.push_back(rgb_parameter("sigma_s", std::move(sigma_s), volume.source));
-            }
-            if (material->volume.emission.enabled) {
-                std::vector<float> emission_values = materialize_pathtracer_scalar_binding(volume, material->volume.emission, "emission", value_count, external_volume_materializer);
-                parameters.push_back(float_parameter("temperature", std::move(emission_values), volume.source));
-            }
             const std::string medium_name = format_message("{}.__medium", volume.name);
-            scene.media.push_back(Scene::Medium{
-                .name = medium_name,
-                .entity = Scene::Entity{.type = medium_type, .parameters = std::move(parameters), .source = volume.source},
-            });
+            bool external_gpu_source = false;
+            for (const Scene::VolumeChannel& channel : volume.channels)
+                if (channel.source_kind == Scene::VolumeChannelSourceKind::ExternalGpuBuffer) external_gpu_source = true;
+            if (!external_gpu_source) {
+                const std::uint64_t value_count = checked_volume_cell_count(volume);
+                std::vector<float> density_values = materialize_pathtracer_scalar_binding(volume, material->volume.density, "density", value_count);
+                log_volume_pathtracer_stats(volume, *material, density_values);
+                const std::string medium_type = material->volume.color.enabled ? "rgbgrid" : "uniformgrid";
+                std::vector<Scene::Parameter> parameters{
+                    string_parameter("type", {medium_type}, volume.source),
+                    integer_parameter("nx", {static_cast<int>(volume.dimensions[0])}, volume.source),
+                    integer_parameter("ny", {static_cast<int>(volume.dimensions[1])}, volume.source),
+                    integer_parameter("nz", {static_cast<int>(volume.dimensions[2])}, volume.source),
+                    float_parameter("scale", {1.0f}, volume.source),
+                };
+                if (!material->volume.color.enabled) {
+                    parameters.push_back(float_parameter("density", std::move(density_values), volume.source));
+                    parameters.push_back(float_parameter("temperaturescale", {1.0f}, volume.source));
+                    parameters.push_back(rgb_parameter("sigma_a", Vector3{0.08f, 0.08f, 0.08f}, volume.source));
+                    parameters.push_back(rgb_parameter("sigma_s", Vector3{0.92f, 0.92f, 0.92f}, volume.source));
+                } else {
+                    std::vector<float> color_values = materialize_pathtracer_color_binding(volume, material->volume.color, value_count);
+                    std::vector<float> sigma_a(color_values.size(), 0.0f);
+                    std::vector<float> sigma_s{};
+                    sigma_s.reserve(color_values.size());
+                    for (std::uint64_t index = 0u; index < value_count; ++index) {
+                        const float density_value = std::max(0.0f, density_values.at(static_cast<std::size_t>(index)));
+                        for (std::uint32_t component = 0u; component < 3u; ++component) {
+                            const float color_value = color_values.at(static_cast<std::size_t>(index * 3u + component));
+                            sigma_s.push_back(density_value * color_value);
+                        }
+                    }
+                    parameters.push_back(rgb_parameter("sigma_a", std::move(sigma_a), volume.source));
+                    parameters.push_back(rgb_parameter("sigma_s", std::move(sigma_s), volume.source));
+                }
+                if (material->volume.emission.enabled) {
+                    std::vector<float> emission_values = materialize_pathtracer_scalar_binding(volume, material->volume.emission, "emission", value_count);
+                    parameters.push_back(float_parameter("temperature", std::move(emission_values), volume.source));
+                }
+                scene.media.push_back(Scene::Medium{
+                    .name = medium_name,
+                    .entity = Scene::Entity{.type = medium_type, .parameters = std::move(parameters), .source = volume.source},
+                });
+            }
 
             const Vector3 p0 = volume.origin;
             const Vector3 p1{
@@ -1134,7 +1140,7 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] Scene::ResolvedScene make_resolved_scene_from_preview(const Scene::Document& document, const Scene::ResolvedFrame& frame, const Scene::Revision revision, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
+        [[nodiscard]] Scene::ResolvedScene make_resolved_scene_from_preview(const Scene::Document& document, const Scene::ResolvedFrame& frame, const Scene::Revision revision) {
             if (document.name.empty()) throw std::runtime_error("Preview document name must not be empty when building canonical scene");
             validate_cameras(frame.cameras, document.active_camera_name, format_message("Preview document \"{}\"", document.name));
             const Scene::Camera& active_camera = require_active_camera(frame.cameras, document.active_camera_name, format_message("Preview document \"{}\"", document.name));
@@ -1143,6 +1149,8 @@ namespace spectra::scene {
                 .name = document.name,
                 .title = document.title.empty() ? document.name : document.title,
                 .source = document.source.empty() ? format_message("scene://{}", document.name) : document.source,
+                .preview_materials = document.materials,
+                .volumes = frame.volumes,
             };
             scene.render_settings.camera = Scene::Entity{
                 .type = "perspective",
@@ -1157,7 +1165,7 @@ namespace spectra::scene {
             for (const Scene::Mesh& mesh : frame.meshes) append_mesh_shape(scene, document, mesh);
             for (const Scene::Sphere& sphere : frame.spheres) append_sphere_shape(scene, document, sphere);
             for (const Scene::PointCloud& point_cloud : frame.point_clouds) append_point_cloud_shapes(scene, document, point_cloud);
-            for (const Scene::VolumeGrid& volume : frame.volumes) append_volume(scene, document, volume, external_volume_materializer);
+            for (const Scene::VolumeGrid& volume : frame.volumes) append_volume(scene, document, volume);
             if (scene.shapes.empty()) throw EmptySceneError{format_message("Preview document \"{}\" produced no canonical pathtracer shapes", document.name)};
             return scene;
         }
@@ -1764,10 +1772,6 @@ namespace spectra::scene {
     }
 
     Scene::ResolvedScene Scene::resolved_scene() const {
-        return this->resolved_scene(std::move_only_function<std::vector<float>(const VolumeGrid&, const VolumeChannel&)>{});
-    }
-
-    Scene::ResolvedScene Scene::resolved_scene(std::move_only_function<std::vector<float>(const VolumeGrid&, const VolumeChannel&)> external_volume_materializer) const {
         if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
         if (this->canonical_scene.has_value() && !this->current_timeline.current_frame.has_value()) {
             ResolvedScene scene = *this->canonical_scene;
@@ -1778,7 +1782,7 @@ namespace spectra::scene {
         const Document& document = this->preview_document();
         const FrameSnapshot empty_frame{};
         const FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
-        ResolvedScene scene = make_resolved_scene_from_preview(document, resolve_document_frame(document, frame_value), this->current_revision, &external_volume_materializer);
+        ResolvedScene scene = make_resolved_scene_from_preview(document, resolve_document_frame(document, frame_value), this->current_revision);
         validate_canonical_scene(scene);
         return scene;
     }
@@ -2085,6 +2089,9 @@ namespace spectra::scene {
     }
 
     void WritePbrtScene(const Scene::ResolvedScene& scene, const std::filesystem::path& path) {
+        for (const Scene::VolumeGrid& volume : scene.volumes)
+            for (const Scene::VolumeChannel& channel : volume.channels)
+                if (channel.source_kind == Scene::VolumeChannelSourceKind::ExternalGpuBuffer) throw std::runtime_error(format_message("Cannot export scene volume \"{}\" channel \"{}\" to PBRT while it refers to a borrowed GPU buffer", volume.name, channel.name));
         write_pbrt_scene_file(scene, path);
     }
 
@@ -4627,6 +4634,9 @@ namespace spectra::scene {
         std::size_t infinite_light_count = 0;
         for (const Scene::Light& light : scene.lights)
             if (light.entity.type == "infinite") ++infinite_light_count;
+        std::set<std::string> medium_names{};
+        for (const Scene::Medium& medium : scene.media) medium_names.insert(medium.name);
+        for (const Scene::VolumeGrid& volume : scene.volumes) medium_names.insert(format_message("{}.__medium", volume.name));
 
         const float camera_fov = one_float_parameter(scene.render_settings.camera.parameters, "fov", scene.render_settings.camera.type == "perspective" ? 90.0f : 45.0f);
         if (!(camera_fov > 0.0f && camera_fov < 180.0f)) throw std::runtime_error(format_message("PBRT scene \"{}\" has invalid camera FOV {}", scene.name, camera_fov));
@@ -4641,7 +4651,7 @@ namespace spectra::scene {
             .shape_count             = scene.shapes.size() + definition_shape_count,
             .material_count          = scene.materials.size(),
             .texture_count           = scene.textures.size(),
-            .medium_count            = scene.media.size(),
+            .medium_count            = medium_names.size(),
             .light_count             = scene.lights.size(),
             .area_light_count        = area_light_count,
             .infinite_light_count    = infinite_light_count,

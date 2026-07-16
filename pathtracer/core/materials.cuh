@@ -19,6 +19,10 @@
 #include <type_traits>
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     // MaterialEvalContext Definition
     struct MaterialEvalContext : public TextureEvalContext {
         // MaterialEvalContext Public Methods
@@ -151,6 +155,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // DielectricMaterial Private Members
         Image* normalMap;
         FloatTexture displacement;
@@ -207,6 +212,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // ThinDielectricMaterial Private Data
         FloatTexture displacement;
         Image* normalMap;
@@ -284,6 +290,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // MixMaterial Private Members
         FloatTexture amount;
         Material materials[2];
@@ -348,6 +355,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // HairMaterial Private Data
         SpectrumTexture sigma_a, color;
         FloatTexture eumelanin, pheomelanin, eta;
@@ -398,6 +406,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // DiffuseMaterial Private Members
         Image* normalMap;
         FloatTexture displacement;
@@ -462,6 +471,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // ConductorMaterial Private Data
         FloatTexture displacement;
         Image* normalMap;
@@ -508,6 +518,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // CoatedDiffuseMaterial Private Members
         FloatTexture displacement;
         Image* normalMap;
@@ -556,6 +567,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // CoatedConductorMaterial Private Members
         FloatTexture displacement;
         Image* normalMap;
@@ -636,6 +648,7 @@ namespace spectra {
         static SubsurfaceMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // SubsurfaceMaterial Private Members
         FloatTexture displacement;
         Image* normalMap;
@@ -688,6 +701,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // DiffuseTransmissionMaterial Private Data
         FloatTexture displacement;
         Image* normalMap;
@@ -735,6 +749,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // MeasuredMaterial Private Members
         FloatTexture displacement;
         Image* normalMap;
@@ -758,7 +773,7 @@ namespace spectra {
             }
         };
 
-        return DispatchCPU(getBSDF);
+        return DispatchHost(getBSDF);
     }
 
     template <typename TextureEvaluator>
@@ -780,7 +795,7 @@ namespace spectra {
                 return BSSRDF(bssrdf);
             }
         };
-        return DispatchCPU(get);
+        return DispatchHost(get);
     }
 
     __host__ __device__ inline bool Material::HasSubsurfaceScattering() const {

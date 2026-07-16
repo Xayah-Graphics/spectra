@@ -208,13 +208,13 @@ namespace spectra {
         }
 
         template <typename F>
-        decltype(auto) DispatchCPU(F&& func) {
+        decltype(auto) DispatchHost(F&& func) {
             using R = detail::ReturnType<F, Ts...>::type;
             return detail::DispatchHost<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
-        decltype(auto) DispatchCPU(F&& func) const {
+        decltype(auto) DispatchHost(F&& func) const {
             using R = detail::ReturnTypeConst<F, Ts...>::type;
             return detail::DispatchHost<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }

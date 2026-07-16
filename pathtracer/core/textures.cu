@@ -12,6 +12,7 @@
 #include <pathtracer/util/file.h>
 #include <pathtracer/util/float.cuh>
 #include <pathtracer/util/splines.cuh>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -257,31 +258,59 @@ namespace spectra {
         return alloc.new_object<SpectrumDirectionMixTexture>(parameters.GetSpectrumTexture("tex1", zero, spectrumType, alloc), parameters.GetSpectrumTexture("tex2", one, spectrumType, alloc), dir);
     }
 
-    static std::mutex ptexMutex;
-    static PtexCache* cache;
+    struct pathtracer::PathtracerTextureCache::State {
+        struct PtexErrorHandler final : ::PtexErrorHandler {
+            void reportError(const char* error) override {
+                throw std::runtime_error(diagnostics::Format("%s", error));
+            }
+        };
 
-    struct : public PtexErrorHandler {
-        void reportError(const char* error) override {
-            throw std::runtime_error(diagnostics::Format("%s", error));
+        struct LuminanceTexture {
+            pathtracer::PathtracerCudaMipmappedArray mipArray;
+            cudaTextureReadMode readMode;
+            int mipLevelCount;
+            bool originallySingleChannel;
+        };
+
+        struct RGBTexture {
+            pathtracer::PathtracerCudaMipmappedArray mipArray;
+            cudaTextureReadMode readMode;
+            int mipLevelCount;
+            const RGBColorSpace* colorSpace;
+        };
+
+        ~State() {
+            if (ptexCache != nullptr) ptexCache->release();
         }
-    } errorHandler;
+
+        std::recursive_mutex mutex;
+        PtexErrorHandler ptexErrorHandler;
+        ::PtexCache* ptexCache{};
+        std::map<std::tuple<std::string, std::string, Float>, GPUFloatPtexTexture*> floatPtexTextures;
+        std::map<std::tuple<std::string, std::string, Float, SpectrumType>, GPUSpectrumPtexTexture*> spectrumPtexTextures;
+        std::map<std::pair<std::string, std::string>, LuminanceTexture> luminanceTextures;
+        std::map<std::pair<std::string, std::string>, RGBTexture> rgbTextures;
+        std::vector<pathtracer::PathtracerCudaTextureObject> textureObjects;
+    };
+
+    pathtracer::PathtracerTextureCache::PathtracerTextureCache() : state(std::make_unique<State>()) {}
+    pathtracer::PathtracerTextureCache::~PathtracerTextureCache() = default;
 
     // PtexTexture Method Definitions
 
-    PtexTextureBase::PtexTextureBase(const std::string& filename, ColorEncoding encoding, Float scale) : filename(filename), encoding(encoding), scale(scale) {
-        ptexMutex.lock();
-        if (!cache) {
+    PtexTextureBase::PtexTextureBase(const std::string& filename, ColorEncoding encoding, Float scale, pathtracer::PathtracerTextureCache& textureCache) : filename(filename), encoding(encoding), scale(scale), textureCache(&textureCache) {
+        std::lock_guard<std::recursive_mutex> lock(textureCache.state->mutex);
+        if (textureCache.state->ptexCache == nullptr) {
             int maxFiles     = 100;
             size_t maxMem    = 1ull << 32; // 4GB
             bool premultiply = true;
 
-            cache = PtexCache::create(maxFiles, maxMem, premultiply, nullptr, &errorHandler);
+            textureCache.state->ptexCache = PtexCache::create(maxFiles, maxMem, premultiply, nullptr, &textureCache.state->ptexErrorHandler);
             // TODO? cache->setSearchPath(...);
         }
-        ptexMutex.unlock();
 
         Ptex::String error;
-        PtexTexture* texture = cache->get(filename.c_str(), error);
+        PtexTexture* texture = textureCache.state->ptexCache->get(filename.c_str(), error);
         if (!texture) throw std::runtime_error(diagnostics::Format("%s", error));
         if (texture->numChannels() != 1 && texture->numChannels() != 3) {
             texture->release();
@@ -291,8 +320,9 @@ namespace spectra {
     }
 
     int PtexTextureBase::SampleTexture(TextureEvalContext ctx, float result[3]) const {
+        std::lock_guard<std::recursive_mutex> lock(textureCache->state->mutex);
         Ptex::String error;
-        PtexTexture* texture = cache->get(filename.c_str(), error);
+        PtexTexture* texture = textureCache->state->ptexCache->get(filename.c_str(), error);
         CHECK(texture);
         // TODO: make the filter an option?
         PtexFilter::Options opts(PtexFilter::FilterType::f_bspline);
@@ -321,11 +351,11 @@ namespace spectra {
     }
 
 
-    GPUFloatPtexTexture::GPUFloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, Allocator alloc) : faceValues(alloc) {
-        PtexTextureBase tex(filename, encoding, scale);
+    GPUFloatPtexTexture::GPUFloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc) : faceValues(alloc) {
+        PtexTextureBase tex(filename, encoding, scale, textureCache);
 
         Ptex::String error;
-        PtexTexture* texture = cache->get(filename.c_str(), error);
+        PtexTexture* texture = textureCache.state->ptexCache->get(filename.c_str(), error);
         CHECK(texture);
         int nFaces = texture->getInfo().numFaces;
         texture->release();
@@ -340,39 +370,27 @@ namespace spectra {
         }
     }
 
-    static std::mutex ptexCacheMutex;
-    static std::map<std::tuple<std::string, std::string, Float>, GPUFloatPtexTexture*> ptexFloatTextureCache;
-
-    GPUFloatPtexTexture* GPUFloatPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    GPUFloatPtexTexture* GPUFloatPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc) {
         std::string filename       = parameters.GetOneString("filename", "");
         std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
         Float scale                = parameters.GetOneFloat("scale", 1.f);
 
         auto key = std::make_tuple(filename, encodingString, scale);
-        ptexCacheMutex.lock();
-        if (auto iter = ptexFloatTextureCache.find(key); iter != ptexFloatTextureCache.end()) {
-            GPUFloatPtexTexture* tex = iter->second;
-            ptexCacheMutex.unlock();
-            return tex;
-        } else {
-            ptexCacheMutex.unlock();
-            ColorEncoding encoding   = ColorEncoding::Get(encodingString, alloc);
-            GPUFloatPtexTexture* tex = alloc.new_object<GPUFloatPtexTexture>(filename, encoding, scale, alloc);
+        std::lock_guard<std::recursive_mutex> lock(textureCache.state->mutex);
+        if (auto iter = textureCache.state->floatPtexTextures.find(key); iter != textureCache.state->floatPtexTextures.end()) return iter->second;
 
-            ptexCacheMutex.lock();
-            CHECK(ptexFloatTextureCache.find(key) == ptexFloatTextureCache.end());
-            ptexFloatTextureCache[key] = tex;
-            ptexCacheMutex.unlock();
-            return tex;
-        }
+        ColorEncoding encoding   = ColorEncoding::Get(encodingString, alloc);
+        GPUFloatPtexTexture* tex = alloc.new_object<GPUFloatPtexTexture>(filename, encoding, scale, textureCache, alloc);
+        textureCache.state->floatPtexTextures[key] = tex;
+        return tex;
     }
 
 
-    GPUSpectrumPtexTexture::GPUSpectrumPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, SpectrumType spectrumType, Allocator alloc) : spectrumType(spectrumType), faceValues(alloc) {
-        PtexTextureBase tex(filename, encoding, scale);
+    GPUSpectrumPtexTexture::GPUSpectrumPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, SpectrumType spectrumType, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc) : spectrumType(spectrumType), faceValues(alloc) {
+        PtexTextureBase tex(filename, encoding, scale, textureCache);
 
         Ptex::String error;
-        PtexTexture* texture = cache->get(filename.c_str(), error);
+        PtexTexture* texture = textureCache.state->ptexCache->get(filename.c_str(), error);
         CHECK(texture);
         int nFaces = texture->getInfo().numFaces;
         texture->release();
@@ -391,30 +409,19 @@ namespace spectra {
         }
     }
 
-    static std::map<std::tuple<std::string, std::string, Float>, GPUSpectrumPtexTexture*> ptexSpectrumTextureCache;
-
-    GPUSpectrumPtexTexture* GPUSpectrumPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
+    GPUSpectrumPtexTexture* GPUSpectrumPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc) {
         std::string filename       = parameters.GetOneString("filename", "");
         std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
         Float scale                = parameters.GetOneFloat("scale", 1.f);
 
-        auto key = std::make_tuple(filename, encodingString, scale);
-        ptexCacheMutex.lock();
-        if (auto iter = ptexSpectrumTextureCache.find(key); iter != ptexSpectrumTextureCache.end()) {
-            GPUSpectrumPtexTexture* tex = iter->second;
-            ptexCacheMutex.unlock();
-            return tex;
-        } else {
-            ptexCacheMutex.unlock();
-            ColorEncoding encoding      = ColorEncoding::Get(encodingString, alloc);
-            GPUSpectrumPtexTexture* tex = alloc.new_object<GPUSpectrumPtexTexture>(filename, encoding, scale, spectrumType, alloc);
+        auto key = std::make_tuple(filename, encodingString, scale, spectrumType);
+        std::lock_guard<std::recursive_mutex> lock(textureCache.state->mutex);
+        if (auto iter = textureCache.state->spectrumPtexTextures.find(key); iter != textureCache.state->spectrumPtexTextures.end()) return iter->second;
 
-            ptexCacheMutex.lock();
-            CHECK(ptexSpectrumTextureCache.find(key) == ptexSpectrumTextureCache.end());
-            ptexSpectrumTextureCache[key] = tex;
-            ptexCacheMutex.unlock();
-            return tex;
-        }
+        ColorEncoding encoding      = ColorEncoding::Get(encodingString, alloc);
+        GPUSpectrumPtexTexture* tex = alloc.new_object<GPUSpectrumPtexTexture>(filename, encoding, scale, spectrumType, textureCache, alloc);
+        textureCache.state->spectrumPtexTextures[key] = tex;
+        return tex;
     }
 
 
@@ -478,51 +485,6 @@ namespace spectra {
         return alloc.new_object<WrinkledTexture>(map, parameters.GetOneInt("octaves", 8), parameters.GetOneFloat("roughness", .5f));
     }
 
-    struct LuminanceTextureCacheItem {
-        pathtracer::PathtracerCudaMipmappedArray mipArray;
-        cudaTextureReadMode readMode;
-        int nMIPMapLevels;
-        bool originallySingleChannel;
-    };
-
-    struct RGBTextureCacheItem {
-        pathtracer::PathtracerCudaMipmappedArray mipArray;
-        cudaTextureReadMode readMode;
-        int nMIPMapLevels;
-        const RGBColorSpace* colorSpace;
-    };
-
-    static std::mutex textureCacheMutex;
-    static std::map<std::string, LuminanceTextureCacheItem> lumTextureCache;
-    static std::map<std::string, RGBTextureCacheItem> rgbTextureCache;
-    static std::vector<pathtracer::PathtracerCudaTextureObject> gpuTextureObjects;
-
-    static void registerGPUTextureObject(pathtracer::PathtracerCudaTextureObject textureObject) {
-        std::lock_guard<std::mutex> lock(textureCacheMutex);
-        gpuTextureObjects.push_back(std::move(textureObject));
-    }
-
-    void ClearPathtracerTextureCaches() {
-        std::vector<pathtracer::PathtracerCudaTextureObject> textureObjects{};
-        std::map<std::string, LuminanceTextureCacheItem> luminanceTextures{};
-        std::map<std::string, RGBTextureCacheItem> rgbTextures{};
-        {
-            std::lock_guard<std::mutex> lock(textureCacheMutex);
-            textureObjects.swap(gpuTextureObjects);
-            luminanceTextures.swap(lumTextureCache);
-            rgbTextures.swap(rgbTextureCache);
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(ptexCacheMutex);
-            ptexFloatTextureCache.clear();
-            ptexSpectrumTextureCache.clear();
-        }
-        textureObjects.clear();
-        luminanceTextures.clear();
-        rgbTextures.clear();
-    }
-
     static pathtracer::PathtracerCudaMipmappedArray createSingleChannelTextureArray(const Image& image, const RGBColorSpace* colorSpace, int* nMIPMapLevels) {
         CHECK_EQ(1, image.NChannels());
         pathtracer::PathtracerCudaMipmappedArray mipArray;
@@ -571,7 +533,7 @@ namespace spectra {
             throw std::runtime_error(diagnostics::Format("%s: texture wrap mode not supported", mode));
     }
 
-    GPUSpectrumImageTexture* GPUSpectrumImageTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
+    GPUSpectrumImageTexture* GPUSpectrumImageTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc) {
         // Initialize _ImageTexture_ parameters
         Float maxAniso     = parameters.GetOneFloat("maxanisotropy", 8.f);
         std::string filter = parameters.GetOneString("filter", "bilinear");
@@ -586,6 +548,8 @@ namespace spectra {
         const char* defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
         std::string encodingString  = parameters.GetOneString("encoding", defaultEncoding);
         ColorEncoding encoding      = ColorEncoding::Get(encodingString, alloc);
+        std::pair<std::string, std::string> cacheKey{filename, encodingString};
+        std::lock_guard<std::recursive_mutex> lock(textureCache.state->mutex);
 
         // These have to be initialized one way or another in the below
         cudaMipmappedArray_t mipArray = nullptr;
@@ -594,30 +558,25 @@ namespace spectra {
         const RGBColorSpace* colorSpace = nullptr;
         bool isSingleChannel            = false;
 
-        textureCacheMutex.lock();
-        auto rgbIter = rgbTextureCache.find(filename);
-        if (rgbIter != rgbTextureCache.end()) {
+        auto rgbIter = textureCache.state->rgbTextures.find(cacheKey);
+        if (rgbIter != textureCache.state->rgbTextures.end()) {
             mipArray      = rgbIter->second.mipArray.get();
             readMode      = rgbIter->second.readMode;
-            nMIPMapLevels = rgbIter->second.nMIPMapLevels;
+            nMIPMapLevels = rgbIter->second.mipLevelCount;
             colorSpace    = rgbIter->second.colorSpace;
-            textureCacheMutex.unlock();
         } else {
-            auto lumIter = lumTextureCache.find(filename);
+            auto lumIter = textureCache.state->luminanceTextures.find(cacheKey);
             // We don't want to take it if it was originally an RGB texture and
             // GPUFloatImageTexture converted it to single channel
-            if (lumIter != lumTextureCache.end() && lumIter->second.originallySingleChannel) {
+            if (lumIter != textureCache.state->luminanceTextures.end() && lumIter->second.originallySingleChannel) {
                 mipArray      = lumIter->second.mipArray.get();
                 readMode      = lumIter->second.readMode;
-                nMIPMapLevels = lumIter->second.nMIPMapLevels;
+                nMIPMapLevels = lumIter->second.mipLevelCount;
                 colorSpace    = RGBColorSpace::SRGB();
-                textureCacheMutex.unlock();
                 isSingleChannel = true;
             } else {
-                textureCacheMutex.unlock();
-
                 {
-                    ImageAndMetadata immeta = Image::Read(filename);
+                    ImageAndMetadata immeta = Image::Read(filename, Allocator(), encoding);
                     Image& image            = immeta.image;
 
                     readMode   = image.Format() == PixelFormat::U256 ? cudaReadModeNormalizedFloat : cudaReadModeElementType;
@@ -719,16 +678,12 @@ namespace spectra {
                         }
 
                         mipArray = newMipArray.get();
-                        textureCacheMutex.lock();
-                        rgbTextureCache[filename] = RGBTextureCacheItem{std::move(newMipArray), readMode, nMIPMapLevels, colorSpace};
-                        textureCacheMutex.unlock();
+                        textureCache.state->rgbTextures[cacheKey] = pathtracer::PathtracerTextureCache::State::RGBTexture{std::move(newMipArray), readMode, nMIPMapLevels, colorSpace};
                     } else if (image.NChannels() == 1) {
                         pathtracer::PathtracerCudaMipmappedArray newMipArray = createSingleChannelTextureArray(image, colorSpace, &nMIPMapLevels);
                         mipArray = newMipArray.get();
 
-                        textureCacheMutex.lock();
-                        lumTextureCache[filename] = LuminanceTextureCacheItem{std::move(newMipArray), readMode, nMIPMapLevels, true};
-                        textureCacheMutex.unlock();
+                        textureCache.state->luminanceTextures[cacheKey] = pathtracer::PathtracerTextureCache::State::LuminanceTexture{std::move(newMipArray), readMode, nMIPMapLevels, true};
                         isSingleChannel = true;
                     } else {
                         diagnostics::PrintWarning(loc, "%s: unable to decipher image format", filename);
@@ -758,15 +713,15 @@ namespace spectra {
         pathtracer::PathtracerCudaTextureObject textureObject;
         textureObject.Create(resDesc, texDesc);
         cudaTextureObject_t texObj = textureObject.get();
-        registerGPUTextureObject(std::move(textureObject));
+        textureCache.state->textureObjects.push_back(std::move(textureObject));
 
         TextureMapping2D mapping = TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
-        return alloc.new_object<GPUSpectrumImageTexture>(filename, mapping, texObj, scale, invert, isSingleChannel, colorSpace, spectrumType);
+        return alloc.new_object<GPUSpectrumImageTexture>(mapping, texObj, scale, invert, isSingleChannel, colorSpace, spectrumType);
     }
 
 
-    GPUFloatImageTexture* GPUFloatImageTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    GPUFloatImageTexture* GPUFloatImageTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc) {
         // Initialize _ImageTexture_ parameters
         Float maxAniso     = parameters.GetOneFloat("maxanisotropy", 8.f);
         std::string filter = parameters.GetOneString("filter", "bilinear");
@@ -781,22 +736,20 @@ namespace spectra {
         const char* defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
         std::string encodingString  = parameters.GetOneString("encoding", defaultEncoding);
         ColorEncoding encoding      = ColorEncoding::Get(encodingString, alloc);
+        std::pair<std::string, std::string> cacheKey{filename, encodingString};
+        std::lock_guard<std::recursive_mutex> lock(textureCache.state->mutex);
 
         cudaMipmappedArray_t mipArray = nullptr;
         int nMIPMapLevels = 0;
         cudaTextureReadMode readMode;
 
-        textureCacheMutex.lock();
-        auto iter = lumTextureCache.find(filename);
-        if (iter != lumTextureCache.end()) {
+        auto iter = textureCache.state->luminanceTextures.find(cacheKey);
+        if (iter != textureCache.state->luminanceTextures.end()) {
             mipArray      = iter->second.mipArray.get();
             readMode      = iter->second.readMode;
-            nMIPMapLevels = iter->second.nMIPMapLevels;
-            textureCacheMutex.unlock();
+            nMIPMapLevels = iter->second.mipLevelCount;
         } else {
-            textureCacheMutex.unlock();
-
-            ImageAndMetadata immeta         = Image::Read(filename);
+            ImageAndMetadata immeta         = Image::Read(filename, Allocator(), encoding);
             Image& image                    = immeta.image;
             const RGBColorSpace* colorSpace = immeta.metadata.GetColorSpace();
 
@@ -831,9 +784,7 @@ namespace spectra {
             mipArray = newMipArray.get();
             readMode = (image.Format() == PixelFormat::U256) ? cudaReadModeNormalizedFloat : cudaReadModeElementType;
 
-            textureCacheMutex.lock();
-            lumTextureCache[filename] = LuminanceTextureCacheItem{std::move(newMipArray), readMode, nMIPMapLevels, !convertedImage};
-            textureCacheMutex.unlock();
+            textureCache.state->luminanceTextures[cacheKey] = pathtracer::PathtracerTextureCache::State::LuminanceTexture{std::move(newMipArray), readMode, nMIPMapLevels, !convertedImage};
         }
 
         cudaResourceDesc resDesc  = {};
@@ -856,15 +807,15 @@ namespace spectra {
         pathtracer::PathtracerCudaTextureObject textureObject;
         textureObject.Create(resDesc, texDesc);
         cudaTextureObject_t texObj = textureObject.get();
-        registerGPUTextureObject(std::move(textureObject));
+        textureCache.state->textureObjects.push_back(std::move(textureObject));
 
         TextureMapping2D mapping = TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
-        return alloc.new_object<GPUFloatImageTexture>(filename, mapping, texObj, scale, invert);
+        return alloc.new_object<GPUFloatImageTexture>(mapping, texObj, scale, invert);
     }
 
 
-    FloatTexture FloatTexture::Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    FloatTexture FloatTexture::Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc) {
         FloatTexture tex;
         if (name == "constant")
             tex = FloatConstantTexture::Create(renderFromTexture, parameters, loc, alloc);
@@ -877,7 +828,7 @@ namespace spectra {
         else if (name == "bilerp")
             tex = FloatBilerpTexture::Create(renderFromTexture, parameters, loc, alloc);
         else if (name == "imagemap")
-            tex = GPUFloatImageTexture::Create(renderFromTexture, parameters, loc, alloc);
+            tex = GPUFloatImageTexture::Create(renderFromTexture, parameters, loc, textureCache, alloc);
         else if (name == "checkerboard")
             tex = FloatCheckerboardTexture::Create(renderFromTexture, parameters, loc, alloc);
         else if (name == "dots")
@@ -889,7 +840,7 @@ namespace spectra {
         else if (name == "windy")
             tex = WindyTexture::Create(renderFromTexture, parameters, loc, alloc);
         else if (name == "ptex")
-            tex = GPUFloatPtexTexture::Create(renderFromTexture, parameters, loc, alloc);
+            tex = GPUFloatPtexTexture::Create(renderFromTexture, parameters, loc, textureCache, alloc);
         else
             throw std::runtime_error(diagnostics::Format(loc, "%s: float texture type unknown.", name));
 
@@ -899,7 +850,7 @@ namespace spectra {
         return tex;
     }
 
-    SpectrumTexture SpectrumTexture::Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
+    SpectrumTexture SpectrumTexture::Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc) {
         SpectrumTexture tex;
         if (name == "constant")
             tex = SpectrumConstantTexture::Create(renderFromTexture, parameters, spectrumType, loc, alloc);
@@ -912,7 +863,7 @@ namespace spectra {
         else if (name == "bilerp")
             tex = SpectrumBilerpTexture::Create(renderFromTexture, parameters, spectrumType, loc, alloc);
         else if (name == "imagemap")
-            tex = GPUSpectrumImageTexture::Create(renderFromTexture, parameters, spectrumType, loc, alloc);
+            tex = GPUSpectrumImageTexture::Create(renderFromTexture, parameters, spectrumType, loc, textureCache, alloc);
         else if (name == "checkerboard")
             tex = SpectrumCheckerboardTexture::Create(renderFromTexture, parameters, spectrumType, loc, alloc);
         else if (name == "dots")
@@ -920,7 +871,7 @@ namespace spectra {
         else if (name == "marble")
             tex = MarbleTexture::Create(renderFromTexture, parameters, loc, alloc);
         else if (name == "ptex")
-            tex = GPUSpectrumPtexTexture::Create(renderFromTexture, parameters, spectrumType, loc, alloc);
+            tex = GPUSpectrumPtexTexture::Create(renderFromTexture, parameters, spectrumType, loc, textureCache, alloc);
         else
             throw std::runtime_error(diagnostics::Format(loc, "%s: spectrum texture type unknown.", name));
 

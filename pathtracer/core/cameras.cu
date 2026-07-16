@@ -70,12 +70,12 @@ namespace spectra {
 
     void Camera::InitMetadata(ImageMetadata* metadata) const {
         auto init = [&](auto ptr) { return ptr->InitMetadata(metadata); };
-        return DispatchCPU(init);
+        return DispatchHost(init);
     }
 
 
     // CameraBase Method Definitions
-    CameraBase::CameraBase(CameraBaseParameters p) : cameraTransform(p.cameraTransform), shutterOpen(p.shutterOpen), shutterClose(p.shutterClose), film(p.film), medium(p.medium) {
+    CameraBase::CameraBase(CameraBaseParameters p) : cameraTransform(p.cameraTransform), shutterOpen(p.shutterOpen), shutterClose(p.shutterClose), filmResolution(p.filmResolution), filmSampleBounds(p.filmSampleBounds), filterRadius(p.filterRadius), filmDiagonal(p.filmDiagonal), medium(p.medium) {
         if (cameraTransform.CameraFromRenderHasScale())
             diagnostics::PrintWarning("Scaling detected in rendering space to camera space transformation!\n"
                                       "The system has numerous assumptions, implicit and explicit,\n"
@@ -130,8 +130,8 @@ namespace spectra {
 
         int n = 512;
         for (int i = 0; i < n; ++i) {
-            sample.pFilm.x = Float(i) / (n - 1) * film.FullResolution().x;
-            sample.pFilm.y = Float(i) / (n - 1) * film.FullResolution().y;
+            sample.pFilm.x = Float(i) / (n - 1) * filmResolution.x;
+            sample.pFilm.y = Float(i) / (n - 1) * filmResolution.y;
 
             pstd::optional<CameraRayDifferential> crd = camera.GenerateRayDifferential(sample, lambda);
             if (!crd) continue;
@@ -173,14 +173,14 @@ namespace spectra {
     }
 
 
-    Camera Camera::Create(const std::string& name, const ParameterDictionary& parameters, Medium medium, const CameraTransform& cameraTransform, Film film, const FileLoc* loc, Allocator alloc) {
+    Camera Camera::Create(const std::string& name, const ParameterDictionary& parameters, Medium medium, const CameraTransform& cameraTransform, Film film, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) {
         Camera camera;
         if (name == "perspective")
             camera = PerspectiveCamera::Create(parameters, cameraTransform, film, medium, loc, alloc);
         else if (name == "orthographic")
             camera = OrthographicCamera::Create(parameters, cameraTransform, film, medium, loc, alloc);
         else if (name == "realistic")
-            camera = RealisticCamera::Create(parameters, cameraTransform, film, medium, loc, alloc);
+            camera = RealisticCamera::Create(parameters, cameraTransform, film, medium, loc, alloc, deviceArena, stream);
         else if (name == "spherical")
             camera = SphericalCamera::Create(parameters, cameraTransform, film, medium, loc, alloc);
         else
@@ -193,7 +193,7 @@ namespace spectra {
     }
 
     // CameraBaseParameters Method Definitions
-    CameraBaseParameters::CameraBaseParameters(const CameraTransform& cameraTransform, Film film, Medium medium, const ParameterDictionary& parameters, const FileLoc* loc) : cameraTransform(cameraTransform), film(film), medium(medium) {
+    CameraBaseParameters::CameraBaseParameters(const CameraTransform& cameraTransform, Film film, Medium medium, const ParameterDictionary& parameters, const FileLoc* loc) : cameraTransform(cameraTransform), filmResolution(film.FullResolution()), filmSampleBounds(film.SampleBounds()), filterRadius(film.GetFilter().Radius()), filmDiagonal(film.Diagonal()), medium(medium) {
         shutterOpen  = parameters.GetOneFloat("shutteropen", 0.f);
         shutterClose = parameters.GetOneFloat("shutterclose", 1.f);
         if (shutterClose < shutterOpen) {
@@ -425,7 +425,7 @@ namespace spectra {
         if (pRasterOut) *pRasterOut = Point2f(pRaster.x, pRaster.y);
 
         // Return zero importance for out of bounds points
-        Bounds2f sampleBounds = film.SampleBounds();
+        Bounds2f sampleBounds = filmSampleBounds;
         if (!Inside(Point2f(pRaster.x, pRaster.y), sampleBounds)) return SampledSpectrum(0.);
 
         // Compute lens area of perspective camera
@@ -449,7 +449,7 @@ namespace spectra {
         Point3f pRaster = cameraFromRaster.ApplyInverse(pCamera);
 
         // Return zero probability for out of bounds points
-        Bounds2f sampleBounds = film.SampleBounds();
+        Bounds2f sampleBounds = filmSampleBounds;
         if (!Inside(Point2f(pRaster.x, pRaster.y), sampleBounds)) {
             *pdfPos = *pdfDir = 0;
             return;
@@ -487,7 +487,7 @@ namespace spectra {
     // SphericalCamera Method Definitions
     __host__ __device__ pstd::optional<CameraRay> SphericalCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
         // Compute spherical camera ray direction
-        Point2f uv(sample.pFilm.x / film.FullResolution().x, sample.pFilm.y / film.FullResolution().y);
+        Point2f uv(sample.pFilm.x / filmResolution.x, sample.pFilm.y / filmResolution.y);
         Vector3f dir;
         if (mapping == EquiRectangular) {
             // Compute ray direction using equirectangular mapping
@@ -553,15 +553,16 @@ namespace spectra {
 
 
     // RealisticCamera Method Definitions
-    RealisticCamera::RealisticCamera(CameraBaseParameters baseParameters, std::vector<Float>& lensParameters, Float focusDistance, Float setApertureDiameter, Image apertureImage, Allocator alloc) : CameraBase(baseParameters), elementInterfaces(alloc), exitPupilBounds(alloc), apertureImage(std::move(apertureImage)) {
+    RealisticCamera::RealisticCamera(CameraBaseParameters baseParameters, std::vector<Float>& lensParameters, Float focusDistance, Float setApertureDiameter, Image hostApertureImage, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) : CameraBase(baseParameters) {
         // Compute film's physical extent
-        Float aspect   = (Float) film.FullResolution().y / (Float) film.FullResolution().x;
-        Float diagonal = film.Diagonal();
+        Float aspect   = static_cast<Float>(filmResolution.y) / static_cast<Float>(filmResolution.x);
+        Float diagonal = filmDiagonal;
         Float x        = std::sqrt(Sqr(diagonal) / (1 + Sqr(aspect)));
         Float y        = aspect * x;
         physicalExtent = Bounds2f(Point2f(-x / 2, -y / 2), Point2f(x / 2, y / 2));
 
-        // Initialize _elementInterfaces_ for camera
+        std::vector<LensElementInterface> hostElementInterfaces;
+        hostElementInterfaces.reserve(lensParameters.size() / 4);
         for (size_t i = 0; i < lensParameters.size(); i += 4) {
             // Extract lens element configuration from _lensParameters_
             Float curvatureRadius  = lensParameters[i] / 1000;
@@ -580,23 +581,41 @@ namespace spectra {
                     apertureDiameter = setApertureDiameter;
             }
             // Add element interface to end of _elementInterfaces_
-            elementInterfaces.push_back({curvatureRadius, thickness, eta, apertureDiameter / 2});
+            hostElementInterfaces.push_back({curvatureRadius, thickness, eta, apertureDiameter / 2});
+        }
+
+        elementInterfaces = hostElementInterfaces.data();
+        elementInterfaceCount = static_cast<int>(hostElementInterfaces.size());
+
+        std::vector<Float> hostAperturePixels;
+        if (hostApertureImage) {
+            apertureImage.resolution = hostApertureImage.Resolution();
+            hostAperturePixels.resize(static_cast<std::size_t>(apertureImage.resolution.x) * apertureImage.resolution.y);
+            for (int y = 0; y < apertureImage.resolution.y; ++y)
+                for (int x = 0; x < apertureImage.resolution.x; ++x) hostAperturePixels[x + y * apertureImage.resolution.x] = hostApertureImage.GetChannel({x, y}, 0);
+            apertureImage.pixels = hostAperturePixels.data();
         }
 
         // Compute lens--film distance for given focus distance
-        elementInterfaces.back().thickness = FocusThickLens(focusDistance);
+        elementInterfaces[elementInterfaceCount - 1].thickness = FocusThickLens(focusDistance);
 
         // Compute exit pupil bounds at sampled points on the film
         int nSamples = 64;
-        exitPupilBounds.resize(nSamples);
+        std::vector<Bounds2f> hostExitPupilBounds(nSamples);
+        exitPupilBounds = hostExitPupilBounds.data();
+        exitPupilBoundCount = nSamples;
         ParallelFor(0, nSamples, [&](int64_t i) {
-            Float r0           = (Float) i / nSamples * film.Diagonal() / 2;
-            Float r1           = (Float) (i + 1) / nSamples * film.Diagonal() / 2;
+            Float r0           = static_cast<Float>(i) / nSamples * filmDiagonal / 2;
+            Float r1           = static_cast<Float>(i + 1) / nSamples * filmDiagonal / 2;
             exitPupilBounds[i] = BoundExitPupil(r0, r1);
         });
 
         // Compute minimum differentials for _RealisticCamera_
         FindMinimumDifferentials(this);
+
+        elementInterfaces = deviceArena.StoreArray(hostElementInterfaces.data(), hostElementInterfaces.size(), stream);
+        exitPupilBounds = deviceArena.StoreArray(hostExitPupilBounds.data(), hostExitPupilBounds.size(), stream);
+        apertureImage.pixels = deviceArena.StoreArray(hostAperturePixels.data(), hostAperturePixels.size(), stream);
     }
 
     __host__ __device__ Float RealisticCamera::TraceLensesFromFilm(const Ray& rCamera, Ray* rOut) const {
@@ -604,7 +623,7 @@ namespace spectra {
         // Transform _rCamera_ from camera to lens system space
         Ray rLens(Point3f(rCamera.o.x, rCamera.o.y, -rCamera.o.z), Vector3f(rCamera.d.x, rCamera.d.y, -rCamera.d.z), rCamera.time);
 
-        for (int i = elementInterfaces.size() - 1; i >= 0; --i) {
+        for (int i = elementInterfaceCount - 1; i >= 0; --i) {
             const LensElementInterface& element = elementInterfaces[i];
             // Update ray from film accounting for interaction with _element_
             elementZ -= element.thickness;
@@ -628,7 +647,7 @@ namespace spectra {
             if (isStop && apertureImage) {
                 // Check intersection point against _apertureImage_
                 Point2f uv((pHit.x / element.apertureRadius + 1) / 2, (pHit.y / element.apertureRadius + 1) / 2);
-                weight = apertureImage.BilerpChannel(uv, 0, WrapMode::Black);
+                weight = apertureImage.Bilerp(uv);
                 if (weight == 0) return 0;
             } else {
                 // Check intersection point against spherical aperture
@@ -660,7 +679,7 @@ namespace spectra {
 
     void RealisticCamera::ComputeThickLensApproximation(Float pz[2], Float fz[2]) const {
         // Find height $x$ from optical axis for parallel rays
-        Float x = .001f * film.Diagonal();
+        Float x = .001f * filmDiagonal;
 
         // Compute cardinal points for film side of lens system
         Ray rScene(Point3f(x, 0, LensFrontZ() + 1), Vector3f(0, 0, -1));
@@ -691,7 +710,7 @@ namespace spectra {
                 focusDistance));
         Float delta = (pz[1] - z + pz[0] - std::sqrt(c)) / 2;
 
-        return elementInterfaces.back().thickness + delta;
+        return elementInterfaces[elementInterfaceCount - 1].thickness + delta;
     }
 
     Bounds2f RealisticCamera::BoundExitPupil(Float filmX0, Float filmX1) const {
@@ -726,8 +745,8 @@ namespace spectra {
     __host__ __device__ pstd::optional<ExitPupilSample> RealisticCamera::SampleExitPupil(Point2f pFilm, Point2f uLens) const {
         // Find exit pupil bound for sample distance from film center
         Float rFilm          = std::sqrt(Sqr(pFilm.x) + Sqr(pFilm.y));
-        int rIndex           = rFilm / (film.Diagonal() / 2) * exitPupilBounds.size();
-        rIndex               = std::min<int>(exitPupilBounds.size() - 1, rIndex);
+        int rIndex           = rFilm / (filmDiagonal / 2) * exitPupilBoundCount;
+        rIndex               = std::min(exitPupilBoundCount - 1, rIndex);
         Bounds2f pupilBounds = exitPupilBounds[rIndex];
         if (pupilBounds.IsDegenerate()) return {};
 
@@ -744,7 +763,7 @@ namespace spectra {
 
     __host__ __device__ pstd::optional<CameraRay> RealisticCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
         // Find point on film, _pFilm_, corresponding to _sample.pFilm_
-        Point2f s(sample.pFilm.x / film.FullResolution().x, sample.pFilm.y / film.FullResolution().y);
+        Point2f s(sample.pFilm.x / filmResolution.x, sample.pFilm.y / filmResolution.y);
         Point2f pFilm2 = physicalExtent.Lerp(s);
         Point3f pFilm(-pFilm2.x, pFilm2.y, 0);
 
@@ -775,7 +794,7 @@ namespace spectra {
         // Transform _rCamera_ from camera to lens system space
         const Transform LensFromCamera = Scale(1, 1, -1);
         Ray rLens                      = LensFromCamera(rCamera);
-        for (size_t i = 0; i < elementInterfaces.size(); ++i) {
+        for (int i = 0; i < elementInterfaceCount; ++i) {
             const LensElementInterface& element = elementInterfaces[i];
             // Compute intersection of ray with lens element
             Float t;
@@ -812,7 +831,7 @@ namespace spectra {
         return 1;
     }
 
-    RealisticCamera* RealisticCamera::Create(const ParameterDictionary& parameters, const CameraTransform& cameraTransform, Film film, Medium medium, const FileLoc* loc, Allocator alloc) {
+    RealisticCamera* RealisticCamera::Create(const ParameterDictionary& parameters, const CameraTransform& cameraTransform, Film film, Medium medium, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) {
         CameraBaseParameters cameraBaseParameters(cameraTransform, film, medium, parameters, loc);
 
         // Realistic camera-specific parameters
@@ -934,6 +953,6 @@ namespace spectra {
             }
         }
 
-        return alloc.new_object<RealisticCamera>(cameraBaseParameters, lensParameters, focusDistance, apertureDiameter, std::move(apertureImage), alloc);
+        return alloc.new_object<RealisticCamera>(cameraBaseParameters, lensParameters, focusDistance, apertureDiameter, std::move(apertureImage), deviceArena, stream);
     }
 } // namespace spectra

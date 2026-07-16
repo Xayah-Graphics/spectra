@@ -1,6 +1,7 @@
 #include <pathtracer/core/filters.cuh>
 #include <pathtracer/core/paramdict.cuh>
 #include <pathtracer/util/rng.cuh>
+#include <vector>
 
 namespace spectra {
     // Box Filter Method Definitions
@@ -13,23 +14,23 @@ namespace spectra {
 
     // Gaussian Filter Method Definitions
 
-    GaussianFilter* GaussianFilter::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    GaussianFilter* GaussianFilter::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) {
         // Find common filter parameters
         Float xw    = parameters.GetOneFloat("xradius", 1.5f);
         Float yw    = parameters.GetOneFloat("yradius", 1.5f);
         Float sigma = parameters.GetOneFloat("sigma", 0.5f); // equivalent to old alpha = 2
-        return alloc.new_object<GaussianFilter>(Vector2f(xw, yw), sigma, alloc);
+        return alloc.new_object<GaussianFilter>(Vector2f(xw, yw), sigma, deviceArena, stream);
     }
 
     // Mitchell Filter Method Definitions
 
-    MitchellFilter* MitchellFilter::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    MitchellFilter* MitchellFilter::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) {
         // Find common filter parameters
         Float xw = parameters.GetOneFloat("xradius", 2.f);
         Float yw = parameters.GetOneFloat("yradius", 2.f);
         Float B  = parameters.GetOneFloat("B", 1.f / 3.f);
         Float C  = parameters.GetOneFloat("C", 1.f / 3.f);
-        return alloc.new_object<MitchellFilter>(Vector2f(xw, yw), B, C, alloc);
+        return alloc.new_object<MitchellFilter>(Vector2f(xw, yw), B, C, deviceArena, stream);
     }
 
     // Sinc Filter Method Definitions
@@ -50,11 +51,11 @@ namespace spectra {
     }
 
 
-    LanczosSincFilter* LanczosSincFilter::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    LanczosSincFilter* LanczosSincFilter::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) {
         Float xw  = parameters.GetOneFloat("xradius", 4.);
         Float yw  = parameters.GetOneFloat("yradius", 4.);
         Float tau = parameters.GetOneFloat("tau", 3.f);
-        return alloc.new_object<LanczosSincFilter>(Vector2f(xw, yw), tau, alloc);
+        return alloc.new_object<LanczosSincFilter>(Vector2f(xw, yw), tau, deviceArena, stream);
     }
 
     // Triangle Filter Method Definitions
@@ -66,16 +67,16 @@ namespace spectra {
         return alloc.new_object<TriangleFilter>(Vector2f(xw, yw));
     }
 
-    Filter Filter::Create(const std::string& name, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    Filter Filter::Create(const std::string& name, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) {
         Filter filter = nullptr;
         if (name == "box")
             filter = BoxFilter::Create(parameters, loc, alloc);
         else if (name == "gaussian")
-            filter = GaussianFilter::Create(parameters, loc, alloc);
+            filter = GaussianFilter::Create(parameters, loc, alloc, deviceArena, stream);
         else if (name == "mitchell")
-            filter = MitchellFilter::Create(parameters, loc, alloc);
+            filter = MitchellFilter::Create(parameters, loc, alloc, deviceArena, stream);
         else if (name == "sinc")
-            filter = LanczosSincFilter::Create(parameters, loc, alloc);
+            filter = LanczosSincFilter::Create(parameters, loc, alloc, deviceArena, stream);
         else if (name == "triangle")
             filter = TriangleFilter::Create(parameters, loc, alloc);
         else
@@ -88,15 +89,34 @@ namespace spectra {
     }
 
     // FilterSampler Method Definitions
-    FilterSampler::FilterSampler(Filter filter, Allocator alloc) : domain(Point2f(-filter.Radius()), Point2f(filter.Radius())), f(int(32 * filter.Radius().x), int(32 * filter.Radius().y), alloc), distrib(alloc) {
-        // Tabularize unnormalized filter function in _f_
-        for (int y = 0; y < f.YSize(); ++y)
-            for (int x = 0; x < f.XSize(); ++x) {
-                Point2f p = domain.Lerp(Point2f((x + 0.5f) / f.XSize(), (y + 0.5f) / f.YSize()));
-                f(x, y)   = filter.Evaluate(p);
-            }
+    FilterSampler::FilterSampler(Filter filter, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) : domain(Point2f(-filter.Radius()), Point2f(filter.Radius())), nx(int(32 * filter.Radius().x)), ny(int(32 * filter.Radius().y)) {
+        std::vector<Float> hostValues(static_cast<std::size_t>(nx) * ny);
+        std::vector<Float> hostConditionalCdf(static_cast<std::size_t>(ny) * (nx + 1));
+        std::vector<Float> rowIntegrals(ny);
+        std::vector<Float> hostMarginalCdf(ny + 1);
 
-        // Compute sampling distribution for filter
-        distrib = PiecewiseConstant2D(f, domain, alloc);
+        for (int y = 0; y < ny; ++y) {
+            Float* rowCdf = hostConditionalCdf.data() + y * (nx + 1);
+            rowCdf[0] = 0;
+            for (int x = 0; x < nx; ++x) {
+                Point2f p = domain.Lerp(Point2f((x + 0.5f) / nx, (y + 0.5f) / ny));
+                const Float value = filter.Evaluate(p);
+                hostValues[x + y * nx] = value;
+                rowCdf[x + 1] = rowCdf[x] + std::abs(value) * (domain.pMax.x - domain.pMin.x) / nx;
+            }
+            rowIntegrals[y] = rowCdf[nx];
+            if (rowIntegrals[y] == 0) for (int x = 1; x <= nx; ++x) rowCdf[x] = Float(x) / nx;
+            else for (int x = 1; x <= nx; ++x) rowCdf[x] /= rowIntegrals[y];
+        }
+
+        hostMarginalCdf[0] = 0;
+        for (int y = 0; y < ny; ++y) hostMarginalCdf[y + 1] = hostMarginalCdf[y] + rowIntegrals[y] * (domain.pMax.y - domain.pMin.y) / ny;
+        integral = hostMarginalCdf[ny];
+        if (integral == 0) for (int y = 1; y <= ny; ++y) hostMarginalCdf[y] = Float(y) / ny;
+        else for (int y = 1; y <= ny; ++y) hostMarginalCdf[y] /= integral;
+
+        values = deviceArena.StoreArray(hostValues.data(), hostValues.size(), stream);
+        conditionalCdf = deviceArena.StoreArray(hostConditionalCdf.data(), hostConditionalCdf.size(), stream);
+        marginalCdf = deviceArena.StoreArray(hostMarginalCdf.data(), hostMarginalCdf.size(), stream);
     }
 } // namespace spectra

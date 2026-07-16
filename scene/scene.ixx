@@ -306,6 +306,9 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
+        struct PreviewMaterial;
+        struct VolumeGrid;
+
         struct ResolvedScene {
             Revision revision{};
             std::string name{};
@@ -319,6 +322,8 @@ namespace spectra::scene {
             std::vector<Shape> shapes{};
             std::vector<ObjectDefinition> object_definitions{};
             std::vector<ObjectInstance> object_instances{};
+            std::vector<PreviewMaterial> preview_materials{};
+            std::vector<VolumeGrid> volumes{};
         };
 
         struct Info {
@@ -485,6 +490,7 @@ namespace spectra::scene {
             VolumeChannelIndexEncoding index_encoding{VolumeChannelIndexEncoding::Linear};
             std::uint64_t buffer_id{};
             std::uintptr_t external_device_pointer{};
+            std::uintptr_t external_ready_event{};
             std::uint64_t source_byte_size{};
         };
 
@@ -731,7 +737,6 @@ namespace spectra::scene {
         [[nodiscard]] Timeline timeline() const;
         [[nodiscard]] ResolvedFrame resolved_frame() const;
         [[nodiscard]] ResolvedScene resolved_scene() const;
-        [[nodiscard]] ResolvedScene resolved_scene(std::move_only_function<std::vector<float>(const VolumeGrid&, const VolumeChannel&)> external_volume_materializer) const;
         [[nodiscard]] Info info() const;
         void commit(Edit edit);
         [[nodiscard]] Kind kind() const;

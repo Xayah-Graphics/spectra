@@ -2,7 +2,7 @@
 #define SPECTRA_PATHTRACER_INTEGRATOR_H
 
 #include <memory>
-#include <optional>
+#include <string>
 #include <pathtracer/base/bxdf.cuh>
 #include <pathtracer/base/camera.cuh>
 #include <pathtracer/base/film.cuh>
@@ -13,6 +13,7 @@
 #include <pathtracer/core/kernel_config.cuh>
 #include <pathtracer/core/render_config.cuh>
 #include <pathtracer/gpu/util.cuh>
+#include <pathtracer/memory/memory.cuh>
 #include <pathtracer/util/float.cuh>
 #include <pathtracer/util/parallel.cuh>
 #include <pathtracer/util/pstd.cuh>
@@ -38,18 +39,18 @@ namespace spectra::pathtracer {
         GpuRuntime& operator=(GpuRuntime&&) noexcept = delete;
 
         void UploadKernelConfig(const KernelConfig& config);
+        [[nodiscard]] cudaStream_t Stream() const;
         void WaitGpuNoexcept() const noexcept;
 
     private:
         std::unique_ptr<RuntimeResources> resources{};
         bool initialized{false};
-        int cudaDevice{};
     };
 
     class WavefrontIntegrator {
     public:
-        WavefrontIntegrator(pstd::pmr::memory_resource* memoryResource, CompiledScene& compiledScene, const RenderConfig& config);
-        __host__ __device__ ~WavefrontIntegrator();
+        WavefrontIntegrator(PathtracerHostMemoryScope* memoryScope, CompiledScene& compiledScene, const RenderConfig& config, cudaStream_t renderStream);
+        ~WavefrontIntegrator();
 
         Float Render();
         void RenderSample(Bounds2i pixelBounds, Transform cameraMotion, int sampleIndex);
@@ -94,9 +95,8 @@ namespace spectra::pathtracer {
             return rayQueues[(wavefrontDepth + 1) & 1];
         }
 
-        void PrefetchGPUAllocations();
         Bounds3f Bounds() const;
-        __host__ __device__ void ReleaseAggregate();
+        void ReleaseAggregate();
 
         bool initializeVisibleSurface;
         bool haveSubsurface;
@@ -104,14 +104,21 @@ namespace spectra::pathtracer {
         pstd::array<bool, Material::NumTags()> haveBasicEvalMaterial;
         pstd::array<bool, Material::NumTags()> haveUniversalEvalMaterial;
 
-        pstd::pmr::memory_resource* memoryResource;
+        CompiledScene& sceneResources;
         RenderConfig renderConfig;
+        std::string outputFilename{};
+        cudaStream_t renderStream{};
 
-        Filter filter;
+        Filter deviceFilter;
         Film film;
+        Film deviceFilm;
         Sampler sampler;
+        Sampler deviceSampler;
         Camera camera;
-        pstd::vector<Light>* infiniteLights;
+        Camera deviceCamera;
+        PathtracerDeviceArena deviceArena{};
+        const Light* infiniteLights = nullptr;
+        int infiniteLightCount = 0;
         LightSampler lightSampler;
 
         int maxDepth;
@@ -122,12 +129,11 @@ namespace spectra::pathtracer {
         int maxQueueSize;
 
         SOA<PixelSampleState> pixelSampleState;
+        PathtracerDeviceMemoryScope frameMemoryScope{};
 
         RayQueue* rayQueues[2];
 
-        CompiledScene* compiledScene    = nullptr;
-        optix::SpectraOptiXAggregate* aggregate   = nullptr;
-        const WavefrontIntegrator* aggregateOwner = this;
+        std::unique_ptr<optix::SpectraOptiXAggregate> aggregate{};
 
         MediumSampleQueue* mediumSampleQueue   = nullptr;
         MediumScatterQueue* mediumScatterQueue = nullptr;

@@ -14,6 +14,10 @@
 #include <type_traits>
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     // Sampling Function Declarations
     __host__ __device__ inline int SampleDiscrete(pstd::span<const Float> weights, Float u, Float* pmf = nullptr, Float* uRemapped = nullptr);
 
@@ -666,6 +670,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // PiecewiseConstant2D Private Members
         Bounds2f domain;
         pstd::vector<PiecewiseConstant1D> pConditionalV;
@@ -693,6 +698,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // AliasTable Private Members
         struct Bin {
             Float q, p;
@@ -725,6 +731,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // SummedAreaTable Private Methods
         __host__ __device__ Float Lookup(Float x, Float y) const {
             // Rescale $(x,y)$ to table resolution and compute integer coordinates
@@ -805,6 +812,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // WindowedPiecewiseConstant2D Private Methods
         template <typename CDF>
         __host__ __device__ static Float SampleBisection(CDF P, Float u, Float min, Float max, int n) {
@@ -1183,6 +1191,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         template <size_t Dim, std::enable_if_t<Dim != 0, int> = 0>
         __host__ __device__ Float lookup(const float* data, uint32_t i0, uint32_t size, const float* param_weight) const {
             uint32_t i1 = i0 + m_param_strides[Dim - 1] * size;

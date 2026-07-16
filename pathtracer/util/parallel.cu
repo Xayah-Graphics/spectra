@@ -6,21 +6,6 @@
 #include <vector>
 
 namespace spectra {
-    // Barrier Method Definitions
-    bool Barrier::Block() {
-        std::unique_lock<std::mutex> lock(mutex);
-
-        --numToBlock;
-        CHECK_GE(numToBlock, 0);
-
-        if (numToBlock > 0) {
-            cv.wait(lock, [this]() { return numToBlock == 0; });
-        } else
-            cv.notify_all();
-
-        return --numToExit == 0;
-    }
-
     ThreadPool* ParallelJob::threadPool;
 
     // ThreadPool Method Definitions
@@ -32,7 +17,7 @@ namespace spectra {
         GPUThreadInit(this->cudaDevice);
 
         std::unique_lock<std::mutex> lock(mutex);
-        while (!shutdownThreads) WorkOrWait(&lock, false);
+        while (!shutdownThreads) WorkOrWait(&lock);
     }
 
     std::unique_lock<std::mutex> ThreadPool::AddToJobList(ParallelJob* job) {
@@ -46,13 +31,7 @@ namespace spectra {
         return lock;
     }
 
-    void ThreadPool::WorkOrWait(std::unique_lock<std::mutex>* lock, bool isEnqueuingThread) {
-        // Return if this is a worker thread and the thread pool is disabled
-        if (!isEnqueuingThread && disabled) {
-            jobListCondition.wait(*lock);
-            return;
-        }
-
+    void ThreadPool::WorkOrWait(std::unique_lock<std::mutex>* lock) {
         ParallelJob* job = jobList;
         while (job && !job->HaveWork()) job = job->next;
         if (job) {
@@ -95,26 +74,6 @@ namespace spectra {
         if (job->Finished()) jobListCondition.notify_all();
 
         return true;
-    }
-
-    void ThreadPool::ForEachThread(std::function<void(void)> func) {
-        Barrier* barrier = new Barrier(threads.size() + 1);
-
-        ParallelFor(0, threads.size() + 1, [barrier, &func](int64_t) {
-            func();
-            if (barrier->Block()) delete barrier;
-        });
-    }
-
-    void ThreadPool::Disable() {
-        CHECK(!disabled);
-        disabled = true;
-        CHECK(jobList == nullptr); // Nothing should be running when Disable() is called.
-    }
-
-    void ThreadPool::Reenable() {
-        CHECK(disabled);
-        disabled = false;
     }
 
     ThreadPool::~ThreadPool() {
@@ -219,7 +178,7 @@ namespace spectra {
         std::unique_lock<std::mutex> lock = ParallelJob::threadPool->AddToJobList(&loop);
 
         // Help out with parallel loop iterations in the current thread
-        while (!loop.Finished()) ParallelJob::threadPool->WorkOrWait(&lock, true);
+        while (!loop.Finished()) ParallelJob::threadPool->WorkOrWait(&lock);
     }
 
     void ParallelFor2D(const Bounds2i& extent, std::function<void(Bounds2i)> func) {
@@ -240,7 +199,7 @@ namespace spectra {
         std::unique_lock<std::mutex> lock = ParallelJob::threadPool->AddToJobList(&loop);
 
         // Help out with parallel loop iterations in the current thread
-        while (!loop.Finished()) ParallelJob::threadPool->WorkOrWait(&lock, true);
+        while (!loop.Finished()) ParallelJob::threadPool->WorkOrWait(&lock);
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -260,17 +219,4 @@ namespace spectra {
         ParallelJob::threadPool = nullptr;
     }
 
-    void ForEachThread(std::function<void(void)> func) {
-        if (ParallelJob::threadPool) ParallelJob::threadPool->ForEachThread(std::move(func));
-    }
-
-    void DisableThreadPool() {
-        CHECK(ParallelJob::threadPool);
-        ParallelJob::threadPool->Disable();
-    }
-
-    void ReenableThreadPool() {
-        CHECK(ParallelJob::threadPool);
-        ParallelJob::threadPool->Reenable();
-    }
 } // namespace spectra

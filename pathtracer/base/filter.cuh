@@ -1,6 +1,7 @@
 #ifndef SPECTRA_PATHTRACER_BASE_FILTER_H
 #define SPECTRA_PATHTRACER_BASE_FILTER_H
 
+#include <cuda_runtime_api.h>
 #include <pathtracer/util/float.cuh>
 #include <pathtracer/util/memory.cuh>
 #include <pathtracer/util/taggedptr.cuh>
@@ -10,6 +11,10 @@
 namespace spectra {
     class ParameterDictionary;
     struct FileLoc;
+
+    namespace pathtracer {
+        class PathtracerDeviceArena;
+    } // namespace pathtracer
 
     // Filter Declarations
     struct FilterSample;
@@ -25,7 +30,7 @@ namespace spectra {
         // Filter Interface
         using TaggedPointer::TaggedPointer;
 
-        static Filter Create(const std::string& name, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static Filter Create(const std::string& name, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ Vector2f Radius() const;
 

@@ -44,8 +44,6 @@ namespace spectra {
             direct     = alloc.allocate_object<Float4>(size);
             indirect   = alloc.allocate_object<Float4>(size);
             subsurface = alloc.allocate_object<Float4>(size);
-            mediaDist  = alloc.allocate_object<Float>(size);
-            mediaMode  = alloc.allocate_object<Float>(size);
         }
 
         __host__ __device__ RaySamples operator[](int i) const {
@@ -94,7 +92,6 @@ namespace spectra {
         Float4* SPECTRA_RESTRICT direct;
         Float4* SPECTRA_RESTRICT indirect;
         Float4* SPECTRA_RESTRICT subsurface;
-        Float *SPECTRA_RESTRICT mediaDist, *SPECTRA_RESTRICT mediaMode;
     };
 
     // PixelSampleState Definition
@@ -319,13 +316,13 @@ namespace spectra {
     public:
         using WorkQueue::WorkQueue;
         // RayQueue Public Methods
-        __host__ __device__ int PushCameraRay(const Ray& ray, const SampledWavelengths& lambda, int pixelIndex);
+        __device__ int PushCameraRay(const Ray& ray, const SampledWavelengths& lambda, int pixelIndex);
 
-        __host__ __device__ int PushIndirectRay(const Ray& ray, int depth, const LightSampleContext& prevIntrCtx, const SampledSpectrum& beta, const SampledSpectrum& r_u, const SampledSpectrum& r_l, const SampledWavelengths& lambda, Float etaScale, bool specularBounce, bool anyNonSpecularBounces, int pixelIndex);
+        __device__ int PushIndirectRay(const Ray& ray, int depth, const LightSampleContext& prevIntrCtx, const SampledSpectrum& beta, const SampledSpectrum& r_u, const SampledSpectrum& r_l, const SampledWavelengths& lambda, Float etaScale, bool specularBounce, bool anyNonSpecularBounces, int pixelIndex);
     };
 
     // RayQueue Inline Methods
-    __host__ __device__ inline int RayQueue::PushCameraRay(const Ray& ray, const SampledWavelengths& lambda, int pixelIndex) {
+    __device__ inline int RayQueue::PushCameraRay(const Ray& ray, const SampledWavelengths& lambda, int pixelIndex) {
         int index = AllocateEntry();
         this->ray[index]                   = ray;
         this->depth[index]                 = 0;
@@ -340,7 +337,7 @@ namespace spectra {
         return index;
     }
 
-    __host__ __device__ inline int RayQueue::PushIndirectRay(const Ray& ray, int depth, const LightSampleContext& prevIntrCtx, const SampledSpectrum& beta, const SampledSpectrum& r_u, const SampledSpectrum& r_l, const SampledWavelengths& lambda, Float etaScale, bool specularBounce, bool anyNonSpecularBounces, int pixelIndex) {
+    __device__ inline int RayQueue::PushIndirectRay(const Ray& ray, int depth, const LightSampleContext& prevIntrCtx, const SampledSpectrum& beta, const SampledSpectrum& r_u, const SampledSpectrum& r_l, const SampledWavelengths& lambda, Float etaScale, bool specularBounce, bool anyNonSpecularBounces, int pixelIndex) {
         int index = AllocateEntry();
         this->ray[index]                   = ray;
         this->depth[index]                 = depth;
@@ -363,14 +360,14 @@ namespace spectra {
     class EscapedRayQueue : public WorkQueue<EscapedRayWorkItem> {
     public:
         // EscapedRayQueue Public Methods
-        __host__ __device__ int Push(RayWorkItem r);
+        __device__ int Push(RayWorkItem r);
 
         using WorkQueue::WorkQueue;
 
         using WorkQueue::Push;
     };
 
-    __host__ __device__ inline int EscapedRayQueue::Push(RayWorkItem r) {
+    __device__ inline int EscapedRayQueue::Push(RayWorkItem r) {
         return Push(EscapedRayWorkItem{r.ray.o, r.ray.d, r.depth, r.lambda, r.pixelIndex, r.beta, (int) r.specularBounce, r.r_u, r.r_l, r.prevIntrCtx});
     }
 
@@ -379,7 +376,7 @@ namespace spectra {
     public:
         using WorkQueue::WorkQueue;
 
-        __host__ __device__ int Push(Material material, SampledWavelengths lambda, SampledSpectrum beta, SampledSpectrum r_u, Point3f p, Vector3f wo, Normal3f n, Normal3f ns, Vector3f dpdus, Point2f uv, int depth, MediumInterface mediumInterface, Float etaScale, int pixelIndex) {
+        __device__ int Push(Material material, SampledWavelengths lambda, SampledSpectrum beta, SampledSpectrum r_u, Point3f p, Vector3f wo, Normal3f n, Normal3f ns, Vector3f dpdus, Point2f uv, int depth, MediumInterface mediumInterface, Float etaScale, int pixelIndex) {
             int index                    = AllocateEntry();
             this->material[index]        = material;
             this->lambda[index]          = lambda;
@@ -404,7 +401,7 @@ namespace spectra {
     public:
         using WorkQueue::WorkQueue;
 
-        __host__ __device__ int Push(Point3f p0, Point3f p1, int depth, Material material, TabulatedBSSRDF bssrdf, SampledWavelengths lambda, SampledSpectrum beta, SampledSpectrum r_u, MediumInterface mediumInterface, Float etaScale, int pixelIndex) {
+        __device__ int Push(Point3f p0, Point3f p1, int depth, Material material, TabulatedBSSRDF bssrdf, SampledWavelengths lambda, SampledSpectrum beta, SampledSpectrum r_u, MediumInterface mediumInterface, Float etaScale, int pixelIndex) {
             int index                    = AllocateEntry();
             this->p0[index]              = p0;
             this->p1[index]              = p1;
@@ -428,7 +425,7 @@ namespace spectra {
 
         using WorkQueue::Push;
 
-        __host__ __device__ int Push(Ray ray, Float tMax, SampledWavelengths lambda, SampledSpectrum beta, SampledSpectrum r_u, SampledSpectrum r_l, int pixelIndex, LightSampleContext prevIntrCtx, int specularBounce, int anyNonSpecularBounces, Float etaScale) {
+        __device__ int Push(Ray ray, Float tMax, SampledWavelengths lambda, SampledSpectrum beta, SampledSpectrum r_u, SampledSpectrum r_l, int pixelIndex, LightSampleContext prevIntrCtx, int specularBounce, int anyNonSpecularBounces, Float etaScale) {
             int index                          = AllocateEntry();
             this->ray[index]                   = ray;
             this->tMax[index]                  = tMax;
@@ -444,7 +441,7 @@ namespace spectra {
             return index;
         }
 
-        __host__ __device__ int Push(RayWorkItem r, Float tMax) {
+        __device__ int Push(RayWorkItem r, Float tMax) {
             return Push(r.ray, tMax, r.lambda, r.beta, r.r_u, r.r_l, r.pixelIndex, r.prevIntrCtx, r.specularBounce, r.anyNonSpecularBounces, r.etaScale);
         }
     };

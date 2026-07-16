@@ -1,6 +1,7 @@
 #ifndef SPECTRA_PATHTRACER_BASE_CAMERA_H
 #define SPECTRA_PATHTRACER_BASE_CAMERA_H
 
+#include <cuda_runtime_api.h>
 #include <pathtracer/base/film.cuh>
 #include <pathtracer/base/filter.cuh>
 #include <pathtracer/util/float.cuh>
@@ -18,6 +19,10 @@ namespace spectra {
     class SampledWavelengths;
     struct FileLoc;
     struct ImageMetadata;
+
+    namespace pathtracer {
+        class PathtracerDeviceArena;
+    } // namespace pathtracer
 
     // Camera Declarations
     struct CameraRay;
@@ -38,14 +43,12 @@ namespace spectra {
         // Camera Interface
         using TaggedPointer::TaggedPointer;
 
-        static Camera Create(const std::string& name, const ParameterDictionary& parameters, Medium medium, const CameraTransform& cameraTransform, Film film, const FileLoc* loc, Allocator alloc);
+        static Camera Create(const std::string& name, const ParameterDictionary& parameters, Medium medium, const CameraTransform& cameraTransform, Film film, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
 
         __host__ __device__ pstd::optional<CameraRay> GenerateRay(CameraSample sample, SampledWavelengths& lambda) const;
 
         __host__ __device__ pstd::optional<CameraRayDifferential> GenerateRayDifferential(CameraSample sample, SampledWavelengths& lambda) const;
-
-        __host__ __device__ Film GetFilm() const;
 
         __host__ __device__ Float SampleTime(Float u) const;
 

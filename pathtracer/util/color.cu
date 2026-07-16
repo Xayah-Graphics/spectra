@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <charconv>
 #include <cctype>
-#include <mutex>
 #include <pathtracer/core/diagnostics.cuh>
 #include <pathtracer/util/check.cuh>
 #include <pathtracer/util/color.cuh>
@@ -175,21 +174,11 @@ namespace spectra {
         else if (name == "sRGB")
             return sRGB;
         else {
-            static std::map<float, ColorEncoding> cache;
-            static std::mutex mutex;
-
             std::vector<std::string> params = SplitWhitespaceTokens(name);
             if (params.size() != 2 || params[0] != "gamma") throw std::runtime_error(diagnostics::Format("%s: expected \"gamma <value>\" for color encoding", name));
             Float gamma;
             if (!ParseFloatToken(params[1], &gamma) || gamma == 0) throw std::runtime_error(diagnostics::Format("%s: unable to parse gamma value", params[1]));
-
-            std::lock_guard<std::mutex> lock(mutex);
-            auto iter = cache.find(gamma);
-            if (iter != cache.end()) return iter->second;
-
-            ColorEncoding enc = alloc.new_object<GammaColorEncoding>(gamma);
-            cache[gamma]      = enc;
-            return enc;
+            return alloc.new_object<GammaColorEncoding>(gamma);
         }
     }
 

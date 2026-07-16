@@ -1,15 +1,12 @@
 #include <ImfThreading.h>
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <cuda.h>
 #include <cuda_runtime.h>
-#include <map>
 #include <memory>
 #include <pathtracer/base/bxdf.cuh>
 #include <pathtracer/base/medium.cuh>
 #include <pathtracer/compiled_scene.cuh>
+#include <pathtracer/device_scene.cuh>
 #include <pathtracer/core/bssrdf.cuh>
 #include <pathtracer/core/bxdfs.cuh>
 #include <pathtracer/core/cameras.cuh>
@@ -42,7 +39,6 @@
 #include <pathtracer/util/vecmath.cuh>
 #include <string>
 #include <type_traits>
-#include <vector>
 
 #ifdef SPECTRA_IS_WINDOWS
 #include <Windows.h>
@@ -54,20 +50,20 @@
 
 namespace spectra::pathtracer::detail {
     static bool runtime_initialized = false;
-
-    int InitializeGpuRuntimeState(std::optional<int> cudaDevice) {
-        return GPUInit(cudaDevice);
-    }
 } // namespace spectra::pathtracer::detail
 
 namespace spectra::pathtracer {
     class RuntimeResources {
     public:
-        RuntimeResources() : memoryScope(std::make_unique<PathtracerMemoryScope>(PathtracerMemoryScopeKind::Runtime, "pathtracer runtime")), bufferResource(std::make_unique<pstd::pmr::monotonic_buffer_resource>(1024 * 1024, memoryScope.get())), alloc(bufferResource.get()) {
+        RuntimeResources() : bufferResource(1024 * 1024, &memoryScope) {
+            renderStream.Create();
+            Allocator alloc(&bufferResource);
             ColorEncoding::Init(alloc);
             Spectra::Init(alloc);
             RGBToSpectrumTable::Init(alloc);
             RGBColorSpace::Init(alloc);
+            DeviceSceneBuilder deviceBuilder(runtimeDeviceArena, renderStream.get());
+            deviceBuilder.InitializeRuntimeGlobals();
         }
 
         ~RuntimeResources() noexcept {
@@ -85,10 +81,15 @@ namespace spectra::pathtracer {
         RuntimeResources& operator=(const RuntimeResources&)     = delete;
         RuntimeResources& operator=(RuntimeResources&&) noexcept = delete;
 
+        [[nodiscard]] cudaStream_t stream() const {
+            return renderStream.get();
+        }
+
     private:
-        std::unique_ptr<PathtracerMemoryScope> memoryScope;
-        std::unique_ptr<pstd::pmr::monotonic_buffer_resource> bufferResource;
-        Allocator alloc;
+        PathtracerCudaStream renderStream{};
+        PathtracerDeviceArena runtimeDeviceArena{};
+        PathtracerHostMemoryScope memoryScope{};
+        pstd::pmr::monotonic_buffer_resource bufferResource;
     };
 
 #ifdef SPECTRA_IS_WINDOWS
@@ -114,22 +115,21 @@ namespace spectra::pathtracer {
         if (config.thread_count <= 0) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime thread count must be positive."));
         if (config.cuda_device.has_value() && *config.cuda_device < 0) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime CUDA device must be non-negative."));
 
-        RuntimeConfig runtimeConfig = config;
-        Imf::setGlobalThreadCount(runtimeConfig.thread_count);
+        Imf::setGlobalThreadCount(config.thread_count);
 
 #ifdef SPECTRA_IS_WINDOWS
         SetUnhandledExceptionFilter(handle_windows_exception);
-        if (runtimeConfig.cuda_device.has_value() && !std::getenv("CUDA_VISIBLE_DEVICES")) {
-            std::string env = "CUDA_VISIBLE_DEVICES=" + std::to_string(*runtimeConfig.cuda_device);
-            _putenv(env.c_str());
-            runtimeConfig.cuda_device = 0;
-        }
 #endif // SPECTRA_IS_WINDOWS
 
-        this->cudaDevice = detail::InitializeGpuRuntimeState(runtimeConfig.cuda_device);
-        ParallelInit(runtimeConfig.thread_count, this->cudaDevice);
+        const int cudaDevice = GPUInit(config.cuda_device);
+        ParallelInit(config.thread_count, cudaDevice);
 
-        this->resources = std::make_unique<RuntimeResources>();
+        try {
+            this->resources = std::make_unique<RuntimeResources>();
+        } catch (...) {
+            ParallelCleanup();
+            throw;
+        }
 
         detail::runtime_initialized = true;
         this->initialized           = true;
@@ -155,21 +155,25 @@ namespace spectra::pathtracer {
         pathtracer::UploadKernelConfig(config);
     }
 
+    [[nodiscard]] cudaStream_t GpuRuntime::Stream() const {
+        return this->resources->stream();
+    }
+
     void GpuRuntime::WaitGpuNoexcept() const noexcept {
         try {
-            if (this->initialized) GPUWait();
+            if (this->initialized) GPUWait(this->resources->stream());
         } catch (...) {
         }
     }
 
     template <typename F>
     void WavefrontIntegrator::ParallelFor(int nItems, F&& func) {
-        spectra::GPUParallelFor(nItems, func);
+        spectra::GPUParallelFor(nItems, func, this->renderStream);
     }
 
     template <typename F>
     void WavefrontIntegrator::Do(F&& func) {
-        spectra::GPUParallelFor(1, [=] __device__(int) mutable { func(); });
+        spectra::GPUParallelFor(1, [=] __device__(int) mutable { func(); }, this->renderStream);
     }
 
     Bounds3f WavefrontIntegrator::Bounds() const {
@@ -177,16 +181,12 @@ namespace spectra::pathtracer {
         return aggregate->Bounds();
     }
 
-    __host__ __device__ WavefrontIntegrator::~WavefrontIntegrator() {
+    WavefrontIntegrator::~WavefrontIntegrator() {
         ReleaseAggregate();
     }
 
-    __host__ __device__ void WavefrontIntegrator::ReleaseAggregate() {
-#if !defined(__CUDA_ARCH__)
-        if (aggregateOwner == this) delete aggregate;
-#endif
-        aggregate      = nullptr;
-        aggregateOwner = nullptr;
+    void WavefrontIntegrator::ReleaseAggregate() {
+        aggregate.reset();
     }
 
     static void updateMaterialNeeds(Material m, pstd::array<bool, Material::NumTags()>* haveBasicEvalMaterial, pstd::array<bool, Material::NumTags()>* haveUniversalEvalMaterial, bool* haveSubsurface, bool* haveMedia) {
@@ -214,12 +214,10 @@ namespace spectra::pathtracer {
             (*haveUniversalEvalMaterial)[m.Tag()] = true;
     }
 
-    WavefrontIntegrator::WavefrontIntegrator(pstd::pmr::memory_resource* memoryResource, CompiledScene& compiledScene, const RenderConfig& config) : compiledScene(&compiledScene), memoryResource(memoryResource), renderConfig(config) {
-        ThreadLocal<Allocator> threadAllocators([memoryResource]() { return Allocator(memoryResource); });
+    WavefrontIntegrator::WavefrontIntegrator(PathtracerHostMemoryScope* memoryScope, CompiledScene& compiledScene, const RenderConfig& config, cudaStream_t renderStream) : sceneResources(compiledScene), renderConfig(config), renderStream(renderStream) {
+        Allocator alloc(memoryScope);
 
-        Allocator alloc = threadAllocators.Get();
-
-        CompiledScene& scene = compiledScene;
+        CompiledScene& scene = sceneResources;
 
         // "haveMedia" is a bit of a misnomer in that determines both whether
         // queues are allocated for the medium sampling kernels, and they are
@@ -233,38 +231,35 @@ namespace spectra::pathtracer {
         haveSubsurface = false;
         for (const auto& material : scene.materials) updateMaterialNeeds(material.second, &haveBasicEvalMaterial, &haveUniversalEvalMaterial, &haveSubsurface, &haveMedia);
 
-        // Retrieve these here so that the CPU isn't writing to managed memory
-        // concurrently with the OptiX acceleration-structure construction work
-        // that follows. (Verbotten on Windows.)
         camera         = scene.camera;
         film           = scene.film;
-        filter         = scene.filter;
         sampler        = scene.sampler;
-        infiniteLights = scene.infiniteLights;
+        outputFilename = scene.outputFilename;
+        DeviceSceneBuilder deviceBuilder(deviceArena, this->renderStream);
+        deviceFilter = deviceBuilder.CompileFilter(scene.filter);
+        deviceFilm = deviceBuilder.CompileFilm(film);
+        deviceSampler = deviceBuilder.CompileSampler(sampler);
+        deviceCamera = deviceBuilder.CompileCamera(camera);
+        infiniteLightCount = static_cast<int>(scene.infiniteLights->size());
 
-        PathtracerMemoryScope* memoryScope = dynamic_cast<PathtracerMemoryScope*>(memoryResource);
-        SPECTRA_CHECK(memoryScope);
-        aggregate = new optix::SpectraOptiXAggregate(scene, this->renderConfig, memoryScope);
+        aggregate = std::make_unique<optix::SpectraOptiXAggregate>(scene, this->renderConfig, memoryScope, this->renderStream, deviceBuilder);
 
         // Preprocess the light sources
         for (Light light : scene.allLights) light.Preprocess(aggregate->Bounds());
+        infiniteLights = deviceBuilder.CompileLights(*scene.infiniteLights);
 
         bool haveLights = !scene.allLights.empty();
-        for (const auto& medium : scene.media) haveLights |= medium.second.IsEmissive();
+        haveLights |= scene.haveEmissiveMedia;
         if (!haveLights) throw std::runtime_error(diagnostics::Format("No light sources specified"));
 
-        std::string lightSamplerName = scene.integrator.parameters.GetOneString("lightsampler", "bvh");
+        std::string lightSamplerName = scene.integrator.lightSampler;
         if (scene.allLights.size() == 1) lightSamplerName = "uniform";
-        lightSampler = LightSampler::Create(lightSamplerName, scene.allLights, alloc);
+        LightSampler hostLightSampler = LightSampler::Create(lightSamplerName, scene.allLights, alloc);
+        lightSampler = deviceBuilder.CompileLightSampler(hostLightSampler);
+        deviceArena.FinishUploads(this->renderStream);
 
-        if (scene.integrator.name != "path" && scene.integrator.name != "volpath")
-            throw std::runtime_error(diagnostics::Format(&scene.integrator.loc,
-                "The Spectra GPU pathtracer only supports \"path\" and \"volpath\" integrators; got \"%s\".",
-                scene.integrator.name));
-
-        // Integrator parameters
-        regularize = scene.integrator.parameters.GetOneBool("regularize", false);
-        maxDepth   = scene.integrator.parameters.GetOneInt("maxdepth", 5);
+        regularize = scene.integrator.regularize;
+        maxDepth   = scene.integrator.maxDepth;
 
         initializeVisibleSurface = film.UsesVisibleSurface();
         samplesPerPixel          = sampler.SamplesPerPixel();
@@ -279,40 +274,39 @@ namespace spectra::pathtracer {
         scanlinesPerPass    = (resolution.y + nPasses - 1) / nPasses;
         maxQueueSize        = resolution.x * scanlinesPerPass;
 
-        pixelSampleState = spectra::SOA<PixelSampleState>(maxQueueSize, alloc);
+        Allocator frameAlloc(&frameMemoryScope);
+        pixelSampleState = spectra::SOA<PixelSampleState>(maxQueueSize, frameAlloc);
 
-        rayQueues[0] = alloc.new_object<RayQueue>(maxQueueSize, alloc);
-        rayQueues[1] = alloc.new_object<RayQueue>(maxQueueSize, alloc);
+        rayQueues[0] = deviceArena.Store(RayQueue(maxQueueSize, frameAlloc), this->renderStream);
+        rayQueues[1] = deviceArena.Store(RayQueue(maxQueueSize, frameAlloc), this->renderStream);
 
-        shadowRayQueue = alloc.new_object<ShadowRayQueue>(maxQueueSize, alloc);
+        shadowRayQueue = deviceArena.Store(ShadowRayQueue(maxQueueSize, frameAlloc), this->renderStream);
 
         if (haveSubsurface) {
-            bssrdfEvalQueue        = alloc.new_object<GetBSSRDFAndProbeRayQueue>(maxQueueSize, alloc);
-            subsurfaceScatterQueue = alloc.new_object<SubsurfaceScatterQueue>(maxQueueSize, alloc);
+            bssrdfEvalQueue        = deviceArena.Store(GetBSSRDFAndProbeRayQueue(maxQueueSize, frameAlloc), this->renderStream);
+            subsurfaceScatterQueue = deviceArena.Store(SubsurfaceScatterQueue(maxQueueSize, frameAlloc), this->renderStream);
         }
 
-        if (infiniteLights->size()) escapedRayQueue = alloc.new_object<EscapedRayQueue>(maxQueueSize, alloc);
-        hitAreaLightQueue = alloc.new_object<HitAreaLightQueue>(maxQueueSize, alloc);
+        if (infiniteLightCount > 0) escapedRayQueue = deviceArena.Store(EscapedRayQueue(maxQueueSize, frameAlloc), this->renderStream);
+        hitAreaLightQueue = deviceArena.Store(HitAreaLightQueue(maxQueueSize, frameAlloc), this->renderStream);
 
-        basicEvalMaterialQueue     = alloc.new_object<MaterialEvalQueue>(maxQueueSize, alloc, pstd::MakeConstSpan(&haveBasicEvalMaterial[1], haveBasicEvalMaterial.size() - 1));
-        universalEvalMaterialQueue = alloc.new_object<MaterialEvalQueue>(maxQueueSize, alloc, pstd::MakeConstSpan(&haveUniversalEvalMaterial[1], haveUniversalEvalMaterial.size() - 1));
+        basicEvalMaterialQueue     = deviceArena.Store(MaterialEvalQueue(maxQueueSize, frameAlloc, pstd::MakeConstSpan(&haveBasicEvalMaterial[1], haveBasicEvalMaterial.size() - 1)), this->renderStream);
+        universalEvalMaterialQueue = deviceArena.Store(MaterialEvalQueue(maxQueueSize, frameAlloc, pstd::MakeConstSpan(&haveUniversalEvalMaterial[1], haveUniversalEvalMaterial.size() - 1)), this->renderStream);
 
         if (haveMedia) {
-            mediumSampleQueue = alloc.new_object<MediumSampleQueue>(maxQueueSize, alloc);
+            mediumSampleQueue = deviceArena.Store(MediumSampleQueue(maxQueueSize, frameAlloc), this->renderStream);
 
             pstd::array<bool, PhaseFunction::NumTags()> havePhase;
             havePhase.fill(true);
-            mediumScatterQueue = alloc.new_object<MediumScatterQueue>(maxQueueSize, alloc, havePhase);
+            mediumScatterQueue = deviceArena.Store(MediumScatterQueue(maxQueueSize, frameAlloc, havePhase), this->renderStream);
         }
+        deviceArena.FinishUploads(this->renderStream);
     }
 
     Float WavefrontIntegrator::Render() {
         Bounds2i pixelBounds = film.PixelBounds();
 
         std::chrono::steady_clock::time_point renderStart = std::chrono::steady_clock::now();
-        // Prefetch allocations to GPU memory
-        PrefetchGPUAllocations();
-
         // Loop over sample indices and evaluate pixel samples
         int firstSampleIndex = 0, lastSampleIndex = samplesPerPixel;
         int totalSamples = lastSampleIndex - firstSampleIndex;
@@ -339,7 +333,7 @@ namespace spectra::pathtracer {
             }
         }
 
-        GPUWait();
+        GPUWait(this->renderStream);
         Float seconds = Float(std::chrono::duration<double>(std::chrono::steady_clock::now() - renderStart).count());
         if (!this->renderConfig.quiet) {
             std::fprintf(stdout, "Rendering completed in %.1fs\n", seconds);
@@ -352,7 +346,7 @@ namespace spectra::pathtracer {
     void WavefrontIntegrator::RenderSample(Bounds2i pixelBounds, Transform cameraMotion, int sampleIndex) {
         for (int y0 = pixelBounds.pMin.y; y0 < pixelBounds.pMax.y; y0 += scanlinesPerPass) {
             RayQueue* cameraRayQueue = CurrentRayQueue(0);
-            Do([=] __host__ __device__() mutable { cameraRayQueue->Reset(); });
+            Do([=] __device__() mutable { cameraRayQueue->Reset(); });
 
             GenerateCameraRays(y0, cameraMotion, sampleIndex);
 
@@ -366,7 +360,7 @@ namespace spectra::pathtracer {
                 MaterialEvalQueue* universalEvalMaterialQueue            = this->universalEvalMaterialQueue;
                 GetBSSRDFAndProbeRayQueue* bssrdfEvalQueue               = this->bssrdfEvalQueue;
                 SubsurfaceScatterQueue* subsurfaceScatterQueue           = this->subsurfaceScatterQueue;
-                Do([=] __host__ __device__() mutable {
+                Do([=] __device__() mutable {
                     nextQueue->Reset();
                     if (mediumSampleQueue) mediumSampleQueue->Reset();
                     if (mediumScatterQueue) mediumScatterQueue->Reset();
@@ -406,8 +400,8 @@ namespace spectra::pathtracer {
 
     void WavefrontIntegrator::ResetFilm(Bounds2i pixelBounds) {
         Vector2i resolution = pixelBounds.Diagonal();
-        Film film = this->film;
-        ParallelFor(resolution.x * resolution.y, [=] __host__ __device__(int i) mutable {
+        Film film = this->deviceFilm;
+        ParallelFor(resolution.x * resolution.y, [=] __device__(int i) mutable {
             int x = i % resolution.x, y = i / resolution.x;
             film.ResetPixel(pixelBounds.pMin + Vector2i(x, y));
         });
@@ -417,13 +411,15 @@ namespace spectra::pathtracer {
         if (!escapedRayQueue) return;
         EscapedRayQueue* escapedRayQueue        = this->escapedRayQueue;
         int maxQueueSize                        = this->maxQueueSize;
-        pstd::vector<Light>* infiniteLights     = this->infiniteLights;
+        const Light* infiniteLights            = this->infiniteLights;
+        int infiniteLightCount                 = this->infiniteLightCount;
         LightSampler lightSampler               = this->lightSampler;
         SOA<PixelSampleState> pixelSampleState  = this->pixelSampleState;
-        ForAllQueued(escapedRayQueue, maxQueueSize, [=] __host__ __device__(const EscapedRayWorkItem w) mutable {
+        ForAllQueued(escapedRayQueue, maxQueueSize, this->renderStream, [=] __device__(const EscapedRayWorkItem w) mutable {
             // Compute weighted radiance for escaped ray
             SampledSpectrum L(0.f);
-            for (const auto& light : *infiniteLights) {
+            for (int i = 0; i < infiniteLightCount; ++i) {
+                Light light = infiniteLights[i];
                 if (SampledSpectrum Le = light.Le(Ray(w.rayo, w.rayd), w.lambda); Le) {
                     // Compute path radiance contribution from infinite light
 
@@ -452,7 +448,7 @@ namespace spectra::pathtracer {
         int maxQueueSize                        = this->maxQueueSize;
         LightSampler lightSampler               = this->lightSampler;
         SOA<PixelSampleState> pixelSampleState  = this->pixelSampleState;
-        ForAllQueued(hitAreaLightQueue, maxQueueSize, [=] __host__ __device__(const HitAreaLightWorkItem w) mutable {
+        ForAllQueued(hitAreaLightQueue, maxQueueSize, this->renderStream, [=] __device__(const HitAreaLightWorkItem w) mutable {
             // Find emitted radiance from surface that ray hit
             SampledSpectrum Le = w.areaLight.L(w.p, w.n, w.uv, w.wo, w.lambda);
             if (!Le) return;
@@ -482,44 +478,12 @@ namespace spectra::pathtracer {
 
     void WavefrontIntegrator::TraceShadowRays(int wavefrontDepth) {
         if (haveMedia)
-            aggregate->IntersectShadowTr(maxQueueSize, shadowRayQueue, &pixelSampleState);
+            aggregate->IntersectShadowTr(maxQueueSize, shadowRayQueue, pixelSampleState);
         else
-            aggregate->IntersectShadow(maxQueueSize, shadowRayQueue, &pixelSampleState);
+            aggregate->IntersectShadow(maxQueueSize, shadowRayQueue, pixelSampleState);
         // Reset shadow ray queue
         ShadowRayQueue* shadowRayQueue = this->shadowRayQueue;
-        Do([=] __host__ __device__() mutable { shadowRayQueue->Reset(); });
-    }
-
-    void WavefrontIntegrator::PrefetchGPUAllocations() {
-        int deviceIndex;
-        SPECTRA_CUDA_CHECK(cudaGetDevice(&deviceIndex));
-        int hasConcurrentManagedAccess;
-        SPECTRA_CUDA_CHECK(cudaDeviceGetAttribute(&hasConcurrentManagedAccess, cudaDevAttrConcurrentManagedAccess, deviceIndex));
-
-        // Copy all the scene data structures over to GPU memory.  This
-        // ensures that there isn't a big performance hitch for the first batch
-        // of rays as that stuff is copied over on demand.
-        if (hasConcurrentManagedAccess) {
-            // Set things up so that we can still have read from the
-            // WavefrontIntegrator struct on the CPU without hurting
-            // performance. (This makes it possible to use the values of things
-            // like WavefrontIntegrator::haveSubsurface to conditionally launch
-            // kernels according to what's in the scene...)
-            cudaMemLocation location = {};
-            location.type            = cudaMemLocationTypeDevice;
-            location.id              = 0; // For ReadMostly: device ID is ignored
-
-            SPECTRA_CUDA_CHECK(cudaMemAdvise(this, sizeof(*this), cudaMemAdviseSetReadMostly, location));
-            location.id = deviceIndex;
-            SPECTRA_CUDA_CHECK(cudaMemAdvise(this, sizeof(*this), cudaMemAdviseSetPreferredLocation, location));
-
-            // Copy all the scene data structures over to GPU memory.  This
-            // ensures that there isn't a big performance hitch for the first batch
-            // of rays as that stuff is copied over on demand.
-            PathtracerMemoryScope* memoryScope = dynamic_cast<PathtracerMemoryScope*>(memoryResource);
-            SPECTRA_CHECK(memoryScope);
-            memoryScope->PrefetchManagedToGPU();
-        }
+        Do([=] __device__() mutable { shadowRayQueue->Reset(); });
     }
 
     void WavefrontIntegrator::GenerateCameraRays(int y0, Transform movingFromCamera, int sampleIndex) {
@@ -528,20 +492,20 @@ namespace spectra::pathtracer {
             GenerateCameraRays<std::remove_reference_t<decltype(*sampler)>>(y0, movingFromCamera, sampleIndex);
         };
 
-        sampler.DispatchCPU(generateRays);
+        sampler.DispatchHost(generateRays);
     }
 
     template <typename ConcreteSampler>
     void WavefrontIntegrator::GenerateCameraRays(int y0, Transform movingFromCamera, int sampleIndex) {
         RayQueue* rayQueue                         = CurrentRayQueue(0);
         int maxQueueSize                           = this->maxQueueSize;
-        Film film                                  = this->film;
-        Sampler sampler                            = this->sampler;
-        Filter filter                              = this->filter;
-        Camera camera                              = this->camera;
+        Film film                                  = this->deviceFilm;
+        Sampler sampler                            = this->deviceSampler;
+        Filter filter                              = this->deviceFilter;
+        Camera camera                              = this->deviceCamera;
         bool initializeVisibleSurface              = this->initializeVisibleSurface;
         SOA<PixelSampleState> pixelSampleState     = this->pixelSampleState;
-        ParallelFor(maxQueueSize, [=] __host__ __device__(int pixelIndex) mutable {
+        ParallelFor(maxQueueSize, [=] __device__(int pixelIndex) mutable {
             // Enqueue camera ray and set pixel state for sample
             // Compute pixel coordinates for _pixelIndex_
             Bounds2i pixelBounds = film.PixelBounds();
@@ -585,7 +549,7 @@ namespace spectra::pathtracer {
         auto generateSamples = [=, this](auto sampler) {
             GenerateRaySamples<std::remove_reference_t<decltype(*sampler)>>(wavefrontDepth, sampleIndex);
         };
-        sampler.DispatchCPU(generateSamples);
+        sampler.DispatchHost(generateSamples);
     }
 
     template <typename ConcreteSampler>
@@ -593,9 +557,9 @@ namespace spectra::pathtracer {
         RayQueue* rayQueue                         = CurrentRayQueue(wavefrontDepth);
         int maxQueueSize                           = this->maxQueueSize;
         bool haveSubsurface                        = this->haveSubsurface;
-        Sampler sampler                            = this->sampler;
+        Sampler sampler                            = this->deviceSampler;
         SOA<PixelSampleState> pixelSampleState     = this->pixelSampleState;
-        spectra::ForAllQueued(rayQueue, maxQueueSize, [=] __host__ __device__(const RayWorkItem w) mutable {
+        spectra::ForAllQueued(rayQueue, maxQueueSize, this->renderStream, [=] __device__(const RayWorkItem w) mutable {
             // Generate samples for ray segment at current sample index
             // Find first sample dimension
             int dimension = 6 + 7 * w.depth;
@@ -652,9 +616,8 @@ namespace spectra::pathtracer {
     void WavefrontIntegrator::EvaluateMaterialAndBSDF(MaterialEvalQueue* evalQueue, Transform movingFromCamera, int wavefrontDepth) {
         // Get BSDF for items in _evalQueue_ and sample illumination
         RayQueue* nextRayQueue                              = NextRayQueue(wavefrontDepth);
-        auto queue                                          = evalQueue->Get<MaterialEvalWorkItem<ConcreteMaterial>>();
         int maxQueueSize                                    = this->maxQueueSize;
-        Camera camera                                       = this->camera;
+        Camera camera                                       = this->deviceCamera;
         int samplesPerPixel                                 = this->samplesPerPixel;
         SOA<PixelSampleState> pixelSampleState              = this->pixelSampleState;
         bool regularize                                     = this->regularize;
@@ -663,7 +626,7 @@ namespace spectra::pathtracer {
         GetBSSRDFAndProbeRayQueue* bssrdfEvalQueue          = this->bssrdfEvalQueue;
         ShadowRayQueue* shadowRayQueue                      = this->shadowRayQueue;
         LightSampler lightSampler                           = this->lightSampler;
-        spectra::ForAllQueued(queue, maxQueueSize, [=] __host__ __device__(const MaterialEvalWorkItem<ConcreteMaterial> w) mutable {
+        spectra::ForAllQueuedType<MaterialEvalWorkItem<ConcreteMaterial>>(evalQueue, maxQueueSize, this->renderStream, [=] __device__(const MaterialEvalWorkItem<ConcreteMaterial> w) mutable {
             // Evaluate material and BSDF for ray intersection
             TextureEvaluator texEval;
             // Compute differentials for position and $(u,v)$ at intersection point
@@ -868,7 +831,7 @@ namespace spectra::pathtracer {
         MaterialEvalQueue* basicEvalMaterialQueue      = this->basicEvalMaterialQueue;
         MaterialEvalQueue* universalEvalMaterialQueue  = this->universalEvalMaterialQueue;
         SOA<PixelSampleState> pixelSampleState         = this->pixelSampleState;
-        ForAllQueued(mediumSampleQueue, maxQueueSize, [=] __host__ __device__(MediumSampleWorkItem w) mutable {
+        ForAllQueued(mediumSampleQueue, maxQueueSize, this->renderStream, [=] __device__(MediumSampleWorkItem w) mutable {
             Ray ray    = w.ray;
             Float tMax = w.tMax;
 
@@ -1010,7 +973,7 @@ namespace spectra::pathtracer {
         LightSampler lightSampler                      = this->lightSampler;
         SOA<PixelSampleState> pixelSampleState         = this->pixelSampleState;
 
-        spectra::ForAllQueued(mediumScatterQueue->Get<MediumScatterWorkItem<ConcretePhaseFunction>>(), maxQueueSize, [=] __host__ __device__(const MediumScatterWorkItem<ConcretePhaseFunction> w) mutable {
+        spectra::ForAllQueuedType<MediumScatterWorkItem<ConcretePhaseFunction>>(mediumScatterQueue, maxQueueSize, this->renderStream, [=] __device__(const MediumScatterWorkItem<ConcretePhaseFunction> w) mutable {
             RaySamples raySamples = pixelSampleState.samples[w.pixelIndex];
             Vector3f wo           = w.wo;
 
@@ -1078,7 +1041,7 @@ namespace spectra::pathtracer {
         SubsurfaceScatterQueue* subsurfaceScatterQueue       = this->subsurfaceScatterQueue;
         SOA<PixelSampleState> pixelSampleState               = this->pixelSampleState;
 
-        ForAllQueued(bssrdfEvalQueue, maxQueueSize, [=] __host__ __device__(const GetBSSRDFAndProbeRayWorkItem w) mutable {
+        ForAllQueued(bssrdfEvalQueue, maxQueueSize, this->renderStream, [=] __device__(const GetBSSRDFAndProbeRayWorkItem w) mutable {
             const SubsurfaceMaterial* material = w.material.Cast<SubsurfaceMaterial>();
             MaterialEvalContext ctx            = w.GetMaterialEvalContext();
             SampledWavelengths lambda          = w.lambda;
@@ -1097,7 +1060,7 @@ namespace spectra::pathtracer {
         bool haveMedia                                      = this->haveMedia;
         LightSampler lightSampler                           = this->lightSampler;
         ShadowRayQueue* shadowRayQueue                      = this->shadowRayQueue;
-        ForAllQueued(subsurfaceScatterQueue, maxQueueSize, [=] __host__ __device__(SubsurfaceScatterWorkItem w) mutable {
+        ForAllQueued(subsurfaceScatterQueue, maxQueueSize, this->renderStream, [=] __device__(SubsurfaceScatterWorkItem w) mutable {
             if (w.reservoirPDF == 0) return;
 
             TabulatedBSSRDF bssrdf = w.bssrdf;
@@ -1201,10 +1164,10 @@ namespace spectra::pathtracer {
 
     void WavefrontIntegrator::UpdateFilm() {
         int maxQueueSize                            = this->maxQueueSize;
-        Film film                                   = this->film;
+        Film film                                   = this->deviceFilm;
         bool initializeVisibleSurface               = this->initializeVisibleSurface;
         SOA<PixelSampleState> pixelSampleState      = this->pixelSampleState;
-        ParallelFor(maxQueueSize, [=] __host__ __device__(int pixelIndex) mutable {
+        ParallelFor(maxQueueSize, [=] __device__(int pixelIndex) mutable {
             // Check pixel against film bounds
             Point2i pPixel = pixelSampleState.pPixel[pixelIndex];
             if (!InsideExclusive(pPixel, film.PixelBounds())) return;
@@ -1226,8 +1189,8 @@ namespace spectra::pathtracer {
 
     void WavefrontIntegrator::UpdateFramebufferFromFilm(Bounds2i pixelBounds, Float exposure, float* rgba) {
         Vector2i resolution = pixelBounds.Diagonal();
-        Film film = this->film;
-        ParallelFor(resolution.x * resolution.y, [=] __host__ __device__(int index) mutable {
+        Film film = this->deviceFilm;
+        ParallelFor(resolution.x * resolution.y, [=] __device__(int index) mutable {
             Point2i p(index % resolution.x, index / resolution.x);
             RGB rgb          = exposure * film.GetPixelRGB(p + pixelBounds.pMin);
             const int outputIndex = p.x + (resolution.y - 1 - p.y) * resolution.x;

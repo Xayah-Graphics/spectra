@@ -19,6 +19,10 @@
 #endif // RGB
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     // RGB Definition
     class RGB {
     public:
@@ -365,6 +369,7 @@ namespace spectra {
         static const RGBToSpectrumTable* ACES2065_1;
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // RGBToSpectrumTable Private Members
         const float* zNodes;
         const CoefficientArray* coeffs;

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <memory>
 #include <pathtracer/base/filter.cuh>
+#include <pathtracer/memory/memory.cuh>
 #include <pathtracer/util/float.cuh>
 #include <pathtracer/util/math.cuh>
 #include <pathtracer/util/memory.cuh>
@@ -20,20 +21,32 @@ namespace spectra {
     class FilterSampler {
     public:
         // FilterSampler Public Methods
-        FilterSampler(Filter filter, Allocator alloc = {});
+        FilterSampler(Filter filter, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ FilterSample Sample(Point2f u) const {
-            Float pdf;
-            Point2i pi;
-            Point2f p = distrib.Sample(u, &pdf, &pi);
-            return FilterSample{p, f[pi] / pdf};
+            int v = FindInterval(ny + 1, [&](int index) { return marginalCdf[index] <= u.y; });
+            Float dv = u.y - marginalCdf[v];
+            if (marginalCdf[v + 1] > marginalCdf[v]) dv /= marginalCdf[v + 1] - marginalCdf[v];
+
+            const Float* rowCdf = conditionalCdf + v * (nx + 1);
+            int x = FindInterval(nx + 1, [&](int index) { return rowCdf[index] <= u.x; });
+            Float du = u.x - rowCdf[x];
+            if (rowCdf[x + 1] > rowCdf[x]) du /= rowCdf[x + 1] - rowCdf[x];
+
+            Point2f p(Lerp((x + du) / nx, domain.pMin.x, domain.pMax.x), Lerp((v + dv) / ny, domain.pMin.y, domain.pMax.y));
+            Float pdf = std::abs(values[x + v * nx]) / integral;
+            return FilterSample{p, values[x + v * nx] / pdf};
         }
 
     private:
         // FilterSampler Private Members
         Bounds2f domain;
-        Array2D<Float> f;
-        PiecewiseConstant2D distrib;
+        int nx = 0;
+        int ny = 0;
+        const Float* values = nullptr;
+        const Float* conditionalCdf = nullptr;
+        const Float* marginalCdf = nullptr;
+        Float integral = 0;
     };
 
     // BoxFilter Definition
@@ -70,9 +83,9 @@ namespace spectra {
     class GaussianFilter {
     public:
         // GaussianFilter Public Methods
-        GaussianFilter(Vector2f radius, Float sigma = 0.5f, Allocator alloc = {}) : radius(radius), sigma(sigma), expX(Gaussian(radius.x, 0, sigma)), expY(Gaussian(radius.y, 0, sigma)), sampler(this, alloc) {}
+        GaussianFilter(Vector2f radius, Float sigma, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) : radius(radius), sigma(sigma), expX(Gaussian(radius.x, 0, sigma)), expY(Gaussian(radius.y, 0, sigma)), sampler(this, deviceArena, stream) {}
 
-        static GaussianFilter* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static GaussianFilter* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ Vector2f Radius() const {
             return radius;
@@ -102,9 +115,9 @@ namespace spectra {
     class MitchellFilter {
     public:
         // MitchellFilter Public Methods
-        MitchellFilter(Vector2f radius, Float b = 1.f / 3.f, Float c = 1.f / 3.f, Allocator alloc = {}) : radius(radius), b(b), c(c), sampler(this, alloc) {}
+        MitchellFilter(Vector2f radius, Float b, Float c, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) : radius(radius), b(b), c(c), sampler(this, deviceArena, stream) {}
 
-        static MitchellFilter* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static MitchellFilter* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ Vector2f Radius() const {
             return radius;
@@ -145,9 +158,9 @@ namespace spectra {
     class LanczosSincFilter {
     public:
         // LanczosSincFilter Public Methods
-        LanczosSincFilter(Vector2f radius, Float tau = 3.f, Allocator alloc = {}) : radius(radius), tau(tau), sampler(this, alloc) {}
+        LanczosSincFilter(Vector2f radius, Float tau, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) : radius(radius), tau(tau), sampler(this, deviceArena, stream) {}
 
-        static LanczosSincFilter* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static LanczosSincFilter* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ Vector2f Radius() const {
             return radius;

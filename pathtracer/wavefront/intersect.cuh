@@ -7,7 +7,7 @@
 
 namespace spectra {
     // Wavefront Ray Intersection Enqueuing Functions
-    inline __host__ __device__ void EnqueueWorkAfterMiss(RayWorkItem r, MediumSampleQueue* mediumSampleQueue, EscapedRayQueue* escapedRayQueue) {
+    inline __device__ void EnqueueWorkAfterMiss(RayWorkItem r, MediumSampleQueue* mediumSampleQueue, EscapedRayQueue* escapedRayQueue) {
         if (r.ray.medium) {
             mediumSampleQueue->Push(r, Infinity);
         } else if (escapedRayQueue) {
@@ -15,7 +15,7 @@ namespace spectra {
         }
     }
 
-    inline __host__ __device__ void RecordShadowRayResult(const ShadowRayWorkItem w, SOA<PixelSampleState>* pixelSampleState, bool foundIntersection) {
+    inline __device__ void RecordShadowRayResult(const ShadowRayWorkItem w, SOA<PixelSampleState>* pixelSampleState, bool foundIntersection) {
         if (foundIntersection) {
             return;
         }
@@ -25,7 +25,7 @@ namespace spectra {
         pixelSampleState->L[w.pixelIndex] = Lpixel + Ld;
     }
 
-    inline __host__ __device__ void EnqueueWorkAfterIntersection(RayWorkItem r, Medium rayMedium, float tMax, SurfaceInteraction intr, MediumSampleQueue* mediumSampleQueue, RayQueue* nextRayQueue, HitAreaLightQueue* hitAreaLightQueue, MaterialEvalQueue* basicEvalMaterialQueue, MaterialEvalQueue* universalEvalMaterialQueue) {
+    inline __device__ void EnqueueWorkAfterIntersection(RayWorkItem r, Medium rayMedium, float tMax, SurfaceInteraction intr, MediumSampleQueue* mediumSampleQueue, RayQueue* nextRayQueue, HitAreaLightQueue* hitAreaLightQueue, MaterialEvalQueue* basicEvalMaterialQueue, MaterialEvalQueue* universalEvalMaterialQueue) {
         MediumInterface mediumInterface = intr.mediumInterface ? *intr.mediumInterface : MediumInterface(rayMedium);
 
         if (rayMedium) {
@@ -65,7 +65,7 @@ namespace spectra {
     };
 
     template <typename T, typename S>
-    inline __host__ __device__ void TraceTransmittance(ShadowRayWorkItem sr, SOA<PixelSampleState>* pixelSampleState, T trace, S spawnTo) {
+    inline __device__ void TraceTransmittance(ShadowRayWorkItem sr, SOA<PixelSampleState>* pixelSampleState, T trace, S spawnTo) {
         SampledWavelengths lambda = sr.lambda;
 
         SampledSpectrum Ld = sr.Ld;

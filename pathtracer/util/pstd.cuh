@@ -343,6 +343,15 @@ namespace pstd {
 
         vector(const Allocator& alloc = {}) : alloc(alloc) {}
 
+        static vector DeviceView(T* storage, size_t count) {
+            vector result;
+            result.ptr = storage;
+            result.nAlloc = count;
+            result.nStored = count;
+            result.ownsStorage = false;
+            return result;
+        }
+
         vector(size_t count, const T& value, const Allocator& alloc = {}) : alloc(alloc) {
             reserve(count);
             for (size_t i = 0; i < count; ++i) this->alloc.template construct<T>(ptr + i, value);
@@ -369,9 +378,11 @@ namespace pstd {
             nStored = other.nStored;
             nAlloc  = other.nAlloc;
             ptr     = other.ptr;
+            ownsStorage = other.ownsStorage;
 
             other.nStored = other.nAlloc = 0;
             other.ptr                    = nullptr;
+            other.ownsStorage            = true;
         }
 
         vector(vector&& other, const Allocator& alloc) {
@@ -379,9 +390,11 @@ namespace pstd {
                 ptr     = other.ptr;
                 nAlloc  = other.nAlloc;
                 nStored = other.nStored;
+                ownsStorage = other.ownsStorage;
 
                 other.ptr    = nullptr;
                 other.nAlloc = other.nStored = 0;
+                other.ownsStorage = true;
             } else {
                 reserve(other.size());
                 for (size_t i = 0; i < other.size(); ++i) alloc.template construct<T>(ptr + i, std::move(other[i]));
@@ -409,6 +422,7 @@ namespace pstd {
                 pstd::swap(ptr, other.ptr);
                 pstd::swap(nAlloc, other.nAlloc);
                 pstd::swap(nStored, other.nStored);
+                pstd::swap(ownsStorage, other.ownsStorage);
             } else {
                 clear();
                 reserve(other.size());
@@ -437,6 +451,7 @@ namespace pstd {
         }
 
         ~vector() {
+            if (!ownsStorage) return;
             clear();
             alloc.deallocate_object(ptr, nAlloc);
         }
@@ -614,6 +629,7 @@ namespace pstd {
         Allocator alloc;
         T* ptr        = nullptr;
         size_t nAlloc = 0, nStored = 0;
+        bool ownsStorage = true;
     };
 } // namespace pstd
 

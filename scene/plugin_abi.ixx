@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 19u;
+    constexpr std::uint32_t plugin_abi_version = 20u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -354,6 +354,7 @@ export namespace spectra::scene {
         std::uint32_t index_encoding{};
         std::uint64_t buffer_id{};
         std::uintptr_t external_device_pointer{};
+        std::uintptr_t external_ready_event{};
         std::uint64_t source_byte_size{};
     };
 

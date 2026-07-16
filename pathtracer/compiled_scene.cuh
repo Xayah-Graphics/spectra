@@ -14,6 +14,9 @@
 #include <pathtracer/core/cameras.cuh>
 #include <pathtracer/core/paramdict.cuh>
 #include <pathtracer/core/render_config.cuh>
+#include <pathtracer/core/textures.cuh>
+#include <pathtracer/gpu/volume.cuh>
+#include <pathtracer/memory/memory.cuh>
 #include <pathtracer/util/buffercache.cuh>
 #include <pathtracer/util/containers.cuh>
 #include <pathtracer/util/parallel.cuh>
@@ -86,32 +89,44 @@ namespace spectra::pathtracer {
         Transform renderFromInstance{};
     };
 
+    struct IntegratorSettings {
+        std::string lightSampler{"bvh"};
+        int maxDepth{5};
+        bool regularize{false};
+    };
+
     class CompiledScene {
     public:
         explicit CompiledScene(pstd::pmr::memory_resource* memoryResource) : allLights(Allocator(RequireCompiledSceneMemoryResource(memoryResource))), lightSpectrumCache(Allocator(RequireCompiledSceneMemoryResource(memoryResource))), threadAllocators([memoryResource]() { return Allocator(RequireCompiledSceneMemoryResource(memoryResource)); }) {}
+        ~CompiledScene() noexcept;
 
         CompiledScene(const CompiledScene&)                = delete;
         CompiledScene(CompiledScene&&) noexcept            = delete;
         CompiledScene& operator=(const CompiledScene&)     = delete;
         CompiledScene& operator=(CompiledScene&&) noexcept = delete;
 
-        Entity integrator{};
-        Entity accelerator{};
-        const RGBColorSpace* filmColorSpace{nullptr};
+        IntegratorSettings integrator{};
+        SpectrumFileCache spectrumFileCache{};
         std::vector<ShapeEntity> shapes{};
         std::vector<InstanceEntity> instances{};
         std::map<std::string, InstanceDefinitionEntity> instanceDefinitions{};
+        PathtracerTextureCache textureCache{};
         NamedTextures textures{};
         std::map<std::string, Medium> media{};
+        std::vector<std::unique_ptr<DeviceVolumeMediumStorage>> deviceVolumeMedia{};
+        PathtracerDeviceArena deviceArena{};
+        PathtracerDeviceMemoryScope filmMemoryScope{};
         std::map<std::string, Material> materials{};
         std::map<int, pstd::vector<Light>*> shapeIndexToAreaLights{};
         pstd::vector<Light> allLights{};
         pstd::vector<Light>* infiniteLights{};
         Filter filter{};
         Film film{};
+        std::string outputFilename{};
         Sampler sampler{};
         Camera camera{};
         bool haveMedia{false};
+        bool haveEmissiveMedia{false};
         MeshBufferCache meshBufferCache{};
         InternCache<DenselySampledSpectrum> lightSpectrumCache;
         std::map<std::string, MeasuredBxDFData*> measuredBxDFData{};

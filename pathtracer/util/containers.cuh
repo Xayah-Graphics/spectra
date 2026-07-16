@@ -17,6 +17,10 @@
 #include <type_traits>
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     // TypePack Definition
     template <typename... Ts>
     struct TypePack {
@@ -156,6 +160,14 @@ namespace spectra {
         // Array2D Public Methods
         Array2D(allocator_type allocator = {}) : Array2D({{0, 0}, {0, 0}}, allocator) {}
 
+        static Array2D DeviceView(Bounds2i extent, T* storage) {
+            Array2D result(DeviceViewTag{});
+            result.extent = extent;
+            result.values = storage;
+            result.ownsStorage = false;
+            return result;
+        }
+
         Array2D(Bounds2i extent, Allocator allocator = {}) : extent(extent), allocator(allocator) {
             int n  = extent.Area();
             values = allocator.allocate_object<T>(n);
@@ -178,6 +190,7 @@ namespace spectra {
         Array2D(const Array2D& a, allocator_type allocator = {}) : Array2D(a.begin(), a.end(), a.XSize(), a.YSize(), allocator) {}
 
         ~Array2D() {
+            if (!ownsStorage) return;
             int n = extent.Area();
             for (int i = 0; i < n; ++i) allocator.destroy(values + i);
             allocator.deallocate_object(values, n);
@@ -186,8 +199,10 @@ namespace spectra {
         Array2D(Array2D&& a, allocator_type allocator = {}) : extent(a.extent), allocator(allocator) {
             if (allocator == a.allocator) {
                 values   = a.values;
+                ownsStorage = a.ownsStorage;
                 a.extent = Bounds2i({0, 0}, {0, 0});
                 a.values = nullptr;
+                a.ownsStorage = true;
             } else {
                 values = allocator.allocate_object<T>(extent.Area());
                 std::copy(a.begin(), a.end(), begin());
@@ -200,6 +215,7 @@ namespace spectra {
             if (allocator == other.allocator) {
                 pstd::swap(extent, other.extent);
                 pstd::swap(values, other.values);
+                pstd::swap(ownsStorage, other.ownsStorage);
             } else if (extent == other.extent) {
                 int n = extent.Area();
                 for (int i = 0; i < n; ++i) {
@@ -271,10 +287,13 @@ namespace spectra {
         }
 
     private:
+        struct DeviceViewTag {};
+        explicit Array2D(DeviceViewTag) {}
         // Array2D Private Members
         Bounds2i extent;
         Allocator allocator;
-        T* values;
+        T* values = nullptr;
+        bool ownsStorage = true;
     };
 
     template <typename T, int N, class Allocator = pstd::pmr::polymorphic_allocator<T>>
@@ -613,8 +632,10 @@ namespace spectra {
 
         HashMap(Allocator alloc) : table(8, alloc) {}
 
-        HashMap(const HashMap&)            = delete;
+        HashMap(const HashMap&) = delete;
+        HashMap(HashMap&& other) noexcept = default;
         HashMap& operator=(const HashMap&) = delete;
+        HashMap& operator=(HashMap&& other) noexcept = default;
 
         void Insert(const Key& key, const Value& value) {
             size_t offset = FindOffset(key);
@@ -649,6 +670,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // HashMap Private Methods
         __host__ __device__ size_t FindOffset(const Key& key) const {
             size_t baseOffset = Hash()(key) & (capacity() - 1);
@@ -782,6 +804,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // SampledGrid Private Members
         pstd::vector<T> values;
         int nx, ny, nz;

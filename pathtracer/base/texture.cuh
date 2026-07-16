@@ -7,6 +7,10 @@
 #include <string>
 
 namespace spectra {
+    namespace pathtracer {
+        class PathtracerTextureCache;
+    }
+
     class TextureParameterDictionary;
     class SampledSpectrum;
     class SampledWavelengths;
@@ -38,7 +42,7 @@ namespace spectra {
         // FloatTexture Interface
         using TaggedPointer::TaggedPointer;
 
-        static FloatTexture Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static FloatTexture Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc);
 
 
         __host__ __device__ inline Float Evaluate(TextureEvalContext ctx) const;
@@ -66,7 +70,7 @@ namespace spectra {
         // SpectrumTexture Interface
         using TaggedPointer::TaggedPointer;
 
-        static SpectrumTexture Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
+        static SpectrumTexture Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, pathtracer::PathtracerTextureCache& textureCache, Allocator alloc);
 
 
         __host__ __device__ inline SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const;

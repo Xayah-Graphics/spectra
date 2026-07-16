@@ -18,7 +18,7 @@ namespace spectra {
             typename std::remove_reference_t<decltype(*ptr)>::BxDF* bxdf = (typename std::remove_reference_t<decltype(*ptr)>::BxDF*) scratchBuffer.Alloc(sizeof(typename std::remove_reference_t<decltype(*ptr)>::BxDF), alignof(typename std::remove_reference_t<decltype(*ptr)>::BxDF));
             return ptr->ProbeIntersectionToSample(si, bxdf);
         };
-        return DispatchCPU(pits);
+        return DispatchHost(pits);
     }
 
     // BSSRDF Function Definitions

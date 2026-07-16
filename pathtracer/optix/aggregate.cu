@@ -8,6 +8,7 @@
 #include <optix_stack_size.h>
 // clang-format on
 #include <pathtracer/compiled_scene.cuh>
+#include <pathtracer/device_scene.cuh>
 #include <pathtracer/core/diagnostics.cuh>
 #include <pathtracer/core/lights.cuh>
 #include <pathtracer/core/materials.cuh>
@@ -81,6 +82,7 @@ namespace spectra::optix {
 
     template <typename T>
     static pathtracer::PathtracerDeviceBuffer CopyToDevice(pstd::span<const T> buffer) {
+        if (buffer.empty()) return {};
         size_t size = buffer.size() * sizeof(buffer[0]);
         pathtracer::PathtracerDeviceBuffer deviceBuffer(size);
         SPECTRA_CUDA_CHECK(cudaMemcpy(deviceBuffer.data(), buffer.data(), size, cudaMemcpyHostToDevice));
@@ -189,7 +191,7 @@ namespace spectra::optix {
         return alloc.new_object<MediumInterface>(getMedium(shape.insideMedium), getMedium(shape.outsideMedium));
     }
 
-    std::map<int, TriQuadMesh> SpectraOptiXAggregate::PreparePLYMeshes(const std::vector<pathtracer::ShapeEntity>& shapes, const std::map<std::string, FloatTexture>& floatTextures, const Float displacementEdgeScale) {
+    std::map<int, TriQuadMesh> SpectraOptiXAggregate::PreparePLYMeshes(const std::vector<pathtracer::ShapeEntity>& shapes, const std::map<std::string, FloatTexture>& floatTextures, const Float displacementEdgeScale, cudaStream_t stream, pathtracer::DeviceSceneBuilder& deviceBuilder) {
         std::map<int, TriQuadMesh> plyMeshes;
         std::mutex mutex;
         ParallelFor(0, shapes.size(), [&](int64_t i) {
@@ -209,7 +211,7 @@ namespace spectra::optix {
                 if (!displacementTexName.empty()) {
                     auto iter = floatTextures.find(displacementTexName);
                     if (iter == floatTextures.end()) throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: no such texture defined.", displacementTexName));
-                    FloatTexture displacement = iter->second;
+                    FloatTexture displacement = deviceBuilder.CompileFloatTexture(iter->second);
                     plyMesh                   = plyMesh.Displace(
                         [&](Point3f v0, Point3f v1) {
                             v0 = (*shape.renderFromObject)(v0);
@@ -218,14 +220,16 @@ namespace spectra::optix {
                         },
                         edgeLength,
                         [&](Point3f* pCPU, const Normal3f* nCPU, const Point2f* uvCPU, int nVertices) {
-                            pathtracer::PathtracerMemoryScope displacementMemory(pathtracer::PathtracerMemoryScopeKind::Transient, "ply displacement");
-                            Point3f* p  = static_cast<Point3f*>(displacementMemory.allocate(nVertices * sizeof(Point3f), alignof(Point3f)));
-                            Normal3f* n = static_cast<Normal3f*>(displacementMemory.allocate(nVertices * sizeof(Normal3f), alignof(Normal3f)));
-                            Point2f* uv = static_cast<Point2f*>(displacementMemory.allocate(nVertices * sizeof(Point2f), alignof(Point2f)));
+                            pathtracer::PathtracerDeviceBuffer positions(nVertices * sizeof(Point3f));
+                            pathtracer::PathtracerDeviceBuffer normals(nVertices * sizeof(Normal3f));
+                            pathtracer::PathtracerDeviceBuffer texcoords(nVertices * sizeof(Point2f));
+                            Point3f* p  = static_cast<Point3f*>(positions.data());
+                            Normal3f* n = static_cast<Normal3f*>(normals.data());
+                            Point2f* uv = static_cast<Point2f*>(texcoords.data());
 
-                            std::memcpy(p, pCPU, nVertices * sizeof(Point3f));
-                            std::memcpy(n, nCPU, nVertices * sizeof(Normal3f));
-                            std::memcpy(uv, uvCPU, nVertices * sizeof(Point2f));
+                            SPECTRA_CUDA_CHECK(cudaMemcpyAsync(p, pCPU, nVertices * sizeof(Point3f), cudaMemcpyHostToDevice, stream));
+                            SPECTRA_CUDA_CHECK(cudaMemcpyAsync(n, nCPU, nVertices * sizeof(Normal3f), cudaMemcpyHostToDevice, stream));
+                            SPECTRA_CUDA_CHECK(cudaMemcpyAsync(uv, uvCPU, nVertices * sizeof(Point2f), cudaMemcpyHostToDevice, stream));
 
                             GPUParallelFor(nVertices, [=] __device__(int i) {
                                 TextureEvalContext ctx;
@@ -233,10 +237,9 @@ namespace spectra::optix {
                                 ctx.uv  = uv[i];
                                 Float d = UniversalTextureEvaluator()(displacement, ctx);
                                 p[i] += Vector3f(d * n[i]);
-                            });
-                            GPUWait();
-
-                            std::memcpy(pCPU, p, nVertices * sizeof(Point3f));
+                            }, stream);
+                            SPECTRA_CUDA_CHECK(cudaMemcpyAsync(pCPU, p, nVertices * sizeof(Point3f), cudaMemcpyDeviceToHost, stream));
+                            SPECTRA_CUDA_CHECK(cudaStreamSynchronize(stream));
 
                         },
                         &shape.loc);
@@ -250,7 +253,7 @@ namespace spectra::optix {
         return plyMeshes;
     }
 
-    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForTriangles(const std::vector<pathtracer::ShapeEntity>& shapes, const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, MeshBufferCache& meshBufferCache, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams) {
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForTriangles(const std::vector<pathtracer::ShapeEntity>& shapes, const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, MeshBufferCache& meshBufferCache, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams, pathtracer::DeviceSceneBuilder& deviceBuilder) {
         // Count how many of the shapes are triangle meshes
         std::vector<size_t> meshIndexToShapeIndex;
         for (size_t i = 0; i < shapes.size(); ++i) {
@@ -390,9 +393,9 @@ namespace spectra::optix {
 
                 HitgroupRecord hgRecord;
                 SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(intersectPG, &hgRecord));
-                hgRecord.triRec.mesh         = mesh;
-                hgRecord.triRec.material     = material;
-                hgRecord.triRec.alphaTexture = alphaTexture;
+                hgRecord.triRec.mesh         = deviceBuilder.CompileTriangleMesh(mesh);
+                hgRecord.triRec.material     = deviceBuilder.CompileMaterial(material);
+                hgRecord.triRec.alphaTexture = deviceBuilder.CompileFloatTexture(alphaTexture);
                 hgRecord.triRec.areaLights   = {};
                 if (shape.areaLight.has_value()) {
                     if (!material)
@@ -403,10 +406,11 @@ namespace spectra::optix {
                         auto iter = shapeIndexToAreaLights.find(shapeIndex);
                         SPECTRA_CHECK(iter != shapeIndexToAreaLights.end());
                         SPECTRA_CHECK_EQ(iter->second->size(), mesh->nTriangles);
-                        hgRecord.triRec.areaLights = pstd::MakeSpan(*iter->second);
+                        const Light* areaLights = deviceBuilder.CompileLights(*iter->second);
+                        hgRecord.triRec.areaLights = pstd::span<const Light>(areaLights, iter->second->size());
                     }
                 }
-                hgRecord.triRec.mediumInterface = getMediumInterface(shape, media, alloc);
+                hgRecord.triRec.mediumInterface = deviceBuilder.CompileMediumInterface(getMediumInterface(shape, media, alloc));
 
                 bvh.intersectHGRecords[meshIndex] = hgRecord;
 
@@ -624,7 +628,7 @@ namespace spectra::optix {
         return alloc.new_object<BilinearPatchMesh>(*shape.renderFromObject, shape.reverseOrientation, blpIndices, blpP, blpN, blpUV, std::vector<int>(), nullptr, meshBufferCache, alloc);
     }
 
-    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForBLPs(const std::vector<pathtracer::ShapeEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const pathtracer::RenderConfig& config, MeshBufferCache& meshBufferCache, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams) {
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForBLPs(const std::vector<pathtracer::ShapeEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const pathtracer::RenderConfig& config, MeshBufferCache& meshBufferCache, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams, pathtracer::DeviceSceneBuilder& deviceBuilder) {
         // Count how many BLP meshes there are in shapes
         std::vector<size_t> meshIndexToShapeIndex;
         for (size_t i = 0; i < shapes.size(); ++i) {
@@ -711,9 +715,9 @@ namespace spectra::optix {
 
             HitgroupRecord hgRecord;
             SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(intersectPG, &hgRecord));
-            hgRecord.bilinearRec.mesh         = mesh;
-            hgRecord.bilinearRec.material     = material;
-            hgRecord.bilinearRec.alphaTexture = alphaTexture;
+            hgRecord.bilinearRec.mesh         = deviceBuilder.CompileBilinearPatchMesh(mesh);
+            hgRecord.bilinearRec.material     = deviceBuilder.CompileMaterial(material);
+            hgRecord.bilinearRec.alphaTexture = deviceBuilder.CompileFloatTexture(alphaTexture);
             hgRecord.bilinearRec.areaLights   = {};
             if (shape.areaLight.has_value()) {
                 if (!material)
@@ -724,10 +728,11 @@ namespace spectra::optix {
                     // light.
                     SPECTRA_CHECK(iter != shapeIndexToAreaLights.end());
                     SPECTRA_CHECK_EQ(iter->second->size(), mesh->nPatches);
-                    hgRecord.bilinearRec.areaLights = pstd::MakeSpan(*iter->second);
+                    const Light* areaLights = deviceBuilder.CompileLights(*iter->second);
+                    hgRecord.bilinearRec.areaLights = pstd::span<const Light>(areaLights, iter->second->size());
                 }
             }
-            hgRecord.bilinearRec.mediumInterface = getMediumInterface(shape, media, alloc);
+            hgRecord.bilinearRec.mediumInterface = deviceBuilder.CompileMediumInterface(getMediumInterface(shape, media, alloc));
 
             bvh.intersectHGRecords[meshIndex] = hgRecord;
 
@@ -750,7 +755,7 @@ namespace spectra::optix {
         return bvh;
     }
 
-    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForQuadrics(const std::vector<pathtracer::ShapeEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const pathtracer::RenderConfig& config, MeshBufferCache& meshBufferCache, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams) {
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForQuadrics(const std::vector<pathtracer::ShapeEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const pathtracer::RenderConfig& config, MeshBufferCache& meshBufferCache, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams, pathtracer::DeviceSceneBuilder& deviceBuilder) {
         int nQuadrics = 0;
         for (size_t shapeIndex = 0; shapeIndex < shapes.size(); ++shapeIndex) {
             const auto& s = shapes[shapeIndex];
@@ -802,9 +807,9 @@ namespace spectra::optix {
 
             HitgroupRecord hgRecord;
             SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(intersectPG, &hgRecord));
-            hgRecord.quadricRec.shape        = shape;
-            hgRecord.quadricRec.material     = material;
-            hgRecord.quadricRec.alphaTexture = alphaTexture;
+            hgRecord.quadricRec.shape        = deviceBuilder.CompileShape(shape);
+            hgRecord.quadricRec.material     = deviceBuilder.CompileMaterial(material);
+            hgRecord.quadricRec.alphaTexture = deviceBuilder.CompileFloatTexture(alphaTexture);
             hgRecord.quadricRec.areaLight    = nullptr;
             if (s.areaLight.has_value()) {
                 if (!material)
@@ -815,10 +820,10 @@ namespace spectra::optix {
                     // light.
                     SPECTRA_CHECK(iter != shapeIndexToAreaLights.end());
                     SPECTRA_CHECK_EQ(iter->second->size(), 1);
-                    hgRecord.quadricRec.areaLight = (*iter->second)[0];
+                    hgRecord.quadricRec.areaLight = deviceBuilder.CompileLight((*iter->second)[0]);
                 }
             }
-            hgRecord.quadricRec.mediumInterface = getMediumInterface(s, media, alloc);
+            hgRecord.quadricRec.mediumInterface = deviceBuilder.CompileMediumInterface(getMediumInterface(s, media, alloc));
 
             bvh.intersectHGRecords[quadricIndex] = hgRecord;
 
@@ -845,16 +850,8 @@ namespace spectra::optix {
         if (level <= 2) throw std::runtime_error(diagnostics::Format("OptiX: %s: %s", tag, message));
     }
 
-    static std::mutex& AccelerationBuildMutex() {
-        static std::mutex mutex;
-        return mutex;
-    }
-
     int SpectraOptiXAggregate::addHGRecords(BVH& bvh) {
         if (bvh.intersectHGRecords.empty()) return -1;
-
-        static std::mutex mutex;
-        std::lock_guard<std::mutex> lock(mutex);
 
         int sbtOffset = static_cast<int>(intersectHGRecords.size());
         intersectHGRecords.insert(intersectHGRecords.end(), bvh.intersectHGRecords.begin(), bvh.intersectHGRecords.end());
@@ -979,7 +976,7 @@ namespace spectra::optix {
         return pg;
     }
 
-    SpectraOptiXAggregate::SpectraOptiXAggregate(pathtracer::CompiledScene& scene, const pathtracer::RenderConfig& config, pathtracer::PathtracerMemoryScope* memoryScope) : memoryScope(memoryScope), cudaStream(nullptr) {
+    SpectraOptiXAggregate::SpectraOptiXAggregate(pathtracer::CompiledScene& scene, const pathtracer::RenderConfig& config, pathtracer::PathtracerHostMemoryScope* memoryScope, cudaStream_t renderStream, pathtracer::DeviceSceneBuilder& deviceBuilder) : memoryScope(memoryScope), cudaStream(renderStream) {
         if (this->memoryScope == nullptr) throw std::runtime_error("Spectra OptiX aggregate requires a pathtracer memory scope");
         const NamedTextures& textures                                     = scene.textures;
         const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights = scene.shapeIndexToAreaLights;
@@ -989,17 +986,6 @@ namespace spectra::optix {
         CUcontext cudaContext;
         SPECTRA_CU_CHECK(cuCtxGetCurrent(&cudaContext));
         SPECTRA_CHECK(cudaContext != nullptr);
-
-#ifdef SPECTRA_IS_WINDOWS
-        // On Windows, it is unfortunately necessary to disable
-        // multithreading here.  The issue is that GPU managed memory can
-        // only be accessed by one of the CPU or the GPU at a time; the
-        // program crashes if this is restriction is violated.  Thus, it's
-        // bad news if we are simultaneously, say, reading PLY files on
-        // the CPU and storing them in managed memory while an OptiX
-        // kernel is running on the GPU to build a BVH... (Issue #164).
-        DisableThreadPool();
-#endif // SPECTRA_IS_WINDOWS
 
         ThreadLocal<pathtracer::PathtracerCudaStream> threadCUDAStreams([]() {
             pathtracer::PathtracerCudaStream stream;
@@ -1077,54 +1063,47 @@ namespace spectra::optix {
         // Shader binding tables...
         // Hitgroups are done as meshes are processed
 
-        // Closest intersection
-        Allocator alloc(memoryScope);
-        RaygenRecord* raygenClosestRecord = alloc.new_object<RaygenRecord>();
-        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGClosest, raygenClosestRecord));
-        intersectSBT.raygenRecord = (CUdeviceptr) raygenClosestRecord;
+        std::array<RaygenRecord, 4> raygenRecords{};
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGClosest, &raygenRecords[0]));
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGShadow, &raygenRecords[1]));
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGShadowTr, &raygenRecords[2]));
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGRandomHit, &raygenRecords[3]));
+        pathtracer::PathtracerDeviceBuffer raygenRecordsDevice = CopyToDevice(pstd::span<const RaygenRecord>(raygenRecords.data(), raygenRecords.size()));
+        CUdeviceptr raygenRecordBase = raygenRecordsDevice.device_ptr();
+        intersectSBT.raygenRecord = raygenRecordBase;
+        shadowSBT.raygenRecord = raygenRecordBase + sizeof(RaygenRecord);
+        shadowTrSBT.raygenRecord = raygenRecordBase + 2 * sizeof(RaygenRecord);
+        randomHitSBT.raygenRecord = raygenRecordBase + 3 * sizeof(RaygenRecord);
+        sbtBuffers.push_back(std::move(raygenRecordsDevice));
 
-        MissRecord* missNoOpRecord = alloc.new_object<MissRecord>();
-        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(missPGNoOp, missNoOpRecord));
-        intersectSBT.missRecordBase          = (CUdeviceptr) missNoOpRecord;
+        std::array<MissRecord, 3> missRecords{};
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(missPGNoOp, &missRecords[0]));
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(missPGShadow, &missRecords[1]));
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(missPGShadowTr, &missRecords[2]));
+        pathtracer::PathtracerDeviceBuffer missRecordsDevice = CopyToDevice(pstd::span<const MissRecord>(missRecords.data(), missRecords.size()));
+        CUdeviceptr missRecordBase = missRecordsDevice.device_ptr();
+        intersectSBT.missRecordBase          = missRecordBase;
         intersectSBT.missRecordStrideInBytes = sizeof(MissRecord);
         intersectSBT.missRecordCount         = 1;
-
-        // Shadow
-        RaygenRecord* raygenShadowRecord = alloc.new_object<RaygenRecord>();
-        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGShadow, raygenShadowRecord));
-        shadowSBT.raygenRecord = (CUdeviceptr) raygenShadowRecord;
-
-        MissRecord* missShadowRecord = alloc.new_object<MissRecord>();
-        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(missPGShadow, missShadowRecord));
-        shadowSBT.missRecordBase          = (CUdeviceptr) missShadowRecord;
+        shadowSBT.missRecordBase          = missRecordBase + sizeof(MissRecord);
         shadowSBT.missRecordStrideInBytes = sizeof(MissRecord);
         shadowSBT.missRecordCount         = 1;
-
-        // Shadow + Tr
-        RaygenRecord* raygenShadowTrRecord = alloc.new_object<RaygenRecord>();
-        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGShadowTr, raygenShadowTrRecord));
-        shadowTrSBT.raygenRecord = (CUdeviceptr) raygenShadowTrRecord;
-
-        MissRecord* missShadowTrRecord = alloc.new_object<MissRecord>();
-        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(missPGShadowTr, missShadowTrRecord));
-        shadowTrSBT.missRecordBase          = (CUdeviceptr) missShadowTrRecord;
+        shadowTrSBT.missRecordBase          = missRecordBase + 2 * sizeof(MissRecord);
         shadowTrSBT.missRecordStrideInBytes = sizeof(MissRecord);
         shadowTrSBT.missRecordCount         = 1;
-
-        // Random hit
-        RaygenRecord* raygenRandomHitRecord = alloc.new_object<RaygenRecord>();
-        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGRandomHit, raygenRandomHitRecord));
-        randomHitSBT.raygenRecord            = (CUdeviceptr) raygenRandomHitRecord;
-        randomHitSBT.missRecordBase          = (CUdeviceptr) missNoOpRecord;
+        randomHitSBT.missRecordBase          = missRecordBase;
         randomHitSBT.missRecordStrideInBytes = sizeof(MissRecord);
         randomHitSBT.missRecordCount         = 1;
+        sbtBuffers.push_back(std::move(missRecordsDevice));
 
 
-        // Note: do not delete the pointers in threadBufferResources, since doing
-        // so would cause the memory they manage to be freed.
-        ThreadLocal<Allocator> threadAllocators([memoryScope]() {
-            pstd::pmr::monotonic_buffer_resource* resource = new pstd::pmr::monotonic_buffer_resource(1024 * 1024, memoryScope);
-            return Allocator(resource);
+        std::mutex threadBufferResourcesMutex;
+        ThreadLocal<Allocator> threadAllocators([this, memoryScope, &threadBufferResourcesMutex]() {
+            auto resource = std::make_unique<pstd::pmr::monotonic_buffer_resource>(1024 * 1024, memoryScope);
+            Allocator allocator(resource.get());
+            std::lock_guard<std::mutex> lock(threadBufferResourcesMutex);
+            this->threadBufferResources.push_back(std::move(resource));
+            return allocator;
         });
 
         ///////////////////////////////////////////////////////////////////////////
@@ -1132,32 +1111,23 @@ namespace spectra::optix {
         for (const auto& shape : scene.shapes)
             if (shape.name != "sphere" && shape.name != "cylinder" && shape.name != "disk" && shape.name != "trianglemesh" && shape.name != "plymesh" && shape.name != "loopsubdiv" && shape.name != "bilinearmesh" && shape.name != "curve") throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: unknown shape", shape.name));
 
-        std::map<int, TriQuadMesh> plyMeshes = PreparePLYMeshes(scene.shapes, textures.floatTextures, config.displacement_edge_scale);
+        std::map<int, TriQuadMesh> plyMeshes = PreparePLYMeshes(scene.shapes, textures.floatTextures, config.displacement_edge_scale, cudaStream, deviceBuilder);
 
         struct GAS {
             BVH bvh;
             int sbtOffset;
         };
-        AsyncJob<GAS*>* triJob = RunAsync([&]() {
-            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
-            BVH triangleBVH = buildBVHForTriangles(scene.shapes, plyMeshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, shapeIndexToAreaLights, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
-            int sbtOffset   = addHGRecords(triangleBVH);
-            return new GAS{std::move(triangleBVH), sbtOffset};
-        });
-
-        AsyncJob<GAS*>* blpJob = RunAsync([&]() {
-            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
-            BVH blpBVH            = buildBVHForBLPs(scene.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, materials, media, shapeIndexToAreaLights, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
-            int bilinearSBTOffset = addHGRecords(blpBVH);
-            return new GAS{std::move(blpBVH), bilinearSBTOffset};
-        });
-
-        AsyncJob<GAS*>* quadricJob = RunAsync([&]() {
-            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
-            BVH quadricBVH       = buildBVHForQuadrics(scene.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, materials, media, shapeIndexToAreaLights, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
-            int quadricSBTOffset = addHGRecords(quadricBVH);
-            return new GAS{std::move(quadricBVH), quadricSBTOffset};
-        });
+        BVH triangleBVH = buildBVHForTriangles(scene.shapes, plyMeshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, shapeIndexToAreaLights, scene.meshBufferCache, threadAllocators, threadCUDAStreams, deviceBuilder);
+        int triangleSBTOffset = addHGRecords(triangleBVH);
+        BVH bilinearBVH = buildBVHForBLPs(scene.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, materials, media, shapeIndexToAreaLights, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams, deviceBuilder);
+        int bilinearSBTOffset = addHGRecords(bilinearBVH);
+        BVH quadricBVH = buildBVHForQuadrics(scene.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, materials, media, shapeIndexToAreaLights, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams, deviceBuilder);
+        int quadricSBTOffset = addHGRecords(quadricBVH);
+        std::array<GAS, 3> directGeometry{
+            GAS{std::move(triangleBVH), triangleSBTOffset},
+            GAS{std::move(bilinearBVH), bilinearSBTOffset},
+            GAS{std::move(quadricBVH), quadricSBTOffset},
+        };
 
         ///////////////////////////////////////////////////////////////////////////
         // Create IASes for instance definitions
@@ -1172,23 +1142,12 @@ namespace spectra::optix {
             }
         };
 
-        std::vector<std::string> allInstanceNames;
-        for (const auto& def : scene.instanceDefinitions) allInstanceNames.push_back(def.first);
-
         std::unordered_map<std::string, Instance> instanceMap;
-        std::mutex instanceMapMutex;
-        ParallelFor(0, scene.instanceDefinitions.size(), [&](int64_t i) {
-            std::string name = allInstanceNames[i];
-            auto iter        = scene.instanceDefinitions.find(name);
-            SPECTRA_CHECK(iter != scene.instanceDefinitions.end());
-            const auto& def = *iter;
-
+        for (const auto& def : scene.instanceDefinitions) {
             Instance inst;
+            std::map<int, TriQuadMesh> meshes = PreparePLYMeshes(def.second.shapes, textures.floatTextures, config.displacement_edge_scale, cudaStream, deviceBuilder);
 
-            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
-            std::map<int, TriQuadMesh> meshes = PreparePLYMeshes(def.second.shapes, textures.floatTextures, config.displacement_edge_scale);
-
-            BVH triangleBVH = buildBVHForTriangles(def.second.shapes, meshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, {}, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
+            BVH triangleBVH = buildBVHForTriangles(def.second.shapes, meshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, {}, scene.meshBufferCache, threadAllocators, threadCUDAStreams, deviceBuilder);
             meshes.clear();
             if (triangleBVH.traversableHandle) {
                 inst.handles[0]    = triangleBVH.traversableHandle;
@@ -1196,23 +1155,22 @@ namespace spectra::optix {
                 inst.bounds        = triangleBVH.bounds;
             }
 
-            BVH blpBVH = buildBVHForBLPs(def.second.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, materials, media, {}, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
+            BVH blpBVH = buildBVHForBLPs(def.second.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, materials, media, {}, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams, deviceBuilder);
             if (blpBVH.traversableHandle) {
                 inst.handles[1]    = blpBVH.traversableHandle;
                 inst.sbtOffsets[1] = addHGRecords(blpBVH);
                 inst.bounds        = Union(inst.bounds, blpBVH.bounds);
             }
 
-            BVH quadricBVH = buildBVHForQuadrics(def.second.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, materials, media, {}, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
+            BVH quadricBVH = buildBVHForQuadrics(def.second.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, materials, media, {}, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams, deviceBuilder);
             if (quadricBVH.traversableHandle) {
                 inst.handles[2]    = quadricBVH.traversableHandle;
                 inst.sbtOffsets[2] = addHGRecords(quadricBVH);
                 inst.bounds        = Union(inst.bounds, quadricBVH.bounds);
             }
 
-            std::lock_guard<std::mutex> lock(instanceMapMutex);
             instanceMap[def.first] = inst;
-        });
+        }
 
 
         ///////////////////////////////////////////////////////////////////////////
@@ -1247,22 +1205,19 @@ namespace spectra::optix {
         std::vector<OptixInstance> iasInstances;
         iasInstances.reserve(3 + totalOptixInstances);
 
-        // Consume futures for top-level non-instanced geometry acceleration structures.
         OptixInstance gasInstance = {};
         float identity[12]        = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
         memcpy(gasInstance.transform, identity, 12 * sizeof(float));
         gasInstance.visibilityMask = 255;
         gasInstance.flags          = OPTIX_INSTANCE_FLAG_NONE; // TODO: OPTIX_INSTANCE_FLAG_DISABLE_ANYHIT
-        for (AsyncJob<GAS*>* job : {triJob, blpJob, quadricJob}) {
-            GAS* gas = job->GetResult();
-            if (gas->bvh.traversableHandle) {
-                gasInstance.traversableHandle = gas->bvh.traversableHandle;
-                gasInstance.sbtOffset         = gas->sbtOffset;
+        for (GAS& gas : directGeometry) {
+            if (gas.bvh.traversableHandle) {
+                gasInstance.traversableHandle = gas.bvh.traversableHandle;
+                gasInstance.sbtOffset         = gas.sbtOffset;
                 iasInstances.push_back(gasInstance);
 
-                bounds = Union(bounds, gas->bvh.bounds);
+                bounds = Union(bounds, gas.bvh.bounds);
             }
-            delete gas;
         }
 
         // Resize iasInstances to be just the right size for the OptixInstances
@@ -1357,13 +1312,10 @@ namespace spectra::optix {
         randomHitSBT.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
         randomHitSBT.hitgroupRecordCount         = randomHitHGRecords.size();
 
-#ifdef SPECTRA_IS_WINDOWS
-        ReenableThreadPool();
-#endif // SPECTRA_IS_WINDOWS
     }
 
     SpectraOptiXAggregate::~SpectraOptiXAggregate() {
-        SPECTRA_CUDA_CHECK(cudaDeviceSynchronize());
+        SPECTRA_CUDA_CHECK(cudaStreamSynchronize(cudaStream));
 
         if (optixPipeline) SPECTRA_OPTIX_CHECK(optixPipelineDestroy(optixPipeline));
         for (OptixProgramGroup programGroup : programGroups) SPECTRA_OPTIX_CHECK(optixProgramGroupDestroy(programGroup));
@@ -1388,7 +1340,7 @@ namespace spectra::optix {
 
         // Copy to host-side pinned memory
         memcpy(pbs.hostBuffer.data(), &params, sizeof(params));
-        SPECTRA_CUDA_CHECK(cudaMemcpyAsync(pbs.deviceBuffer.data(), pbs.hostBuffer.data(), sizeof(params), cudaMemcpyHostToDevice));
+        SPECTRA_CUDA_CHECK(cudaMemcpyAsync(pbs.deviceBuffer.data(), pbs.hostBuffer.data(), sizeof(params), cudaMemcpyHostToDevice, cudaStream));
 
         return pbs;
     }
@@ -1408,35 +1360,35 @@ namespace spectra::optix {
             ParamBufferState& pbs = getParamBuffer(params);
 
             SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.deviceBuffer.device_ptr(), sizeof(RayIntersectParameters), &intersectSBT, maxRays, 1, 1));
-            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get()));
+            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get(), cudaStream));
         }
     }
 
-    void SpectraOptiXAggregate::IntersectShadow(int maxRays, ShadowRayQueue* shadowRayQueue, SOA<PixelSampleState>* pixelSampleState) const {
+    void SpectraOptiXAggregate::IntersectShadow(int maxRays, ShadowRayQueue* shadowRayQueue, SOA<PixelSampleState> pixelSampleState) const {
         if (rootTraversable) {
             RayIntersectParameters params = {};
             params.traversable            = rootTraversable;
             params.shadowRayQueue         = shadowRayQueue;
-            params.pixelSampleState       = *pixelSampleState;
+            params.pixelSampleState       = pixelSampleState;
 
             ParamBufferState& pbs = getParamBuffer(params);
 
             SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.deviceBuffer.device_ptr(), sizeof(RayIntersectParameters), &shadowSBT, maxRays, 1, 1));
-            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get()));
+            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get(), cudaStream));
         }
     }
 
-    void SpectraOptiXAggregate::IntersectShadowTr(int maxRays, ShadowRayQueue* shadowRayQueue, SOA<PixelSampleState>* pixelSampleState) const {
+    void SpectraOptiXAggregate::IntersectShadowTr(int maxRays, ShadowRayQueue* shadowRayQueue, SOA<PixelSampleState> pixelSampleState) const {
         if (rootTraversable) {
             RayIntersectParameters params = {};
             params.traversable            = rootTraversable;
             params.shadowRayQueue         = shadowRayQueue;
-            params.pixelSampleState       = *pixelSampleState;
+            params.pixelSampleState       = pixelSampleState;
 
             ParamBufferState& pbs = getParamBuffer(params);
 
             SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.deviceBuffer.device_ptr(), sizeof(RayIntersectParameters), &shadowTrSBT, maxRays, 1, 1));
-            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get()));
+            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get(), cudaStream));
         }
     }
 
@@ -1449,7 +1401,7 @@ namespace spectra::optix {
             ParamBufferState& pbs = getParamBuffer(params);
 
             SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.deviceBuffer.device_ptr(), sizeof(RayIntersectParameters), &randomHitSBT, maxRays, 1, 1));
-            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get()));
+            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get(), cudaStream));
         }
     }
 } // namespace spectra::optix

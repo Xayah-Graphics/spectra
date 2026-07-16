@@ -1,17 +1,13 @@
 #ifndef SPECTRA_PATHTRACER_WAVEFRONT_WORKQUEUE_H
 #define SPECTRA_PATHTRACER_WAVEFRONT_WORKQUEUE_H
 
-#include <atomic>
+#include <cuda/atomic>
 #include <pathtracer/gpu/util.cuh>
 #include <pathtracer/util/float.cuh>
 #include <pathtracer/util/memory.cuh>
 #include <pathtracer/util/parallel.cuh>
 #include <pathtracer/util/pstd.cuh>
 #include <utility>
-
-#if defined(__CUDA_ARCH__)
-#include <cuda/atomic>
-#endif // __CUDA_ARCH__
 
 namespace spectra {
     // WorkQueue Definition
@@ -25,27 +21,19 @@ namespace spectra {
 
         WorkQueue& operator=(const WorkQueue& w) {
             SOA<WorkItem>::operator=(w);
-            size.store(w.size.load());
+            size = w.size;
             return *this;
         }
 
-        __host__ __device__ int Size() const {
-#if defined(__CUDA_ARCH__)
-            return size.load(cuda::std::memory_order_relaxed);
-#else
-            return size.load(std::memory_order_relaxed);
-#endif
+        __device__ int Size() const {
+            return size;
         }
 
-        __host__ __device__ void Reset() {
-#if defined(__CUDA_ARCH__)
-            size.store(0, cuda::std::memory_order_relaxed);
-#else
-            size.store(0, std::memory_order_relaxed);
-#endif
+        __device__ void Reset() {
+            size = 0;
         }
 
-        __host__ __device__ int Push(WorkItem w) {
+        __device__ int Push(WorkItem w) {
             int index      = AllocateEntry();
             (*this)[index] = w;
             return index;
@@ -53,30 +41,23 @@ namespace spectra {
 
     protected:
         // WorkQueue Protected Methods
-        __host__ __device__ int AllocateEntry() {
-#if defined(__CUDA_ARCH__)
-            return size.fetch_add(1, cuda::std::memory_order_relaxed);
-#else
-            return size.fetch_add(1, std::memory_order_relaxed);
-#endif
+        __device__ int AllocateEntry() {
+            cuda::atomic_ref<int, cuda::thread_scope_device> count(size);
+            return count.fetch_add(1, cuda::std::memory_order_relaxed);
         }
 
     private:
         // WorkQueue Private Members
-#if defined(__CUDA_ARCH__)
-        cuda::atomic<int, cuda::thread_scope_device> size{0};
-#else
-        std::atomic<int> size{0};
-#endif // __CUDA_ARCH__
+        int size{};
     };
 
     // WorkQueue Inline Functions
     template <typename F, typename WorkItem>
-    void ForAllQueued(const WorkQueue<WorkItem>* q, int maxQueued, F&& func) {
+    void ForAllQueued(const WorkQueue<WorkItem>* q, int maxQueued, cudaStream_t stream, F&& func) {
         GPUParallelFor(maxQueued, [=] __device__(int index) mutable {
             if (index >= q->Size()) return;
             func((*q)[index]);
-        });
+        }, stream);
     }
 
     // MultiWorkQueue Definition
@@ -92,22 +73,27 @@ namespace spectra {
             return &pstd::get<WorkQueue<T>>(queues);
         }
 
+        template <typename T>
+        __host__ __device__ const WorkQueue<T>* Get() const {
+            return &pstd::get<WorkQueue<T>>(queues);
+        }
+
         MultiWorkQueue(int n, Allocator alloc, pstd::span<const bool> haveType) {
             int index = 0;
             ((*Get<Ts>() = WorkQueue<Ts>(haveType[index++] ? n : 1, alloc)), ...);
         }
 
         template <typename T>
-        __host__ __device__ int Size() const {
+        __device__ int Size() const {
             return Get<T>()->Size();
         }
 
         template <typename T>
-        __host__ __device__ int Push(const T& value) {
+        __device__ int Push(const T& value) {
             return Get<T>()->Push(value);
         }
 
-        __host__ __device__ void Reset() {
+        __device__ void Reset() {
             (Get<Ts>()->Reset(), ...);
         }
 
@@ -115,6 +101,23 @@ namespace spectra {
         // MultiWorkQueue Private Members
         pstd::tuple<WorkQueue<Ts>...> queues;
     };
+
+    template <typename WorkItem, typename Queue, typename Function>
+    struct MultiWorkQueueForEach {
+        const Queue* queues;
+        Function function;
+
+        __device__ void operator()(int index) {
+            const WorkQueue<WorkItem>* queue = queues->template Get<WorkItem>();
+            if (index >= queue->Size()) return;
+            function((*queue)[index]);
+        }
+    };
+
+    template <typename WorkItem, typename... Ts, typename F>
+    void ForAllQueuedType(const MultiWorkQueue<TypePack<Ts...>>* queues, int maxQueued, cudaStream_t stream, F function) {
+        GPUParallelFor(maxQueued, MultiWorkQueueForEach<WorkItem, MultiWorkQueue<TypePack<Ts...>>, F>{queues, function}, stream);
+    }
 } // namespace spectra
 
 #endif // SPECTRA_PATHTRACER_WAVEFRONT_WORKQUEUE_H

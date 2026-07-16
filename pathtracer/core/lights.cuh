@@ -25,6 +25,10 @@
 #include <string>
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     // Light Inline Functions
     __host__ __device__ inline bool IsDeltaLight(LightType type) {
         return (type == LightType::DeltaPosition || type == LightType::DeltaDirection);
@@ -128,6 +132,7 @@ namespace spectra {
         }
 
     protected:
+        friend class pathtracer::DeviceSceneBuilder;
         // LightBase Protected Methods
         static const DenselySampledSpectrum* LookupSpectrum(Spectrum s, InternCache<DenselySampledSpectrum>& spectrumCache);
 
@@ -170,6 +175,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // PointLight Private Members
         const DenselySampledSpectrum* I;
         Float scale;
@@ -212,6 +218,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // DistantLight Private Members
         const DenselySampledSpectrum* Lemit;
         Float scale;
@@ -246,6 +253,7 @@ namespace spectra {
         pstd::optional<LightBounds> Bounds() const;
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // ProjectionLight Private Members
         Image image;
         const RGBColorSpace* imageColorSpace;
@@ -289,6 +297,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // GoniometricLight Private Members
         const DenselySampledSpectrum* Iemit;
         Float scale;
@@ -339,6 +348,7 @@ namespace spectra {
         __host__ __device__ Float PDF_Li(LightSampleContext ctx, Vector3f wi, bool allowIncompletePDF) const;
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // DiffuseAreaLight Private Members
         Shape shape;
         FloatTexture alpha;
@@ -391,6 +401,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // UniformInfiniteLight Private Members
         const DenselySampledSpectrum* Lemit;
         Float scale;
@@ -452,6 +463,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // ImageInfiniteLight Private Methods
         __host__ __device__ SampledSpectrum ImageLe(Point2f uv, const SampledWavelengths& lambda) const {
             RGB rgb;
@@ -500,6 +512,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // PortalImageInfiniteLight Private Methods
         __host__ __device__ SampledSpectrum ImageLookup(Point2f uv, const SampledWavelengths& lambda) const;
 
@@ -544,7 +557,6 @@ namespace spectra {
         const RGBColorSpace* imageColorSpace;
         Float scale;
         Float sceneRadius;
-        std::string filename;
         Point3f sceneCenter;
     };
 
@@ -586,6 +598,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // SpotLight Private Members
         const DenselySampledSpectrum* Iemit;
         Float scale, cosFalloffStart, cosFalloffEnd;

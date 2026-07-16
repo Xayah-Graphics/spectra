@@ -5,81 +5,56 @@
 #include <cuda_runtime_api.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <pathtracer/util/pstd.cuh>
-#include <string>
+#include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace spectra::pathtracer {
-    enum class PathtracerMemoryScopeKind {
-        Runtime,
-        Scene,
-        Frame,
-        Transient,
-        Texture,
-        OptiX,
-        Interop,
-    };
-
-    enum class PathtracerAllocationKind {
-        Managed,
-        Device,
-        HostPinned,
-        MipmappedArray,
-        TextureObject,
-        ExternalMemory,
-        ExternalSemaphore,
-        Event,
-        Stream,
-        OptiXHandle,
-    };
-
-    struct PathtracerMemorySnapshot {
-        std::size_t currentBytes{};
-        std::size_t peakBytes{};
-        std::size_t liveAllocations{};
-        std::size_t peakAllocations{};
-    };
-
-    class PathtracerMemoryScope final : public pstd::pmr::memory_resource {
+    class PathtracerHostMemoryScope final : public pstd::pmr::memory_resource {
     public:
-        PathtracerMemoryScope(PathtracerMemoryScopeKind kind, std::string label);
-        ~PathtracerMemoryScope() noexcept override;
+        PathtracerHostMemoryScope() = default;
+        ~PathtracerHostMemoryScope() noexcept override;
 
-        PathtracerMemoryScope(const PathtracerMemoryScope& other)                = delete;
-        PathtracerMemoryScope(PathtracerMemoryScope&& other) noexcept            = delete;
-        PathtracerMemoryScope& operator=(const PathtracerMemoryScope& other)     = delete;
-        PathtracerMemoryScope& operator=(PathtracerMemoryScope&& other) noexcept = delete;
-
-        [[nodiscard]] PathtracerMemoryScopeKind scope_kind() const noexcept;
-        [[nodiscard]] const std::string& scope_label() const noexcept;
-        [[nodiscard]] PathtracerMemorySnapshot snapshot() const;
+        PathtracerHostMemoryScope(const PathtracerHostMemoryScope& other)                = delete;
+        PathtracerHostMemoryScope(PathtracerHostMemoryScope&& other) noexcept            = delete;
+        PathtracerHostMemoryScope& operator=(const PathtracerHostMemoryScope& other)     = delete;
+        PathtracerHostMemoryScope& operator=(PathtracerHostMemoryScope&& other) noexcept = delete;
 
         void ReleaseAll();
         void ReleaseAllNoexcept() noexcept;
-        void PrefetchManagedToGPU() const;
-
     private:
-        struct AllocationRecord {
-            std::size_t bytes{};
-            std::size_t alignment{};
-            PathtracerAllocationKind kind{PathtracerAllocationKind::Managed};
-        };
-
         void* do_allocate(std::size_t bytes, std::size_t alignment) override;
         void do_deallocate(void* ptr, std::size_t bytes, std::size_t alignment) override;
         bool do_is_equal(const memory_resource& other) const noexcept override;
 
-        void note_allocation_locked(void* ptr, std::size_t bytes, std::size_t alignment, PathtracerAllocationKind kind);
-        [[nodiscard]] AllocationRecord remove_allocation_locked(void* ptr, std::size_t bytes, std::size_t alignment);
+        std::mutex mutex{};
+        std::unordered_map<void*, std::size_t> allocations{};
+    };
 
-        PathtracerMemoryScopeKind kind{};
-        std::string label{};
-        mutable std::mutex mutex{};
-        std::unordered_map<void*, AllocationRecord> allocations{};
-        std::size_t currentBytes{};
-        std::size_t peakBytes{};
-        std::size_t peakAllocations{};
+    class PathtracerDeviceMemoryScope final : public pstd::pmr::memory_resource {
+    public:
+        PathtracerDeviceMemoryScope() = default;
+        ~PathtracerDeviceMemoryScope() noexcept override;
+
+        PathtracerDeviceMemoryScope(const PathtracerDeviceMemoryScope& other)                = delete;
+        PathtracerDeviceMemoryScope(PathtracerDeviceMemoryScope&& other) noexcept            = delete;
+        PathtracerDeviceMemoryScope& operator=(const PathtracerDeviceMemoryScope& other)     = delete;
+        PathtracerDeviceMemoryScope& operator=(PathtracerDeviceMemoryScope&& other) noexcept = delete;
+
+        void ReleaseAll();
+        void ReleaseAllNoexcept() noexcept;
+
+    private:
+        void* do_allocate(std::size_t bytes, std::size_t alignment) override;
+        void do_deallocate(void* ptr, std::size_t bytes, std::size_t alignment) override;
+        bool do_is_equal(const memory_resource& other) const noexcept override;
+
+        std::mutex mutex{};
+        std::unordered_set<void*> allocations{};
     };
 
     class PathtracerDeviceBuffer final {
@@ -129,6 +104,41 @@ namespace spectra::pathtracer {
     private:
         void* ptr{};
         std::size_t bytes{};
+    };
+
+    class PathtracerDeviceArena final {
+    public:
+        PathtracerDeviceArena() = default;
+
+        PathtracerDeviceArena(const PathtracerDeviceArena& other)                = delete;
+        PathtracerDeviceArena(PathtracerDeviceArena&& other) noexcept            = delete;
+        PathtracerDeviceArena& operator=(const PathtracerDeviceArena& other)     = delete;
+        PathtracerDeviceArena& operator=(PathtracerDeviceArena&& other) noexcept = delete;
+
+        template <typename T>
+        [[nodiscard]] T* Store(const T& value, cudaStream_t stream) {
+            return StoreArray(&value, 1, stream);
+        }
+
+        template <typename T>
+        [[nodiscard]] T* StoreArray(const T* values, std::size_t count, cudaStream_t stream) {
+            if (count == 0) return nullptr;
+            std::lock_guard lock(mutex);
+            const std::size_t bytes = sizeof(T) * count;
+            buffers.emplace_back(bytes);
+            stagingBuffers.emplace_back(bytes);
+            std::memcpy(stagingBuffers.back().data(), values, bytes);
+            cudaError_t result = cudaMemcpyAsync(buffers.back().data(), stagingBuffers.back().data(), bytes, cudaMemcpyHostToDevice, stream);
+            if (result != cudaSuccess) throw std::runtime_error(cudaGetErrorString(result));
+            return static_cast<T*>(buffers.back().data());
+        }
+
+        void FinishUploads(cudaStream_t stream);
+
+    private:
+        std::mutex mutex{};
+        std::vector<PathtracerDeviceBuffer> buffers{};
+        std::vector<PathtracerPinnedHostBuffer> stagingBuffers{};
     };
 
     class PathtracerCudaEvent final {

@@ -323,6 +323,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // Sphere Private Members
         Float radius;
         Float zMin, zMax;
@@ -456,6 +457,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // Disk Private Members
         const Transform *renderFromObject, *objectFromRender;
         bool reverseOrientation, transformSwapsHandedness;
@@ -650,6 +652,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // Cylinder Private Members
         const Transform *renderFromObject, *objectFromRender;
         bool reverseOrientation, transformSwapsHandedness;
@@ -962,6 +965,7 @@ namespace spectra {
         }
 
         // Triangle Private Members
+        friend class pathtracer::DeviceSceneBuilder;
         const TriangleMesh* mesh                      = nullptr;
         int triIndex                                  = -1;
         static constexpr Float MinSphericalSampleArea = 3e-4;
@@ -1012,6 +1016,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // Curve Private Methods
         bool IntersectRay(const Ray& r, Float tMax, pstd::optional<ShapeIntersection>* si) const;
         bool RecursiveIntersect(const Ray& r, Float tMax, pstd::span<const Point3f> cp, const Transform& ObjectFromRay, Float u0, Float u1, int depth, pstd::optional<ShapeIntersection>* si) const;
@@ -1238,6 +1243,7 @@ namespace spectra {
         }
 
         // BilinearPatch Private Members
+        friend class pathtracer::DeviceSceneBuilder;
         const BilinearPatchMesh* mesh;
         int blpIndex;
         Float area;

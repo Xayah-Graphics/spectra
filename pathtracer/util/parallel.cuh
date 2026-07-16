@@ -1,13 +1,10 @@
 #ifndef SPECTRA_PATHTRACER_UTIL_PARALLEL_H
 #define SPECTRA_PATHTRACER_UTIL_PARALLEL_H
 
-#include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <exception>
 #include <functional>
-#include <future>
-#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -102,121 +99,29 @@ namespace spectra {
         mutex.unlock();
     }
 
-    // AtomicFloat Definition
-    class AtomicFloat {
-    public:
-        // AtomicFloat Public Methods
-        __host__ __device__ explicit AtomicFloat(float v = 0) {
-#if defined(__CUDA_ARCH__)
-            value = v;
-#else
-            bits = FloatToBits(v);
-#endif
-        }
-
-        __host__ __device__ operator float() const {
-#if defined(__CUDA_ARCH__)
-            return value;
-#else
-            return BitsToFloat(bits);
-#endif
-        }
-
-        __host__ __device__ Float operator=(float v) {
-#if defined(__CUDA_ARCH__)
-            value = v;
-            return value;
-#else
-            bits = FloatToBits(v);
-            return v;
-#endif
-        }
-
-        __host__ __device__ void Add(float v) {
-#if defined(__CUDA_ARCH__)
-            atomicAdd(&value, v);
-#else
-            FloatBits oldBits = bits, newBits;
-            do {
-                newBits = FloatToBits(BitsToFloat(oldBits) + v);
-            } while (!bits.compare_exchange_weak(oldBits, newBits));
-#endif
-        }
-
-    private:
-        // AtomicFloat Private Members
-#if defined(__CUDA_ARCH__)
-        float value;
-#else
-        std::atomic<FloatBits> bits;
-#endif
-    };
-
     class AtomicDouble {
     public:
-        // AtomicDouble Public Methods
-        __host__ __device__ explicit AtomicDouble(double v = 0) {
-#if defined(__CUDA_ARCH__)
-            value = v;
-#else
-            bits = FloatToBits(v);
-#endif
-        }
+        __host__ __device__ explicit AtomicDouble(double v = 0) : value(v) {}
 
         __host__ __device__ operator double() const {
-#if defined(__CUDA_ARCH__)
             return value;
-#else
-            return BitsToFloat(bits);
-#endif
         }
 
         __host__ __device__ double operator=(double v) {
-#if defined(__CUDA_ARCH__)
             value = v;
             return value;
-#else
-            bits = FloatToBits(v);
-            return v;
-#endif
         }
 
         __host__ __device__ void Add(double v) {
 #if defined(__CUDA_ARCH__)
             atomicAdd(&value, v);
 #else
-            uint64_t oldBits = bits, newBits;
-            do {
-                newBits = FloatToBits(BitsToFloat(oldBits) + v);
-            } while (!bits.compare_exchange_weak(oldBits, newBits));
+            value += v;
 #endif
         }
 
     private:
-        // AtomicDouble Private Data
-#if defined(__CUDA_ARCH__)
-        double value;
-#else
-        std::atomic<uint64_t> bits;
-#endif
-    };
-
-    // Barrier Definition
-    class Barrier {
-    public:
-        explicit Barrier(int n) : numToBlock(n), numToExit(n) {}
-
-        Barrier(const Barrier&)            = delete;
-        Barrier& operator=(const Barrier&) = delete;
-
-        // All block. Returns true to only one thread (which should delete the
-        // barrier).
-        bool Block();
-
-    private:
-        std::mutex mutex;
-        std::condition_variable cv;
-        int numToBlock, numToExit;
+        double value{};
     };
 
     void ParallelFor(int64_t start, int64_t end, std::function<void(int64_t, int64_t)> func);
@@ -279,13 +184,8 @@ namespace spectra {
         std::unique_lock<std::mutex> AddToJobList(ParallelJob* job);
         void RemoveFromJobList(ParallelJob* job);
 
-        void WorkOrWait(std::unique_lock<std::mutex>* lock, bool isEnqueuingThread);
+        void WorkOrWait(std::unique_lock<std::mutex>* lock);
         bool WorkOrReturn();
-
-        void Disable();
-        void Reenable();
-
-        void ForEachThread(std::function<void(void)> func);
 
     private:
         // ThreadPool Private Methods
@@ -296,7 +196,6 @@ namespace spectra {
         int cudaDevice{};
         mutable std::mutex mutex;
         bool shutdownThreads = false;
-        bool disabled        = false;
         ParallelJob* jobList = nullptr;
         std::condition_variable jobListCondition;
     };
@@ -310,6 +209,10 @@ namespace spectra {
         // AsyncJob Public Methods
         AsyncJob(std::function<T(void)> w) : func(std::move(w)) {}
 
+        ~AsyncJob() override {
+            Wait();
+        }
+
         bool HaveWork() const {
             return !started;
         }
@@ -318,47 +221,58 @@ namespace spectra {
             threadPool->RemoveFromJobList(this);
             started = true;
             lock->unlock();
-            // Execute asynchronous work and notify waiting threads of its completion
-            T r = func();
-            std::unique_lock<std::mutex> ul(mutex);
-            result = r;
+
+            try {
+                T r = func();
+                std::lock_guard<std::mutex> resultLock(mutex);
+                result = std::move(r);
+            } catch (...) {
+                std::lock_guard<std::mutex> resultLock(mutex);
+                exception = std::current_exception();
+            }
             cv.notify_all();
         }
 
         bool IsReady() const {
             std::lock_guard<std::mutex> lock(mutex);
-            return result.has_value();
+            return result.has_value() || exception != nullptr;
         }
 
         T GetResult() {
             Wait();
             std::lock_guard<std::mutex> lock(mutex);
+            if (exception) std::rethrow_exception(exception);
             return *result;
         }
 
-        pstd::optional<T> TryGetResult(std::mutex* extMutex) {
+        pstd::optional<T> TryGetResult(std::unique_lock<std::mutex>& externalLock) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
+                if (exception) std::rethrow_exception(exception);
                 if (result) return result;
             }
 
-            extMutex->unlock();
+            externalLock.unlock();
             DoParallelWork();
-            extMutex->lock();
+            externalLock.lock();
             return {};
         }
 
         void Wait() {
             while (!IsReady() && DoParallelWork());
             std::unique_lock<std::mutex> lock(mutex);
-            if (!result.has_value()) cv.wait(lock, [this]() { return result.has_value(); });
+            cv.wait(lock, [this]() { return result.has_value() || exception != nullptr; });
         }
 
         void DoWork() {
-            T r = func();
-            std::unique_lock<std::mutex> l(mutex);
-            CHECK(!result.has_value());
-            result = r;
+            try {
+                T r = func();
+                std::lock_guard<std::mutex> resultLock(mutex);
+                result = std::move(r);
+            } catch (...) {
+                std::lock_guard<std::mutex> resultLock(mutex);
+                exception = std::current_exception();
+            }
             cv.notify_all();
         }
 
@@ -367,14 +281,10 @@ namespace spectra {
         std::function<T(void)> func;
         bool started = false;
         pstd::optional<T> result;
+        std::exception_ptr exception;
         mutable std::mutex mutex;
         std::condition_variable cv;
     };
-
-    void ForEachThread(std::function<void(void)> func);
-
-    void DisableThreadPool();
-    void ReenableThreadPool();
 
     // Asynchronous Task Launch Function Definitions
     template <typename F, typename... Args>
@@ -382,14 +292,14 @@ namespace spectra {
         // Create _AsyncJob_ for _func_ and _args_
         auto fvoid       = std::bind(func, std::forward<Args>(args)...);
         using R          = std::invoke_result_t<F, Args...>;
-        AsyncJob<R>* job = new AsyncJob<R>(std::move(fvoid));
+        auto job          = std::make_unique<AsyncJob<R>>(std::move(fvoid));
 
         // Enqueue _job_ or run it immediately
         std::unique_lock<std::mutex> lock;
         if (RunningThreads() == 1)
             job->DoWork();
         else
-            lock = ParallelJob::threadPool->AddToJobList(job);
+            lock = ParallelJob::threadPool->AddToJobList(job.get());
 
         return job;
     }

@@ -30,6 +30,7 @@ namespace spectra {
     struct ShapeSampleContext;
 
     namespace pathtracer {
+        class DeviceSceneBuilder;
         struct RenderConfig;
     } // namespace pathtracer
 

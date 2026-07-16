@@ -17,9 +17,6 @@
 #include <pathtracer/util/scattering.cuh>
 #include <pathtracer/util/spectrum.cuh>
 #include <pathtracer/util/transform.cuh>
-#if defined(__NVCC__)
-#include <nanovdb/cuda/DeviceBuffer.h>
-#endif // __NVCC__
 
 #include <algorithm>
 #include <limits>
@@ -27,6 +24,10 @@
 #include <vector>
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     // Media Function Declarations
     bool GetMediumScatteringProperties(const std::string& name, Spectrum* sigma_a, Spectrum* sigma_s, Allocator alloc);
 
@@ -210,6 +211,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // HomogeneousMedium Private Data
         DenselySampledSpectrum sigma_a_spec, sigma_s_spec, Le_spec;
         HGPhaseFunction phase;
@@ -279,6 +281,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // GridMedium Private Members
         Bounds3f bounds;
         Transform renderFromMedium;
@@ -338,6 +341,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // RGBGridMedium Private Members
         Bounds3f bounds;
         Transform renderFromMedium;
@@ -347,6 +351,161 @@ namespace spectra {
         pstd::optional<SampledGrid<RGBUnboundedSpectrum>> sigma_aGrid, sigma_sGrid;
         Float sigmaScale;
         MajorantGrid majorantGrid;
+    };
+
+    struct DeviceVolumeMajorantGrid {
+        __host__ __device__ Float Lookup(int x, int y, int z) const {
+            return voxels[x + resolution.x * (y + resolution.y * z)];
+        }
+
+        __host__ __device__ Bounds3f VoxelBounds(int x, int y, int z) const {
+            Point3f p0(Float(x) / resolution.x, Float(y) / resolution.y, Float(z) / resolution.z);
+            Point3f p1(Float(x + 1) / resolution.x, Float(y + 1) / resolution.y, Float(z + 1) / resolution.z);
+            return Bounds3f(p0, p1);
+        }
+
+        Bounds3f bounds{};
+        const Float* voxels{};
+        Point3i resolution{};
+    };
+
+    class DeviceVolumeMajorantIterator {
+    public:
+        DeviceVolumeMajorantIterator() = default;
+
+        __host__ __device__ DeviceVolumeMajorantIterator(Ray ray, Float tMin, Float tMax, const DeviceVolumeMajorantGrid* grid, SampledSpectrum sigma_t) : tMin(tMin), tMax(tMax), grid(grid), sigma_t(sigma_t) {
+            Vector3f diagonal = grid->bounds.Diagonal();
+            Ray gridRay(Point3f(grid->bounds.Offset(ray.o)), Vector3f(ray.d.x / diagonal.x, ray.d.y / diagonal.y, ray.d.z / diagonal.z));
+            Point3f gridIntersection = gridRay(tMin);
+            for (int axis = 0; axis < 3; ++axis) {
+                voxel[axis]  = Clamp(gridIntersection[axis] * grid->resolution[axis], 0, grid->resolution[axis] - 1);
+                deltaT[axis] = 1 / (std::abs(gridRay.d[axis]) * grid->resolution[axis]);
+                if (gridRay.d[axis] == -0.f) gridRay.d[axis] = 0.f;
+                if (gridRay.d[axis] >= 0) {
+                    Float nextVoxelPosition = Float(voxel[axis] + 1) / grid->resolution[axis];
+                    nextCrossingT[axis]      = tMin + (nextVoxelPosition - gridIntersection[axis]) / gridRay.d[axis];
+                    step[axis]               = 1;
+                    voxelLimit[axis]         = grid->resolution[axis];
+                } else {
+                    Float nextVoxelPosition = Float(voxel[axis]) / grid->resolution[axis];
+                    nextCrossingT[axis]      = tMin + (nextVoxelPosition - gridIntersection[axis]) / gridRay.d[axis];
+                    step[axis]               = -1;
+                    voxelLimit[axis]         = -1;
+                }
+            }
+        }
+
+        __host__ __device__ pstd::optional<RayMajorantSegment> Next() {
+            if (tMin >= tMax) return {};
+            int comparisons       = ((nextCrossingT[0] < nextCrossingT[1]) << 2) + ((nextCrossingT[0] < nextCrossingT[2]) << 1) + (nextCrossingT[1] < nextCrossingT[2]);
+            const int axisForComparisons[8] = {2, 1, 2, 1, 2, 2, 0, 0};
+            int stepAxis           = axisForComparisons[comparisons];
+            Float voxelExit        = std::min(tMax, nextCrossingT[stepAxis]);
+            RayMajorantSegment segment{tMin, voxelExit, sigma_t * grid->Lookup(voxel[0], voxel[1], voxel[2])};
+            tMin = voxelExit;
+            if (nextCrossingT[stepAxis] > tMax) tMin = tMax;
+            voxel[stepAxis] += step[stepAxis];
+            if (voxel[stepAxis] == voxelLimit[stepAxis]) tMin = tMax;
+            nextCrossingT[stepAxis] += deltaT[stepAxis];
+            return segment;
+        }
+
+    private:
+        SampledSpectrum sigma_t{};
+        Float tMin{Infinity};
+        Float tMax{-Infinity};
+        const DeviceVolumeMajorantGrid* grid{};
+        Float nextCrossingT[3]{};
+        Float deltaT[3]{};
+        int step[3]{};
+        int voxelLimit[3]{};
+        int voxel[3]{};
+    };
+
+    class DeviceVolumeMedium {
+    public:
+        class MajorantIterator final : public DeviceVolumeMajorantIterator {
+        public:
+            MajorantIterator() = default;
+            __host__ __device__ MajorantIterator(Ray ray, Float tMin, Float tMax, const DeviceVolumeMajorantGrid* grid, SampledSpectrum sigmaT) : DeviceVolumeMajorantIterator(ray, tMin, tMax, grid, sigmaT) {}
+        };
+
+        DeviceVolumeMedium() = default;
+
+        DeviceVolumeMedium(Bounds3f bounds, Transform renderFromMedium, const RGBColorSpace* colorSpace, Point3i dimensions, const Float* density, const RGB* color, const Float* emission, const Float* majorants, bool hasColor) : bounds(bounds), renderFromMedium(renderFromMedium), colorSpace(colorSpace), dimensions(dimensions), density(density), color(color), emission(emission), phase(0.f), hasColor(hasColor), majorantGrid{bounds, majorants, Point3i{16, 16, 16}} {}
+
+        __host__ __device__ bool IsEmissive() const {
+            return emission != nullptr;
+        }
+
+        __host__ __device__ MediumProperties SamplePoint(Point3f p, const SampledWavelengths& lambda) const {
+            p = renderFromMedium.ApplyInverse(p);
+            p = Point3f(bounds.Offset(p));
+            Float densityValue = std::max<Float>(0, Lookup(density, p));
+            SampledSpectrum sigmaA{};
+            SampledSpectrum sigmaS{};
+            if (hasColor) {
+                RGBUnboundedSpectrum scattering(*colorSpace, Lookup(color, p));
+                sigmaS = densityValue * scattering.Sample(lambda);
+            } else {
+                sigmaA = densityValue * RGBUnboundedSpectrum(*colorSpace, RGB(0.08f, 0.08f, 0.08f)).Sample(lambda);
+                sigmaS = densityValue * RGBUnboundedSpectrum(*colorSpace, RGB(0.92f, 0.92f, 0.92f)).Sample(lambda);
+            }
+            SampledSpectrum emitted{};
+            if (emission != nullptr) {
+                Float temperature = Lookup(emission, p);
+                if (temperature > 100.f) emitted = BlackbodySpectrum(temperature).Sample(lambda);
+            }
+            return MediumProperties{sigmaA, sigmaS, &phase, emitted};
+        }
+
+        __host__ __device__ MajorantIterator SampleRay(Ray ray, Float rayMax, const SampledWavelengths& lambda) const {
+            ray = renderFromMedium.ApplyInverse(ray, &rayMax);
+            Float tMin{};
+            Float tMax{};
+            if (!bounds.IntersectP(ray.o, ray.d, rayMax, &tMin, &tMax)) return {};
+            SampledSpectrum sigmaT(1.f);
+            if (!hasColor) {
+                sigmaT = RGBUnboundedSpectrum(*colorSpace, RGB(0.08f, 0.08f, 0.08f)).Sample(lambda) + RGBUnboundedSpectrum(*colorSpace, RGB(0.92f, 0.92f, 0.92f)).Sample(lambda);
+            }
+            return MajorantIterator(ray, tMin, tMax, &majorantGrid, sigmaT);
+        }
+
+    private:
+        template <typename T>
+        __host__ __device__ T Lookup(const T* values, Point3f p) const {
+            Point3f samplePosition(p.x * dimensions.x - .5f, p.y * dimensions.y - .5f, p.z * dimensions.z - .5f);
+            Point3i base = Point3i(Floor(samplePosition));
+            Vector3f delta = samplePosition - Point3f(base);
+            T v000 = Lookup(values, base);
+            T v100 = Lookup(values, base + Vector3i(1, 0, 0));
+            T v010 = Lookup(values, base + Vector3i(0, 1, 0));
+            T v110 = Lookup(values, base + Vector3i(1, 1, 0));
+            T v001 = Lookup(values, base + Vector3i(0, 0, 1));
+            T v101 = Lookup(values, base + Vector3i(1, 0, 1));
+            T v011 = Lookup(values, base + Vector3i(0, 1, 1));
+            T v111 = Lookup(values, base + Vector3i(1, 1, 1));
+            T lower = Lerp(delta.y, Lerp(delta.x, v000, v100), Lerp(delta.x, v010, v110));
+            T upper = Lerp(delta.y, Lerp(delta.x, v001, v101), Lerp(delta.x, v011, v111));
+            return Lerp(delta.z, lower, upper);
+        }
+
+        template <typename T>
+        __host__ __device__ T Lookup(const T* values, Point3i p) const {
+            if (p.x < 0 || p.y < 0 || p.z < 0 || p.x >= dimensions.x || p.y >= dimensions.y || p.z >= dimensions.z) return T{};
+            return values[(p.z * dimensions.y + p.y) * dimensions.x + p.x];
+        }
+
+        Bounds3f bounds{};
+        Transform renderFromMedium{};
+        const RGBColorSpace* colorSpace{};
+        Point3i dimensions{};
+        const Float* density{};
+        const RGB* color{};
+        const Float* emission{};
+        HGPhaseFunction phase{};
+        bool hasColor{};
+        DeviceVolumeMajorantGrid majorantGrid{};
     };
 
     // CloudMedium Definition
@@ -388,6 +547,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // CloudMedium Private Methods
         __host__ __device__ Float Density(Point3f p) const {
             Point3f pp = frequency * p;
@@ -511,6 +671,7 @@ namespace spectra {
     class NanoVDBMedium {
     public:
         using MajorantIterator = DDAMajorantIterator;
+        NanoVDBMedium() = default;
         // NanoVDBMedium Public Methods
         static NanoVDBMedium* Create(const ParameterDictionary& parameters, const Transform& renderFromMedium, const FileLoc* loc, Allocator alloc);
 
@@ -551,6 +712,8 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
+        NanoVDBMedium(const NanoVDBMedium& other) : bounds(other.bounds), renderFromMedium(other.renderFromMedium), sigma_a_spec(other.sigma_a_spec), sigma_s_spec(other.sigma_s_spec), phase(other.phase), majorantGrid(other.majorantGrid), densityFloatGrid(other.densityFloatGrid), temperatureFloatGrid(other.temperatureFloatGrid), LeScale(other.LeScale), temperatureOffset(other.temperatureOffset), temperatureScale(other.temperatureScale) {}
         // NanoVDBMedium Private Methods
         __host__ __device__ SampledSpectrum Le(Point3f p, const SampledWavelengths& lambda) const {
             if (!temperatureFloatGrid) return SampledSpectrum(0.f);

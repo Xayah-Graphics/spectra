@@ -767,7 +767,6 @@ set(SPECTRA_PATHTRACER_UTIL_SOURCE
         pathtracer/util/file.cpp
         pathtracer/util/image.cpp
         pathtracer/util/loopsubdiv.cu
-        pathtracer/util/lowdiscrepancy.cu
         pathtracer/util/math.cu
         pathtracer/util/mesh.cu
         pathtracer/util/mipmap.cu
@@ -845,6 +844,7 @@ target_sources(
         ${SPECTRA_PATHTRACER_DEVICE_SOURCE}
         pathtracer/renderer.cpp
         pathtracer/compiled_scene.cpp
+        pathtracer/device_scene.cu
         pathtracer/optix/aggregate.cu
         pathtracer/integrator.cu
 )

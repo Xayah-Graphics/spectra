@@ -16,6 +16,10 @@
 #include <string>
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
     // UniformLightSampler Definition
     class UniformLightSampler {
     public:
@@ -42,6 +46,8 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
+        UniformLightSampler() = default;
         // UniformLightSampler Private Members
         pstd::vector<Light> lights;
     };
@@ -73,6 +79,8 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
+        explicit PowerLightSampler(Allocator alloc) : lights(alloc), lightToIndex(alloc), aliasTable(alloc) {}
         // PowerLightSampler Private Members
         pstd::vector<Light> lights;
         HashMap<Light, size_t> lightToIndex;
@@ -306,6 +314,8 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
+        explicit BVHLightSampler(Allocator alloc) : lights(alloc), infiniteLights(alloc), nodes(alloc), lightToBitTrail(alloc) {}
         // BVHLightSampler Private Methods
         std::pair<int, LightBounds> buildBVH(std::vector<std::pair<int, LightBounds>>& bvhLights, int start, int end, uint32_t bitTrail, int depth);
 
@@ -351,6 +361,8 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
+        explicit ExhaustiveLightSampler(Allocator alloc) : lights(alloc), boundedLights(alloc), infiniteLights(alloc), lightBounds(alloc), lightToBoundedIndex(alloc) {}
         pstd::vector<Light> lights, boundedLights, infiniteLights;
         pstd::vector<LightBounds> lightBounds;
         HashMap<Light, size_t> lightToBoundedIndex;

@@ -10,6 +10,7 @@
 #include <pathtracer/core/kernel_config.cuh>
 #include <pathtracer/core/ray.cuh>
 #include <pathtracer/core/samplers.cuh>
+#include <pathtracer/memory/memory.cuh>
 #include <pathtracer/util/float.cuh>
 #include <pathtracer/util/image.cuh>
 #include <pathtracer/util/memory.cuh>
@@ -120,7 +121,10 @@ namespace spectra {
     struct CameraBaseParameters {
         CameraTransform cameraTransform;
         Float shutterOpen = 0, shutterClose = 1;
-        Film film;
+        Point2i filmResolution{};
+        Bounds2f filmSampleBounds{};
+        Vector2f filterRadius{};
+        Float filmDiagonal{};
         Medium medium;
         CameraBaseParameters() = default;
         CameraBaseParameters(const CameraTransform& cameraTransform, Film film, Medium medium, const ParameterDictionary& parameters, const FileLoc* loc);
@@ -130,10 +134,6 @@ namespace spectra {
     class CameraBase {
     public:
         // CameraBase Public Methods
-        __host__ __device__ Film GetFilm() const {
-            return film;
-        }
-
         __host__ __device__ const CameraTransform& GetCameraTransform() const {
             return cameraTransform;
         }
@@ -166,10 +166,14 @@ namespace spectra {
         }
 
     protected:
+        friend class pathtracer::DeviceSceneBuilder;
         // CameraBase Protected Members
         CameraTransform cameraTransform;
         Float shutterOpen, shutterClose;
-        Film film;
+        Point2i filmResolution{};
+        Bounds2f filmSampleBounds{};
+        Vector2f filterRadius{};
+        Float filmDiagonal{};
         Medium medium;
         Vector3f minPosDifferentialX, minPosDifferentialY;
         Vector3f minDirDifferentialX, minDirDifferentialY;
@@ -227,7 +231,7 @@ namespace spectra {
             // Compute projective camera transformations
             // Compute projective camera screen transformations
             Transform NDCFromScreen = Scale(1 / (screenWindow.pMax.x - screenWindow.pMin.x), 1 / (screenWindow.pMax.y - screenWindow.pMin.y), 1) * Translate(Vector3f(-screenWindow.pMin.x, -screenWindow.pMax.y, 0));
-            Transform rasterFromNDC = Scale(film.FullResolution().x, -film.FullResolution().y, 1);
+            Transform rasterFromNDC = Scale(filmResolution.x, -filmResolution.y, 1);
             rasterFromScreen        = rasterFromNDC * NDCFromScreen;
             screenFromRaster        = Inverse(rasterFromScreen);
 
@@ -291,13 +295,13 @@ namespace spectra {
             dyCamera = cameraFromRaster(Point3f(0, 1, 0)) - cameraFromRaster(Point3f(0, 0, 0));
 
             // Compute _cosTotalWidth_ for perspective camera
-            Point2f radius = Point2f(film.GetFilter().Radius());
+            Point2f radius = Point2f(filterRadius);
             Point3f pCorner(-radius.x, -radius.y, 0.f);
             Vector3f wCornerCamera = Normalize(Vector3f(cameraFromRaster(pCorner)));
             cosTotalWidth          = wCornerCamera.z;
 
             // Compute image plane area at $z=1$ for _PerspectiveCamera_
-            Point2i res  = film.FullResolution();
+            Point2i res  = filmResolution;
             Point3f pMin = cameraFromRaster(Point3f(0, 0, 0));
             Point3f pMax = cameraFromRaster(Point3f(res.x, res.y, 0));
             pMin /= pMin.z;
@@ -372,13 +376,37 @@ namespace spectra {
         Float pdf;
     };
 
+    struct CameraFloatImage {
+        Point2i resolution{};
+        const Float* pixels = nullptr;
+
+        __host__ __device__ explicit operator bool() const {
+            return pixels != nullptr;
+        }
+
+        __host__ __device__ Float Get(Point2i p) const {
+            if (p.x < 0 || p.x >= resolution.x || p.y < 0 || p.y >= resolution.y) return 0;
+            return pixels[p.x + p.y * resolution.x];
+        }
+
+        __host__ __device__ Float Bilerp(Point2f p) const {
+            Float x = p.x * resolution.x - 0.5f;
+            Float y = p.y * resolution.y - 0.5f;
+            int xi = pstd::floor(x);
+            int yi = pstd::floor(y);
+            Float dx = x - xi;
+            Float dy = y - yi;
+            return (1 - dx) * (1 - dy) * Get({xi, yi}) + dx * (1 - dy) * Get({xi + 1, yi}) + (1 - dx) * dy * Get({xi, yi + 1}) + dx * dy * Get({xi + 1, yi + 1});
+        }
+    };
+
     // RealisticCamera Definition
     class RealisticCamera : public CameraBase {
     public:
         // RealisticCamera Public Methods
-        RealisticCamera(CameraBaseParameters baseParameters, std::vector<Float>& lensParameters, Float focusDistance, Float apertureDiameter, Image apertureImage, Allocator alloc);
+        RealisticCamera(CameraBaseParameters baseParameters, std::vector<Float>& lensParameters, Float focusDistance, Float apertureDiameter, Image apertureImage, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
-        static RealisticCamera* Create(const ParameterDictionary& parameters, const CameraTransform& cameraTransform, Film film, Medium medium, const FileLoc* loc, Allocator alloc = {});
+        static RealisticCamera* Create(const ParameterDictionary& parameters, const CameraTransform& cameraTransform, Film film, Medium medium, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ pstd::optional<CameraRay> GenerateRay(CameraSample sample, SampledWavelengths& lambda) const;
 
@@ -411,17 +439,17 @@ namespace spectra {
 
         // RealisticCamera Private Methods
         __host__ __device__ Float LensRearZ() const {
-            return elementInterfaces.back().thickness;
+            return elementInterfaces[elementInterfaceCount - 1].thickness;
         }
 
         __host__ __device__ Float LensFrontZ() const {
             Float zSum = 0;
-            for (const LensElementInterface& element : elementInterfaces) zSum += element.thickness;
+            for (int i = 0; i < elementInterfaceCount; ++i) zSum += elementInterfaces[i].thickness;
             return zSum;
         }
 
         __host__ __device__ Float RearElementRadius() const {
-            return elementInterfaces.back().apertureRadius;
+            return elementInterfaces[elementInterfaceCount - 1].apertureRadius;
         }
 
         __host__ __device__ Float TraceLensesFromFilm(const Ray& rCamera, Ray* rOut) const;
@@ -457,19 +485,16 @@ namespace spectra {
 
         // RealisticCamera Private Members
         Bounds2f physicalExtent;
-        pstd::vector<LensElementInterface> elementInterfaces;
-        Image apertureImage;
-        pstd::vector<Bounds2f> exitPupilBounds;
+        LensElementInterface* elementInterfaces = nullptr;
+        int elementInterfaceCount = 0;
+        CameraFloatImage apertureImage{};
+        Bounds2f* exitPupilBounds = nullptr;
+        int exitPupilBoundCount = 0;
     };
 
     __host__ __device__ inline pstd::optional<CameraRay> Camera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
         auto generate = [&](auto ptr) { return ptr->GenerateRay(sample, lambda); };
         return Dispatch(generate);
-    }
-
-    __host__ __device__ inline Film Camera::GetFilm() const {
-        auto getfilm = [&](auto ptr) { return ptr->GetFilm(); };
-        return Dispatch(getfilm);
     }
 
     __host__ __device__ inline Float Camera::SampleTime(Float u) const {

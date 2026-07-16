@@ -1,133 +1,109 @@
-#include <algorithm>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <algorithm>
 #include <pathtracer/core/diagnostics.cuh>
 #include <pathtracer/gpu/util.cuh>
 #include <pathtracer/memory/memory.cuh>
 #include <pathtracer/util/check.cuh>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
 namespace spectra::pathtracer {
-    namespace {
-        std::mutex& CUDAMemoryMutex() {
-            static std::mutex mutex;
-            return mutex;
-        }
-    } // namespace
-
-    PathtracerMemoryScope::PathtracerMemoryScope(const PathtracerMemoryScopeKind kind, std::string label) : kind(kind), label(std::move(label)) {
-        if (this->label.empty()) throw std::runtime_error("Pathtracer memory scope requires a non-empty label");
-    }
-
-    PathtracerMemoryScope::~PathtracerMemoryScope() noexcept {
+    PathtracerHostMemoryScope::~PathtracerHostMemoryScope() noexcept {
         this->ReleaseAllNoexcept();
     }
 
-    [[nodiscard]] PathtracerMemoryScopeKind PathtracerMemoryScope::scope_kind() const noexcept {
-        return this->kind;
-    }
-
-    [[nodiscard]] const std::string& PathtracerMemoryScope::scope_label() const noexcept {
-        return this->label;
-    }
-
-    [[nodiscard]] PathtracerMemorySnapshot PathtracerMemoryScope::snapshot() const {
-        std::lock_guard<std::mutex> lock(this->mutex);
-        return PathtracerMemorySnapshot{
-            .currentBytes    = this->currentBytes,
-            .peakBytes       = this->peakBytes,
-            .liveAllocations = this->allocations.size(),
-            .peakAllocations = this->peakAllocations,
-        };
-    }
-
-    void PathtracerMemoryScope::ReleaseAll() {
-        std::lock_guard<std::mutex> cudaLock(CUDAMemoryMutex());
+    void PathtracerHostMemoryScope::ReleaseAll() {
         std::lock_guard<std::mutex> allocationLock(this->mutex);
         for (auto iter = this->allocations.begin(); iter != this->allocations.end();) {
-            void* ptr                    = iter->first;
-            const AllocationRecord record = iter->second;
-            if (record.kind != PathtracerAllocationKind::Managed) throw std::runtime_error("Pathtracer memory scope contains a non-managed allocation");
-            CUDA_CHECK(cudaFree(ptr));
-            this->currentBytes -= record.bytes;
+            ::operator delete(iter->first, std::align_val_t(iter->second));
             iter = this->allocations.erase(iter);
         }
     }
 
-    void PathtracerMemoryScope::ReleaseAllNoexcept() noexcept {
+    void PathtracerHostMemoryScope::ReleaseAllNoexcept() noexcept {
         try {
             this->ReleaseAll();
         } catch (...) {
         }
     }
 
-    void PathtracerMemoryScope::PrefetchManagedToGPU() const {
-        int deviceIndex = 0;
-        CUDA_CHECK(cudaGetDevice(&deviceIndex));
-
-        std::lock_guard<std::mutex> lock(this->mutex);
-        for (const std::pair<void* const, AllocationRecord>& allocation : this->allocations) {
-            cudaMemLocation location = {};
-            location.type            = cudaMemLocationTypeDevice;
-            location.id              = deviceIndex;
-            CUDA_CHECK(cudaMemPrefetchAsync(allocation.first, allocation.second.bytes, location, 0));
-        }
-        CUDA_CHECK(cudaDeviceSynchronize());
-    }
-
-    void* PathtracerMemoryScope::do_allocate(const std::size_t bytes, const std::size_t alignment) {
+    void* PathtracerHostMemoryScope::do_allocate(const std::size_t bytes, const std::size_t alignment) {
         if (bytes == 0) return nullptr;
+        const std::size_t allocationAlignment = std::max(alignment, alignof(std::max_align_t));
+        void* ptr = ::operator new(bytes, std::align_val_t(allocationAlignment));
 
-        std::lock_guard<std::mutex> cudaLock(CUDAMemoryMutex());
-        void* ptr = nullptr;
-        CUDA_CHECK(cudaMallocManaged(&ptr, bytes));
-        CHECK_EQ(0, reinterpret_cast<std::uintptr_t>(ptr) % alignment);
-
-        std::lock_guard<std::mutex> allocationLock(this->mutex);
-        this->note_allocation_locked(ptr, bytes, alignment, PathtracerAllocationKind::Managed);
+        try {
+            std::lock_guard<std::mutex> allocationLock(this->mutex);
+            this->allocations.emplace(ptr, allocationAlignment);
+        } catch (...) {
+            ::operator delete(ptr, std::align_val_t(allocationAlignment));
+            throw;
+        }
         return ptr;
     }
 
-    void PathtracerMemoryScope::do_deallocate(void* ptr, const std::size_t bytes, const std::size_t alignment) {
+    void PathtracerHostMemoryScope::do_deallocate(void* ptr, const std::size_t, const std::size_t) {
         if (ptr == nullptr) return;
 
-        std::lock_guard<std::mutex> cudaLock(CUDAMemoryMutex());
+        std::size_t alignment;
         {
             std::lock_guard<std::mutex> allocationLock(this->mutex);
-            const AllocationRecord record = this->remove_allocation_locked(ptr, bytes, alignment);
-            static_cast<void>(record);
+            alignment = this->allocations.at(ptr);
+            this->allocations.erase(ptr);
+        }
+        ::operator delete(ptr, std::align_val_t(alignment));
+    }
+
+    bool PathtracerHostMemoryScope::do_is_equal(const memory_resource& other) const noexcept {
+        return this == &other;
+    }
+
+    PathtracerDeviceMemoryScope::~PathtracerDeviceMemoryScope() noexcept {
+        this->ReleaseAllNoexcept();
+    }
+
+    void PathtracerDeviceMemoryScope::ReleaseAll() {
+        std::lock_guard<std::mutex> lock(this->mutex);
+        for (auto iter = this->allocations.begin(); iter != this->allocations.end();) {
+            CUDA_CHECK(cudaFree(*iter));
+            iter = this->allocations.erase(iter);
+        }
+    }
+
+    void PathtracerDeviceMemoryScope::ReleaseAllNoexcept() noexcept {
+        try {
+            this->ReleaseAll();
+        } catch (...) {
+        }
+    }
+
+    void* PathtracerDeviceMemoryScope::do_allocate(const std::size_t bytes, const std::size_t) {
+        if (bytes == 0) return nullptr;
+        void* ptr{};
+        CUDA_CHECK(cudaMalloc(&ptr, bytes));
+        try {
+            std::lock_guard<std::mutex> lock(this->mutex);
+            this->allocations.emplace(ptr);
+        } catch (...) {
+            CUDA_CHECK(cudaFree(ptr));
+            throw;
+        }
+        return ptr;
+    }
+
+    void PathtracerDeviceMemoryScope::do_deallocate(void* ptr, const std::size_t, const std::size_t) {
+        if (ptr == nullptr) return;
+        {
+            std::lock_guard<std::mutex> lock(this->mutex);
+            this->allocations.erase(ptr);
         }
         CUDA_CHECK(cudaFree(ptr));
     }
 
-    bool PathtracerMemoryScope::do_is_equal(const memory_resource& other) const noexcept {
+    bool PathtracerDeviceMemoryScope::do_is_equal(const memory_resource& other) const noexcept {
         return this == &other;
-    }
-
-    void PathtracerMemoryScope::note_allocation_locked(void* ptr, const std::size_t bytes, const std::size_t alignment, const PathtracerAllocationKind kind) {
-        if (ptr == nullptr) throw std::runtime_error("Pathtracer memory scope cannot track a null allocation");
-        if (this->allocations.find(ptr) != this->allocations.end()) throw std::runtime_error("Pathtracer memory scope received a duplicate allocation pointer");
-        this->allocations.emplace(ptr,
-            AllocationRecord{
-                .bytes     = bytes,
-                .alignment = alignment,
-                .kind      = kind,
-            });
-        this->currentBytes += bytes;
-        this->peakBytes       = std::max(this->peakBytes, this->currentBytes);
-        this->peakAllocations = std::max(this->peakAllocations, this->allocations.size());
-    }
-
-    [[nodiscard]] PathtracerMemoryScope::AllocationRecord PathtracerMemoryScope::remove_allocation_locked(void* ptr, const std::size_t bytes, const std::size_t alignment) {
-        auto iter = this->allocations.find(ptr);
-        if (iter == this->allocations.end()) throw std::runtime_error("Pathtracer memory scope received an unknown deallocation pointer");
-        const AllocationRecord record = iter->second;
-        if (record.bytes != bytes) throw std::runtime_error("Pathtracer memory scope deallocation size mismatch");
-        if (record.alignment != alignment) throw std::runtime_error("Pathtracer memory scope deallocation alignment mismatch");
-        this->allocations.erase(iter);
-        this->currentBytes -= record.bytes;
-        return record;
     }
 
     PathtracerDeviceBuffer::PathtracerDeviceBuffer(const std::size_t bytes) {
@@ -236,6 +212,13 @@ namespace spectra::pathtracer {
         return this->ptr == nullptr;
     }
 
+    void PathtracerDeviceArena::FinishUploads(cudaStream_t stream) {
+        std::lock_guard lock(mutex);
+        if (stagingBuffers.empty()) return;
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        stagingBuffers.clear();
+    }
+
     PathtracerCudaEvent::PathtracerCudaEvent(const unsigned int flags) {
         this->Create(flags);
     }
@@ -294,7 +277,7 @@ namespace spectra::pathtracer {
 
     void PathtracerCudaStream::Create() {
         if (this->stream != nullptr) throw std::runtime_error("Pathtracer CUDA stream is already created");
-        CUDA_CHECK(cudaStreamCreate(&this->stream));
+        CUDA_CHECK(cudaStreamCreateWithFlags(&this->stream, cudaStreamNonBlocking));
     }
 
     void PathtracerCudaStream::Release() {

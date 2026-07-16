@@ -9,8 +9,27 @@
 
 namespace spectra {
     // HaltonSampler Method Definitions
-    HaltonSampler::HaltonSampler(int samplesPerPixel, Point2i fullRes, RandomizeStrategy randomize, int seed, Allocator alloc) : samplesPerPixel(samplesPerPixel), randomize(randomize) {
-        if (randomize == RandomizeStrategy::PermuteDigits) digitPermutations = ComputeRadicalInversePermutations(seed, alloc);
+    HaltonSampler::HaltonSampler(int samplesPerPixel, Point2i fullRes, RandomizeStrategy randomize, int seed, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) : samplesPerPixel(samplesPerPixel), randomize(randomize) {
+        if (randomize == RandomizeStrategy::PermuteDigits) {
+            std::vector<DigitPermutation> descriptors(PrimeTableSize);
+            std::vector<std::size_t> offsets(PrimeTableSize);
+            std::size_t valueCount = 0;
+            for (int i = 0; i < PrimeTableSize; ++i) {
+                const int base = Primes[i];
+                const int digitCount = DigitPermutation::DigitCount(base);
+                offsets[i] = valueCount;
+                valueCount += static_cast<std::size_t>(base) * digitCount;
+            }
+            std::vector<uint16_t> values(valueCount);
+            for (int i = 0; i < PrimeTableSize; ++i) {
+                const int base = Primes[i];
+                const int digitCount = DigitPermutation::DigitCount(base);
+                DigitPermutation::Generate(base, digitCount, seed, values.data() + offsets[i]);
+            }
+            const uint16_t* deviceValues = deviceArena.StoreArray(values.data(), values.size(), stream);
+            for (int i = 0; i < PrimeTableSize; ++i) descriptors[i] = DigitPermutation(Primes[i], DigitPermutation::DigitCount(Primes[i]), deviceValues + offsets[i]);
+            digitPermutations = deviceArena.StoreArray(descriptors.data(), descriptors.size(), stream);
+        }
         // Find radical inverse base scales and exponents that cover sampling area
         for (int i = 0; i < 2; ++i) {
             int base  = (i == 0) ? 2 : 3;
@@ -28,7 +47,7 @@ namespace spectra {
         multInverse[1] = multiplicativeInverse(baseScales[0], baseScales[1]);
     }
 
-    HaltonSampler* HaltonSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
+    HaltonSampler* HaltonSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
         if (config.pixel_samples) nsamp = *config.pixel_samples;
         int seed = parameters.GetOneInt("seed", config.seed);
@@ -46,7 +65,7 @@ namespace spectra {
         else
             throw std::runtime_error(diagnostics::Format(loc, "%s: unknown randomization strategy given to HaltonSampler", s));
 
-        return alloc.new_object<HaltonSampler>(nsamp, fullResolution, randomizer, seed, alloc);
+        return alloc.new_object<HaltonSampler>(nsamp, fullResolution, randomizer, seed, deviceArena, stream);
     }
 
     PaddedSobolSampler* PaddedSobolSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
@@ -93,7 +112,7 @@ namespace spectra {
     }
 
     // PMJ02BNSampler Method Definitions
-    PMJ02BNSampler::PMJ02BNSampler(int samplesPerPixel, int seed, Allocator alloc) : samplesPerPixel(samplesPerPixel), seed(seed) {
+    PMJ02BNSampler::PMJ02BNSampler(int samplesPerPixel, int seed, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) : samplesPerPixel(samplesPerPixel), seed(seed) {
         if (!IsPowerOf4(samplesPerPixel))
             diagnostics::PrintWarning("PMJ02BNSampler results are best with power-of-4 samples per "
                                       "pixel (1, 4, 16, 64, ...)");
@@ -102,7 +121,7 @@ namespace spectra {
         // Compute _pixelTileSize_ for pmj02bn pixel samples and allocate _pixelSamples_
         pixelTileSize     = 1 << (Log4Int(nPMJ02bnSamples) - Log4Int(RoundUpPow4(samplesPerPixel)));
         int nPixelSamples = pixelTileSize * pixelTileSize * samplesPerPixel;
-        pixelSamples      = alloc.new_object<pstd::vector<Point2f>>(nPixelSamples, alloc);
+        std::vector<Point2f> hostPixelSamples(nPixelSamples);
 
         // Loop over pmj02bn samples and associate them with their pixels
         std::vector<int> nStored(pixelTileSize * pixelTileSize, 0);
@@ -115,19 +134,20 @@ namespace spectra {
                 continue;
             }
             int sampleOffset = pixelOffset * samplesPerPixel + nStored[pixelOffset];
-            CHECK((*pixelSamples)[sampleOffset] == Point2f(0, 0));
-            (*pixelSamples)[sampleOffset] = Point2f(p - Floor(p));
+            CHECK(hostPixelSamples[sampleOffset] == Point2f(0, 0));
+            hostPixelSamples[sampleOffset] = Point2f(p - Floor(p));
             ++nStored[pixelOffset];
         }
 
         for (int i = 0; i < nStored.size(); ++i) CHECK_EQ(nStored[i], samplesPerPixel);
+        pixelSamples = deviceArena.StoreArray(hostPixelSamples.data(), hostPixelSamples.size(), stream);
     }
 
-    PMJ02BNSampler* PMJ02BNSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
+    PMJ02BNSampler* PMJ02BNSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
         if (config.pixel_samples) nsamp = *config.pixel_samples;
         int seed = parameters.GetOneInt("seed", config.seed);
-        return alloc.new_object<PMJ02BNSampler>(nsamp, seed, alloc);
+        return alloc.new_object<PMJ02BNSampler>(nsamp, seed, deviceArena, stream);
     }
 
     IndependentSampler* IndependentSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
@@ -184,18 +204,18 @@ namespace spectra {
     }
 
     // Sampler Method Definitions
-    Sampler Sampler::Create(const std::string& name, const ParameterDictionary& parameters, Point2i fullRes, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
+    Sampler Sampler::Create(const std::string& name, const ParameterDictionary& parameters, Point2i fullRes, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream) {
         Sampler sampler = nullptr;
         if (name == "zsobol") sampler = ZSobolSampler::Create(parameters, fullRes, config, loc, alloc);
         // Create remainder of _Sampler_ types
         else if (name == "paddedsobol")
             sampler = PaddedSobolSampler::Create(parameters, config, loc, alloc);
         else if (name == "halton")
-            sampler = HaltonSampler::Create(parameters, fullRes, config, loc, alloc);
+            sampler = HaltonSampler::Create(parameters, fullRes, config, loc, alloc, deviceArena, stream);
         else if (name == "sobol")
             sampler = SobolSampler::Create(parameters, fullRes, config, loc, alloc);
         else if (name == "pmj02bn")
-            sampler = PMJ02BNSampler::Create(parameters, config, loc, alloc);
+            sampler = PMJ02BNSampler::Create(parameters, config, loc, alloc, deviceArena, stream);
         else if (name == "independent")
             sampler = IndependentSampler::Create(parameters, config, loc, alloc);
         else if (name == "stratified")

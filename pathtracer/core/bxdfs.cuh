@@ -13,6 +13,7 @@
 #include <pathtracer/util/math.cuh>
 #include <pathtracer/util/memory.cuh>
 #include <pathtracer/util/pstd.cuh>
+#include <pathtracer/util/sampling.cuh>
 #include <pathtracer/util/scattering.cuh>
 #include <pathtracer/util/spectrum.cuh>
 #include <pathtracer/util/taggedptr.cuh>
@@ -20,7 +21,18 @@
 #include <string>
 
 namespace spectra {
-    struct MeasuredBxDFData;
+    struct MeasuredBxDFData {
+        pstd::vector<float> wavelengths;
+        PiecewiseLinear2D<3> spectra;
+        PiecewiseLinear2D<0> ndf;
+        PiecewiseLinear2D<2> vndf;
+        PiecewiseLinear2D<0> sigma;
+        bool isotropic{};
+        PiecewiseLinear2D<2> luminance;
+
+        explicit MeasuredBxDFData(Allocator alloc) : wavelengths(alloc), spectra(alloc), ndf(alloc), vndf(alloc), sigma(alloc), luminance(alloc) {}
+        static MeasuredBxDFData* Create(const std::string& filename, Allocator alloc);
+    };
 
     // DiffuseBxDF Definition
     class DiffuseBxDF {

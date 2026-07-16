@@ -2,12 +2,16 @@
 #include <pathtracer/core/diagnostics.cuh>
 #include <pathtracer/core/media.cuh>
 #include <pathtracer/core/paramdict.cuh>
+#include <pathtracer/gpu/util.cuh>
+#include <pathtracer/gpu/volume.cuh>
 #include <pathtracer/util/color.cuh>
 #include <pathtracer/util/colorspace.cuh>
 #include <pathtracer/util/memory.cuh>
 #define NANOVDB_USE_ZIP 1
 #include <algorithm>
+#include <cstring>
 #include <nanovdb/io/IO.h>
+#include <vector>
 
 namespace spectra {
     // HenyeyGreenstein Method Definitions
@@ -90,7 +94,7 @@ namespace spectra {
 
     bool Medium::IsEmissive() const {
         auto is = [&](auto ptr) { return ptr->IsEmissive(); };
-        return DispatchCPU(is);
+        return DispatchHost(is);
     }
 
     // HomogeneousMedium Method Definitions
@@ -436,3 +440,107 @@ namespace spectra {
         return m;
     }
 } // namespace spectra
+
+namespace spectra::pathtracer {
+    namespace {
+        __device__ std::uint64_t spread_volume_morton_bits(std::uint32_t value) {
+            std::uint64_t result{};
+            for (std::uint32_t bit = 0u; bit < 21u; ++bit) result |= static_cast<std::uint64_t>((value >> bit) & 1u) << (3u * bit);
+            return result;
+        }
+
+        __device__ std::uint64_t volume_source_index(std::uint64_t linear_index, Point3i dimensions, bool morton_encoded) {
+            if (!morton_encoded) return linear_index;
+            std::uint32_t x = static_cast<std::uint32_t>(linear_index % static_cast<std::uint64_t>(dimensions.x));
+            std::uint64_t yz = linear_index / static_cast<std::uint64_t>(dimensions.x);
+            std::uint32_t y = static_cast<std::uint32_t>(yz % static_cast<std::uint64_t>(dimensions.y));
+            std::uint32_t z = static_cast<std::uint32_t>(yz / static_cast<std::uint64_t>(dimensions.y));
+            return spread_volume_morton_bits(x) | (spread_volume_morton_bits(y) << 1u) | (spread_volume_morton_bits(z) << 2u);
+        }
+
+        const float* prepare_volume_source(const DeviceVolumeChannelBuildInput& input, cudaStream_t stream, std::vector<PathtracerDeviceBuffer>& staging, std::vector<PathtracerPinnedHostBuffer>& hostStaging) {
+            if (input.device_values != nullptr) {
+                CUDA_CHECK(cudaStreamWaitEvent(stream, input.ready_event, 0u));
+                return input.device_values;
+            }
+            std::size_t bytes = input.source_value_count * sizeof(float);
+            hostStaging.emplace_back(bytes);
+            std::memcpy(hostStaging.back().data(), input.host_values, bytes);
+            staging.emplace_back(bytes);
+            CUDA_CHECK(cudaMemcpyAsync(staging.back().data(), hostStaging.back().data(), bytes, cudaMemcpyHostToDevice, stream));
+            return static_cast<const float*>(staging.back().data());
+        }
+
+        void materialize_scalar_channel(const DeviceVolumeChannelBuildInput& input, Point3i dimensions, PathtracerDeviceBuffer& destination, cudaStream_t stream, std::vector<PathtracerDeviceBuffer>& staging, std::vector<PathtracerPinnedHostBuffer>& hostStaging) {
+            std::uint64_t cell_count = static_cast<std::uint64_t>(dimensions.x) * static_cast<std::uint64_t>(dimensions.y) * static_cast<std::uint64_t>(dimensions.z);
+            destination.Allocate(cell_count * sizeof(float));
+            const float* source = prepare_volume_source(input, stream, staging, hostStaging);
+            float* output = static_cast<float*>(destination.data());
+            GPUParallelFor(static_cast<int>(cell_count), [=] __device__(int index) {
+                std::uint64_t source_index = volume_source_index(static_cast<std::uint64_t>(index), dimensions, input.morton_encoded) * input.component_count + input.first_component;
+                output[index] = source[source_index] * input.scale + input.bias;
+            }, stream);
+        }
+
+        void materialize_color_channel(const DeviceVolumeChannelBuildInput& input, Point3i dimensions, PathtracerDeviceBuffer& destination, cudaStream_t stream, std::vector<PathtracerDeviceBuffer>& staging, std::vector<PathtracerPinnedHostBuffer>& hostStaging) {
+            std::uint64_t cell_count = static_cast<std::uint64_t>(dimensions.x) * static_cast<std::uint64_t>(dimensions.y) * static_cast<std::uint64_t>(dimensions.z);
+            destination.Allocate(cell_count * sizeof(RGB));
+            const float* source = prepare_volume_source(input, stream, staging, hostStaging);
+            RGB* output = static_cast<RGB*>(destination.data());
+            GPUParallelFor(static_cast<int>(cell_count), [=] __device__(int index) {
+                std::uint64_t source_index = volume_source_index(static_cast<std::uint64_t>(index), dimensions, input.morton_encoded) * input.component_count + input.first_component;
+                if (input.component_count == 1u) {
+                    float value = source[source_index] * input.scale + input.bias;
+                    output[index] = RGB(value, value, value);
+                    return;
+                }
+                output[index] = RGB(source[source_index] * input.scale + input.bias, source[source_index + 1u] * input.scale + input.bias, source[source_index + 2u] * input.scale + input.bias);
+            }, stream);
+        }
+
+        void build_volume_majorants(Point3i dimensions, const float* density, const RGB* color, const RGBColorSpace* color_space, bool has_color, PathtracerDeviceBuffer& destination, cudaStream_t stream) {
+            constexpr int majorant_resolution = 16;
+            constexpr int majorant_count = majorant_resolution * majorant_resolution * majorant_resolution;
+            destination.Allocate(majorant_count * sizeof(float));
+            float* output = static_cast<float*>(destination.data());
+            GPUParallelFor(majorant_count, [=] __device__(int index) {
+                int x = index % majorant_resolution;
+                int yz = index / majorant_resolution;
+                int y = yz % majorant_resolution;
+                int z = yz / majorant_resolution;
+                int x0 = std::max(0, static_cast<int>(floorf(static_cast<float>(x) * dimensions.x / majorant_resolution - .5f)));
+                int y0 = std::max(0, static_cast<int>(floorf(static_cast<float>(y) * dimensions.y / majorant_resolution - .5f)));
+                int z0 = std::max(0, static_cast<int>(floorf(static_cast<float>(z) * dimensions.z / majorant_resolution - .5f)));
+                int x1 = std::min(dimensions.x - 1, static_cast<int>(floorf(static_cast<float>(x + 1) * dimensions.x / majorant_resolution - .5f)) + 1);
+                int y1 = std::min(dimensions.y - 1, static_cast<int>(floorf(static_cast<float>(y + 1) * dimensions.y / majorant_resolution - .5f)) + 1);
+                int z1 = std::min(dimensions.z - 1, static_cast<int>(floorf(static_cast<float>(z + 1) * dimensions.z / majorant_resolution - .5f)) + 1);
+                float maximum{};
+                for (int sample_z = z0; sample_z <= z1; ++sample_z)
+                    for (int sample_y = y0; sample_y <= y1; ++sample_y)
+                        for (int sample_x = x0; sample_x <= x1; ++sample_x) {
+                            int sample_index = (sample_z * dimensions.y + sample_y) * dimensions.x + sample_x;
+                            float candidate = density[sample_index];
+                            if (has_color) candidate = std::max(0.f, candidate) * RGBUnboundedSpectrum(*color_space, color[sample_index]).MaxValue();
+                            maximum = std::max(maximum, candidate);
+                        }
+                output[index] = maximum;
+            }, stream);
+        }
+    } // namespace
+
+    DeviceVolumeMediumStorage::DeviceVolumeMediumStorage(const DeviceVolumeMediumBuildInput& input, cudaStream_t stream) {
+        std::vector<PathtracerDeviceBuffer> staging{};
+        std::vector<PathtracerPinnedHostBuffer> hostStaging{};
+        materialize_scalar_channel(input.density, input.dimensions, this->density, stream, staging, hostStaging);
+        if (input.has_color) materialize_color_channel(input.color, input.dimensions, this->color, stream, staging, hostStaging);
+        if (input.has_emission) materialize_scalar_channel(input.emission, input.dimensions, this->emission, stream, staging, hostStaging);
+        build_volume_majorants(input.dimensions, static_cast<const float*>(this->density.data()), static_cast<const RGB*>(this->color.data()), input.color_space, input.has_color, this->majorants, stream);
+        DeviceVolumeMedium medium(input.bounds, input.render_from_medium, input.color_space, input.dimensions, static_cast<const float*>(this->density.data()), static_cast<const RGB*>(this->color.data()), static_cast<const float*>(this->emission.data()), static_cast<const float*>(this->majorants.data()), input.has_color);
+        this->handle = this->descriptorArena.Store(medium, stream);
+        this->descriptorArena.FinishUploads(stream);
+    }
+
+    Medium DeviceVolumeMediumStorage::medium() const noexcept {
+        return this->handle;
+    }
+} // namespace spectra::pathtracer

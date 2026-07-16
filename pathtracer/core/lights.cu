@@ -836,7 +836,7 @@ namespace spectra {
 
 
     // PortalImageInfiniteLight Method Definitions
-    PortalImageInfiniteLight::PortalImageInfiniteLight(const Transform& renderFromLight, Image equalAreaImage, const RGBColorSpace* imageColorSpace, Float scale, const std::string& filename, std::vector<Point3f> p, Allocator alloc) : LightBase(LightType::Infinite, renderFromLight, MediumInterface()), image(alloc), imageColorSpace(imageColorSpace), scale(scale), filename(filename), distribution(alloc) {
+    PortalImageInfiniteLight::PortalImageInfiniteLight(const Transform& renderFromLight, Image equalAreaImage, const RGBColorSpace* imageColorSpace, Float scale, const std::string& filename, std::vector<Point3f> p, Allocator alloc) : LightBase(LightType::Infinite, renderFromLight, MediumInterface()), image(alloc), imageColorSpace(imageColorSpace), scale(scale), distribution(alloc) {
         ImageChannelDesc channelDesc = equalAreaImage.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
             throw std::runtime_error(diagnostics::Format("%s: image used for PortalImageInfiniteLight doesn't have R, "
@@ -1108,12 +1108,12 @@ namespace spectra {
 
     SampledSpectrum Light::Phi(SampledWavelengths lambda) const {
         auto phi = [&](auto ptr) { return ptr->Phi(lambda); };
-        return DispatchCPU(phi);
+        return DispatchHost(phi);
     }
 
     void Light::Preprocess(const Bounds3f& sceneBounds) {
         auto preprocess = [&](auto ptr) { return ptr->Preprocess(sceneBounds); };
-        return DispatchCPU(preprocess);
+        return DispatchHost(preprocess);
     }
 
     __host__ __device__ pstd::optional<LightLeSample> Light::SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const {
@@ -1128,7 +1128,7 @@ namespace spectra {
 
     pstd::optional<LightBounds> Light::Bounds() const {
         auto bounds = [](auto ptr) { return ptr->Bounds(); };
-        return DispatchCPU(bounds);
+        return DispatchHost(bounds);
     }
 
 

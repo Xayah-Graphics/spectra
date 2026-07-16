@@ -496,6 +496,7 @@ namespace spectra::scene {
                     .index_encoding = volume_channel_index_encoding_from_u32(channel.index_encoding, std::format("Scene volume \"{}\" channel \"{}\"", name, channel_name)),
                     .buffer_id = channel.buffer_id,
                     .external_device_pointer = channel.external_device_pointer,
+                    .external_ready_event = channel.external_ready_event,
                     .source_byte_size = channel.source_byte_size,
                 };
                 const std::uint64_t cell_count = static_cast<std::uint64_t>(result.dimensions[0]) * static_cast<std::uint64_t>(result.dimensions[1]) * static_cast<std::uint64_t>(result.dimensions[2]);
@@ -517,6 +518,7 @@ namespace spectra::scene {
                     if (converted.source_byte_size < expected_count * sizeof(float)) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" external GPU source byte size is too small", name, converted.name));
                     if (converted.buffer_id == 0u) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" external GPU source has no buffer id", name, converted.name));
                     if (converted.external_device_pointer == 0u) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" external GPU source has no device pointer for pathtracer snapshot", name, converted.name));
+                    if (converted.external_ready_event == 0u) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" external GPU source has no CUDA readiness event", name, converted.name));
                 }
                 result.channels.push_back(std::move(converted));
             }
@@ -1255,7 +1257,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v19");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v20");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));

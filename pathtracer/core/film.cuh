@@ -6,6 +6,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <atomic>
+#include <cuda_runtime_api.h>
 #include <map>
 #include <pathtracer/base/bxdf.cuh>
 #include <pathtracer/base/camera.cuh>
@@ -27,6 +28,68 @@
 #include <vector>
 
 namespace spectra {
+    namespace pathtracer {
+        class DeviceSceneBuilder;
+    } // namespace pathtracer
+
+    template <typename T>
+    class DeviceFilmArray2D {
+    public:
+        DeviceFilmArray2D(Bounds2i extent, Allocator allocator, cudaStream_t stream) : extent(extent) {
+            values = allocator.allocate_object<T>(extent.Area());
+            cudaError_t result = cudaMemsetAsync(values, 0, static_cast<std::size_t>(extent.Area()) * sizeof(T), stream);
+            if (result != cudaSuccess) throw std::runtime_error(cudaGetErrorString(result));
+        }
+
+        DeviceFilmArray2D(const DeviceFilmArray2D& other)                = default;
+        DeviceFilmArray2D(DeviceFilmArray2D&& other) noexcept            = default;
+        DeviceFilmArray2D& operator=(const DeviceFilmArray2D& other)     = default;
+        DeviceFilmArray2D& operator=(DeviceFilmArray2D&& other) noexcept = default;
+
+        __host__ __device__ T& operator[](Point2i p) {
+            return values[(p.y - extent.pMin.y) * (extent.pMax.x - extent.pMin.x) + p.x - extent.pMin.x];
+        }
+
+        __host__ __device__ const T& operator[](Point2i p) const {
+            return values[(p.y - extent.pMin.y) * (extent.pMax.x - extent.pMin.x) + p.x - extent.pMin.x];
+        }
+
+        [[nodiscard]] std::vector<T> CopyToHost() const {
+            std::vector<T> host(static_cast<std::size_t>(extent.Area()));
+            cudaError_t result = cudaMemcpy(host.data(), values, host.size() * sizeof(T), cudaMemcpyDeviceToHost);
+            if (result != cudaSuccess) throw std::runtime_error(cudaGetErrorString(result));
+            return host;
+        }
+
+        [[nodiscard]] const T& HostPixel(const std::vector<T>& host, Point2i p) const {
+            return host[static_cast<std::size_t>((p.y - extent.pMin.y) * (extent.pMax.x - extent.pMin.x) + p.x - extent.pMin.x)];
+        }
+
+    private:
+        Bounds2i extent{};
+        T* values{};
+    };
+
+    struct DevicePixelSensor {
+        __host__ __device__ RGB ToSensorRGB(SampledSpectrum radiance, const SampledWavelengths& wavelengths) const {
+            radiance = SafeDiv(radiance, wavelengths.PDF());
+            RGB result{};
+            for (int sample = 0; sample < NSpectrumSamples; ++sample) {
+                int offset = static_cast<int>(std::lround(wavelengths[sample])) - Lambda_min;
+                if (offset < 0 || offset > Lambda_max - Lambda_min) continue;
+                result.r += red[offset] * radiance[sample];
+                result.g += green[offset] * radiance[sample];
+                result.b += blue[offset] * radiance[sample];
+            }
+            return imagingRatio * result / NSpectrumSamples;
+        }
+
+        const Float* red{};
+        const Float* green{};
+        const Float* blue{};
+        Float imagingRatio{};
+    };
+
     // PixelSensor Definition
     class PixelSensor {
     public:
@@ -72,6 +135,16 @@ namespace spectra {
         __host__ __device__ RGB ToSensorRGB(SampledSpectrum L, const SampledWavelengths& lambda) const {
             L = SafeDiv(L, lambda.PDF());
             return imagingRatio * RGB((r_bar.Sample(lambda) * L).Average(), (g_bar.Sample(lambda) * L).Average(), (b_bar.Sample(lambda) * L).Average());
+        }
+
+        [[nodiscard]] Float Response(int channel, int wavelength) const {
+            if (channel == 0) return r_bar(wavelength);
+            if (channel == 1) return g_bar(wavelength);
+            return b_bar(wavelength);
+        }
+
+        [[nodiscard]] Float ImagingRatio() const {
+            return imagingRatio;
         }
 
         // PixelSensor Public Members
@@ -130,8 +203,6 @@ namespace spectra {
     struct FilmBaseParameters {
         FilmBaseParameters(const ParameterDictionary& parameters, Filter filter, const PixelSensor* sensor, const pathtracer::RenderConfig& config, const FileLoc* loc);
 
-        FilmBaseParameters(Point2i fullResolution, Bounds2i pixelBounds, Filter filter, Float diagonal, const PixelSensor* sensor, std::string filename) : fullResolution(fullResolution), pixelBounds(pixelBounds), filter(filter), diagonal(diagonal), sensor(sensor), filename(filename) {}
-
         Point2i fullResolution;
         Bounds2i pixelBounds;
         Filter filter;
@@ -144,7 +215,7 @@ namespace spectra {
     class FilmBase {
     public:
         // FilmBase Public Methods
-        FilmBase(FilmBaseParameters p) : fullResolution(p.fullResolution), pixelBounds(p.pixelBounds), filter(p.filter), diagonal(p.diagonal * .001f), sensor(p.sensor), filename(p.filename) {
+        FilmBase(FilmBaseParameters p) : fullResolution(p.fullResolution), pixelBounds(p.pixelBounds), filter(p.filter), diagonal(p.diagonal * .001f), sensor(p.sensor) {
             CHECK(!pixelBounds.IsEmpty());
             CHECK_GE(pixelBounds.pMin.x, 0);
             CHECK_LE(pixelBounds.pMax.x, fullResolution.x);
@@ -168,12 +239,8 @@ namespace spectra {
             return filter;
         }
 
-        __host__ __device__ const PixelSensor* GetPixelSensor() const {
+        const PixelSensor* GetPixelSensor() const {
             return sensor;
-        }
-
-        std::string GetFilename() const {
-            return filename;
         }
 
         __host__ __device__ SampledWavelengths SampleWavelengths(Float u) const {
@@ -182,14 +249,23 @@ namespace spectra {
 
         __host__ __device__ Bounds2f SampleBounds() const;
 
+        void SetDevicePixelSensor(DevicePixelSensor value) {
+            deviceSensor = value;
+        }
+
+        __host__ __device__ RGB SensorRGB(SampledSpectrum radiance, const SampledWavelengths& wavelengths) const {
+            return deviceSensor.ToSensorRGB(radiance, wavelengths);
+        }
+
     protected:
+        friend class pathtracer::DeviceSceneBuilder;
         // FilmBase Protected Members
         Point2i fullResolution;
         Bounds2i pixelBounds;
         Filter filter;
         Float diagonal;
         const PixelSensor* sensor;
-        std::string filename;
+        DevicePixelSensor deviceSensor{};
     };
 
     // RGBFilm Definition
@@ -202,7 +278,7 @@ namespace spectra {
 
         __host__ __device__ void AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface*, Float weight) {
             // Convert sample radiance to _PixelSensor_ RGB
-            RGB rgb = sensor->ToSensorRGB(L, lambda);
+            RGB rgb = SensorRGB(L, lambda);
 
             // Optionally clamp sensor RGB value
             Float m = MaxComponentValue(rgb);
@@ -230,18 +306,18 @@ namespace spectra {
             return rgb;
         }
 
-        RGBFilm(FilmBaseParameters p, const RGBColorSpace* colorSpace, Float maxComponentValue = Infinity, bool writeFP16 = true, Allocator alloc = {});
+        RGBFilm(FilmBaseParameters p, const RGBColorSpace* colorSpace, Float maxComponentValue, bool writeFP16, Allocator pixelAlloc, cudaStream_t stream);
 
-        static RGBFilm* Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
+        static RGBFilm* Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, Allocator pixelAlloc, cudaStream_t stream, std::string* outputFilename);
 
         __host__ __device__ void AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda);
 
-        void WriteImage(ImageMetadata metadata, Float splatScale = 1);
+        void WriteImage(ImageMetadata metadata, const std::string& filename, Float splatScale = 1);
         Image GetImage(ImageMetadata* metadata, Float splatScale = 1);
 
 
         __host__ __device__ RGB ToOutputRGB(SampledSpectrum L, const SampledWavelengths& lambda) const {
-            RGB sensorRGB = sensor->ToSensorRGB(L, lambda);
+            RGB sensorRGB = SensorRGB(L, lambda);
             return outputRGBFromSensorRGB * sensorRGB;
         }
 
@@ -250,6 +326,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // RGBFilm::Pixel Definition
         struct Pixel {
             Pixel()          = default;
@@ -264,23 +341,23 @@ namespace spectra {
         bool writeFP16;
         Float filterIntegral;
         SquareMatrix<3> outputRGBFromSensorRGB;
-        Array2D<Pixel> pixels;
+        DeviceFilmArray2D<Pixel> pixels;
     };
 
     // GBufferFilm Definition
     class GBufferFilm : public FilmBase {
     public:
         // GBufferFilm Public Methods
-        GBufferFilm(FilmBaseParameters p, const AnimatedTransform& outputFromRender, bool applyInverse, const RGBColorSpace* colorSpace, Float maxComponentValue = Infinity, bool writeFP16 = true, Allocator alloc = {});
+        GBufferFilm(FilmBaseParameters p, const AnimatedTransform& outputFromRender, bool applyInverse, const RGBColorSpace* colorSpace, Float maxComponentValue, bool writeFP16, Allocator pixelAlloc, cudaStream_t stream);
 
-        static GBufferFilm* Create(const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
+        static GBufferFilm* Create(const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, Allocator pixelAlloc, cudaStream_t stream, std::string* outputFilename);
 
         __host__ __device__ void AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface* visibleSurface, Float weight);
 
         __host__ __device__ void AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda);
 
         __host__ __device__ RGB ToOutputRGB(SampledSpectrum L, const SampledWavelengths& lambda) const {
-            RGB cameraRGB = sensor->ToSensorRGB(L, lambda);
+            RGB cameraRGB = SensorRGB(L, lambda);
             return outputRGBFromSensorRGB * cameraRGB;
         }
 
@@ -304,7 +381,7 @@ namespace spectra {
             return rgb;
         }
 
-        void WriteImage(ImageMetadata metadata, Float splatScale = 1);
+        void WriteImage(ImageMetadata metadata, const std::string& filename, Float splatScale = 1);
         Image GetImage(ImageMetadata* metadata, Float splatScale = 1);
 
 
@@ -313,6 +390,7 @@ namespace spectra {
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         // GBufferFilm::Pixel Definition
         struct Pixel {
             Pixel()          = default;
@@ -330,7 +408,7 @@ namespace spectra {
         // GBufferFilm Private Members
         AnimatedTransform outputFromRender;
         bool applyInverse;
-        Array2D<Pixel> pixels;
+        DeviceFilmArray2D<Pixel> pixels;
         const RGBColorSpace* colorSpace;
         Float maxComponentValue;
         bool writeFP16;
@@ -355,7 +433,7 @@ namespace spectra {
             // that we can maintain accurate RGB values.
 
             // Convert sample radiance to _PixelSensor_ RGB
-            RGB rgb = sensor->ToSensorRGB(L, lambda);
+            RGB rgb = SensorRGB(L, lambda);
 
             // Optionally clamp sensor RGB value
             Float m = MaxComponentValue(rgb);
@@ -363,6 +441,7 @@ namespace spectra {
 
             // Update RGB fields in Pixel structure.
             Pixel& pixel = pixels[pFilm];
+            std::size_t pixelOffset = PixelIndex(pFilm) * nBuckets;
             for (int c = 0; c < 3; ++c) pixel.rgbSum[c] += weight * rgb[c];
             pixel.rgbWeightSum += weight;
 
@@ -384,20 +463,20 @@ namespace spectra {
             // Accumulate contributions in spectral buckets.
             for (int i = 0; i < NSpectrumSamples; ++i) {
                 int b = LambdaToBucket(lambda[i]);
-                pixel.bucketSums[b] += L[i];
-                pixel.weightSums[b] += weight;
+                bucketSums[pixelOffset + b] += L[i];
+                weightSums[pixelOffset + b] += weight;
             }
         }
 
         __host__ __device__ RGB GetPixelRGB(Point2i p, Float splatScale = 1) const;
 
-        SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMax, int nBuckets, const RGBColorSpace* colorSpace, Float maxComponentValue = Infinity, bool writeFP16 = true, Allocator alloc = {});
+        SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMax, int nBuckets, const RGBColorSpace* colorSpace, Float maxComponentValue, bool writeFP16, Allocator pixelAlloc, cudaStream_t stream);
 
-        static SpectralFilm* Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
+        static SpectralFilm* Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, Allocator pixelAlloc, cudaStream_t stream, std::string* outputFilename);
 
         __host__ __device__ void AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda);
 
-        void WriteImage(ImageMetadata metadata, Float splatScale = 1);
+        void WriteImage(ImageMetadata metadata, const std::string& filename, Float splatScale = 1);
 
         // Returns an image with both RGB and spectral components, following
         // the layout proposed in "An OpenEXR Layout for Sepctral Images" by
@@ -417,15 +496,21 @@ namespace spectra {
             pix.rgbSum[0] = pix.rgbSum[1] = pix.rgbSum[2] = 0.;
             pix.rgbWeightSum                              = 0.;
             pix.rgbSplat[0] = pix.rgbSplat[1] = pix.rgbSplat[2] = 0.;
-            memset(pix.bucketSums, 0, nBuckets * sizeof(double));
-            memset(pix.weightSums, 0, nBuckets * sizeof(double));
-            memset(pix.bucketSplats, 0, nBuckets * sizeof(AtomicDouble));
+            std::size_t offset = PixelIndex(p) * nBuckets;
+            memset(bucketSums + offset, 0, nBuckets * sizeof(double));
+            memset(weightSums + offset, 0, nBuckets * sizeof(double));
+            memset(bucketSplats + offset, 0, nBuckets * sizeof(AtomicDouble));
         }
 
     private:
+        friend class pathtracer::DeviceSceneBuilder;
         __host__ __device__ int LambdaToBucket(Float lambda) const {
             int bucket = nBuckets * (lambda - lambdaMin) / (lambdaMax - lambdaMin);
             return Clamp(bucket, 0, nBuckets - 1);
+        }
+
+        __host__ __device__ std::size_t PixelIndex(Point2i p) const {
+            return static_cast<std::size_t>(p.y - pixelBounds.pMin.y) * static_cast<std::size_t>(pixelBounds.pMax.x - pixelBounds.pMin.x) + static_cast<std::size_t>(p.x - pixelBounds.pMin.x);
         }
 
         // SpectralFilm::Pixel Definition
@@ -435,9 +520,6 @@ namespace spectra {
             double rgbSum[3]    = {0., 0., 0.};
             double rgbWeightSum = 0.;
             AtomicDouble rgbSplat[3];
-            // The following will all have nBuckets entries.
-            double *bucketSums, *weightSums;
-            AtomicDouble* bucketSplats;
         };
 
         // SpectralFilm Private Members
@@ -447,7 +529,10 @@ namespace spectra {
         Float maxComponentValue;
         bool writeFP16;
         Float filterIntegral;
-        Array2D<Pixel> pixels;
+        DeviceFilmArray2D<Pixel> pixels;
+        double* bucketSums{};
+        double* weightSums{};
+        AtomicDouble* bucketSplats{};
         SquareMatrix<3> outputRGBFromSensorRGB;
     };
 
@@ -501,9 +586,9 @@ namespace spectra {
         return Dispatch(add);
     }
 
-    __host__ __device__ inline const PixelSensor* Film::GetPixelSensor() const {
+    inline const PixelSensor* Film::GetPixelSensor() const {
         auto filter = [&](auto ptr) { return ptr->GetPixelSensor(); };
-        return Dispatch(filter);
+        return DispatchHost(filter);
     }
 
     __host__ __device__ inline void Film::ResetPixel(Point2i p) {

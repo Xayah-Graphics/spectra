@@ -24,7 +24,7 @@ namespace spectra::optix {
         const TriangleMesh* mesh;
         Material material;
         FloatTexture alphaTexture;
-        pstd::span<Light> areaLights;
+        pstd::span<const Light> areaLights;
         MediumInterface* mediumInterface;
     };
 
@@ -32,7 +32,7 @@ namespace spectra::optix {
         const BilinearPatchMesh* mesh;
         Material material;
         FloatTexture alphaTexture;
-        pstd::span<Light> areaLights;
+        pstd::span<const Light> areaLights;
         MediumInterface* mediumInterface;
     };
 

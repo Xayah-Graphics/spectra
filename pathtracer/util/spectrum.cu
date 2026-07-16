@@ -4817,10 +4817,6 @@ namespace spectra {
             PiecewiseLinearSpectrum zpls(CIE_lambda, CIE_Z);
             z = alloc.new_object<DenselySampledSpectrum>(&zpls, alloc);
 
-            CUDA_CHECK(cudaMemcpyToSymbol(xGPU, &x, sizeof(x)));
-            CUDA_CHECK(cudaMemcpyToSymbol(yGPU, &y, sizeof(y)));
-            CUDA_CHECK(cudaMemcpyToSymbol(zGPU, &z, sizeof(z)));
-
             Spectrum illuma       = PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_A, true, alloc);
             Spectrum illumd50     = PiecewiseLinearSpectrum::FromInterleaved(CIE_Illum_D5000, true, alloc);
             Spectrum illumacesd60 = PiecewiseLinearSpectrum::FromInterleaved(ACES_Illum_D60, true, alloc);
@@ -4909,10 +4905,13 @@ namespace spectra {
             z = nullptr;
             namedSpectra.clear();
 
-            DenselySampledSpectrum* nullSpectrum = nullptr;
-            CUDA_CHECK(cudaMemcpyToSymbol(xGPU, &nullSpectrum, sizeof(nullSpectrum)));
-            CUDA_CHECK(cudaMemcpyToSymbol(yGPU, &nullSpectrum, sizeof(nullSpectrum)));
-            CUDA_CHECK(cudaMemcpyToSymbol(zGPU, &nullSpectrum, sizeof(nullSpectrum)));
+            SetDeviceXYZ(nullptr, nullptr, nullptr);
+        }
+
+        void SetDeviceXYZ(const DenselySampledSpectrum* x, const DenselySampledSpectrum* y, const DenselySampledSpectrum* z) {
+            CUDA_CHECK(cudaMemcpyToSymbol(xGPU, &x, sizeof(x)));
+            CUDA_CHECK(cudaMemcpyToSymbol(yGPU, &y, sizeof(y)));
+            CUDA_CHECK(cudaMemcpyToSymbol(zGPU, &z, sizeof(z)));
         }
     } // namespace Spectra
 

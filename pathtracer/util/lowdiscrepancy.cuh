@@ -21,23 +21,25 @@ namespace spectra {
         // DigitPermutation Public Methods
         DigitPermutation() = default;
 
-        DigitPermutation(int base, uint32_t seed, Allocator alloc) : base(base) {
+        DigitPermutation(int base, int nDigits, const uint16_t* permutations) : base(base), nDigits(nDigits), permutations(permutations) {}
+
+        static int DigitCount(int base) {
             CHECK_LT(base, 65536); // uint16_t
-            // Compute number of digits needed for _base_
-            nDigits       = 0;
+            int nDigits    = 0;
             Float invBase = (Float) 1 / (Float) base, invBaseM = 1;
             while (1 - (base - 1) * invBaseM < 1) {
                 ++nDigits;
                 invBaseM *= invBase;
             }
+            return nDigits;
+        }
 
-            permutations = alloc.allocate_object<uint16_t>(nDigits * base);
-            // Compute random permutations for all digits
+        static void Generate(int base, int nDigits, uint32_t seed, uint16_t* permutations) {
             for (int digitIndex = 0; digitIndex < nDigits; ++digitIndex) {
                 uint64_t dseed = Hash(base, digitIndex, seed);
                 for (int digitValue = 0; digitValue < base; ++digitValue) {
                     int index           = digitIndex * base + digitValue;
-                    permutations[index] = PermutationElement(digitValue, base, dseed);
+                    permutations[index] = static_cast<uint16_t>(PermutationElement(digitValue, base, dseed));
                 }
             }
         }
@@ -49,7 +51,7 @@ namespace spectra {
     private:
         // DigitPermutation Private Members
         int base, nDigits;
-        uint16_t* permutations;
+        const uint16_t* permutations = nullptr;
     };
 
     // Low Discrepancy Declarations
@@ -58,7 +60,6 @@ namespace spectra {
     __host__ __device__ inline Float BlueNoiseSample(Point2i p, int instance);
 
     __host__ __device__ Float RadicalInverse(int baseIndex, uint64_t a);
-    pstd::vector<DigitPermutation>* ComputeRadicalInversePermutations(uint32_t seed, Allocator alloc = {});
     __host__ __device__ Float ScrambledRadicalInverse(int baseIndex, uint64_t a, const DigitPermutation& perm);
 
     // NoRandomizer Definition

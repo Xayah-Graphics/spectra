@@ -42,6 +42,7 @@ namespace spectra {
     class HomogeneousMedium;
     class GridMedium;
     class RGBGridMedium;
+    class DeviceVolumeMedium;
     class CloudMedium;
     class NanoVDBMedium;
 
@@ -55,7 +56,7 @@ namespace spectra {
 
     // Medium Definition
     class Medium : public TaggedPointer< // Medium Types
-                       HomogeneousMedium, GridMedium, RGBGridMedium, CloudMedium, NanoVDBMedium
+                       HomogeneousMedium, GridMedium, RGBGridMedium, DeviceVolumeMedium, CloudMedium, NanoVDBMedium
 
                        > {
     public:

@@ -12,6 +12,7 @@
 #include <pathtracer/core/filters.cuh>
 #include <pathtracer/core/paramdict.cuh>
 #include <pathtracer/core/render_config.cuh>
+#include <pathtracer/gpu/util.cuh>
 #include <pathtracer/util/bluenoise.cuh>
 #include <pathtracer/util/check.cuh>
 #include <pathtracer/util/color.cuh>
@@ -30,20 +31,14 @@ namespace spectra {
         return Dispatch(splat);
     }
 
-    void Film::WriteImage(ImageMetadata metadata, Float splatScale) {
-        auto write = [&](auto ptr) { return ptr->WriteImage(metadata, splatScale); };
-        return DispatchCPU(write);
+    void Film::WriteImage(ImageMetadata metadata, const std::string& filename, Float splatScale) {
+        auto write = [&](auto ptr) { return ptr->WriteImage(metadata, filename, splatScale); };
+        return DispatchHost(write);
     }
 
     Image Film::GetImage(ImageMetadata* metadata, Float splatScale) {
         auto get = [&](auto ptr) { return ptr->GetImage(metadata, splatScale); };
-        return DispatchCPU(get);
-    }
-
-
-    std::string Film::GetFilename() const {
-        auto get = [&](auto ptr) { return ptr->GetFilename(); };
-        return DispatchCPU(get);
+        return DispatchHost(get);
     }
 
     // FilmBaseParameters Method Definitions
@@ -225,7 +220,7 @@ namespace spectra {
         PiecewiseLinearSpectrum::FromInterleaved({380.0, 0.031, 390.0, 0.032, 400.0, 0.032, 410.0, 0.033, 420.0, 0.033, 430.0, 0.033, 440.0, 0.033, 450.0, 0.033, 460.0, 0.032, 470.0, 0.032, 480.0, 0.032, 490.0, 0.032, 500.0, 0.032, 510.0, 0.032, 520.0, 0.032, 530.0, 0.032, 540.0, 0.032, 550.0, 0.032, 560.0, 0.032, 570.0, 0.032, 580.0, 0.032, 590.0, 0.032, 600.0, 0.032, 610.0, 0.032, 620.0, 0.032, 630.0, 0.032, 640.0, 0.032, 650.0, 0.032, 660.0, 0.032, 670.0, 0.032, 680.0, 0.032, 690.0, 0.032, 700.0, 0.032, 710.0, 0.032, 720.0, 0.032, 730.0, 0.033}, false, Allocator())};
 
     // RGBFilm Method Definitions
-    RGBFilm::RGBFilm(FilmBaseParameters p, const RGBColorSpace* colorSpace, Float maxComponentValue, bool writeFP16, Allocator alloc) : FilmBase(p), pixels(p.pixelBounds, alloc), colorSpace(colorSpace), maxComponentValue(maxComponentValue), writeFP16(writeFP16) {
+    RGBFilm::RGBFilm(FilmBaseParameters p, const RGBColorSpace* colorSpace, Float maxComponentValue, bool writeFP16, Allocator pixelAlloc, cudaStream_t stream) : FilmBase(p), pixels(p.pixelBounds, pixelAlloc, stream), colorSpace(colorSpace), maxComponentValue(maxComponentValue), writeFP16(writeFP16) {
         filterIntegral = filter.Integral();
         CHECK(!pixelBounds.IsEmpty());
         CHECK(colorSpace);
@@ -236,7 +231,7 @@ namespace spectra {
     __host__ __device__ void RGBFilm::AddSplat(Point2f p, SampledSpectrum L, const SampledWavelengths& lambda) {
         CHECK(!L.HasNaNs());
         // Convert sample radiance to _PixelSensor_ RGB
-        RGB rgb = sensor->ToSensorRGB(L, lambda);
+        RGB rgb = SensorRGB(L, lambda);
 
         // Optionally clamp sensor RGB value
         Float m = MaxComponentValue(rgb);
@@ -258,7 +253,7 @@ namespace spectra {
         }
     }
 
-    void RGBFilm::WriteImage(ImageMetadata metadata, Float splatScale) {
+    void RGBFilm::WriteImage(ImageMetadata metadata, const std::string& filename, Float splatScale) {
         Image image = GetImage(&metadata, splatScale);
         image.Write(filename, metadata);
     }
@@ -267,10 +262,15 @@ namespace spectra {
         // Convert image to RGB and compute final pixel values
         PixelFormat format = writeFP16 ? PixelFormat::Half : PixelFormat::Float;
         Image image(format, Point2i(pixelBounds.Diagonal()), {"R", "G", "B"});
+        std::vector<Pixel> hostPixels = pixels.CopyToHost();
 
         std::atomic<int> nClamped{0};
         ParallelFor2D(pixelBounds, [&](Point2i p) {
-            RGB rgb = GetPixelRGB(p, splatScale);
+            const Pixel& pixel = pixels.HostPixel(hostPixels, p);
+            RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
+            if (pixel.weightSum != 0) rgb /= pixel.weightSum;
+            for (int component = 0; component < 3; ++component) rgb[component] += splatScale * pixel.rgbSplat[component] / filterIntegral;
+            rgb = outputRGBFromSensorRGB * rgb;
 
             if (writeFP16 && MaxComponentValue(rgb) > 65504) {
                 if (rgb.r > 65504) rgb.r = 65504;
@@ -279,7 +279,7 @@ namespace spectra {
                 ++nClamped;
             }
 
-            Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
+            Point2i pOffset(p.x - pixelBounds.pMin.x, pixelBounds.pMax.y - 1 - p.y);
             image.SetChannels(pOffset, {rgb[0], rgb[1], rgb[2]});
         });
 
@@ -293,19 +293,20 @@ namespace spectra {
     }
 
 
-    RGBFilm* RGBFilm::Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
+    RGBFilm* RGBFilm::Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, Allocator pixelAlloc, cudaStream_t stream, std::string* outputFilename) {
         Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
         bool writeFP16          = parameters.GetOneBool("savefp16", true);
 
         PixelSensor* sensor = PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
         FilmBaseParameters filmBaseParameters(parameters, filter, sensor, config, loc);
+        *outputFilename = filmBaseParameters.filename;
 
-        return alloc.new_object<RGBFilm>(filmBaseParameters, colorSpace, maxComponentValue, writeFP16, alloc);
+        return alloc.new_object<RGBFilm>(filmBaseParameters, colorSpace, maxComponentValue, writeFP16, pixelAlloc, stream);
     }
 
     // GBufferFilm Method Definitions
     __host__ __device__ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface* visibleSurface, Float weight) {
-        RGB rgb = sensor->ToSensorRGB(L, lambda);
+        RGB rgb = SensorRGB(L, lambda);
         Float m = MaxComponentValue(rgb);
         if (m > maxComponentValue) rgb *= maxComponentValue / m;
 
@@ -340,7 +341,7 @@ namespace spectra {
         p.weightSum += weight;
     }
 
-    GBufferFilm::GBufferFilm(FilmBaseParameters p, const AnimatedTransform& outputFromRender, bool applyInverse, const RGBColorSpace* colorSpace, Float maxComponentValue, bool writeFP16, Allocator alloc) : FilmBase(p), outputFromRender(outputFromRender), applyInverse(applyInverse), pixels(pixelBounds, alloc), colorSpace(colorSpace), maxComponentValue(maxComponentValue), writeFP16(writeFP16), filterIntegral(filter.Integral()) {
+    GBufferFilm::GBufferFilm(FilmBaseParameters p, const AnimatedTransform& outputFromRender, bool applyInverse, const RGBColorSpace* colorSpace, Float maxComponentValue, bool writeFP16, Allocator pixelAlloc, cudaStream_t stream) : FilmBase(p), outputFromRender(outputFromRender), applyInverse(applyInverse), pixels(pixelBounds, pixelAlloc, stream), colorSpace(colorSpace), maxComponentValue(maxComponentValue), writeFP16(writeFP16), filterIntegral(filter.Integral()) {
         CHECK(!pixelBounds.IsEmpty());
         outputRGBFromSensorRGB = colorSpace->RGBFromXYZ * sensor->XYZFromSensorRGB;
     }
@@ -348,7 +349,7 @@ namespace spectra {
     __host__ __device__ void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda) {
         // NOTE: same code as RGBFilm::AddSplat()...
         CHECK(!v.HasNaNs());
-        RGB rgb = sensor->ToSensorRGB(v, lambda);
+        RGB rgb = SensorRGB(v, lambda);
         Float m = MaxComponentValue(rgb);
         if (m > maxComponentValue) rgb *= maxComponentValue / m;
 
@@ -364,7 +365,7 @@ namespace spectra {
         }
     }
 
-    void GBufferFilm::WriteImage(ImageMetadata metadata, Float splatScale) {
+    void GBufferFilm::WriteImage(ImageMetadata metadata, const std::string& filename, Float splatScale) {
         Image image = GetImage(&metadata, splatScale);
         image.Write(filename, metadata);
     }
@@ -383,10 +384,11 @@ namespace spectra {
         ImageChannelDesc albedoRgbDesc   = image.GetChannelDesc({"Albedo.R", "Albedo.G", "Albedo.B"});
         ImageChannelDesc varianceDesc    = image.GetChannelDesc({"Variance.R", "Variance.G", "Variance.B"});
         ImageChannelDesc relVarianceDesc = image.GetChannelDesc({"RelativeVariance.R", "RelativeVariance.G", "RelativeVariance.B"});
+        std::vector<Pixel> hostPixels = pixels.CopyToHost();
 
         std::atomic<int> nClamped{0};
         ParallelFor2D(pixelBounds, [&](Point2i p) {
-            Pixel& pixel = pixels[p];
+            const Pixel& pixel = pixels.HostPixel(hostPixels, p);
             RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
             RGB albedoRgb(pixel.rgbAlbedoSum[0], pixel.rgbAlbedoSum[1], pixel.rgbAlbedoSum[2]);
 
@@ -418,7 +420,7 @@ namespace spectra {
                 ++nClamped;
             }
 
-            Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
+            Point2i pOffset(p.x - pixelBounds.pMin.x, pixelBounds.pMax.y - 1 - p.y);
             image.SetChannels(pOffset, rgbDesc, {rgb[0], rgb[1], rgb[2]});
             image.SetChannels(pOffset, albedoRgbDesc, {albedoRgb[0], albedoRgb[1], albedoRgb[2]});
 
@@ -443,13 +445,14 @@ namespace spectra {
     }
 
 
-    GBufferFilm* GBufferFilm::Create(const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
+    GBufferFilm* GBufferFilm::Create(const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, Allocator pixelAlloc, cudaStream_t stream, std::string* outputFilename) {
         Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
         bool writeFP16          = parameters.GetOneBool("savefp16", true);
 
         PixelSensor* sensor = PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
 
         FilmBaseParameters filmBaseParameters(parameters, filter, sensor, config, loc);
+        *outputFilename = filmBaseParameters.filename;
 
         if (!HasExtension(filmBaseParameters.filename, "exr")) throw std::runtime_error(diagnostics::Format(loc, "%s: EXR is the only format supported by the GBufferFilm.", filmBaseParameters.filename));
 
@@ -467,11 +470,11 @@ namespace spectra {
                 "or \"world\".)",
                 coordinateSystem));
 
-        return alloc.new_object<GBufferFilm>(filmBaseParameters, outputFromRender, applyInverse, colorSpace, maxComponentValue, writeFP16, alloc);
+        return alloc.new_object<GBufferFilm>(filmBaseParameters, outputFromRender, applyInverse, colorSpace, maxComponentValue, writeFP16, pixelAlloc, stream);
     }
 
     // SpectralFilm Method Definitions
-    SpectralFilm::SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMax, int nBuckets, const RGBColorSpace* colorSpace, Float maxComponentValue, bool writeFP16, Allocator alloc) : FilmBase(p), colorSpace(colorSpace), lambdaMin(lambdaMin), lambdaMax(lambdaMax), nBuckets(nBuckets), maxComponentValue(maxComponentValue), writeFP16(writeFP16), pixels(p.pixelBounds, alloc) {
+    SpectralFilm::SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMax, int nBuckets, const RGBColorSpace* colorSpace, Float maxComponentValue, bool writeFP16, Allocator pixelAlloc, cudaStream_t stream) : FilmBase(p), colorSpace(colorSpace), lambdaMin(lambdaMin), lambdaMax(lambdaMax), nBuckets(nBuckets), maxComponentValue(maxComponentValue), writeFP16(writeFP16), pixels(p.pixelBounds, pixelAlloc, stream) {
         // Compute _outputRGBFromSensorRGB_ matrix
         outputRGBFromSensorRGB = colorSpace->RGBFromXYZ * sensor->XYZFromSensorRGB;
 
@@ -483,20 +486,12 @@ namespace spectra {
         // SpectralFilm::Pixel structure since the addresses could be computed
         // based on the base pointers and pixel coordinates.
         int nPixels                = pixelBounds.Area();
-        double* bucketWeightBuffer = alloc.allocate_object<double>(2 * nBuckets * nPixels);
-        std::memset(bucketWeightBuffer, 0, 2 * nBuckets * nPixels * sizeof(double));
-        AtomicDouble* splatBuffer = alloc.allocate_object<AtomicDouble>(nBuckets * nPixels);
-        std::memset(splatBuffer, 0, nBuckets * nPixels * sizeof(double));
-
-        for (Point2i p : pixelBounds) {
-            Pixel& pixel     = pixels[p];
-            pixel.bucketSums = bucketWeightBuffer;
-            bucketWeightBuffer += nBuckets;
-            pixel.weightSums = bucketWeightBuffer;
-            bucketWeightBuffer += nBuckets;
-            pixel.bucketSplats = splatBuffer;
-            splatBuffer += nBuckets;
-        }
+        bucketSums = pixelAlloc.allocate_object<double>(nBuckets * nPixels);
+        weightSums = pixelAlloc.allocate_object<double>(nBuckets * nPixels);
+        bucketSplats = pixelAlloc.allocate_object<AtomicDouble>(nBuckets * nPixels);
+        CUDA_CHECK(cudaMemsetAsync(bucketSums, 0, nBuckets * nPixels * sizeof(double), stream));
+        CUDA_CHECK(cudaMemsetAsync(weightSums, 0, nBuckets * nPixels * sizeof(double), stream));
+        CUDA_CHECK(cudaMemsetAsync(bucketSplats, 0, nBuckets * nPixels * sizeof(AtomicDouble), stream));
     }
 
     __host__ __device__ RGB SpectralFilm::GetPixelRGB(Point2i p, Float splatScale) const {
@@ -524,7 +519,7 @@ namespace spectra {
         CHECK(!L.HasNaNs());
 
         // Convert sample radiance to _PixelSensor_ RGB
-        RGB rgb = sensor->ToSensorRGB(L, lambda);
+        RGB rgb = SensorRGB(L, lambda);
 
         // Optionally clamp sensor RGB value
         Float m = MaxComponentValue(rgb);
@@ -547,18 +542,19 @@ namespace spectra {
             Float wt = filter.Evaluate(Point2f(p - pi - Vector2f(0.5, 0.5)));
             if (wt != 0) {
                 Pixel& pixel = pixels[pi];
+                std::size_t pixelOffset = PixelIndex(pi) * nBuckets;
 
                 for (int i = 0; i < 3; ++i) pixel.rgbSplat[i].Add(wt * rgb[i]);
 
                 for (int i = 0; i < NSpectrumSamples; ++i) {
                     int b = LambdaToBucket(lambda[i]);
-                    pixel.bucketSplats[b].Add(wt * L[i]);
+                    bucketSplats[pixelOffset + b].Add(wt * L[i]);
                 }
             }
         }
     }
 
-    void SpectralFilm::WriteImage(ImageMetadata metadata, Float splatScale) {
+    void SpectralFilm::WriteImage(ImageMetadata metadata, const std::string& filename, Float splatScale) {
         Image image = GetImage(&metadata, splatScale);
         image.Write(filename, metadata);
     }
@@ -581,12 +577,22 @@ namespace spectra {
             imageChannels.push_back("S0." + lambda);
         }
         Image image(format, Point2i(pixelBounds.Diagonal()), imageChannels);
+        std::vector<Pixel> hostPixels = pixels.CopyToHost();
+        std::size_t bucketValueCount = static_cast<std::size_t>(pixelBounds.Area()) * static_cast<std::size_t>(nBuckets);
+        std::vector<double> hostBucketSums(bucketValueCount);
+        std::vector<double> hostWeightSums(bucketValueCount);
+        std::vector<AtomicDouble> hostBucketSplats(bucketValueCount);
+        CUDA_CHECK(cudaMemcpy(hostBucketSums.data(), bucketSums, bucketValueCount * sizeof(double), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(hostWeightSums.data(), weightSums, bucketValueCount * sizeof(double), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(hostBucketSplats.data(), bucketSplats, bucketValueCount * sizeof(AtomicDouble), cudaMemcpyDeviceToHost));
 
         std::atomic<int> nClamped{0};
         ParallelFor2D(pixelBounds, [&](Point2i p) {
-            Pixel& pixel = pixels[p];
-
-            RGB rgb = GetPixelRGB(p, splatScale);
+            const Pixel& pixel = pixels.HostPixel(hostPixels, p);
+            RGB rgb(pixel.rgbSum[0], pixel.rgbSum[1], pixel.rgbSum[2]);
+            if (pixel.rgbWeightSum != 0) rgb /= pixel.rgbWeightSum;
+            for (int component = 0; component < 3; ++component) rgb[component] += splatScale * pixel.rgbSplat[component] / filterIntegral;
+            rgb = outputRGBFromSensorRGB * rgb;
 
             // Clamp to max representable fp16 to avoid Infs
             if (writeFP16) {
@@ -598,15 +604,16 @@ namespace spectra {
                 }
             }
 
-            Point2i pOffset(p.x - pixelBounds.pMin.x, p.y - pixelBounds.pMin.y);
+            Point2i pOffset(p.x - pixelBounds.pMin.x, pixelBounds.pMax.y - 1 - p.y);
             image.SetChannels(pOffset, {rgb[0], rgb[1], rgb[2]});
 
             // Set spectral channels. Hardcoded assuming that they come
             // immediately after RGB, as is currently specified above.
+            std::size_t pixelOffset = PixelIndex(p) * nBuckets;
             for (int i = 0; i < nBuckets; ++i) {
                 Float c = 0;
-                if (pixel.weightSums[i] > 0) {
-                    c = pixel.bucketSums[i] / pixel.weightSums[i] + splatScale * pixel.bucketSplats[i] / filterIntegral;
+                if (hostWeightSums[pixelOffset + i] > 0) {
+                    c = hostBucketSums[pixelOffset + i] / hostWeightSums[pixelOffset + i] + splatScale * hostBucketSplats[pixelOffset + i] / filterIntegral;
                     if (writeFP16 && c > 65504) {
                         c = 65504;
                         ++nClamped;
@@ -631,9 +638,10 @@ namespace spectra {
     }
 
 
-    SpectralFilm* SpectralFilm::Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
+    SpectralFilm* SpectralFilm::Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, Allocator pixelAlloc, cudaStream_t stream, std::string* outputFilename) {
         PixelSensor* sensor = PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
         FilmBaseParameters filmBaseParameters(parameters, filter, sensor, config, loc);
+        *outputFilename = filmBaseParameters.filename;
         bool writeFP16 = parameters.GetOneBool("savefp16", true);
 
         if (!HasExtension(filmBaseParameters.filename, "exr")) throw std::runtime_error(diagnostics::Format(loc, "%s: EXR is the only output format supported by the SpectralFilm.", filmBaseParameters.filename));
@@ -650,17 +658,17 @@ namespace spectra {
 
         Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
 
-        return alloc.new_object<SpectralFilm>(filmBaseParameters, lambdaMin, lambdaMax, nBuckets, colorSpace, maxComponentValue, writeFP16, alloc);
+        return alloc.new_object<SpectralFilm>(filmBaseParameters, lambdaMin, lambdaMax, nBuckets, colorSpace, maxComponentValue, writeFP16, pixelAlloc, stream);
     }
 
-    Film Film::Create(const std::string& name, const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
+    Film Film::Create(const std::string& name, const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, Allocator pixelAlloc, cudaStream_t stream, std::string* outputFilename) {
         Film film;
         if (name == "rgb")
-            film = RGBFilm::Create(parameters, exposureTime, filter, parameters.ColorSpace(), config, loc, alloc);
+            film = RGBFilm::Create(parameters, exposureTime, filter, parameters.ColorSpace(), config, loc, alloc, pixelAlloc, stream, outputFilename);
         else if (name == "gbuffer")
-            film = GBufferFilm::Create(parameters, exposureTime, cameraTransform, filter, parameters.ColorSpace(), config, loc, alloc);
+            film = GBufferFilm::Create(parameters, exposureTime, cameraTransform, filter, parameters.ColorSpace(), config, loc, alloc, pixelAlloc, stream, outputFilename);
         else if (name == "spectral")
-            film = SpectralFilm::Create(parameters, exposureTime, filter, parameters.ColorSpace(), config, loc, alloc);
+            film = SpectralFilm::Create(parameters, exposureTime, filter, parameters.ColorSpace(), config, loc, alloc, pixelAlloc, stream, outputFilename);
         else
             throw std::runtime_error(diagnostics::Format(loc, "%s: film type unknown.", name));
 

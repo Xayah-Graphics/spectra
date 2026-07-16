@@ -1,6 +1,7 @@
 #ifndef SPECTRA_PATHTRACER_BASE_SAMPLER_H
 #define SPECTRA_PATHTRACER_BASE_SAMPLER_H
 
+#include <cuda_runtime_api.h>
 #include <pathtracer/util/float.cuh>
 #include <pathtracer/util/memory.cuh>
 #include <pathtracer/util/taggedptr.cuh>
@@ -12,6 +13,7 @@ namespace spectra {
     struct FileLoc;
 
     namespace pathtracer {
+        class PathtracerDeviceArena;
         struct RenderConfig;
     } // namespace pathtracer
 
@@ -41,7 +43,7 @@ namespace spectra {
         // Sampler Interface
         using TaggedPointer::TaggedPointer;
 
-        static Sampler Create(const std::string& name, const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
+        static Sampler Create(const std::string& name, const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc, pathtracer::PathtracerDeviceArena& deviceArena, cudaStream_t stream);
 
         __host__ __device__ int SamplesPerPixel() const;
 
