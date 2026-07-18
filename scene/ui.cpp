@@ -130,7 +130,7 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] bool option_uses_slider(const ControlOptionSchema& schema) {
-            return schema.kind == ControlOptionKind::Float && schema.presentation == ControlOptionPresentationSlider && schema.has_numeric_range;
+            return (schema.kind == ControlOptionKind::Float || schema.kind == ControlOptionKind::UnsignedInteger) && schema.presentation == ControlOptionPresentationSlider && schema.has_numeric_range;
         }
 
         [[nodiscard]] int slider_decimal_precision(const ControlOptionSchema& schema) {
@@ -154,6 +154,13 @@ namespace spectra::scene {
             editor.float_value = std::clamp(editor.schema.numeric_min + offset, editor.schema.numeric_min, editor.schema.numeric_max);
         }
 
+        void snap_unsigned_slider_value(OptionEditor& editor) {
+            const std::uint64_t offset = editor.unsigned_value - editor.schema.unsigned_min;
+            const std::uint64_t remainder = offset % editor.schema.unsigned_step;
+            editor.unsigned_value -= remainder;
+            if (remainder >= editor.schema.unsigned_step - remainder && editor.schema.unsigned_max - editor.unsigned_value >= editor.schema.unsigned_step) editor.unsigned_value += editor.schema.unsigned_step;
+        }
+
         [[nodiscard]] OptionEditor make_option_editor(ControlOptionSchema schema) {
             OptionEditor editor{.schema = std::move(schema)};
             editor.enabled = editor.schema.required || !editor.schema.default_value.empty();
@@ -166,7 +173,7 @@ namespace spectra::scene {
                 else editor.float_value = parse_float_text(editor.schema.default_value, std::format("Scene option '{}'", editor.schema.key));
                 break;
             case ControlOptionKind::UnsignedInteger:
-                editor.unsigned_value = editor.schema.default_value.empty() ? 0u : parse_unsigned_integer_text(editor.schema.default_value, std::format("Scene option '{}'", editor.schema.key));
+                editor.unsigned_value = editor.schema.default_value.empty() ? option_uses_slider(editor.schema) ? editor.schema.unsigned_min : 0u : parse_unsigned_integer_text(editor.schema.default_value, std::format("Scene option '{}'", editor.schema.key));
                 break;
             default:
                 editor.text_value = editor.schema.default_value;
@@ -330,7 +337,12 @@ namespace spectra::scene {
                 }
                 break;
             case ControlOptionKind::UnsignedInteger:
-                changed = ImGui::InputScalar("##value", ImGuiDataType_U64, &editor.unsigned_value, nullptr, nullptr, nullptr, ImGuiInputTextFlags_EnterReturnsTrue) || changed;
+                if (option_uses_slider(editor.schema)) {
+                    changed = ImGui::SliderScalar("##value", ImGuiDataType_U64, &editor.unsigned_value, &editor.schema.unsigned_min, &editor.schema.unsigned_max, "%llu") || changed;
+                    if (changed) snap_unsigned_slider_value(editor);
+                } else {
+                    changed = ImGui::InputScalar("##value", ImGuiDataType_U64, &editor.unsigned_value, nullptr, nullptr, nullptr, ImGuiInputTextFlags_EnterReturnsTrue) || changed;
+                }
                 break;
             default:
                 changed = input_text("##value", editor.text_buffer) || changed;
@@ -502,6 +514,25 @@ namespace spectra::scene {
             controls.editor_plugin_key = plugin_editor_key(plugin);
         }
 
+        void apply_setting_states(ControlsState& controls, const ControlState& state) {
+            for (const ControlSettingState& setting_state : state.setting_states) {
+                const auto editor = std::ranges::find_if(controls.settings, [&setting_state](const SettingEditor& candidate) { return candidate.schema.key == setting_state.key; });
+                if (setting_state.has_unsigned_range) {
+                    editor->schema.has_numeric_range = true;
+                    editor->schema.unsigned_min = setting_state.unsigned_min;
+                    editor->schema.unsigned_max = setting_state.unsigned_max;
+                    editor->schema.unsigned_step = setting_state.unsigned_step;
+                    editor->option.schema.has_numeric_range = true;
+                    editor->option.schema.unsigned_min = setting_state.unsigned_min;
+                    editor->option.schema.unsigned_max = setting_state.unsigned_max;
+                    editor->option.schema.unsigned_step = setting_state.unsigned_step;
+                }
+                if (editor->committed_value == setting_state.value) continue;
+                set_option_editor_value(editor->option, setting_state.value);
+                editor->committed_value = setting_state.value;
+            }
+        }
+
         void begin_pending_plugin_controls(ControlsState& controls, PluginInfo plugin) {
             controls.pending_plugin = std::move(plugin);
             const PluginInfo& pending_plugin = *controls.pending_plugin;
@@ -642,6 +673,8 @@ namespace spectra::scene {
                 static_cast<void>(draw_open_controls(scene_instance, status, controls, *plugin));
                 return;
             }
+
+            apply_setting_states(controls, *control_state);
 
             for (const ControlSection& section : plugin->sections) {
                 const bool has_actions = action_section_has_editors(controls.actions, section.id);

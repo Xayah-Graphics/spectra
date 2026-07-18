@@ -745,14 +745,25 @@ namespace spectra::scene {
                 if (schema.presentation == ControlOptionPresentationSlider) throw std::runtime_error(std::format("{} slider presentation requires a numeric range", context));
                 return;
             }
-            if (schema.kind != ControlOptionKind::Float) throw std::runtime_error(std::format("{} numeric range is only supported for float options", context));
             if (schema.presentation != ControlOptionPresentationSlider) throw std::runtime_error(std::format("{} numeric range requires slider presentation", context));
-            if (!std::isfinite(schema.numeric_min) || !std::isfinite(schema.numeric_max) || !std::isfinite(schema.numeric_step)) throw std::runtime_error(std::format("{} numeric range must be finite", context));
-            if (!(schema.numeric_min < schema.numeric_max)) throw std::runtime_error(std::format("{} numeric range min must be less than max", context));
-            if (!(schema.numeric_step > 0.0f)) throw std::runtime_error(std::format("{} numeric range step must be positive", context));
-            if (schema.default_value.empty()) return;
-            const float default_value = parse_float_default(schema.default_value, std::format("{} default value", context));
-            if (default_value < schema.numeric_min || default_value > schema.numeric_max) throw std::runtime_error(std::format("{} default value is outside its numeric range", context));
+            if (schema.kind == ControlOptionKind::Float) {
+                if (!std::isfinite(schema.numeric_min) || !std::isfinite(schema.numeric_max) || !std::isfinite(schema.numeric_step)) throw std::runtime_error(std::format("{} numeric range must be finite", context));
+                if (!(schema.numeric_min < schema.numeric_max)) throw std::runtime_error(std::format("{} numeric range min must be less than max", context));
+                if (!(schema.numeric_step > 0.0f)) throw std::runtime_error(std::format("{} numeric range step must be positive", context));
+                if (schema.default_value.empty()) return;
+                const float default_value = parse_float_default(schema.default_value, std::format("{} default value", context));
+                if (default_value < schema.numeric_min || default_value > schema.numeric_max) throw std::runtime_error(std::format("{} default value is outside its numeric range", context));
+                return;
+            }
+            if (schema.kind == ControlOptionKind::UnsignedInteger) {
+                if (schema.unsigned_min >= schema.unsigned_max) throw std::runtime_error(std::format("{} unsigned range min must be less than max", context));
+                if (schema.unsigned_step == 0u) throw std::runtime_error(std::format("{} unsigned range step must be positive", context));
+                if (schema.default_value.empty()) return;
+                const std::uint64_t default_value = parse_unsigned_integer_default(schema.default_value, std::format("{} default value", context));
+                if (default_value < schema.unsigned_min || default_value > schema.unsigned_max) throw std::runtime_error(std::format("{} default value is outside its unsigned range", context));
+                return;
+            }
+            throw std::runtime_error(std::format("{} numeric range is only supported for float and unsigned integer options", context));
         }
 
         [[nodiscard]] ControlOptionSchema make_open_option_schema(const SpectraSceneControlOptionSchema& schema, const std::string_view context) {
@@ -770,6 +781,9 @@ namespace spectra::scene {
                 .numeric_min = schema.numeric_min,
                 .numeric_max = schema.numeric_max,
                 .numeric_step = schema.numeric_step,
+                .unsigned_min = schema.unsigned_min,
+                .unsigned_max = schema.unsigned_max,
+                .unsigned_step = schema.unsigned_step,
             };
             if (schema.required != 0u && schema.required != 1u) throw std::runtime_error(std::format("{} required flag must be 0 or 1", context));
             const std::span<const SpectraSceneControlOptionChoice> choices = abi_span(schema.choices.data, schema.choices.count, std::format("{} choices", context));
@@ -915,6 +929,25 @@ namespace spectra::scene {
                 if (converted.enabled && !converted.disabled_reason.empty()) throw std::runtime_error(std::format("{} enabled action '{}' must not provide disabled_reason", context, converted.action_id));
                 state.action_states.push_back(std::move(converted));
             }
+            const std::span<const SpectraSceneControlSettingState> setting_states = abi_span(view.setting_states.data, view.setting_states.count, std::format("{} setting states", context));
+            std::set<std::string> setting_keys{};
+            state.setting_states.reserve(setting_states.size());
+            for (std::size_t setting_index = 0u; setting_index < setting_states.size(); ++setting_index) {
+                const SpectraSceneControlSettingState& setting = setting_states[setting_index];
+                ControlSettingState converted{
+                    .key = abi_string(setting.key, std::format("{} setting state {} key", context, setting_index), false),
+                    .value = abi_string(setting.value, std::format("{} setting state {} value", context, setting_index), false),
+                    .has_unsigned_range = setting.has_unsigned_range != 0u,
+                    .unsigned_min = setting.unsigned_min,
+                    .unsigned_max = setting.unsigned_max,
+                    .unsigned_step = setting.unsigned_step,
+                };
+                if (setting.has_unsigned_range != 0u && setting.has_unsigned_range != 1u) throw std::runtime_error(std::format("{} setting state '{}' has_unsigned_range flag must be 0 or 1", context, converted.key));
+                if (converted.has_unsigned_range && converted.unsigned_min >= converted.unsigned_max) throw std::runtime_error(std::format("{} setting state '{}' unsigned range min must be less than max", context, converted.key));
+                if (converted.has_unsigned_range && converted.unsigned_step == 0u) throw std::runtime_error(std::format("{} setting state '{}' unsigned range step must be positive", context, converted.key));
+                if (!setting_keys.insert(converted.key).second) throw std::runtime_error(std::format("{} setting state '{}' is duplicated", context, converted.key));
+                state.setting_states.push_back(std::move(converted));
+            }
             return state;
         }
 
@@ -933,7 +966,7 @@ namespace spectra::scene {
             for (const ControlMetric& metric : state.metrics) require_known_section_id(section_ids, metric.section_id, std::format("{} metric '{}'", context, metric.key));
         }
 
-        [[nodiscard]] ControlState make_checked_control_state(const SpectraSceneControlStateView& view, const std::span<const ControlSection> sections, const std::span<const ControlAction> actions, const std::string_view context) {
+        [[nodiscard]] ControlState make_checked_control_state(const SpectraSceneControlStateView& view, const std::span<const ControlSection> sections, const std::span<const ControlAction> actions, const std::span<const ControlOptionSchema> settings, const std::string_view context) {
             ControlState state = make_control_state(view, context);
             std::set<std::string> action_ids{};
             for (const ControlAction& action : actions) action_ids.insert(action.id);
@@ -944,6 +977,22 @@ namespace spectra::scene {
             }
             for (const std::string& action_id : action_ids)
                 if (!action_state_ids.contains(action_id)) throw std::runtime_error(std::format("{} did not provide a state for action '{}'", context, action_id));
+            std::set<std::string> setting_keys{};
+            for (const ControlOptionSchema& setting : settings) setting_keys.insert(setting.key);
+            std::set<std::string> setting_state_keys{};
+            for (const ControlSettingState& setting_state : state.setting_states) {
+                const auto setting = std::ranges::find_if(settings, [&setting_state](const ControlOptionSchema& candidate) { return candidate.key == setting_state.key; });
+                if (setting == settings.end()) throw std::runtime_error(std::format("{} state references unknown setting '{}'", context, setting_state.key));
+                validate_control_setting_value(*setting, setting_state.value, context);
+                if (setting_state.has_unsigned_range && setting->kind != ControlOptionKind::UnsignedInteger) throw std::runtime_error(std::format("{} setting '{}' supplies an unsigned range for a non-unsigned setting", context, setting_state.key));
+                if (setting_state.has_unsigned_range) {
+                    const std::uint64_t value = parse_unsigned_integer_default(setting_state.value, std::format("{} setting '{}' value", context, setting_state.key));
+                    if (value < setting_state.unsigned_min || value > setting_state.unsigned_max) throw std::runtime_error(std::format("{} setting '{}' value is outside its unsigned range", context, setting_state.key));
+                }
+                setting_state_keys.insert(setting_state.key);
+            }
+            for (const std::string& setting_key : setting_keys)
+                if (!setting_state_keys.contains(setting_key)) throw std::runtime_error(std::format("{} did not provide a state for setting '{}'", context, setting_key));
             validate_state_section_references(state, sections, context);
             return state;
         }
@@ -1257,7 +1306,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v20");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v21");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -1394,7 +1443,7 @@ namespace spectra::scene {
         [[nodiscard]] ControlState control_state(SpectraSceneInstance* instance) const {
             SpectraSceneControlStateView view{};
             this->check_result(this->plugin->control_state(instance, &view), instance, "Scene plugin controls state");
-            return make_checked_control_state(view, this->descriptor.sections, this->descriptor.control_actions, "Scene plugin controls state");
+            return make_checked_control_state(view, this->descriptor.sections, this->descriptor.control_actions, this->descriptor.control_settings, "Scene plugin controls state");
         }
 
         [[nodiscard]] SpectraSceneDocumentView document(SpectraSceneInstance* instance) const {

@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 20u;
+    constexpr std::uint32_t plugin_abi_version = 21u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -70,6 +70,9 @@ export namespace spectra::scene {
         float numeric_min{};
         float numeric_max{};
         float numeric_step{};
+        std::uint64_t unsigned_min{};
+        std::uint64_t unsigned_max{};
+        std::uint64_t unsigned_step{};
     };
 
     struct SpectraSceneControlOptionSchemaSpan {
@@ -116,6 +119,20 @@ export namespace spectra::scene {
         std::uint64_t count{};
     };
 
+    struct SpectraSceneControlSettingState {
+        const char* key{};
+        const char* value{};
+        std::uint32_t has_unsigned_range{};
+        std::uint64_t unsigned_min{};
+        std::uint64_t unsigned_max{};
+        std::uint64_t unsigned_step{};
+    };
+
+    struct SpectraSceneControlSettingStateSpan {
+        const SpectraSceneControlSettingState* data{};
+        std::uint64_t count{};
+    };
+
     struct SpectraSceneControlStateView {
         std::uint64_t struct_size{};
         const char* phase{};
@@ -123,6 +140,7 @@ export namespace spectra::scene {
         const char* detail{};
         SpectraSceneControlMetricSpan metrics{};
         SpectraSceneControlActionStateSpan action_states{};
+        SpectraSceneControlSettingStateSpan setting_states{};
     };
 
     struct SpectraSceneUpdateInfo {

@@ -47,6 +47,9 @@ namespace spectra::scene {
         float numeric_min{};
         float numeric_max{};
         float numeric_step{};
+        std::uint64_t unsigned_min{};
+        std::uint64_t unsigned_max{};
+        std::uint64_t unsigned_step{};
     };
 
     export struct ControlOption {
@@ -154,12 +157,22 @@ namespace spectra::scene {
         std::string disabled_reason{};
     };
 
+    export struct ControlSettingState {
+        std::string key{};
+        std::string value{};
+        bool has_unsigned_range{};
+        std::uint64_t unsigned_min{};
+        std::uint64_t unsigned_max{};
+        std::uint64_t unsigned_step{};
+    };
+
     export struct ControlState {
         std::string phase{};
         std::string headline{};
         std::string detail{};
         std::vector<ControlMetric> metrics{};
         std::vector<ControlActionState> action_states{};
+        std::vector<ControlSettingState> setting_states{};
     };
 
     export struct UpdateInfo {
