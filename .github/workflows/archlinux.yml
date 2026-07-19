@@ -52,7 +52,6 @@ jobs:
         run: |
           . /etc/profile
           export PATH="/opt/slang/bin:${PATH}"
-          mv "$("${NVCC_CCBIN}" -print-file-name=libstdc++.modules.json)" /usr/lib/libstdc++.modules.json
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER="${NVCC_CCBIN}" \
