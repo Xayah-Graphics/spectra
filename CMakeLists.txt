@@ -499,26 +499,19 @@ target_sources(
 )
 set_property(TARGET spectra_scene_model PROPERTY CXX_MODULE_STD ON)
 
-add_library(spectra_scene_plugin_runtime)
+add_library(spectra_scene)
+add_library(spectra::scene ALIAS spectra_scene)
 target_sources(
-        spectra_scene_plugin_runtime
-        PUBLIC
-        FILE_SET runtime_cxx_modules TYPE CXX_MODULES FILES
-        scene/plugin_host.ixx
+        spectra_scene
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
         scene/plugin_abi.ixx
         PRIVATE
+        scene/scene.cpp
         scene/plugin_host.cpp
 )
-target_link_libraries(spectra_scene_plugin_runtime PRIVATE spectra_scene_model ${CMAKE_DL_LIBS})
-set_property(TARGET spectra_scene_plugin_runtime PROPERTY CXX_MODULE_STD ON)
-
-add_library(spectra_scene)
-add_library(spectra::scene ALIAS spectra_scene)
-target_sources(spectra_scene PRIVATE scene/scene.cpp)
 target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTRA_SCENES_ROOT}\"")
-target_link_libraries(spectra_scene PUBLIC spectra_scene_model PRIVATE spectra_scene_plugin_runtime ZLIB::ZLIB spectra::lodepng)
+target_link_libraries(spectra_scene PUBLIC spectra_scene_model PRIVATE ZLIB::ZLIB spectra::lodepng ${CMAKE_DL_LIBS})
 set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 
 # ============================================================================

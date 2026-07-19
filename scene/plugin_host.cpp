@@ -9,10 +9,9 @@ module;
 #include <dlfcn.h>
 #endif
 
-module spectra.scene.plugin_host;
+module spectra.scene;
 
 import std;
-import spectra.scene;
 import spectra.scene.plugin_abi;
 
 namespace spectra::scene {

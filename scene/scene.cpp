@@ -10,7 +10,6 @@ module;
 module spectra.scene;
 
 import std;
-import spectra.scene.plugin_host;
 
 namespace spectra::scene {
     [[nodiscard]] Scene::Document make_preview_document_from_pbrt(const Scene::ResolvedScene& scene);
