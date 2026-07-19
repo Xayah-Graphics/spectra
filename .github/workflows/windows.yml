@@ -15,13 +15,14 @@ concurrency:
 jobs:
   build:
     name: Build (Windows, MSVC, CMake+Ninja)
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     timeout-minutes: 180
 
     env:
       CMAKE_BUILD_TYPE: Release
       SPECTRA_BUILD_DIR: build
       SPECTRA_CMAKE_VERSION: '4.4.0'
+      SPECTRA_NINJA_VERSION: '1.13.0'
       SPECTRA_CUDA_VERSION: '13.3.0'
       SPECTRA_VULKAN_VERSION: '1.4.350.0'
       SPECTRA_OPTIX_TAG: v9.1.0
@@ -29,28 +30,32 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      - name: Install CMake
-        uses: ssrobins/install-cmake@v1
-        with:
-          version: ${{ env.SPECTRA_CMAKE_VERSION }}
-
-      - name: Install Ninja
+      - name: Install CMake and Ninja
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          choco install ninja -y --no-progress
+          python -m pip install "cmake==$env:SPECTRA_CMAKE_VERSION" "ninja==$env:SPECTRA_NINJA_VERSION"
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.35
-        with:
-          cuda: ${{ env.SPECTRA_CUDA_VERSION }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cudaVersion = [System.Version]$env:SPECTRA_CUDA_VERSION
+          $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$($cudaVersion.Major).$($cudaVersion.Minor)"
+          $installer = Join-Path $env:RUNNER_TEMP "cuda-$env:SPECTRA_CUDA_VERSION-installer.exe"
+          $installerUrl = "https://developer.download.nvidia.com/compute/cuda/$env:SPECTRA_CUDA_VERSION/network_installers/cuda_$($env:SPECTRA_CUDA_VERSION)_windows_network.exe"
+
+          Invoke-WebRequest -Uri $installerUrl -OutFile $installer
+          $process = Start-Process -FilePath $installer -ArgumentList "-s" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "CUDA $env:SPECTRA_CUDA_VERSION installer exited with code $($process.ExitCode)."
+          }
+
+          "CUDA_PATH=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CUDAToolkit_ROOT=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          (Join-Path $cudaPath "bin") | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Install Vulkan SDK
         uses: jakoch/install-vulkan-sdk-action@v1
@@ -88,6 +93,16 @@ jobs:
           }
 
           "SPECTRA_OPTIX_PATH=$optixRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Enter Visual Studio developer environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installation = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $developerCommand = Join-Path $installation "Common7\Tools\VsDevCmd.bat"
+          cmd /d /s /c "`"$developerCommand`" -arch=x64 -host_arch=x64 && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+          }
 
       - name: Toolchain sanity
         shell: pwsh
