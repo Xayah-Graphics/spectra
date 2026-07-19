@@ -22,7 +22,7 @@ jobs:
       CMAKE_BUILD_TYPE: Release
       SPECTRA_BUILD_DIR: build
       SPECTRA_CMAKE_VERSION: '4.4.0'
-      SPECTRA_CUDA_VERSION: '13.2.0'
+      SPECTRA_CUDA_VERSION: '13.3.0'
       SPECTRA_VULKAN_VERSION: '1.4.350.0'
       SPECTRA_OPTIX_TAG: v9.1.0
       SPECTRA_SLANG_URL: https://github.com/shader-slang/slang/releases/download/v2026.11/slang-2026.11-windows-x86_64.zip
@@ -111,8 +111,8 @@ jobs:
           }
 
           $nvccVersion = (nvcc --version) -join "`n"
-          if ($nvccVersion -notmatch "release 13\.2") {
-            throw "CUDA 13.2 is required; nvcc reported: $nvccVersion"
+          if ($nvccVersion -notmatch "release 13\.3") {
+            throw "CUDA 13.3 is required; nvcc reported: $nvccVersion"
           }
 
           if (-not (Test-Path -LiteralPath (Join-Path $env:VULKAN_SDK "Include\vulkan\vulkan.h"))) {

@@ -442,6 +442,7 @@ target_sources(
         "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp"
 )
 target_include_directories(spectra_imgui PUBLIC "${SPECTRA_IMGUI_SOURCE_DIR}" "${SPECTRA_IMGUI_SOURCE_DIR}/backends")
+target_compile_definitions(spectra_imgui PRIVATE GLFW_INCLUDE_NONE)
 target_link_libraries(spectra_imgui PUBLIC spectra::vulkan PRIVATE glfw)
 set_property(TARGET spectra_imgui PROPERTY CXX_MODULE_STD ON)
 
