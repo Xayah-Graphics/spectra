@@ -863,6 +863,7 @@ target_link_libraries(
         Threads::Threads
         spectra_pathtracer_embedded_optix_input
 )
+set_property(TARGET spectra_pathtracer PROPERTY CXX_MODULE_STD ON)
 set_property(TARGET spectra_pathtracer PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET spectra_pathtracer PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
