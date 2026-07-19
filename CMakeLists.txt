@@ -526,7 +526,7 @@ set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX SDK for the Spectra pathtrac
 set(SPECTRA_OPTIX_CACHE_DIR "${SPECTRA_BINARY_ROOT_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for the Spectra pathtracer")
 set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for the Spectra pathtracer")
 
-find_package(CUDAToolkit 13.2 EXACT REQUIRED)
+find_package(CUDAToolkit 13.2 REQUIRED)
 if (NOT CMAKE_CUDA_COMPILER_VERSION MATCHES "^13\\.2($|\\.)")
     message(FATAL_ERROR "spectra requires CUDA compiler 13.2; found ${CMAKE_CUDA_COMPILER_VERSION}.")
 endif ()
