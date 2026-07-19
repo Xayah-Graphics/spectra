@@ -28,7 +28,7 @@ set(SPECTRA_SCENES_ROOT "${SPECTRA_ROOT_DIR}/scenes")
 # ============================================================================
 # Dependencies
 # ============================================================================
-find_package(CUDAToolkit 13.2 REQUIRED)
+find_package(CUDAToolkit 13.3 REQUIRED)
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
 

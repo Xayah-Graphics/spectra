@@ -86,7 +86,7 @@ namespace spectra::pathtracer {
         RGBToSpectrumTable device = *table;
         device.zNodes = arena.StoreArray(table->zNodes, RGBToSpectrumTable::res, stream);
         constexpr std::size_t coefficientCount = 3ull * RGBToSpectrumTable::res * RGBToSpectrumTable::res * RGBToSpectrumTable::res * 3;
-        device.coeffs = reinterpret_cast<const RGBToSpectrumTable::CoefficientArray*>(arena.StoreArray(reinterpret_cast<const float*>(table->coeffs), coefficientCount, stream));
+        device.coeffs = reinterpret_cast<decltype(device.coeffs)>(arena.StoreArray(reinterpret_cast<const float*>(table->coeffs), coefficientCount, stream));
         const RGBToSpectrumTable* result = arena.Store(device, stream);
         state->rgbToSpectrumTables.emplace(table, result);
         return result;
