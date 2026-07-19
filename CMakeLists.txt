@@ -182,6 +182,7 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 set(GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
 add_subdirectory("${SPECTRA_GLFW_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/glfw-build/${SPECTRA_GLFW_COMMIT}")
+target_compile_definitions(glfw INTERFACE GLFW_INCLUDE_NONE)
 
 add_library(spectra_vulkan)
 add_library(spectra::vulkan ALIAS spectra_vulkan)
@@ -442,7 +443,6 @@ target_sources(
         "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp"
 )
 target_include_directories(spectra_imgui PUBLIC "${SPECTRA_IMGUI_SOURCE_DIR}" "${SPECTRA_IMGUI_SOURCE_DIR}/backends")
-target_compile_definitions(spectra_imgui PRIVATE GLFW_INCLUDE_NONE)
 target_link_libraries(spectra_imgui PUBLIC spectra::vulkan PRIVATE glfw)
 set_property(TARGET spectra_imgui PROPERTY CXX_MODULE_STD ON)
 
