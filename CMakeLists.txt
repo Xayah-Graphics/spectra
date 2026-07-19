@@ -28,6 +28,7 @@ set(SPECTRA_SCENES_ROOT "${SPECTRA_ROOT_DIR}/scenes")
 # ============================================================================
 # Dependencies
 # ============================================================================
+find_package(CUDAToolkit 13.2 REQUIRED)
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -525,14 +526,6 @@ set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX SDK for the Spectra pathtracer")
 set(SPECTRA_OPTIX_CACHE_DIR "${SPECTRA_BINARY_ROOT_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for the Spectra pathtracer")
 set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for the Spectra pathtracer")
-
-find_package(CUDAToolkit 13.2 REQUIRED)
-if (NOT CMAKE_CUDA_COMPILER_VERSION MATCHES "^13\\.2($|\\.)")
-    message(FATAL_ERROR "spectra requires CUDA compiler 13.2; found ${CMAKE_CUDA_COMPILER_VERSION}.")
-endif ()
-if (NOT CUDAToolkit_VERSION MATCHES "^13\\.2($|\\.)")
-    message(FATAL_ERROR "spectra requires CUDA Toolkit 13.2; found ${CUDAToolkit_VERSION}.")
-endif ()
 
 if (SPECTRA_OPTIX_PATH STREQUAL "")
     file(GLOB SPECTRA_OPTIX_DEFAULT_PATHS LIST_DIRECTORIES true
