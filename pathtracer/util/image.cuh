@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <pathtracer/core/diagnostics.cuh>
@@ -15,6 +16,8 @@
 #include <pathtracer/util/parallel.cuh>
 #include <pathtracer/util/pstd.cuh>
 #include <pathtracer/util/vecmath.cuh>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace spectra {
@@ -199,10 +202,14 @@ namespace spectra {
         Image(Allocator alloc = {}) : p8(alloc), p16(alloc), p32(alloc), format(PixelFormat::U256), resolution(0, 0) {}
 
         Image(pstd::vector<uint8_t> p8, Point2i resolution, pstd::span<const std::string> channels, ColorEncoding encoding);
+        Image(pstd::vector<uint8_t> p8, Point2i resolution, std::initializer_list<std::string> channels, ColorEncoding encoding) : Image(std::move(p8), resolution, pstd::span<const std::string>{channels.begin(), channels.size()}, encoding) {}
         Image(pstd::vector<Half> p16, Point2i resolution, pstd::span<const std::string> channels);
+        Image(pstd::vector<Half> p16, Point2i resolution, std::initializer_list<std::string> channels) : Image(std::move(p16), resolution, pstd::span<const std::string>{channels.begin(), channels.size()}) {}
         Image(pstd::vector<float> p32, Point2i resolution, pstd::span<const std::string> channels);
+        Image(pstd::vector<float> p32, Point2i resolution, std::initializer_list<std::string> channels) : Image(std::move(p32), resolution, pstd::span<const std::string>{channels.begin(), channels.size()}) {}
 
         Image(PixelFormat format, Point2i resolution, pstd::span<const std::string> channelNames, ColorEncoding encoding = nullptr, Allocator alloc = {});
+        Image(PixelFormat format, Point2i resolution, std::initializer_list<std::string> channelNames, ColorEncoding encoding = nullptr, Allocator alloc = {}) : Image(format, resolution, pstd::span<const std::string>{channelNames.begin(), channelNames.size()}, encoding, alloc) {}
 
         __host__ __device__ PixelFormat Format() const {
             return format;
@@ -268,6 +275,7 @@ namespace spectra {
         ImageChannelValues GetChannels(Point2i p, WrapMode2D wrapMode = WrapMode::Clamp) const;
 
         ImageChannelDesc GetChannelDesc(pstd::span<const std::string> channels) const;
+        ImageChannelDesc GetChannelDesc(std::initializer_list<std::string> channels) const { return GetChannelDesc(pstd::span<const std::string>{channels.begin(), channels.size()}); }
 
         ImageChannelDesc AllChannelsDesc() const {
             ImageChannelDesc desc;
