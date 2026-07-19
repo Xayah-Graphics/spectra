@@ -115,6 +115,13 @@ namespace spectra {
         return spec;
     }
 
+    PiecewiseLinearSpectrum* PiecewiseLinearSpectrum::FromInterleaved(std::initializer_list<double> samples, bool normalize, Allocator alloc) {
+        pstd::vector<Float> converted(alloc);
+        converted.reserve(samples.size());
+        for (double sample : samples) converted.push_back(static_cast<Float>(sample));
+        return FromInterleaved(converted, normalize, alloc);
+    }
+
 
     __host__ __device__ SampledSpectrum ConstantSpectrum::Sample(const SampledWavelengths&) const {
         return SampledSpectrum(c);

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <numeric>
 #include <pathtracer/util/check.cuh>
@@ -416,6 +417,7 @@ namespace spectra {
         static pstd::optional<Spectrum> Read(const std::string& filename, Allocator alloc);
 
         static PiecewiseLinearSpectrum* FromInterleaved(pstd::span<const Float> samples, bool normalize, Allocator alloc);
+        static PiecewiseLinearSpectrum* FromInterleaved(std::initializer_list<double> samples, bool normalize, Allocator alloc);
 
     private:
         friend class pathtracer::DeviceSceneBuilder;
