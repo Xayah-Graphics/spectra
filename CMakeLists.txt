@@ -9,6 +9,13 @@ project(spectra VERSION 1.1.2 LANGUAGES C CXX CUDA)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+if (MSVC)
+    add_compile_options(
+            "$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>"
+            "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>"
+    )
+endif ()
+
 # ============================================================================
 # CUDA Configuration
 # ============================================================================
@@ -44,7 +51,7 @@ function(spectra_download_if_needed url out_path sha256)
         return()
     endif ()
 
-    get_filename_component(out_dir "${out_path}" DIRECTORY)
+    cmake_path(GET out_path PARENT_PATH out_dir)
     file(MAKE_DIRECTORY "${out_dir}")
 
     message(STATUS "Downloading ${url}")
@@ -217,9 +224,6 @@ set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
 set(ZLIB_CONF_WRITTEN OFF CACHE BOOL "" FORCE)
 set(SPECTRA_ZLIB_BINARY_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/zlib-build/${SPECTRA_ZLIB_COMMIT}")
 add_subdirectory("${SPECTRA_ZLIB_SOURCE_DIR}" "${SPECTRA_ZLIB_BINARY_DIR}")
-if (NOT TARGET zlibstatic)
-    message(FATAL_ERROR "Downloaded zlib did not define the zlibstatic target.")
-endif ()
 add_library(ZLIB::ZLIB ALIAS zlibstatic)
 
 set(SPECTRA_RPLY_COMMIT "5f7a606806a4ac7b939131ded9d7a30ebd02416e")
@@ -239,7 +243,7 @@ endforeach ()
 add_library(spectra_rply STATIC "${SPECTRA_RPLY_DIR}/rply/rply.cpp")
 add_library(spectra::rply ALIAS spectra_rply)
 target_include_directories(spectra_rply PUBLIC "${SPECTRA_RPLY_DIR}")
-target_link_libraries(spectra_rply PUBLIC ZLIB::ZLIB)
+target_link_libraries(spectra_rply PRIVATE ZLIB::ZLIB)
 
 set(SPECTRA_LIBDEFLATE_COMMIT "c8c56a20f8f621e6a966b716b31f1dedab6a41e3")
 set(SPECTRA_LIBDEFLATE_ARCHIVE_SHA256 "BC0DDBC4E26C8B1379A0FC639E9B8159744C13A435017BB8EF3A30BBB53BDF47")
@@ -256,9 +260,6 @@ set(LIBDEFLATE_BUILD_SHARED_LIB OFF CACHE BOOL "" FORCE)
 set(LIBDEFLATE_BUILD_GZIP OFF CACHE BOOL "" FORCE)
 set(LIBDEFLATE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${SPECTRA_LIBDEFLATE_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/libdeflate-build/${SPECTRA_LIBDEFLATE_COMMIT}")
-if (NOT TARGET libdeflate::libdeflate_static)
-    message(FATAL_ERROR "Downloaded libdeflate did not define libdeflate::libdeflate_static.")
-endif ()
 
 set(SPECTRA_IMATH_COMMIT "1e480d11cb98b032a2dece9b9a8730512effc7f6")
 set(SPECTRA_IMATH_ARCHIVE_SHA256 "B707D359CF0ADC0E75DD4C68AB06601D58433E301295F04D44B8A60FF148C939")
@@ -319,13 +320,12 @@ set(OPENEXR_FORCE_INTERNAL_DEFLATE OFF CACHE BOOL "" FORCE)
 set(OPENEXR_FORCE_INTERNAL_IMATH OFF CACHE BOOL "" FORCE)
 set(EXR_DEFLATE_LIB libdeflate::libdeflate_static CACHE STRING "" FORCE)
 set(EXR_DEFLATE_VERSION 1.25 CACHE STRING "" FORCE)
-set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig ON CACHE BOOL "" FORCE)
-set(CMAKE_DISABLE_FIND_PACKAGE_libdeflate ON CACHE BOOL "" FORCE)
-set(CMAKE_DISABLE_FIND_PACKAGE_Imath ON CACHE BOOL "" FORCE)
-add_subdirectory("${SPECTRA_OPENEXR_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/openexr-build/${SPECTRA_OPENEXR_COMMIT}")
-set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig OFF CACHE BOOL "" FORCE)
-set(CMAKE_DISABLE_FIND_PACKAGE_libdeflate OFF CACHE BOOL "" FORCE)
-set(CMAKE_DISABLE_FIND_PACKAGE_Imath OFF CACHE BOOL "" FORCE)
+block(SCOPE_FOR VARIABLES)
+    set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig ON)
+    set(CMAKE_DISABLE_FIND_PACKAGE_libdeflate ON)
+    set(CMAKE_DISABLE_FIND_PACKAGE_Imath ON)
+    add_subdirectory("${SPECTRA_OPENEXR_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/openexr-build/${SPECTRA_OPENEXR_COMMIT}")
+endblock()
 
 set(SPECTRA_PTEX_COMMIT "a3729367596c827ace086f4baa6cab89b6a7f439")
 set(SPECTRA_PTEX_ARCHIVE_SHA256 "5C079E439B4910826F8D4BA29698A325C886EC6C0D471AEF9BAC8FE63931BDBC")
@@ -442,9 +442,8 @@ target_sources(
         "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp"
         "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp"
 )
-target_include_directories(spectra_imgui PUBLIC "${SPECTRA_IMGUI_SOURCE_DIR}" "${SPECTRA_IMGUI_SOURCE_DIR}/backends")
+target_include_directories(spectra_imgui PRIVATE "${SPECTRA_IMGUI_SOURCE_DIR}" "${SPECTRA_IMGUI_SOURCE_DIR}/backends")
 target_link_libraries(spectra_imgui PUBLIC spectra::vulkan PRIVATE glfw)
-set_property(TARGET spectra_imgui PROPERTY CXX_MODULE_STD ON)
 
 
 # ============================================================================
@@ -476,7 +475,7 @@ target_sources(
         spectra/spectra.cpp
 )
 target_link_libraries(spectra_core PUBLIC spectra::renderer_host PRIVATE glfw)
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+if (WIN32)
     target_link_libraries(spectra_core PRIVATE comctl32 dwmapi)
 endif ()
 target_include_directories(spectra_core PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}")
@@ -554,7 +553,7 @@ set(SPECTRA_PATHTRACER_DEFINITIONS
         PTEX_STATIC
 )
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+if (WIN32)
     if (NOT MSVC)
         message(FATAL_ERROR "Windows builds require MSVC.")
     endif ()
@@ -567,7 +566,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
             "SPECTRA_RESTRICT=__restrict"
             SPECTRA_HAVE__ALIGNED_MALLOC
     )
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+elseif (LINUX)
     list(APPEND SPECTRA_PATHTRACER_DEFINITIONS
             "SPECTRA_RESTRICT=__restrict__"
             SPECTRA_HAVE_POSIX_MEMALIGN
@@ -576,48 +575,47 @@ else ()
     message(FATAL_ERROR "Only Linux/WSL and Windows/MSVC are supported by the Spectra pathtracer.")
 endif ()
 
-set(SPECTRA_PATHTRACER_CUDA_PLATFORM_OPTIONS
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/Zc:preprocessor>"
-)
 set(SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS
-        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:--forward-slash-prefix-opts>>"
         "$<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>"
         "$<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>"
         "$<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:--forward-unknown-to-host-compiler>"
 )
 
 
 # ============================================================================
 # Pathtracer Generated Sources
 # ============================================================================
-get_filename_component(SPECTRA_PATHTRACER_CUDA_COMPILER_BIN "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+cmake_path(GET CMAKE_CUDA_COMPILER PARENT_PATH SPECTRA_PATHTRACER_CUDA_COMPILER_BIN)
 find_program(
         SPECTRA_PATHTRACER_BIN2C
         NAMES bin2c
         PATHS ${SPECTRA_PATHTRACER_CUDA_COMPILER_BIN} ${CUDAToolkit_BIN_DIR}
         NO_DEFAULT_PATH
+        REQUIRED
+        NO_CACHE
 )
-if (NOT SPECTRA_PATHTRACER_BIN2C)
-    message(FATAL_ERROR "CUDA bin2c was not found next to '${CMAKE_CUDA_COMPILER}'.")
-endif ()
 
 set(SPECTRA_PATHTRACER_SOURCE_DIR ${SPECTRA_ROOT_DIR}/pathtracer)
 set(SPECTRA_PATHTRACER_GENERATED_DIR ${SPECTRA_BINARY_ROOT_DIR}/pathtracer/generated/spectra_pathtracer)
 file(MAKE_DIRECTORY "${SPECTRA_PATHTRACER_GENERATED_DIR}")
 file(MAKE_DIRECTORY "${SPECTRA_OPTIX_CACHE_DIR}")
-string(REPLACE "\\" "/" SPECTRA_OPTIX_CACHE_DIR_CONFIG "${SPECTRA_OPTIX_CACHE_DIR}")
+cmake_path(SET SPECTRA_OPTIX_CACHE_DIR_CONFIG NORMALIZE "${SPECTRA_OPTIX_CACHE_DIR}")
 string(REPLACE "\"" "\\\"" SPECTRA_OPTIX_CACHE_DIR_CONFIG "${SPECTRA_OPTIX_CACHE_DIR_CONFIG}")
-file(WRITE "${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_optix_config.h"
-        "#pragma once\n"
-        "\n"
-        "#include <cstddef>\n"
-        "\n"
-        "namespace spectra::optix\n"
-        "{\n"
-        "    inline constexpr char SpectraOptiXCacheDir[] = \"${SPECTRA_OPTIX_CACHE_DIR_CONFIG}\";\n"
-        "    inline constexpr std::size_t SpectraOptiXCacheSizeBytes = ${SPECTRA_OPTIX_CACHE_SIZE_BYTES}ull;\n"
-        "} // namespace spectra::optix\n")
+file(CONFIGURE
+        OUTPUT "${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_optix_config.h"
+        CONTENT [=[
+#pragma once
+
+#include <cstddef>
+
+namespace spectra::optix
+{
+    inline constexpr char SpectraOptiXCacheDir[] = "@SPECTRA_OPTIX_CACHE_DIR_CONFIG@";
+    inline constexpr std::size_t SpectraOptiXCacheSizeBytes = @SPECTRA_OPTIX_CACHE_SIZE_BYTES@ull;
+} // namespace spectra::optix
+]=]
+        @ONLY
+)
 
 set(SPECTRA_PATHTRACER_INCLUDE_DIRS
         ${SPECTRA_ROOT_DIR}
@@ -635,11 +633,13 @@ set(SPECTRA_PATHTRACER_INCLUDE_DIRS
 )
 
 set(SPECTRA_PATHTRACER_BIN2C_SCRIPT ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_pathtracer_bin2c_embed.cmake)
-file(WRITE "${SPECTRA_PATHTRACER_BIN2C_SCRIPT}" [=[
+file(CONFIGURE
+        OUTPUT "${SPECTRA_PATHTRACER_BIN2C_SCRIPT}"
+        CONTENT [=[
 set(file_contents)
 foreach (obj IN LISTS OBJECTS)
-    get_filename_component(obj_ext "${obj}" EXT)
-    get_filename_component(obj_dir "${obj}" DIRECTORY)
+    cmake_path(GET obj EXTENSION obj_ext)
+    cmake_path(GET obj PARENT_PATH obj_dir)
     if (obj_ext MATCHES "\\.(optixir|ptx)$")
         execute_process(
                 COMMAND "${BIN_TO_C_COMMAND}" --name "${VAR_NAME}" "${obj}"
@@ -659,11 +659,11 @@ if (file_contents STREQUAL "")
     message(FATAL_ERROR "No OptiX input was passed to bin2c: ${OBJECTS}")
 endif ()
 file(WRITE "${OUTPUT}" "${file_contents}")
-]=])
+]=]
+        @ONLY
+)
 
 add_executable(spectra_pathtracer_soac pathtracer/tools/soac.cpp)
-target_compile_definitions(spectra_pathtracer_soac PRIVATE ${SPECTRA_PATHTRACER_DEFINITIONS})
-target_include_directories(spectra_pathtracer_soac PRIVATE ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
 
 add_custom_command(
         OUTPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_soa.cuh
@@ -686,44 +686,29 @@ set(SPECTRA_PATHTRACER_SOA_GENERATED
 add_custom_target(spectra_pathtracer_soa_generated DEPENDS ${SPECTRA_PATHTRACER_SOA_GENERATED})
 
 add_executable(spectra_pathtracer_rgb2spec_opt pathtracer/tools/rgb2spec_opt.cpp)
-target_compile_definitions(spectra_pathtracer_rgb2spec_opt PRIVATE ${SPECTRA_PATHTRACER_DEFINITIONS})
-target_include_directories(spectra_pathtracer_rgb2spec_opt PRIVATE ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
 target_link_libraries(spectra_pathtracer_rgb2spec_opt PRIVATE Threads::Threads)
 
-set(SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES
-        ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_aces.cpp
-        ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_dci_p3.cpp
-        ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_rec2020.cpp
-        ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_srgb.cpp
+set(SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_MANIFEST
+        "aces|ACES2065_1"
+        "dci_p3|DCI_P3"
+        "rec2020|REC2020"
+        "srgb|sRGB"
 )
-add_custom_command(
-        OUTPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_aces.cpp
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_PATHTRACER_GENERATED_DIR}
-        COMMAND spectra_pathtracer_rgb2spec_opt 64 ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_aces.cpp ACES2065_1
-        DEPENDS spectra_pathtracer_rgb2spec_opt
-        VERBATIM
-)
-add_custom_command(
-        OUTPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_dci_p3.cpp
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_PATHTRACER_GENERATED_DIR}
-        COMMAND spectra_pathtracer_rgb2spec_opt 64 ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_dci_p3.cpp DCI_P3
-        DEPENDS spectra_pathtracer_rgb2spec_opt
-        VERBATIM
-)
-add_custom_command(
-        OUTPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_rec2020.cpp
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_PATHTRACER_GENERATED_DIR}
-        COMMAND spectra_pathtracer_rgb2spec_opt 64 ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_rec2020.cpp REC2020
-        DEPENDS spectra_pathtracer_rgb2spec_opt
-        VERBATIM
-)
-add_custom_command(
-        OUTPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_srgb.cpp
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_PATHTRACER_GENERATED_DIR}
-        COMMAND spectra_pathtracer_rgb2spec_opt 64 ${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_srgb.cpp sRGB
-        DEPENDS spectra_pathtracer_rgb2spec_opt
-        VERBATIM
-)
+set(SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES)
+foreach (rgb_to_spectrum_spec IN LISTS SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_MANIFEST)
+    string(REPLACE "|" ";" rgb_to_spectrum_fields "${rgb_to_spectrum_spec}")
+    list(GET rgb_to_spectrum_fields 0 rgb_to_spectrum_name)
+    list(GET rgb_to_spectrum_fields 1 rgb_to_spectrum_color_space)
+    set(rgb_to_spectrum_output "${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_${rgb_to_spectrum_name}.cpp")
+    list(APPEND SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES "${rgb_to_spectrum_output}")
+    add_custom_command(
+            OUTPUT "${rgb_to_spectrum_output}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_PATHTRACER_GENERATED_DIR}"
+            COMMAND spectra_pathtracer_rgb2spec_opt 64 "${rgb_to_spectrum_output}" "${rgb_to_spectrum_color_space}"
+            DEPENDS spectra_pathtracer_rgb2spec_opt
+            VERBATIM
+    )
+endforeach ()
 
 
 # ============================================================================
@@ -784,7 +769,6 @@ target_compile_options(
         spectra_pathtracer_optix_input
         PRIVATE
         ${SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS}
-        ${SPECTRA_PATHTRACER_CUDA_PLATFORM_OPTIONS}
         "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${SPECTRA_OPTIX_IR_ARCH}>"
         "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --display_error_number>"
 )
@@ -804,7 +788,7 @@ add_custom_command(
         "-DVAR_NAME=SPECTRA_EMBEDDED_OPTIX_INPUT"
         "-DOUTPUT=${SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT}"
         -P ${SPECTRA_PATHTRACER_BIN2C_SCRIPT}
-        DEPENDS spectra_pathtracer_optix_input $<TARGET_OBJECTS:spectra_pathtracer_optix_input>
+        DEPENDS spectra_pathtracer_optix_input $<TARGET_OBJECTS:spectra_pathtracer_optix_input> ${SPECTRA_PATHTRACER_BIN2C_SCRIPT}
         VERBATIM
 )
 add_library(spectra_pathtracer_embedded_optix_input STATIC ${SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT})
@@ -842,7 +826,6 @@ target_compile_options(
         PRIVATE
         "$<$<COMPILE_LANG_AND_ID:CXX,Clang>:-ffp-contract=off>"
         ${SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS}
-        ${SPECTRA_PATHTRACER_CUDA_PLATFORM_OPTIONS}
 )
 target_link_libraries(
         spectra_pathtracer
@@ -868,15 +851,12 @@ set_property(TARGET spectra_pathtracer PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET spectra_pathtracer PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
 add_executable(spectra_pathtracer_cli pathtracer/pathtracer_cli.cpp)
-target_link_libraries(spectra_pathtracer_cli PRIVATE spectra::pathtracer xayah-util-xcli Threads::Threads)
-target_compile_definitions(spectra_pathtracer_cli PRIVATE ${SPECTRA_PATHTRACER_DEFINITIONS})
-target_include_directories(spectra_pathtracer_cli PRIVATE ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
-target_compile_options(spectra_pathtracer_cli PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+target_link_libraries(spectra_pathtracer_cli PRIVATE spectra::pathtracer xayah-util-xcli)
+if (LINUX)
     target_link_options(spectra_pathtracer_cli PRIVATE -rdynamic "LINKER:--no-as-needed")
 endif ()
 if (MSVC)
-    target_link_options(spectra_pathtracer_cli PRIVATE "/WHOLEARCHIVE:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib")
+    target_link_libraries(spectra_pathtracer_cli PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,@cmake_cxx_std>")
 endif ()
 
 
@@ -955,14 +935,13 @@ foreach (shader_spec IN LISTS SPECTRA_RASTERIZER_SHADER_MANIFEST)
     set(shader_file "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/${shader_source}")
     spectra_rasterizer_shader_stage(shader_header "${shader_file}" "${shader_entry}" "${shader_stage}" "${shader_output_name}")
     list(APPEND SPECTRA_RASTERIZER_SHADER_HEADERS "${shader_header}")
-    get_filename_component(shader_header_name "${shader_header}" NAME)
+    cmake_path(GET shader_header FILENAME shader_header_name)
     string(APPEND SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT "#include <${shader_header_name}>\n")
 endforeach ()
 
 set(SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_shaders_spv.h")
 file(MAKE_DIRECTORY "${SPECTRA_RASTERIZER_GENERATED_DIR}")
-file(GENERATE OUTPUT "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}" CONTENT "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT}")
-set_source_files_properties("${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}" PROPERTIES GENERATED TRUE)
+file(CONFIGURE OUTPUT "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}" CONTENT "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT}" @ONLY)
 
 target_sources(
         spectra_rasterizer
@@ -1008,6 +987,6 @@ target_link_libraries(
 )
 target_include_directories(spectra PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}")
 if (MSVC)
-    target_link_options(spectra PRIVATE "/WHOLEARCHIVE:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib")
+    target_link_libraries(spectra PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,@cmake_cxx_std>")
 endif ()
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
