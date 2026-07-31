@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.4.0)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
-project(spectra VERSION 1.1.2 LANGUAGES C CXX CUDA)
+project(spectra VERSION 2.0.0 LANGUAGES C CXX)
 
 
 # ============================================================================
@@ -9,35 +9,49 @@ project(spectra VERSION 1.1.2 LANGUAGES C CXX CUDA)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if (MSVC)
     add_compile_options(
             "$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>"
-            "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>"
     )
 endif ()
-
-# ============================================================================
-# CUDA Configuration
-# ============================================================================
-set(CMAKE_CUDA_STANDARD 20)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_EXTENSIONS OFF)
-set(CMAKE_CUDA_ARCHITECTURES 120)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 
 set(SPECTRA_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(SPECTRA_BINARY_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}")
-set(SPECTRA_SCENES_ROOT "${SPECTRA_ROOT_DIR}/scenes")
+set(SPECTRA_VENDOR_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor")
+set(SPECTRA_GENERATED_DIR "${SPECTRA_BINARY_ROOT_DIR}/generated")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 
 # ============================================================================
 # Dependencies
 # ============================================================================
-find_package(CUDAToolkit 13.3 REQUIRED)
 find_package(Vulkan 1.4 REQUIRED)
-find_package(Threads REQUIRED)
+list(GET Vulkan_INCLUDE_DIRS 0 SPECTRA_VULKAN_INCLUDE_DIR)
+cmake_path(
+        GET SPECTRA_VULKAN_INCLUDE_DIR
+        PARENT_PATH SPECTRA_VULKAN_SDK_DIR
+)
+if (NOT EXISTS "${SPECTRA_VULKAN_SDK_DIR}/Include/slang/slang.h"
+        OR NOT EXISTS "${SPECTRA_VULKAN_SDK_DIR}/Lib/slang.lib"
+        OR NOT EXISTS "${SPECTRA_VULKAN_SDK_DIR}/Bin/slang.dll")
+    message(FATAL_ERROR "The Vulkan SDK at ${SPECTRA_VULKAN_SDK_DIR} does not contain its bundled Slang toolchain.")
+endif ()
+add_library(spectra_slang SHARED IMPORTED)
+add_library(spectra::slang ALIAS spectra_slang)
+set_target_properties(
+        spectra_slang PROPERTIES
+        IMPORTED_IMPLIB "${SPECTRA_VULKAN_SDK_DIR}/Lib/slang.lib"
+        IMPORTED_LOCATION "${SPECTRA_VULKAN_SDK_DIR}/Bin/slang.dll"
+        INTERFACE_INCLUDE_DIRECTORIES "${SPECTRA_VULKAN_SDK_DIR}/Include/slang"
+)
+find_program(
+        SPECTRA_SPIRV_VAL
+        NAMES spirv-val
+        HINTS "${Vulkan_INCLUDE_DIRS}/../Bin"
+        REQUIRED
+)
 
 function(spectra_download_if_needed url out_path sha256)
     string(TOLOWER "${sha256}" expected_sha256)
@@ -47,37 +61,52 @@ function(spectra_download_if_needed url out_path sha256)
         if (NOT existing_sha256 STREQUAL expected_sha256)
             message(FATAL_ERROR "Cached dependency hash mismatch for ${out_path}: expected ${expected_sha256}, got ${existing_sha256}")
         endif ()
-        message(STATUS "Using cached file: ${out_path}")
         return()
     endif ()
 
     cmake_path(GET out_path PARENT_PATH out_dir)
     file(MAKE_DIRECTORY "${out_dir}")
-
-    message(STATUS "Downloading ${url}")
-    set(tmp_path "${out_path}.download")
-    file(REMOVE "${tmp_path}")
     file(DOWNLOAD
             "${url}"
-            "${tmp_path}"
+            "${out_path}"
             TLS_VERIFY ON
             EXPECTED_HASH "SHA256=${sha256}"
-            STATUS dl_status
+            STATUS download_status
     )
-
-    list(GET dl_status 0 dl_code)
-    list(GET dl_status 1 dl_msg)
-    if (NOT dl_code EQUAL 0)
-        file(REMOVE "${tmp_path}")
-        message(FATAL_ERROR "Failed to download ${url}: [${dl_code}] ${dl_msg}")
+    list(GET download_status 0 download_code)
+    list(GET download_status 1 download_message)
+    if (NOT download_code EQUAL 0)
+        file(REMOVE "${out_path}")
+        message(FATAL_ERROR "Failed to download ${url}: [${download_code}] ${download_message}")
     endif ()
-    file(RENAME "${tmp_path}" "${out_path}")
 endfunction()
 
-function(spectra_prepare_archive_dependency out_source_dir owner repository commit archive_sha256 cache_name)
-    set(cache_dir "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/${cache_name}/${commit}")
-    set(archive_path "${cache_dir}/${cache_name}.zip")
-    set(extract_dir "${cache_dir}/source")
+function(spectra_prepare_archive_dependency out_source_dir owner repository tag archive_sha256)
+    set(archive_dir "${SPECTRA_VENDOR_DIR}/${repository}/${tag}")
+    set(archive_path "${archive_dir}/${repository}.zip")
+    set(extract_dir "${archive_dir}/source")
+    string(REGEX REPLACE "^v" "" source_tag "${tag}")
+    set(source_dir "${extract_dir}/${repository}-${source_tag}")
+    spectra_download_if_needed(
+            "https://codeload.github.com/${owner}/${repository}/zip/refs/tags/${tag}"
+            "${archive_path}"
+            "${archive_sha256}"
+    )
+    if (NOT EXISTS "${source_dir}")
+        file(REMOVE_RECURSE "${extract_dir}")
+        file(MAKE_DIRECTORY "${extract_dir}")
+        file(ARCHIVE_EXTRACT INPUT "${archive_path}" DESTINATION "${extract_dir}")
+    endif ()
+    if (NOT EXISTS "${source_dir}")
+        message(FATAL_ERROR "Failed to extract ${repository} ${tag}.")
+    endif ()
+    set(${out_source_dir} "${source_dir}" PARENT_SCOPE)
+endfunction()
+
+function(spectra_prepare_commit_dependency out_source_dir owner repository commit archive_sha256)
+    set(archive_dir "${SPECTRA_VENDOR_DIR}/${repository}/${commit}")
+    set(archive_path "${archive_dir}/${repository}.zip")
+    set(extract_dir "${archive_dir}/source")
     set(source_dir "${extract_dir}/${repository}-${commit}")
     spectra_download_if_needed(
             "https://codeload.github.com/${owner}/${repository}/zip/${commit}"
@@ -90,107 +119,162 @@ function(spectra_prepare_archive_dependency out_source_dir owner repository comm
         file(ARCHIVE_EXTRACT INPUT "${archive_path}" DESTINATION "${extract_dir}")
     endif ()
     if (NOT EXISTS "${source_dir}")
-        message(FATAL_ERROR "Failed to extract ${cache_name} archive to ${source_dir}.")
+        message(FATAL_ERROR "Failed to extract ${repository} ${commit}.")
     endif ()
     set(${out_source_dir} "${source_dir}" PARENT_SCOPE)
 endfunction()
 
-set(SPECTRA_XCLI_COMMIT "bb261075e7c8a4722b23f42c3be01aa24024731a")
-set(SPECTRA_XCLI_VENDOR_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/util/${SPECTRA_XCLI_COMMIT}")
-spectra_download_if_needed(
-        "https://raw.githubusercontent.com/Xayah-Graphics/util/${SPECTRA_XCLI_COMMIT}/xcli.ixx"
-        "${SPECTRA_XCLI_VENDOR_DIR}/xcli.ixx"
-        "2F80115AA7B739BDE4BF990EC1C0D0AFD85CF6B5610AF9A9D22A8C6686898F8D"
-)
-spectra_download_if_needed(
-        "https://raw.githubusercontent.com/Xayah-Graphics/util/${SPECTRA_XCLI_COMMIT}/xcli.cpp"
-        "${SPECTRA_XCLI_VENDOR_DIR}/xcli.cpp"
-        "A1386CE6782CF267CD9AFB002FA66E70B7BF019CFA19ADC9C5EF0470BE445E69"
+set(SPECTRA_GLAZE_TAG "v7.5.0")
+spectra_prepare_archive_dependency(
+        SPECTRA_GLAZE_SOURCE_DIR
+        stephenberry
+        glaze
+        "${SPECTRA_GLAZE_TAG}"
+        "AABC62B0C0A10FB99DE9245822DC3136B6F3F8346C880B5BBE673ABA1218D952"
 )
 
-add_library(xayah-util-xcli)
-target_sources(
-        xayah-util-xcli
-        PRIVATE
-        "${SPECTRA_XCLI_VENDOR_DIR}/xcli.cpp"
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        "${SPECTRA_XCLI_VENDOR_DIR}/xcli.ixx"
-)
-set_property(TARGET xayah-util-xcli PROPERTY CXX_MODULE_STD ON)
-
-set(SPECTRA_LODEPNG_COMMIT "ed6fe5825c6a4fbb7f58ab35a4231c7543cd452a")
-set(SPECTRA_LODEPNG_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/lodepng/${SPECTRA_LODEPNG_COMMIT}")
-set(lodepng_files lodepng.cpp lodepng.h)
-set(lodepng_sha256s
-        D98E1F40D303C1038A096EBF93B413A565A91CF2C72B9D2FA5C625C4279C3CB6
-        23C27ABB06883ED98184D16D0B20771B526DCA1E8E13236C2397316769C0DC8B
-)
-foreach (lodepng_file lodepng_sha256 IN ZIP_LISTS lodepng_files lodepng_sha256s)
-    spectra_download_if_needed(
-            "https://raw.githubusercontent.com/lvandeve/lodepng/${SPECTRA_LODEPNG_COMMIT}/${lodepng_file}"
-            "${SPECTRA_LODEPNG_DIR}/lodepng/${lodepng_file}"
-            "${lodepng_sha256}"
-    )
-endforeach ()
-
-add_library(spectra_lodepng STATIC "${SPECTRA_LODEPNG_DIR}/lodepng/lodepng.cpp")
-add_library(spectra::lodepng ALIAS spectra_lodepng)
-target_include_directories(spectra_lodepng PUBLIC "${SPECTRA_LODEPNG_DIR}")
-
-set(SPECTRA_STB_COMMIT "31c1ad37456438565541f4919958214b6e762fb4")
-set(SPECTRA_STB_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/stb/${SPECTRA_STB_COMMIT}")
-spectra_download_if_needed(
-        "https://raw.githubusercontent.com/nothings/stb/${SPECTRA_STB_COMMIT}/stb_image.h"
-        "${SPECTRA_STB_DIR}/stb/stb_image.h"
-        "594C2FE35D49488B4382DBFAEC8F98366DEFCA819D916AC95BECF3E75F4200B3"
-)
-
-set(SPECTRA_QOI_COMMIT "97bacc86a9c4abf5a2d452102dc26546c4c670b9")
-set(SPECTRA_QOI_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/qoi/${SPECTRA_QOI_COMMIT}")
-spectra_download_if_needed(
-        "https://raw.githubusercontent.com/phoboslab/qoi/${SPECTRA_QOI_COMMIT}/qoi.h"
-        "${SPECTRA_QOI_DIR}/qoi/qoi.h"
-        "7DE6FCA1A285B1C20D38F2723DEC8B774EB9F144EDB9710800A95FEEEA09375A"
-)
-
-set(SPECTRA_NVPRO_CORE2_COMMIT "eb7c2f25859b0ff279e3bbd8376a8418528da556")
-set(SPECTRA_UI_ASSET_INCLUDE_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}")
-spectra_download_if_needed(
-        "https://raw.githubusercontent.com/nvpro-samples/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}/third_party/roboto/roboto_regular.h"
-        "${SPECTRA_UI_ASSET_INCLUDE_DIR}/roboto/roboto_regular.h"
-        "B71F0558B23A776641C1AF56BD0B4D015F2C8B9D378B57006B5493AD573B72F9"
-)
-spectra_download_if_needed(
-        "https://raw.githubusercontent.com/nvpro-samples/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}/third_party/material_symbols/material_symbols_rounded_regular.h"
-        "${SPECTRA_UI_ASSET_INCLUDE_DIR}/material_symbols/material_symbols_rounded_regular.h"
-        "6011F816D224842B554D9E03159C36E2B118B357A4C8AA0DA94D53DE00820629"
-)
-spectra_download_if_needed(
-        "https://raw.githubusercontent.com/nvpro-samples/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}/nvgui/IconsMaterialSymbols.h"
-        "${SPECTRA_UI_ASSET_INCLUDE_DIR}/material_symbols/IconsMaterialSymbols.h"
-        "C5C13FC3DB46576F77A1F41BDB322BFCE1D024D59F307E078BDA6F7599666B62"
-)
-
-set(SPECTRA_GLFW_COMMIT "7b6aead9fb88b3623e3b3725ebb42670cbe4c579")
-set(SPECTRA_GLFW_ARCHIVE_SHA256 "699BF0B3D0BD422C0212263F30C4B6FC1AB4F67320824B27854F1E5C6949A2A0")
+set(SPECTRA_GLFW_TAG "3.4")
 spectra_prepare_archive_dependency(
         SPECTRA_GLFW_SOURCE_DIR
         glfw
         glfw
-        "${SPECTRA_GLFW_COMMIT}"
-        "${SPECTRA_GLFW_ARCHIVE_SHA256}"
-        glfw
+        "${SPECTRA_GLFW_TAG}"
+        "A133DDC3D3C66143EBA9035621DB8E0BCF34DBA1EE9514A9E23E96AFD39FD57A"
 )
-
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-set(GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
-add_subdirectory("${SPECTRA_GLFW_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/glfw-build/${SPECTRA_GLFW_COMMIT}")
-target_compile_definitions(glfw INTERFACE GLFW_INCLUDE_NONE)
+add_subdirectory("${SPECTRA_GLFW_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/glfw" EXCLUDE_FROM_ALL)
 
+set(SPECTRA_IMGUI_COMMIT "b334d19b667958ed970000073644d911fae17e57")
+spectra_prepare_commit_dependency(
+        SPECTRA_IMGUI_SOURCE_DIR
+        ocornut
+        imgui
+        "${SPECTRA_IMGUI_COMMIT}"
+        "504BC8171B80B8C92F035EBC899F6B3086C9CFA56EFADEE4962753DEB38626A2"
+)
+add_library(spectra_imgui STATIC
+        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui.cpp"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui_draw.cpp"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui_tables.cpp"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui_widgets.cpp"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp"
+)
+add_library(spectra::imgui ALIAS spectra_imgui)
+target_include_directories(spectra_imgui PUBLIC
+        "${SPECTRA_IMGUI_SOURCE_DIR}"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/backends"
+)
+target_compile_definitions(spectra_imgui PUBLIC GLFW_INCLUDE_NONE)
+target_link_libraries(spectra_imgui PUBLIC glfw)
+
+set(SPECTRA_IMGUIZMO_COMMIT "dc25afb98bc3ebe00dfc9a23ba7235fead2ccb1d")
+spectra_prepare_commit_dependency(
+        SPECTRA_IMGUIZMO_SOURCE_DIR
+        CedricGuillemet
+        ImGuizmo
+        "${SPECTRA_IMGUIZMO_COMMIT}"
+        "0CBB48F6A9041FE18E0D66380AF76BF8EF1D836C6913F9F4E8A0D512F42A3116"
+)
+add_library(spectra_imguizmo STATIC "${SPECTRA_IMGUIZMO_SOURCE_DIR}/src/ImGuizmo.cpp")
+add_library(spectra::imguizmo ALIAS spectra_imguizmo)
+target_include_directories(spectra_imguizmo PUBLIC "${SPECTRA_IMGUIZMO_SOURCE_DIR}/src")
+target_link_libraries(spectra_imguizmo PUBLIC spectra::imgui)
+
+set(SPECTRA_TINYEXR_TAG "v3.2.0")
+spectra_prepare_archive_dependency(
+        SPECTRA_TINYEXR_SOURCE_DIR
+        syoyo
+        tinyexr
+        "${SPECTRA_TINYEXR_TAG}"
+        "12A458E2E92A7072E26927BA4E53276CE35605EFB2E0418E7C5210CBC81DE2DF"
+)
+set(SPECTRA_TINYEXR_SOURCES
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_attr.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_b44.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_codec.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_color.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_convert.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_core.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_cpu.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_deep.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_deflate.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_fpnge.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_half.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_jph.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_jph_simd.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_jph_simd_neon.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_mip.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_piz.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_pxr24.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_reader.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_resize.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_rle.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_simd_neon.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_simd_x86.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_spectral.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_stdio.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_thread.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_tonemap.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_util_simd_neon.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_util_simd_x86.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_writer.c"
+        "${SPECTRA_TINYEXR_SOURCE_DIR}/src/exr_zip.c"
+)
+add_library(spectra_tinyexr STATIC ${SPECTRA_TINYEXR_SOURCES})
+add_library(spectra::tinyexr ALIAS spectra_tinyexr)
+set_target_properties(
+        spectra_tinyexr PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+)
+target_compile_definitions(
+        spectra_tinyexr PRIVATE
+        EXR_NO_ZSTD
+        _CRT_SECURE_NO_WARNINGS
+        __builtin_clz=_lzcnt_u32
+)
+target_compile_options(
+        spectra_tinyexr PRIVATE
+        /experimental:c11atomics
+        /wd4556
+)
+target_include_directories(
+        spectra_tinyexr
+        SYSTEM PUBLIC "${SPECTRA_TINYEXR_SOURCE_DIR}/include"
+        PRIVATE "${SPECTRA_TINYEXR_SOURCE_DIR}/src"
+)
+
+set(SPECTRA_OPENVDB_TAG "v13.0.0")
+set(SPECTRA_PNANOVDB_INCLUDE_DIR "${SPECTRA_VENDOR_DIR}/openvdb/${SPECTRA_OPENVDB_TAG}/include")
+set(SPECTRA_PNANOVDB_HEADER "${SPECTRA_PNANOVDB_INCLUDE_DIR}/nanovdb/PNanoVDB.h")
+spectra_download_if_needed(
+        "https://raw.githubusercontent.com/AcademySoftwareFoundation/openvdb/${SPECTRA_OPENVDB_TAG}/nanovdb/nanovdb/PNanoVDB.h"
+        "${SPECTRA_PNANOVDB_HEADER}"
+        "588F213B0DA23F9451DA000CD66566EDA6F42D594E8612093FE4A49519A9AA52"
+)
+
+set(CMAKE_CXX_MODULE_STD ON)
+# MSVC interprets CMake's relative @cmake_cxx_std.lib entry as a response file.
+add_link_options("$<$<LINK_LANGUAGE:CXX>:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib>")
+
+add_executable(
+        spectra_shader_build
+        tools/shader_build.cpp
+)
+target_link_libraries(
+        spectra_shader_build
+        PRIVATE spectra::slang
+)
+target_compile_definitions(spectra_shader_build PRIVATE NOMINMAX)
+
+
+# ============================================================================
+# Vulkan
+# ============================================================================
 add_library(spectra_vulkan)
 add_library(spectra::vulkan ALIAS spectra_vulkan)
 target_sources(
@@ -201,792 +285,168 @@ target_sources(
         FILES
         "${Vulkan_INCLUDE_DIRS}/vulkan/vulkan.cppm"
 )
-if (WIN32)
-    target_compile_definitions(spectra_vulkan PUBLIC VK_USE_PLATFORM_WIN32_KHR NOMINMAX)
-endif ()
+target_compile_definitions(spectra_vulkan PUBLIC VK_USE_PLATFORM_WIN32_KHR NOMINMAX)
 target_link_libraries(spectra_vulkan PUBLIC Vulkan::Vulkan)
-set_property(TARGET spectra_vulkan PROPERTY CXX_MODULE_STD ON)
 
-set(SPECTRA_ZLIB_COMMIT "da607da739fa6047df13e66a2af6b8bec7c2a498")
-set(SPECTRA_ZLIB_ARCHIVE_SHA256 "21DE001766ABB1F5BFDFB3C23AA42D30A6BBD7EDDD37131D5E7FE89C5EC068F8")
-spectra_prepare_archive_dependency(
-        SPECTRA_ZLIB_SOURCE_DIR
-        madler
-        zlib
-        "${SPECTRA_ZLIB_COMMIT}"
-        "${SPECTRA_ZLIB_ARCHIVE_SHA256}"
-        zlib
-)
-set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
-set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
-set(ZLIB_CONF_WRITTEN OFF CACHE BOOL "" FORCE)
-set(SPECTRA_ZLIB_BINARY_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/zlib-build/${SPECTRA_ZLIB_COMMIT}")
-add_subdirectory("${SPECTRA_ZLIB_SOURCE_DIR}" "${SPECTRA_ZLIB_BINARY_DIR}")
-add_library(ZLIB::ZLIB ALIAS zlibstatic)
 
-set(SPECTRA_RPLY_COMMIT "5f7a606806a4ac7b939131ded9d7a30ebd02416e")
-set(SPECTRA_RPLY_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/rply/${SPECTRA_RPLY_COMMIT}")
-set(rply_files rply.cpp rply.h)
-set(rply_sha256s
-        EBD62DF552247C6132B0178B8127D1C9574DFCD4E5C66430F5D659CC1B3FED2E
-        EEA61D8C7F6C7C87BE4B472618236E1CC8FE0590ED597A58E80D7E08D0CB4A11
+# ============================================================================
+# Plugin API 5
+# ============================================================================
+add_library(spectra_plugin_contract INTERFACE)
+add_library(spectra::plugin_contract ALIAS spectra_plugin_contract)
+target_include_directories(spectra_plugin_contract INTERFACE "${SPECTRA_ROOT_DIR}")
+
+# ============================================================================
+# Slang
+# ============================================================================
+set(SPECTRA_SHADER_OUTPUT_DIR "${SPECTRA_GENERATED_DIR}/shaders")
+set(SPECTRA_PATH_ABI_MODULE "${SPECTRA_GENERATED_DIR}/pathtracer/abi.ixx")
+set(SPECTRA_SHADER_ENTRY_LIST "${SPECTRA_ROOT_DIR}/tools/shaders.entries")
+set(SPECTRA_SHADER_STAMP "${SPECTRA_SHADER_OUTPUT_DIR}/build.stamp")
+set_property(
+        DIRECTORY
+        APPEND
+        PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${SPECTRA_SHADER_ENTRY_LIST}"
 )
-foreach (rply_file rply_sha256 IN ZIP_LISTS rply_files rply_sha256s)
-    spectra_download_if_needed(
-            "https://raw.githubusercontent.com/mmp/pbrt-v4/${SPECTRA_RPLY_COMMIT}/src/ext/rply/${rply_file}"
-            "${SPECTRA_RPLY_DIR}/rply/${rply_file}"
-            "${rply_sha256}"
+file(
+        STRINGS
+        "${SPECTRA_SHADER_ENTRY_LIST}"
+        SPECTRA_SHADER_ENTRY_LINES
+        REGEX "^[^#].*"
+)
+set(SPECTRA_SHADER_OUTPUTS)
+foreach (shader_entry IN LISTS SPECTRA_SHADER_ENTRY_LINES)
+    string(
+            REGEX MATCH
+            "^([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]*$"
+            shader_entry_match
+            "${shader_entry}"
     )
+    if (NOT shader_entry_match)
+        message(FATAL_ERROR "Invalid shader entry: ${shader_entry}")
+    endif ()
+    list(APPEND SPECTRA_SHADER_OUTPUTS "${SPECTRA_SHADER_OUTPUT_DIR}/${CMAKE_MATCH_1}.spv")
 endforeach ()
-add_library(spectra_rply STATIC "${SPECTRA_RPLY_DIR}/rply/rply.cpp")
-add_library(spectra::rply ALIAS spectra_rply)
-target_include_directories(spectra_rply PUBLIC "${SPECTRA_RPLY_DIR}")
-target_link_libraries(spectra_rply PRIVATE ZLIB::ZLIB)
-
-set(SPECTRA_LIBDEFLATE_COMMIT "c8c56a20f8f621e6a966b716b31f1dedab6a41e3")
-set(SPECTRA_LIBDEFLATE_ARCHIVE_SHA256 "BC0DDBC4E26C8B1379A0FC639E9B8159744C13A435017BB8EF3A30BBB53BDF47")
-spectra_prepare_archive_dependency(
-        SPECTRA_LIBDEFLATE_SOURCE_DIR
-        ebiggers
-        libdeflate
-        "${SPECTRA_LIBDEFLATE_COMMIT}"
-        "${SPECTRA_LIBDEFLATE_ARCHIVE_SHA256}"
-        libdeflate
+file(
+        GLOB
+        SPECTRA_SHADER_SOURCES
+        CONFIGURE_DEPENDS
+        "${SPECTRA_ROOT_DIR}/app/shaders/*.slang"
+        "${SPECTRA_ROOT_DIR}/rasterizer/shaders/*.slang"
+        "${SPECTRA_ROOT_DIR}/pathtracer/shaders/*.slang"
+        "${SPECTRA_ROOT_DIR}/workspace/shaders/*.slang"
+        "${SPECTRA_ROOT_DIR}/ui/shaders/*.slang"
 )
-set(LIBDEFLATE_BUILD_STATIC_LIB ON CACHE BOOL "" FORCE)
-set(LIBDEFLATE_BUILD_SHARED_LIB OFF CACHE BOOL "" FORCE)
-set(LIBDEFLATE_BUILD_GZIP OFF CACHE BOOL "" FORCE)
-set(LIBDEFLATE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-add_subdirectory("${SPECTRA_LIBDEFLATE_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/libdeflate-build/${SPECTRA_LIBDEFLATE_COMMIT}")
-
-set(SPECTRA_IMATH_COMMIT "1e480d11cb98b032a2dece9b9a8730512effc7f6")
-set(SPECTRA_IMATH_ARCHIVE_SHA256 "B707D359CF0ADC0E75DD4C68AB06601D58433E301295F04D44B8A60FF148C939")
-spectra_prepare_archive_dependency(
-        SPECTRA_IMATH_SOURCE_DIR
-        AcademySoftwareFoundation
-        Imath
-        "${SPECTRA_IMATH_COMMIT}"
-        "${SPECTRA_IMATH_ARCHIVE_SHA256}"
-        imath
+add_custom_command(
+        OUTPUT "${SPECTRA_SHADER_STAMP}"
+        BYPRODUCTS
+        "${SPECTRA_PATH_ABI_MODULE}"
+        ${SPECTRA_SHADER_OUTPUTS}
+        COMMAND
+        "${CMAKE_COMMAND}" -E env
+        "PATH=$<TARGET_FILE_DIR:spectra_slang>;$ENV{PATH}"
+        "$<TARGET_FILE:spectra_shader_build>"
+        "${SPECTRA_ROOT_DIR}/pathtracer/shaders/abi.types"
+        "${SPECTRA_PATH_ABI_MODULE}"
+        "${SPECTRA_SHADER_ENTRY_LIST}"
+        "${SPECTRA_SHADER_OUTPUT_DIR}"
+        "${SPECTRA_SPIRV_VAL}"
+        "${SPECTRA_ROOT_DIR}/app/shaders"
+        "${SPECTRA_ROOT_DIR}/rasterizer/shaders"
+        "${SPECTRA_ROOT_DIR}/pathtracer/shaders"
+        "${SPECTRA_ROOT_DIR}/workspace/shaders"
+        "${SPECTRA_ROOT_DIR}/ui/shaders"
+        "${SPECTRA_PNANOVDB_INCLUDE_DIR}"
+        COMMAND
+        "${CMAKE_COMMAND}" -E touch
+        "${SPECTRA_SHADER_STAMP}"
+        DEPENDS
+        spectra_shader_build
+        "$<TARGET_FILE:spectra_slang>"
+        "${SPECTRA_ROOT_DIR}/pathtracer/shaders/abi.types"
+        "${SPECTRA_SHADER_ENTRY_LIST}"
+        "${SPECTRA_PNANOVDB_HEADER}"
+        ${SPECTRA_SHADER_SOURCES}
+        VERBATIM
 )
-foreach (cache_var IN ITEMS
-        IMATH_INTERNAL_NAMESPACE
-        IMATH_LIB_SUFFIX
-        IMATH_PACKAGE_NAME
-        IMATH_STATIC_LIB_SUFFIX
-        IMATH_VERSION_RELEASE_TYPE)
-    unset(${cache_var} CACHE)
-endforeach ()
-set(IMATH_INSTALL OFF CACHE BOOL "" FORCE)
-set(IMATH_INSTALL_PKG_CONFIG OFF CACHE BOOL "" FORCE)
-set(IMATH_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-add_subdirectory("${SPECTRA_IMATH_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/imath-build/${SPECTRA_IMATH_COMMIT}")
+add_custom_target(spectra_shaders DEPENDS "${SPECTRA_SHADER_STAMP}")
 
-set(SPECTRA_OPENEXR_COMMIT "d1dcb760459e6cf9985b98deb118abc6de12f9bb")
-set(SPECTRA_OPENEXR_ARCHIVE_SHA256 "1EAC27323A849E936E85D1B6AB245D1547BCD267B1379F0045B08FF227B926F9")
-spectra_prepare_archive_dependency(
-        SPECTRA_OPENEXR_SOURCE_DIR
-        AcademySoftwareFoundation
-        openexr
-        "${SPECTRA_OPENEXR_COMMIT}"
-        "${SPECTRA_OPENEXR_ARCHIVE_SHA256}"
-        openexr
-)
-foreach (cache_var IN ITEMS
-        OPENEXR_IMATH_REPO
-        OPENEXR_IMATH_TAG
-        OPENEXR_INTERNAL_IMF_NAMESPACE
-        OPENEXR_LIB_SUFFIX
-        OPENEXR_PACKAGE_NAME
-        OPENEXR_STATIC_LIB_SUFFIX
-        OPENEXR_VERSION_RELEASE_TYPE)
-    unset(${cache_var} CACHE)
-endforeach ()
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(OPENEXR_INSTALL OFF CACHE BOOL "" FORCE)
-set(OPENEXR_INSTALL_PKG_CONFIG OFF CACHE BOOL "" FORCE)
-set(OPENEXR_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-set(OPENEXR_INSTALL_TOOLS OFF CACHE BOOL "" FORCE)
-set(OPENEXR_INSTALL_DEVELOPER_TOOLS OFF CACHE BOOL "" FORCE)
-set(OPENEXR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(OPENEXR_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
-set(OPENEXR_BUILD_OSS_FUZZ OFF CACHE BOOL "" FORCE)
-set(OPENEXR_TEST_LIBRARIES OFF CACHE BOOL "" FORCE)
-set(OPENEXR_TEST_TOOLS OFF CACHE BOOL "" FORCE)
-set(OPENEXR_TEST_PYTHON OFF CACHE BOOL "" FORCE)
-set(OPENEXR_FORCE_INTERNAL_DEFLATE OFF CACHE BOOL "" FORCE)
-set(OPENEXR_FORCE_INTERNAL_IMATH OFF CACHE BOOL "" FORCE)
-set(EXR_DEFLATE_LIB libdeflate::libdeflate_static CACHE STRING "" FORCE)
-set(EXR_DEFLATE_VERSION 1.25 CACHE STRING "" FORCE)
-block(SCOPE_FOR VARIABLES)
-    set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig ON)
-    set(CMAKE_DISABLE_FIND_PACKAGE_libdeflate ON)
-    set(CMAKE_DISABLE_FIND_PACKAGE_Imath ON)
-    add_subdirectory("${SPECTRA_OPENEXR_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/openexr-build/${SPECTRA_OPENEXR_COMMIT}")
-endblock()
 
-set(SPECTRA_PTEX_COMMIT "a3729367596c827ace086f4baa6cab89b6a7f439")
-set(SPECTRA_PTEX_ARCHIVE_SHA256 "5C079E439B4910826F8D4BA29698A325C886EC6C0D471AEF9BAC8FE63931BDBC")
-spectra_prepare_archive_dependency(
-        SPECTRA_PTEX_SOURCE_DIR
-        wdas
-        ptex
-        "${SPECTRA_PTEX_COMMIT}"
-        "${SPECTRA_PTEX_ARCHIVE_SHA256}"
-        ptex
-)
-include(GNUInstallDirs)
-set(PTEX_BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
-set(PTEX_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(PTEX_MAJOR_VERSION 2)
-set(PTEX_MINOR_VERSION 5)
-add_subdirectory("${SPECTRA_PTEX_SOURCE_DIR}/src/ptex" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/ptex-build/${SPECTRA_PTEX_COMMIT}/src/ptex")
-set(PTEX_INCLUDE "${SPECTRA_PTEX_SOURCE_DIR}/src/ptex")
-
-set(SPECTRA_OPENVDB_COMMIT "7c03e1f084873cd1b3422c7ff7aec6ee681b3b38")
-set(SPECTRA_OPENVDB_ARCHIVE_SHA256 "7492C5D80F56E961193FD6DD27F17642C7A5250960FFBDE72BC39806237BFDA4")
-spectra_prepare_archive_dependency(
-        SPECTRA_OPENVDB_SOURCE_DIR
-        AcademySoftwareFoundation
-        openvdb
-        "${SPECTRA_OPENVDB_COMMIT}"
-        "${SPECTRA_OPENVDB_ARCHIVE_SHA256}"
-        openvdb
-)
-set(NANOVDB_INCLUDE "${SPECTRA_OPENVDB_SOURCE_DIR}/nanovdb")
-
-set(SPECTRA_IMGUI_MODULE_COMMIT "8fff16535a92346f681bfb8a61ee1454142eef82")
-set(SPECTRA_IMGUI_SOURCE_COMMIT "b61e56346a92cfcaf1f43a545ca37b0b32239654")
-set(SPECTRA_IMGUI_MODULE_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/imgui-module/${SPECTRA_IMGUI_MODULE_COMMIT}")
-set(SPECTRA_IMGUI_SOURCE_DIR "${SPECTRA_IMGUI_MODULE_DIR}/imgui/${SPECTRA_IMGUI_SOURCE_COMMIT}")
-
-set(imgui_module_files
-        generated/imgui.cppm
-        generated/imgui_internal.cppm
-        generated/backends/imgui_impl_glfw.cppm
-        generated/backends/imgui_impl_vulkan.cppm
-)
-set(imgui_module_sha256s
-        77EF07F938F9B82E16C570114BD11FD83D29C40207094C41637419837D717EEB
-        396D47952D0D530E9CA944F8DBFA5CF1689A0BB16834A146A8D8447C193E2859
-        A0FC5757EDC87C3CE5B6E833F0DCE52E52D212266FD19D247986F27AE19EDA30
-        C8F0EB29D99DD83DB8B5A01C7D0B7745E0E9A8DBF8236BF4AE02E5E5308CE382
-)
-foreach (imgui_module_file imgui_module_sha256 IN ZIP_LISTS imgui_module_files imgui_module_sha256s)
-    spectra_download_if_needed(
-            "https://raw.githubusercontent.com/stripe2933/imgui-module/${SPECTRA_IMGUI_MODULE_COMMIT}/${imgui_module_file}"
-            "${SPECTRA_IMGUI_MODULE_DIR}/${imgui_module_file}"
-            "${imgui_module_sha256}"
-    )
-endforeach ()
-
-set(imgui_source_files
-        imgui.cpp
-        imgui_draw.cpp
-        imgui_tables.cpp
-        imgui_widgets.cpp
-        imgui.h
-        imgui_internal.h
-        imconfig.h
-        imstb_rectpack.h
-        imstb_textedit.h
-        imstb_truetype.h
-        backends/imgui_impl_glfw.cpp
-        backends/imgui_impl_glfw.h
-        backends/imgui_impl_vulkan.cpp
-        backends/imgui_impl_vulkan.h
-)
-set(imgui_source_sha256s
-        49CCA8475198925B69B128985148F29EB37DB689A49C7C6F0DBA6D2FAC5415BD
-        6814299D0618749A6FC73B0259A42BD6C2EABF5B55C0BFEF293BFDCDA68155AF
-        33B5146F5EB362605A166E532B336D1955579743EAB719D96241A163A21222EB
-        7B46CA08CA95E046AA57A88D2838933843851348A42F3A738D57EBDAA2F5C682
-        DA6D77803FC8963CA6A6826D6D6D08E3BE74FDD7F527841B90858E3E545BB478
-        F72EC91731B9114A6CEE203F575582B9859825A4F66836CF32CC7E70488C7AA6
-        1353BFA59DA16EEC481723FD4E5D910356F0406B79E3C4142E0C9867BAFFFAB5
-        889B396795202D1457560A797A7242E96F6F132D4B88CA2D69BE58BF05E1771F
-        A985F5FA0ED97353D493B497961E9EEF52082EDCD045CF6954B69990EC9D0741
-        C51A0F7E7EA760F2366BD3752635EC58E21FCCFEC4A832501639990BA6CE0528
-        2B6A3465AE69B21E22727CA95E39D335E84240A503057DD8C055A6168876DBB4
-        8A78AC98DC05F8B71EF817118D984537B4EF5CD570A84AB9AD99EED221DFE937
-        FF4A9B986F3E5CDDAA6B5B1C288D02FA2FDDC4B8D98942C07195D71E4878145A
-        4A22EDBD5589A7E6DB7BA4DF452CE7264CBFF1F1467568EA848A75FD8738D3B4
-)
-foreach (imgui_source_file imgui_source_sha256 IN ZIP_LISTS imgui_source_files imgui_source_sha256s)
-    spectra_download_if_needed(
-            "https://raw.githubusercontent.com/ocornut/imgui/${SPECTRA_IMGUI_SOURCE_COMMIT}/${imgui_source_file}"
-            "${SPECTRA_IMGUI_SOURCE_DIR}/${imgui_source_file}"
-            "${imgui_source_sha256}"
-    )
-endforeach ()
-
-add_library(spectra_imgui)
-add_library(spectra::imgui ALIAS spectra_imgui)
+# ============================================================================
+# Spectra
+# ============================================================================
+add_executable(spectra WIN32)
 target_sources(
-        spectra_imgui
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES
-        BASE_DIRS "${SPECTRA_IMGUI_MODULE_DIR}/generated"
-        FILES
-        "${SPECTRA_IMGUI_MODULE_DIR}/generated/imgui.cppm"
-        "${SPECTRA_IMGUI_MODULE_DIR}/generated/imgui_internal.cppm"
-        "${SPECTRA_IMGUI_MODULE_DIR}/generated/backends/imgui_impl_glfw.cppm"
-        "${SPECTRA_IMGUI_MODULE_DIR}/generated/backends/imgui_impl_vulkan.cppm"
+        spectra
         PRIVATE
-        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui.cpp"
-        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui_draw.cpp"
-        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui_tables.cpp"
-        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui_widgets.cpp"
-        "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp"
-        "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp"
-)
-target_include_directories(spectra_imgui PRIVATE "${SPECTRA_IMGUI_SOURCE_DIR}" "${SPECTRA_IMGUI_SOURCE_DIR}/backends")
-target_link_libraries(spectra_imgui PUBLIC spectra::vulkan PRIVATE glfw)
-
-
-# ============================================================================
-# Renderer Host Contract
-# ============================================================================
-add_library(spectra_renderer_host)
-add_library(spectra::renderer_host ALIAS spectra_renderer_host)
-target_sources(
-        spectra_renderer_host
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        renderer/host.ixx
-)
-target_link_libraries(spectra_renderer_host PUBLIC spectra::vulkan spectra::imgui)
-set_property(TARGET spectra_renderer_host PROPERTY CXX_MODULE_STD ON)
-
-
-# ============================================================================
-# Spectra Core
-# ============================================================================
-add_library(spectra_core)
-add_library(spectra::core ALIAS spectra_core)
-target_sources(
-        spectra_core
-        PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         spectra/spectra.ixx
-        PRIVATE
-        spectra/spectra.cpp
-)
-target_link_libraries(spectra_core PUBLIC spectra::renderer_host PRIVATE glfw)
-if (WIN32)
-    target_link_libraries(spectra_core PRIVATE comctl32 dwmapi)
-endif ()
-target_include_directories(spectra_core PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}")
-set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
-
-
-# ============================================================================
-# Scene
-# ============================================================================
-add_library(spectra_scene_model)
-target_sources(
-        spectra_scene_model
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        scene/math.ixx
-        scene/spatial.ixx
+        scene/schema.ixx
         scene/scene.ixx
-        PRIVATE
-        scene/spatial.cpp
-)
-set_property(TARGET spectra_scene_model PROPERTY CXX_MODULE_STD ON)
-
-add_library(spectra_scene)
-add_library(spectra::scene ALIAS spectra_scene)
-target_sources(
-        spectra_scene
-        PRIVATE
-        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
-        scene/plugin_abi.ixx
-        PRIVATE
-        scene/scene.cpp
-        scene/plugin_host.cpp
-)
-target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTRA_SCENES_ROOT}\"")
-target_link_libraries(spectra_scene PUBLIC spectra_scene_model PRIVATE ZLIB::ZLIB spectra::lodepng ${CMAKE_DL_LIBS})
-set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
-
-# ============================================================================
-# Pathtracer Configuration
-# ============================================================================
-set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX SDK for the Spectra pathtracer")
-set(SPECTRA_OPTIX_CACHE_DIR "${SPECTRA_BINARY_ROOT_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for the Spectra pathtracer")
-set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for the Spectra pathtracer")
-
-if (SPECTRA_OPTIX_PATH STREQUAL "")
-    file(GLOB SPECTRA_OPTIX_DEFAULT_PATHS LIST_DIRECTORIES true
-            "C:/ProgramData/NVIDIA Corporation/OptiX SDK *"
-            "/mnt/c/ProgramData/NVIDIA Corporation/OptiX SDK *"
-            "/opt/NVIDIA-OptiX-SDK-*"
-            "/opt/OptiX SDK *"
-            "/opt/optix*"
-            "/usr/local/NVIDIA-OptiX-SDK-*"
-            "/usr/local/OptiX SDK *"
-            "/usr/local/optix*"
-    )
-    foreach (SPECTRA_OPTIX_DEFAULT_PATH IN LISTS SPECTRA_OPTIX_DEFAULT_PATHS)
-        if (EXISTS "${SPECTRA_OPTIX_DEFAULT_PATH}/include/optix.h")
-            list(APPEND SPECTRA_OPTIX_CANDIDATE_PATHS "${SPECTRA_OPTIX_DEFAULT_PATH}")
-        endif ()
-    endforeach ()
-    if (SPECTRA_OPTIX_CANDIDATE_PATHS)
-        list(SORT SPECTRA_OPTIX_CANDIDATE_PATHS COMPARE NATURAL ORDER DESCENDING)
-        list(GET SPECTRA_OPTIX_CANDIDATE_PATHS 0 SPECTRA_OPTIX_PATH)
-        set(SPECTRA_OPTIX_PATH "${SPECTRA_OPTIX_PATH}" CACHE PATH "Path to OptiX SDK for the Spectra pathtracer" FORCE)
-    endif ()
-endif ()
-if (SPECTRA_OPTIX_PATH STREQUAL "")
-    message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to an OptiX SDK root; no default installation was found.")
-endif ()
-set(SPECTRA_OPTIX_IR_ARCH compute_75)
-message(STATUS "Spectra OptiX-IR CUDA Architecture: ${SPECTRA_OPTIX_IR_ARCH}")
-math(EXPR SPECTRA_OPTIX_CACHE_SIZE_BYTES "${SPECTRA_OPTIX_CACHE_SIZE_MB} * 1024 * 1024")
-
-set(SPECTRA_PATHTRACER_DEFINITIONS
-        PTEX_STATIC
-)
-
-if (WIN32)
-    if (NOT MSVC)
-        message(FATAL_ERROR "Windows builds require MSVC.")
-    endif ()
-    list(APPEND SPECTRA_PATHTRACER_DEFINITIONS
-            SPECTRA_IS_WINDOWS
-            SPECTRA_IS_MSVC
-            NOMINMAX
-            _CRT_SECURE_NO_WARNINGS
-            SPECTRA_HAS_INTRIN_H
-            "SPECTRA_RESTRICT=__restrict"
-            SPECTRA_HAVE__ALIGNED_MALLOC
-    )
-elseif (LINUX)
-    list(APPEND SPECTRA_PATHTRACER_DEFINITIONS
-            "SPECTRA_RESTRICT=__restrict__"
-            SPECTRA_HAVE_POSIX_MEMALIGN
-    )
-else ()
-    message(FATAL_ERROR "Only Linux/WSL and Windows/MSVC are supported by the Spectra pathtracer.")
-endif ()
-
-set(SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS
-        "$<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>"
-)
-
-
-# ============================================================================
-# Pathtracer Generated Sources
-# ============================================================================
-cmake_path(GET CMAKE_CUDA_COMPILER PARENT_PATH SPECTRA_PATHTRACER_CUDA_COMPILER_BIN)
-find_program(
-        SPECTRA_PATHTRACER_BIN2C
-        NAMES bin2c
-        PATHS ${SPECTRA_PATHTRACER_CUDA_COMPILER_BIN} ${CUDAToolkit_BIN_DIR}
-        NO_DEFAULT_PATH
-        REQUIRED
-        NO_CACHE
-)
-
-set(SPECTRA_PATHTRACER_SOURCE_DIR ${SPECTRA_ROOT_DIR}/pathtracer)
-set(SPECTRA_PATHTRACER_GENERATED_DIR ${SPECTRA_BINARY_ROOT_DIR}/pathtracer/generated/spectra_pathtracer)
-file(MAKE_DIRECTORY "${SPECTRA_PATHTRACER_GENERATED_DIR}")
-file(MAKE_DIRECTORY "${SPECTRA_OPTIX_CACHE_DIR}")
-cmake_path(SET SPECTRA_OPTIX_CACHE_DIR_CONFIG NORMALIZE "${SPECTRA_OPTIX_CACHE_DIR}")
-string(REPLACE "\"" "\\\"" SPECTRA_OPTIX_CACHE_DIR_CONFIG "${SPECTRA_OPTIX_CACHE_DIR_CONFIG}")
-file(CONFIGURE
-        OUTPUT "${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_optix_config.h"
-        CONTENT [=[
-#pragma once
-
-#include <cstddef>
-
-namespace spectra::optix
-{
-    inline constexpr char SpectraOptiXCacheDir[] = "@SPECTRA_OPTIX_CACHE_DIR_CONFIG@";
-    inline constexpr std::size_t SpectraOptiXCacheSizeBytes = @SPECTRA_OPTIX_CACHE_SIZE_BYTES@ull;
-} // namespace spectra::optix
-]=]
-        @ONLY
-)
-
-set(SPECTRA_PATHTRACER_INCLUDE_DIRS
-        ${SPECTRA_ROOT_DIR}
-        ${SPECTRA_UI_ASSET_INCLUDE_DIR}
-        ${SPECTRA_STB_DIR}
-        ${SPECTRA_QOI_DIR}
-        ${SPECTRA_ZLIB_SOURCE_DIR}
-        ${SPECTRA_ZLIB_BINARY_DIR}
-        ${PTEX_INCLUDE}
-        ${NANOVDB_INCLUDE}
-        ${SPECTRA_BINARY_ROOT_DIR}
-        ${SPECTRA_PATHTRACER_GENERATED_DIR}
-        ${SPECTRA_OPTIX_PATH}/include
-        ${CUDAToolkit_INCLUDE_DIRS}
-)
-
-set(SPECTRA_PATHTRACER_BIN2C_SCRIPT ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_pathtracer_bin2c_embed.cmake)
-file(CONFIGURE
-        OUTPUT "${SPECTRA_PATHTRACER_BIN2C_SCRIPT}"
-        CONTENT [=[
-set(file_contents)
-foreach (obj IN LISTS OBJECTS)
-    cmake_path(GET obj EXTENSION obj_ext)
-    cmake_path(GET obj PARENT_PATH obj_dir)
-    if (obj_ext MATCHES "\\.(optixir|ptx)$")
-        execute_process(
-                COMMAND "${BIN_TO_C_COMMAND}" --name "${VAR_NAME}" "${obj}"
-                WORKING_DIRECTORY "${obj_dir}"
-                RESULT_VARIABLE result
-                OUTPUT_VARIABLE output
-                ERROR_VARIABLE error_var
-        )
-        if (NOT result EQUAL 0)
-            message(FATAL_ERROR "bin2c failed for ${obj}: ${error_var}")
-        endif ()
-        file(SIZE "${obj}" obj_size)
-        string(APPEND file_contents " \n${output}\nunsigned long long ${VAR_NAME}_SIZE = ${obj_size}ull;\n")
-    endif ()
-endforeach ()
-if (file_contents STREQUAL "")
-    message(FATAL_ERROR "No OptiX input was passed to bin2c: ${OBJECTS}")
-endif ()
-file(WRITE "${OUTPUT}" "${file_contents}")
-]=]
-        @ONLY
-)
-
-add_executable(spectra_pathtracer_soac pathtracer/tools/soac.cpp)
-
-add_custom_command(
-        OUTPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_soa.cuh
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_PATHTRACER_GENERATED_DIR}
-        COMMAND spectra_pathtracer_soac ${SPECTRA_PATHTRACER_SOURCE_DIR}/core/spectra.soa > ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_soa.cuh
-        DEPENDS spectra_pathtracer_soac ${SPECTRA_PATHTRACER_SOURCE_DIR}/core/spectra.soa
-        VERBATIM
-)
-add_custom_command(
-        OUTPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_wavefront_workitems_soa.cuh
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_PATHTRACER_GENERATED_DIR}
-        COMMAND spectra_pathtracer_soac ${SPECTRA_PATHTRACER_SOURCE_DIR}/wavefront/workitems.soa > ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_wavefront_workitems_soa.cuh
-        DEPENDS spectra_pathtracer_soac ${SPECTRA_PATHTRACER_SOURCE_DIR}/wavefront/workitems.soa
-        VERBATIM
-)
-set(SPECTRA_PATHTRACER_SOA_GENERATED
-        ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_soa.cuh
-        ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_wavefront_workitems_soa.cuh
-)
-add_custom_target(spectra_pathtracer_soa_generated DEPENDS ${SPECTRA_PATHTRACER_SOA_GENERATED})
-
-add_executable(spectra_pathtracer_rgb2spec_opt pathtracer/tools/rgb2spec_opt.cpp)
-target_link_libraries(spectra_pathtracer_rgb2spec_opt PRIVATE Threads::Threads)
-
-set(SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_MANIFEST
-        "aces|ACES2065_1"
-        "dci_p3|DCI_P3"
-        "rec2020|REC2020"
-        "srgb|sRGB"
-)
-set(SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES)
-foreach (rgb_to_spectrum_spec IN LISTS SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_MANIFEST)
-    string(REPLACE "|" ";" rgb_to_spectrum_fields "${rgb_to_spectrum_spec}")
-    list(GET rgb_to_spectrum_fields 0 rgb_to_spectrum_name)
-    list(GET rgb_to_spectrum_fields 1 rgb_to_spectrum_color_space)
-    set(rgb_to_spectrum_output "${SPECTRA_PATHTRACER_GENERATED_DIR}/rgbspectrum_${rgb_to_spectrum_name}.cpp")
-    list(APPEND SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES "${rgb_to_spectrum_output}")
-    add_custom_command(
-            OUTPUT "${rgb_to_spectrum_output}"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_PATHTRACER_GENERATED_DIR}"
-            COMMAND spectra_pathtracer_rgb2spec_opt 64 "${rgb_to_spectrum_output}" "${rgb_to_spectrum_color_space}"
-            DEPENDS spectra_pathtracer_rgb2spec_opt
-            VERBATIM
-    )
-endforeach ()
-
-
-# ============================================================================
-# Pathtracer Source Lists
-# ============================================================================
-set(SPECTRA_PATHTRACER_CORE_SOURCE
-        pathtracer/core/bssrdf.cu
-        pathtracer/core/bxdfs.cu
-        pathtracer/core/cameras.cu
-        pathtracer/core/film.cu
-        pathtracer/core/filters.cu
-        pathtracer/core/interaction.cu
-        pathtracer/core/kernel_config.cu
-        pathtracer/core/lights.cu
-        pathtracer/core/lightsamplers.cu
-        pathtracer/core/materials.cu
-        pathtracer/core/media_host.cu
-        pathtracer/core/media.cu
-        pathtracer/core/paramdict.cu
-        pathtracer/core/samplers.cu
-        pathtracer/core/shapes.cu
-        pathtracer/core/textures.cu
-)
-set(SPECTRA_PATHTRACER_UTIL_SOURCE
-        pathtracer/util/bluenoise.cu
-        pathtracer/util/color.cu
-        pathtracer/util/colorspace.cu
-        pathtracer/util/file.cpp
-        pathtracer/util/image.cpp
-        pathtracer/util/loopsubdiv.cu
-        pathtracer/util/math.cu
-        pathtracer/util/mesh.cu
-        pathtracer/util/mipmap.cu
-        pathtracer/util/noise.cu
-        pathtracer/util/parallel.cu
-        pathtracer/util/pmj02tables.cu
-        pathtracer/util/primes.cu
-        pathtracer/util/pstd.cu
-        pathtracer/util/sampling.cu
-        pathtracer/util/scattering.cu
-        pathtracer/util/sobolmatrices.cu
-        pathtracer/util/spectrum.cu
-        pathtracer/util/stbimage.cu
-        pathtracer/util/transform.cu
-        pathtracer/util/vecmath.cu
-)
-set(SPECTRA_PATHTRACER_DEVICE_SOURCE
-        pathtracer/gpu/util.cu
-        pathtracer/memory/memory.cu
-)
-
-add_library(spectra_pathtracer_optix_input OBJECT pathtracer/optix/optix.cu)
-set_property(TARGET spectra_pathtracer_optix_input PROPERTY CUDA_OPTIX_COMPILATION ON)
-set_property(TARGET spectra_pathtracer_optix_input PROPERTY CUDA_ARCHITECTURES OFF)
-target_compile_definitions(spectra_pathtracer_optix_input PRIVATE ${SPECTRA_PATHTRACER_DEFINITIONS} CCCL_DISABLE_INT128_SUPPORT)
-target_include_directories(spectra_pathtracer_optix_input PRIVATE ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
-target_compile_options(
-        spectra_pathtracer_optix_input
-        PRIVATE
-        ${SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS}
-        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${SPECTRA_OPTIX_IR_ARCH}>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --display_error_number>"
-)
-add_dependencies(spectra_pathtracer_optix_input spectra_pathtracer_soa_generated)
-
-
-# ============================================================================
-# Pathtracer Targets
-# ============================================================================
-set(SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/optix.cu.ptx_embedded.c)
-add_custom_command(
-        OUTPUT ${SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_PATHTRACER_GENERATED_DIR}
-        COMMAND ${CMAKE_COMMAND}
-        "-DBIN_TO_C_COMMAND=${SPECTRA_PATHTRACER_BIN2C}"
-        "-DOBJECTS=$<TARGET_OBJECTS:spectra_pathtracer_optix_input>"
-        "-DVAR_NAME=SPECTRA_EMBEDDED_OPTIX_INPUT"
-        "-DOUTPUT=${SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT}"
-        -P ${SPECTRA_PATHTRACER_BIN2C_SCRIPT}
-        DEPENDS spectra_pathtracer_optix_input $<TARGET_OBJECTS:spectra_pathtracer_optix_input> ${SPECTRA_PATHTRACER_BIN2C_SCRIPT}
-        VERBATIM
-)
-add_library(spectra_pathtracer_embedded_optix_input STATIC ${SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT})
-
-add_library(spectra_pathtracer_api)
-target_sources(
-        spectra_pathtracer_api
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        scene/format.ixx
+        plugin/plugin.ixx
+        render/assets.ixx
+        render/output.ixx
+        ui/ui.ixx
         pathtracer/renderer.ixx
-)
-target_link_libraries(spectra_pathtracer_api PUBLIC spectra::vulkan spectra::scene spectra::renderer_host)
-set_property(TARGET spectra_pathtracer_api PROPERTY CXX_MODULE_STD ON)
-
-add_library(spectra_pathtracer)
-add_library(spectra::pathtracer ALIAS spectra_pathtracer)
-target_sources(
-        spectra_pathtracer
-        PRIVATE
-        ${SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES}
-        ${SPECTRA_PATHTRACER_SOA_GENERATED}
-        ${SPECTRA_PATHTRACER_CORE_SOURCE}
-        ${SPECTRA_PATHTRACER_UTIL_SOURCE}
-        ${SPECTRA_PATHTRACER_DEVICE_SOURCE}
-        pathtracer/renderer.cpp
-        pathtracer/compiled_scene.cpp
-        pathtracer/device_scene.cu
-        pathtracer/optix/aggregate.cu
-        pathtracer/integrator.cu
-)
-target_compile_definitions(spectra_pathtracer PRIVATE ${SPECTRA_PATHTRACER_DEFINITIONS})
-target_include_directories(spectra_pathtracer PRIVATE ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
-target_compile_options(
-        spectra_pathtracer
-        PRIVATE
-        "$<$<COMPILE_LANG_AND_ID:CXX,Clang>:-ffp-contract=off>"
-        ${SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS}
-)
-target_link_libraries(
-        spectra_pathtracer
-        PUBLIC
-        spectra_pathtracer_api
-        PRIVATE
-        spectra::vulkan
-        spectra::imgui
-        spectra::scene
-        spectra::renderer_host
-        spectra::lodepng
-        spectra::rply
-        OpenEXR::OpenEXR
-        Ptex_static
-        ZLIB::ZLIB
-        CUDA::cudart
-        CUDA::cuda_driver
-        Threads::Threads
-        spectra_pathtracer_embedded_optix_input
-)
-set_property(TARGET spectra_pathtracer PROPERTY CXX_MODULE_STD ON)
-set_property(TARGET spectra_pathtracer PROPERTY CUDA_SEPARABLE_COMPILATION ON)
-set_property(TARGET spectra_pathtracer PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-
-add_executable(spectra_pathtracer_cli pathtracer/pathtracer_cli.cpp)
-target_link_libraries(spectra_pathtracer_cli PRIVATE spectra::pathtracer xayah-util-xcli)
-if (LINUX)
-    target_link_options(spectra_pathtracer_cli PRIVATE -rdynamic "LINKER:--no-as-needed")
-endif ()
-if (MSVC)
-    target_link_libraries(spectra_pathtracer_cli PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,@cmake_cxx_std>")
-endif ()
-
-
-# ============================================================================
-# Rasterizer
-# ============================================================================
-add_library(spectra_rasterizer)
-add_library(spectra::rasterizer ALIAS spectra_rasterizer)
-
-find_program(SLANGC_EXECUTABLE NAMES slangc REQUIRED)
-set(SPECTRA_RASTERIZER_SOURCE_DIR ${SPECTRA_ROOT_DIR}/rasterizer)
-set(SPECTRA_RASTERIZER_GENERATED_DIR ${SPECTRA_BINARY_ROOT_DIR}/rasterizer/generated)
-
-set(SPECTRA_RASTERIZER_SHADER_MANIFEST
-        "mesh.slang|vertex_main|vertex|mesh_vertex"
-        "mesh.slang|fragment_main|fragment|mesh_fragment"
-        "mesh_pick.slang|vertex_main|vertex|mesh_pick_vertex"
-        "mesh_pick.slang|fragment_main|fragment|mesh_pick_fragment"
-        "mesh_selection_mask.slang|vertex_main|vertex|mesh_selection_mask_vertex"
-        "mesh_selection_mask.slang|fragment_main|fragment|mesh_selection_mask_fragment"
-        "point_cloud.slang|vertex_main|vertex|point_cloud_vertex"
-        "point_cloud.slang|fragment_main|fragment|point_cloud_fragment"
-        "point_cloud_pick.slang|vertex_main|vertex|point_cloud_pick_vertex"
-        "point_cloud_pick.slang|fragment_main|fragment|point_cloud_pick_fragment"
-        "point_cloud_selection_mask.slang|vertex_main|vertex|point_cloud_selection_mask_vertex"
-        "point_cloud_selection_mask.slang|fragment_main|fragment|point_cloud_selection_mask_fragment"
-        "selection_outline.slang|vertex_main|vertex|selection_outline_vertex"
-        "selection_outline.slang|fragment_main|fragment|selection_outline_fragment"
-        "viewport_grid.slang|vertex_main|vertex|viewport_grid_vertex"
-        "viewport_grid.slang|fragment_main|fragment|viewport_grid_fragment"
-        "viewport_image_plane.slang|vertex_main|vertex|viewport_image_plane_vertex"
-        "viewport_image_plane.slang|fragment_main|fragment|viewport_image_plane_fragment"
-        "viewport_segment.slang|vertex_main|vertex|viewport_segment_vertex"
-        "viewport_segment.slang|fragment_main|fragment|viewport_segment_fragment"
-        "viewport_voxel_grid.slang|vertex_main|vertex|viewport_voxel_grid_vertex"
-        "viewport_voxel_grid.slang|fragment_main|fragment|viewport_voxel_grid_fragment"
-        "volume.slang|vertex_main|vertex|volume_vertex"
-        "volume.slang|fragment_main|fragment|volume_fragment"
-        "volume_pick.slang|vertex_main|vertex|volume_pick_vertex"
-        "volume_pick.slang|fragment_main|fragment|volume_pick_fragment"
-        "volume_selection_mask.slang|vertex_main|vertex|volume_selection_mask_vertex"
-        "volume_selection_mask.slang|fragment_main|fragment|volume_selection_mask_fragment"
-        "viewport_voxel_grid_compact.slang|compute_main|compute|viewport_voxel_grid_compact_compute"
-        "volume_color_upload.slang|compute_main|compute|volume_color_upload_compute"
-        "volume_upload.slang|compute_main|compute|volume_upload_compute"
-)
-set(SPECTRA_RASTERIZER_SHADER_INCLUDE_FILES
-        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/camera_uniform.slangh"
-        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/mesh_selection.slangh"
-        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/point_cloud_selection.slangh"
-        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/volume_selection.slangh"
-        "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/volume_upload.slangh"
-)
-
-function(spectra_rasterizer_shader_stage output_variable shader_file entry stage output_name)
-    set(embed_name "spectra_rasterizer_${output_name}_spv")
-    set(output_file "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_${output_name}_spv.h")
-    add_custom_command(
-            OUTPUT "${output_file}"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_RASTERIZER_GENERATED_DIR}"
-            COMMAND "${SLANGC_EXECUTABLE}" "${shader_file}" -I "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders" -target spirv -profile glsl_460 -entry "${entry}" -stage "${stage}" -matrix-layout-row-major -source-embed-style u32 -source-embed-name "${embed_name}" -o "${output_file}"
-            DEPENDS "${shader_file}" ${SPECTRA_RASTERIZER_SHADER_INCLUDE_FILES}
-            VERBATIM
-    )
-    set("${output_variable}" "${output_file}" PARENT_SCOPE)
-endfunction()
-
-set(SPECTRA_RASTERIZER_SHADER_HEADERS)
-set(SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT)
-foreach (shader_spec IN LISTS SPECTRA_RASTERIZER_SHADER_MANIFEST)
-    string(REPLACE "|" ";" shader_fields "${shader_spec}")
-    list(GET shader_fields 0 shader_source)
-    list(GET shader_fields 1 shader_entry)
-    list(GET shader_fields 2 shader_stage)
-    list(GET shader_fields 3 shader_output_name)
-    set(shader_file "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/${shader_source}")
-    spectra_rasterizer_shader_stage(shader_header "${shader_file}" "${shader_entry}" "${shader_stage}" "${shader_output_name}")
-    list(APPEND SPECTRA_RASTERIZER_SHADER_HEADERS "${shader_header}")
-    cmake_path(GET shader_header FILENAME shader_header_name)
-    string(APPEND SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT "#include <${shader_header_name}>\n")
-endforeach ()
-
-set(SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_shaders_spv.h")
-file(MAKE_DIRECTORY "${SPECTRA_RASTERIZER_GENERATED_DIR}")
-file(CONFIGURE OUTPUT "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}" CONTENT "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT}" @ONLY)
-
-target_sources(
-        spectra_rasterizer
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        pathtracer/spectrum.ixx
+        "${SPECTRA_PATH_ABI_MODULE}"
         rasterizer/renderer.ixx
+        workspace/workspace.ixx
+        workspace/picker.ixx
+        workspace/overlay.ixx
+        app/application.ixx
+        app/workspace_ui.ixx
+        app/image_io.ixx
+        app/presenter.ixx
         PRIVATE
-        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
-        rasterizer/math.ixx
-        PRIVATE
+        main.cpp
+        spectra/spectra.cpp
+        scene/schema.cpp
+        scene/scene.cpp
+        scene/format.cpp
+        plugin/plugin.cpp
+        render/assets.cpp
+        ui/ui.cpp
+        pathtracer/spectrum.cpp
+        pathtracer/scene.cpp
+        pathtracer/session.cpp
+        pathtracer/integrator.cpp
+        pathtracer/renderer.cpp
+        rasterizer/scene.cpp
         rasterizer/renderer.cpp
-        "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}"
-        ${SPECTRA_RASTERIZER_SHADER_HEADERS}
+        workspace/workspace.cpp
+        workspace/picker.cpp
+        workspace/overlay.cpp
+        app/application.cpp
+        app/workspace_ui.cpp
+        app/image_io.cpp
+        app/presenter.cpp
 )
-target_link_libraries(spectra_rasterizer PUBLIC spectra::vulkan spectra::imgui spectra::scene spectra::renderer_host PRIVATE spectra::lodepng)
-target_include_directories(spectra_rasterizer PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}" "${SPECTRA_RASTERIZER_GENERATED_DIR}")
-set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
-
-
-# ============================================================================
-# GUI
-# ============================================================================
-add_executable(spectra main.cpp)
-if (WIN32)
-    target_sources(spectra PRIVATE spectra.rc)
-endif ()
-target_sources(
-        spectra
-        PRIVATE
-        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
-        scene/ui.ixx
-        PRIVATE
-        scene/ui.cpp
+target_include_directories(spectra PRIVATE "${SPECTRA_GLAZE_SOURCE_DIR}/include")
+target_link_libraries(spectra PRIVATE
+        spectra::vulkan
+        spectra::plugin_contract
+        spectra::imgui
+        spectra::imguizmo
+        spectra::tinyexr
+        glfw
+        bcrypt
+        dwmapi
+        ole32
+        shell32
+        windowscodecs
 )
-target_link_libraries(
-        spectra
-        PRIVATE
-        spectra::core
-        spectra::scene
-        spectra::pathtracer
-        spectra::rasterizer
-        xayah-util-xcli
+target_compile_definitions(spectra PRIVATE
+        GLFW_EXPOSE_NATIVE_WIN32
+        "SPECTRA_DEFAULT_SCENE=\"${SPECTRA_ROOT_DIR}/scenes/cornell-box.spectra\""
+        "SPECTRA_SHADER_DIRECTORY=\"${SPECTRA_SHADER_OUTPUT_DIR}\""
 )
-target_include_directories(spectra PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}")
-if (MSVC)
-    target_link_libraries(spectra PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,@cmake_cxx_std>")
-endif ()
-set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
+set_property(
+        SOURCE pathtracer/scene.cpp
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS
+        "SPECTRA_SPECTRAL_ASSET_DIRECTORY=\"${SPECTRA_ROOT_DIR}/pathtracer/assets\""
+)
+add_dependencies(spectra spectra_shaders)

@@ -1,74 +1,113 @@
 ![Spectra](https://github.com/Xayah-Graphics/imagebed/blob/14c6599b610e65a7ef42174e6910dac53004cec9/spectra-banner2.png)
 
-# Spectra v1.1.2
+# Spectra
 
-[![Windows](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml)
-[![Arch Linux](https://github.com/Xayah-Graphics/spectra/actions/workflows/archlinux.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/archlinux.yml)
-[![License](https://img.shields.io/github/license/Xayah-Graphics/spectra)](LICENSE)
+Spectra is a Windows graphics workspace for physical simulation and 3D reconstruction. One native `.spectra` scene is shared by an interactive Vulkan rasterizer and a spectral Vulkan ray-tracing path tracer.
 
-Spectra is a C++23 graphics research workspace for inspecting static PBRT scenes and live plugin-driven scenes.
-It owns one shared `spectra.scene` workspace and lets multiple renderer backends consume the same active scene.
+The application owns scene loading, editing, presentation and capture. Simulation plugins publish data through a small C ABI and do not depend on the renderer implementation.
 
-| Pathtracing Rendering                                                                                                                       | Physical Simulation                                                                                                                                   | Instant NGP                                                                                                                                 |
-|---------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
-| ![Cornell Box](https://github.com/Xayah-Graphics/imagebed/blob/883141b90fd655fa7e4b227d8a54842ee137392c/spectra-pathtracer-cornell-box.png) | ![Cloth Simulation](https://github.com/Xayah-Graphics/imagebed/blob/0b600f42860a713b7bad36e350fbb55f29a4d97c/spectra-pathtracer-cloth-simulation.png) | ![Instant NGP](https://github.com/Xayah-Graphics/imagebed/blob/eae3d3fd1d4073f8876f69cc38927ee88448df21/spectra-rasterizer-instant-ngp.png) |
+## Rendering architecture
 
-## Highlights
+- `spectra`: the only Vulkan runtime. It owns the window, instance, device, descriptor heaps, allocator, swapchain and frame synchronization.
+- `spectra.scene`: the canonical scene model and native package format.
+- `spectra.renderer`: shared GPU assets, acceleration structures, picking, overlays and render outputs.
+- `spectra.rasterizer`: Vulkan Mesh Shader interactive preview.
+- `spectra.pathtracer`: Slang wavefront spectral path tracing through `VK_KHR_ray_tracing_pipeline`.
+- `spectra.workspace`: the single active scene, renderer switching, selection, camera control, edits and undo/redo.
+- `spectra.plugin`: Plugin API 4 host for live deformable meshes, topology-changing meshes, particles and simulation state.
 
-- **Shared scene model**: PBRT files and runtime scene plugins resolve into the same `spectra.scene` data model.
-- **Live rasterizer**: Vulkan renderer for interactive preview, debug overlays, camera visuals, volumes, point clouds,
-  and scene attachments.
-- **Path tracer**: CUDA/OptiX renderer for path-traced snapshots of the active scene.
-- **Scene plugins**: External dynamic libraries can publish dynamic meshes, cameras, volumes, debug attachments,
-  controls, and live HUD state without including Spectra headers.
-- **Zero renderer-owned loading**: renderers receive the active scene; file/plugin loading stays in the application
-  scene layer.
+The rasterizer deliberately presents complex materials as a clearly labelled interactive PBR approximation. The path tracer is the physical reference for every feature included in the native scene schema.
 
 ## Requirements
 
-- CMake 4.3+
-- C++23 compiler with modules support
-- Vulkan SDK 1.4+
-- CUDA Toolkit 13+
-- NVIDIA OptiX SDK 9+
-- Ninja is recommended
+- Windows 11
+- CMake 4.4
+- Ninja
+- Microsoft Visual C++ with C++23 standard-library module support
+- Vulkan SDK 1.4
+- A discrete Vulkan 1.4 GPU supporting Descriptor Heap, Shader Untyped Pointers, Shader Object, Mesh Shader and the complete KHR ray-tracing pipeline profile required by `spectra/spectra.cpp`
+
+Slang 2026.14 and the remaining pinned source dependencies are downloaded and hash-verified by CMake.
+
+CUDA and OptiX are not used.
+
+## Native scene suite
+
+Large scenes and image baselines are intentionally kept outside Git. Configuration requires the external suite directory:
+
+```text
+C:\Users\xayah\Documents\Desktop\spectra-scenes
+```
+
+It contains 15 native scenes, one shared content-addressed asset store, Path Tracer and Rasterizer baselines, and `suite.json`. Together with the repository Cornell Box, the acceptance suite contains 16 cases.
+
+Use `SPECTRA_SCENE_SUITE_DIR` to select another complete suite. Missing scenes, assets, baselines or an incompatible manifest are errors; there is no download or fallback path.
 
 ## Build
 
-```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSPECTRA_OPTIX_PATH=/path/to/OptiX-SDK
-cmake --build build --parallel
+Run from a Visual Studio developer command prompt:
+
+```powershell
+cmake -S . -B cmake-build-release -G Ninja -DCMAKE_BUILD_TYPE=Release `
+  -DSPECTRA_SCENE_SUITE_DIR=C:/Users/xayah/Documents/Desktop/spectra-scenes
+cmake --build cmake-build-release --parallel 30
 ```
 
-The main desktop executable target is `spectra`.
+Shader compilation, SPIR-V validation and generation of the shared C++/Slang path-tracing ABI are part of the build.
 
 ## Run
 
-Open an empty workspace:
+Open the default Cornell Box:
 
-```bash
-./build/spectra
+```powershell
+.\cmake-build-release\spectra.exe
 ```
 
-Open a PBRT scene or scene plugin directly:
+Open a native scene or a Plugin API 4 library:
 
-```bash
-./build/spectra --scene /path/to/scene.pbrt
-./build/spectra --scene /path/to/plugin.dll
+```powershell
+.\cmake-build-release\spectra.exe --scene C:\path\scene.spectra
+.\cmake-build-release\spectra.exe --plugin C:\path\simulation.dll
 ```
 
-You can also drag a `.pbrt`, `.pbrt.gz`, `.dll`, or `.so` into the viewport. Plugin libraries first open their declared
-setup form in the Scene panel; after opening, controls stay in the Scene panel and runtime status appears in the
-viewport HUD.
+Select the initial renderer or run a fixed number of successfully presented frames:
 
-## Project Layout
+```powershell
+.\cmake-build-release\spectra.exe --renderer pathtracer
+.\cmake-build-release\spectra.exe --frames 5
+```
 
-- `scene/`: scene model, PBRT import, scene plugin host, control/HUD data.
-- `rasterizer/`: Vulkan preview renderer and debug visualization.
-- `pathtracer/`: CUDA/OptiX path tracing backend.
-- `spectra.ixx` / `spectra.cpp`: application shell and Vulkan lifecycle core.
-- `main.cpp`: desktop executable entry point.
+The UI supports Rasterizer/Path Tracer switching, scene hierarchy and inspection, viewport navigation, picking, outlines, transform gizmos, undo/redo, sampler and film controls, and PNG or linear EXR capture. A `.spectra` scene or `.dll` plugin can also be dropped onto the window.
+
+## Test
+
+Run all functional and native scene acceptance tests serially:
+
+```powershell
+ctest --test-dir cmake-build-release --parallel 1 --output-on-failure
+```
+
+Run only the 16-scene Path Tracer and Rasterizer suite:
+
+```powershell
+cmake --build cmake-build-release --target spectra_scene_suite_acceptance --parallel 30
+```
+
+Small native fixtures and frozen numerical golden data remain in the repository so material, light, sampling, geometry, volume and dynamic-resource failures can be diagnosed independently of the large scene suite.
+
+## Project layout
+
+- `spectra/`: Vulkan runtime and `GpuDevice` façade.
+- `scene/`: canonical schema, resources, spectral data, spatial utilities and `.spectra` serialization.
+- `renderer/`: shared GPU scene, workspace, presentation, picking, overlays, UI renderer and image I/O.
+- `rasterizer/`: interactive raster backend.
+- `pathtracer/`: spectral wavefront path tracer, Slang shaders and immutable sampling tables.
+- `plugin/`: zero-renderer-dependency simulation contract and host.
+- `app/`: desktop application and workspace UI.
+- `scenes/`: repository Cornell Box only.
+- `tests/`: native micro-scenes, frozen baselines and regression tests.
+- `docs/`: current architecture and migration certificate documentation.
 
 ## License
 
-Spectra is distributed under the GNU General Public License v2. See [LICENSE](LICENSE).
+Spectra is distributed under the GNU General Public License v2. See [LICENSE](LICENSE). Third-party algorithm and data notices are retained beside the affected assets and test fixtures.

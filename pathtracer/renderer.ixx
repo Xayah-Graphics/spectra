@@ -1,62 +1,288 @@
-module;
+export module spectra.pathtracer;
 
-export module spectra.pathtracer.renderer;
-
-export import spectra.renderer.host;
-export import spectra.scene;
-export import vulkan;
-
+import spectra;
+import spectra.render.assets;
+import spectra.render.output;
+import spectra.scene;
 import std;
+import vulkan;
 
 namespace spectra::pathtracer {
-    struct SceneSupportReport {
-        bool supported{true};
-        std::vector<scene::Scene::Diagnostic> diagnostics{};
+    enum class PathMaterialTable : std::size_t {
+        Header,
+        Diffuse,
+        DiffuseTransmission,
+        Conductor,
+        Dielectric,
+        ThinDielectric,
+        CoatedDiffuse,
+        CoatedConductor,
+        Mix,
+        TextureRequest,
+        Count,
     };
 
-    [[nodiscard]] SceneSupportReport AnalyzeSceneSupport(const scene::Scene::ResolvedScene& scene);
-
-    export {
-        struct OfflineRenderRequest {
-            std::string output_file{};
-            std::optional<int> pixel_samples{};
-            int seed{0};
-            std::optional<int> cuda_device{};
-            bool quiet{false};
-        };
-
-        void RenderScene(const scene::Scene::ResolvedScene& scene, OfflineRenderRequest request);
-
-        class Renderer final {
-        public:
-            Renderer(std::shared_ptr<scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
-            ~Renderer() noexcept;
-
-            Renderer(const Renderer& other) = delete;
-            Renderer(Renderer&& other) noexcept;
-            Renderer& operator=(const Renderer& other) = delete;
-            Renderer& operator=(Renderer&& other) noexcept;
-
-            [[nodiscard]] static std::string_view name();
-            void attach(HostView host);
-            template <Host HostType>
-            void attach(HostType& host) {
-                this->attach(HostView{host});
-            }
-            void detach() noexcept;
-            void before_imgui_shutdown() noexcept;
-            void after_imgui_created();
-            [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
-            template <Host HostType>
-            [[nodiscard]] FrameResult begin_frame(HostType& host, const FrameContext& frame) {
-                return this->begin_frame(HostView{host}, frame);
-            }
-            void record_frame(const vk::raii::CommandBuffer& command_buffer);
-
-        private:
-            class Impl;
-            std::unique_ptr<Impl> impl;
-        };
+    enum class PathTextureTable : std::size_t {
+        Header,
+        Mapping,
+        Constant,
+        Image,
+        Checkerboard,
+        Scale,
+        Mix,
+        DirectionMix,
+        Bilerp,
+        Count,
     };
 
+    struct GpuBufferBinding {
+        GpuBuffer buffer{};
+        DescriptorHandle descriptor{};
+
+        GpuBufferBinding() = default;
+        explicit GpuBufferBinding(const DescriptorHandle descriptor) noexcept
+            : descriptor(descriptor) {}
+        GpuBufferBinding(GpuBufferBinding&&) noexcept = default;
+        GpuBufferBinding& operator=(GpuBufferBinding&&) noexcept = default;
+        GpuBufferBinding(const GpuBufferBinding&) = delete;
+        GpuBufferBinding& operator=(const GpuBufferBinding&) = delete;
+    };
+
+    struct PathScene {
+        PathScene(GpuDevice& gpu, const render::GpuAssetCache& shared_assets, scene::SceneView scene);
+        ~PathScene();
+
+        PathScene(const PathScene&)            = delete;
+        PathScene(PathScene&&)                 = delete;
+        PathScene& operator=(const PathScene&) = delete;
+        PathScene& operator=(PathScene&&)      = delete;
+
+        void synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+
+    private:
+        enum class VolumeField : std::size_t {
+            Density,
+            Temperature,
+            EmissionScale,
+            SigmaA,
+            SigmaS,
+            Emission,
+            NanoVdbDensity,
+            NanoVdbTemperature,
+            Majorant,
+            Count,
+        };
+
+        struct VolumeGpuData {
+            std::vector<GpuBufferBinding> fields_data{};
+            std::array<std::uint32_t, static_cast<std::size_t>(VolumeField::Count)> fields{};
+            scene::VolumeId id{};
+            scene::ResourceRevision revision{};
+        };
+
+        void compile(scene::SceneView scene, const vk::raii::CommandBuffer* command_buffer);
+        void compile_filter(const scene::Film& film, const vk::raii::CommandBuffer* command_buffer);
+        void compile_sampler(const scene::Sampler& sampler, const vk::raii::CommandBuffer* command_buffer);
+        void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+
+    public:
+        GpuDevice* gpu{};
+        const render::GpuAssetCache* shared_assets{};
+        std::vector<std::uint32_t> spectrum_table_data{};
+        std::vector<float> cie_samples{};
+        GpuBufferBinding primitives{};
+        std::array<GpuBufferBinding, static_cast<std::size_t>(PathMaterialTable::Count)> materials{};
+        std::array<GpuBufferBinding, static_cast<std::size_t>(PathTextureTable::Count)> textures{};
+        GpuBufferBinding light_table{};
+        GpuBufferBinding light_shapes{};
+        GpuBufferBinding light_distribution{};
+        GpuBufferBinding light_distribution_data{};
+        GpuBufferBinding portals{};
+        GpuBufferBinding light_bvh_nodes{};
+        GpuBufferBinding light_bvh_bit_trails{};
+        GpuBufferBinding face_materials{};
+        GpuBufferBinding media{};
+        GpuBufferBinding volumes{};
+        GpuBufferBinding volume_zero{};
+        std::vector<VolumeGpuData> volume_gpu_data{};
+        GpuBufferBinding spectra{};
+        GpuBufferBinding piecewise_spectra{};
+        GpuBufferBinding cie_spectra{};
+        GpuBufferBinding rgb_to_spectrum{};
+        GpuBufferBinding bindings_table{};
+        struct {
+            scene::Film description{};
+            GpuBufferBinding distribution{};
+            GpuBufferBinding sensor_response{};
+            std::array<std::uint32_t, 2> resolution{};
+            float absolute_integral{};
+        } filter;
+        struct {
+            scene::Sampler description{};
+            std::vector<std::uint32_t> table_data{};
+            GpuBufferBinding tables{};
+            GpuBufferBinding pixel_samples{};
+            std::uint32_t pixel_tile_size{1};
+        } sampler;
+        std::uint32_t lights{};
+        std::uint32_t texture_stack_size{1};
+        std::uint32_t material_texture_values{1};
+        std::uint32_t camera_medium_index{std::numeric_limits<std::uint32_t>::max()};
+        scene::CameraResource scene_camera{};
+        scene::TransportSettings transport_settings{};
+        scene::Bounds3 compiled_bounds{};
+        std::vector<scene::Transform> compiled_instance_transforms{};
+        scene::SceneRevision compiled_revision{};
+    };
+
+    struct PathRenderSession {
+        PathRenderSession(GpuDevice& gpu, std::uint32_t frames_in_flight);
+        ~PathRenderSession();
+
+        PathRenderSession(const PathRenderSession&)            = delete;
+        PathRenderSession(PathRenderSession&&)                 = delete;
+        PathRenderSession& operator=(const PathRenderSession&) = delete;
+        PathRenderSession& operator=(PathRenderSession&&)      = delete;
+
+        void resize(vk::Extent2D extent, std::uint32_t texture_evaluation_stack_size, std::uint32_t material_texture_value_count);
+        void reset() noexcept;
+        [[nodiscard]] render::RenderReadback readback();
+        [[nodiscard]] render::RenderOutput output() const noexcept;
+
+    private:
+        friend struct WavefrontIntegrator;
+
+        [[nodiscard]] std::vector<float> read_radiance();
+
+        GpuDevice* gpu{};
+        std::uint32_t frame_count{};
+        vk::Extent2D extent{};
+        std::uint32_t capacity{};
+        GpuImage output_image{};
+        DescriptorHandle output_descriptor{};
+        DescriptorHandle sampled_output_descriptor{};
+        vk::ImageLayout output_layout{vk::ImageLayout::eUndefined};
+        GpuBufferBinding queue_counts{};
+        GpuBufferBinding ray_queue_0{};
+        GpuBufferBinding ray_queue_1{};
+        GpuBufferBinding ray_origins{};
+        GpuBufferBinding ray_directions{};
+        GpuBufferBinding ray_origin_dx{};
+        GpuBufferBinding ray_origin_dy{};
+        GpuBufferBinding ray_direction_dx{};
+        GpuBufferBinding ray_direction_dy{};
+        GpuBufferBinding throughputs{};
+        GpuBufferBinding radiances{};
+        GpuBufferBinding wavelengths{};
+        GpuBufferBinding wavelength_pdfs{};
+        GpuBufferBinding path_r_u{};
+        GpuBufferBinding path_r_l{};
+        GpuBufferBinding current_media{};
+        GpuBufferBinding light_context_normals{};
+        GpuBufferBinding path_flags{};
+        GpuBufferBinding eta_scales{};
+        GpuBufferBinding hit_normal_distances{};
+        GpuBufferBinding hit_geometric_normal_u{};
+        GpuBufferBinding hit_tangent_v{};
+        GpuBufferBinding hit_dpdu{};
+        GpuBufferBinding hit_dpdv{};
+        GpuBufferBinding hit_dndu{};
+        GpuBufferBinding hit_dndv{};
+        GpuBufferBinding hit_identifiers{};
+        GpuBufferBinding shadow_path_ids{};
+        GpuBufferBinding shadow_origins{};
+        GpuBufferBinding shadow_directions{};
+        GpuBufferBinding shadow_contributions{};
+        GpuBufferBinding shadow_r_p{};
+        GpuBufferBinding shadow_pdfs{};
+        GpuBufferBinding shadow_media{};
+        GpuBufferBinding texture_evaluation_stack{};
+        GpuBufferBinding evaluated_texture_values{};
+        GpuBufferBinding filter_weights{};
+        GpuBufferBinding film_rgb_sums{};
+        GpuBufferBinding film_weight_sums{};
+        GpuBufferBinding gbuffer_sample_albedo{};
+        GpuBufferBinding gbuffer_sample_shading_normal{};
+        GpuBufferBinding gbuffer_sample_geometric_normal{};
+        GpuBufferBinding gbuffer_sample_position_depth{};
+        GpuBufferBinding gbuffer_sample_uv{};
+        GpuBufferBinding gbuffer_sample_identity_0{};
+        GpuBufferBinding gbuffer_sample_identity_1{};
+        GpuBufferBinding gbuffer_albedo_sums{};
+        GpuBufferBinding gbuffer_shading_normal_sums{};
+        GpuBufferBinding gbuffer_geometric_normal_sums{};
+        GpuBufferBinding gbuffer_position_depth_sums{};
+        GpuBufferBinding gbuffer_uv_weight_sums{};
+        GpuBufferBinding gbuffer_identity_0{};
+        GpuBufferBinding gbuffer_identity_1{};
+        GpuBuffer indirect_commands{};
+        GpuBufferBinding bindings{};
+        std::vector<GpuBufferBinding> parameters{};
+        std::uint32_t texture_stack_size{};
+        std::uint32_t texture_value_count{};
+        bool indirect_commands_configured{};
+
+    public:
+        std::uint32_t sample_index{};
+    };
+
+    struct WavefrontIntegrator {
+        WavefrontIntegrator(GpuDevice& gpu, const std::filesystem::path& shader_directory);
+        ~WavefrontIntegrator();
+
+        WavefrontIntegrator(const WavefrontIntegrator&)            = delete;
+        WavefrontIntegrator(WavefrontIntegrator&&)                 = delete;
+        WavefrontIntegrator& operator=(const WavefrontIntegrator&) = delete;
+        WavefrontIntegrator& operator=(WavefrontIntegrator&&)      = delete;
+
+        void record(const PathScene& scene, PathRenderSession& session, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_index);
+
+    private:
+        void create_ray_tracing_pipeline(const std::filesystem::path& shader_directory);
+        void create_shader_binding_table();
+        void configure_indirect_commands(PathRenderSession& session) const;
+
+        GpuDevice* gpu{};
+        std::filesystem::path shader_directory{};
+        vk::raii::ShaderEXT generate_camera_rays{nullptr};
+        vk::raii::ShaderEXT evaluate_surface_textures{nullptr};
+        vk::raii::ShaderEXT shade_surfaces{nullptr};
+        vk::raii::ShaderEXT resolve_visibility{nullptr};
+        vk::raii::ShaderEXT accumulate_film{nullptr};
+        vk::raii::Pipeline ray_generation_library{nullptr};
+        vk::raii::Pipeline hit_library{nullptr};
+        vk::raii::Pipeline pipeline{nullptr};
+        GpuBuffer shader_binding_table{};
+        vk::StridedDeviceAddressRegionKHR surface_ray_generation_region{};
+        vk::StridedDeviceAddressRegionKHR shadow_ray_generation_region{};
+        vk::StridedDeviceAddressRegionKHR miss_region{};
+        vk::StridedDeviceAddressRegionKHR hit_region{};
+        std::uint32_t stack_size{};
+    };
+
+    export struct PathTracer {
+        PathTracer(GpuDevice& gpu, const render::GpuAssetCache& assets, scene::SceneView canonical_scene, const std::filesystem::path& shader_directory, std::uint32_t frames_in_flight);
+        ~PathTracer();
+
+        PathTracer(const PathTracer&)            = delete;
+        PathTracer(PathTracer&&)                 = delete;
+        PathTracer& operator=(const PathTracer&) = delete;
+        PathTracer& operator=(PathTracer&&)      = delete;
+
+        void prepare(vk::Extent2D extent);
+        void synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_index);
+        void reset_accumulation() noexcept;
+        void change_camera(const scene::CameraResource& camera) noexcept;
+        [[nodiscard]] render::RenderReadback readback();
+        [[nodiscard]] render::RenderOutput output() const noexcept;
+        [[nodiscard]] std::uint32_t accumulated_samples() const noexcept;
+
+    private:
+        GpuDevice* gpu{};
+        std::filesystem::path shader_directory{};
+        PathScene path_scene;
+        PathRenderSession render_session;
+        std::unique_ptr<WavefrontIntegrator> integrator{};
+    };
 } // namespace spectra::pathtracer

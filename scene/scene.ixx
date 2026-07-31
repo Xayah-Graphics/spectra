@@ -1,858 +1,141 @@
 export module spectra.scene;
 
-export import spectra.scene.math;
-export import spectra.scene.spatial;
+export import spectra.scene.schema;
 import std;
 
 namespace spectra::scene {
-    export class EmptySceneError final : public std::runtime_error {
-    public:
-        explicit EmptySceneError(const std::string& message) : std::runtime_error(message) {}
+    export inline constexpr std::uint32_t current_scene_format_version = 15;
+
+    export struct ResourceTables {
+        std::vector<Geometry> geometries{};
+        std::vector<ParticleSet> particle_sets{};
+        std::vector<Volume> volumes{};
+        std::vector<Texture> textures{};
+        std::vector<MaterialResource> materials{};
+        std::vector<Medium> media{};
+        std::vector<Light> lights{};
+        std::vector<CameraResource> cameras{};
+        std::vector<Film> films{};
+        std::vector<Sampler> samplers{};
+        std::vector<Prototype> prototypes{};
+        std::vector<Instance> instances{};
     };
 
-    export enum class ControlOptionKind {
-        Text,
-        DirectoryPath,
-        FilePath,
-        Choice,
-        Bool,
-        Float,
-        UnsignedInteger,
+    export enum class SceneChange : std::uint16_t {
+        None      = 0,
+        Geometry  = 1 << 0,
+        Transform = 1 << 1,
+        Texture   = 1 << 2,
+        Material  = 1 << 3,
+        Light     = 1 << 4,
+        Medium    = 1 << 5,
+        Volume    = 1 << 6,
+        Camera    = 1 << 7,
+        Film      = 1 << 8,
+        Sampler   = 1 << 9,
+        Metadata  = 1 << 10,
+        Transport = 1 << 11,
+        All       = 0xfff,
     };
 
-    export struct ControlOptionChoice {
-        std::string value{};
-        std::string label{};
-    };
-
-    export inline constexpr std::uint32_t ControlOptionPresentationDefault = 0u;
-    export inline constexpr std::uint32_t ControlOptionPresentationSlider = 1u;
-
-    export struct ControlSection {
-        std::string id{};
-        std::string label{};
-    };
-
-    export struct ControlOptionSchema {
-        std::string key{};
-        std::string label{};
-        std::string description{};
-        ControlOptionKind kind{ControlOptionKind::Text};
-        bool required{};
-        std::string default_value{};
-        std::string section_id{};
-        std::vector<ControlOptionChoice> choices{};
-        std::uint32_t presentation{ControlOptionPresentationDefault};
-        bool has_numeric_range{};
-        float numeric_min{};
-        float numeric_max{};
-        float numeric_step{};
-        std::uint64_t unsigned_min{};
-        std::uint64_t unsigned_max{};
-        std::uint64_t unsigned_step{};
-    };
-
-    export struct ControlOption {
-        std::string key{};
-        std::string value{};
-    };
-
-    export enum class GpuResourceHandleKind : std::uint32_t {
-        OpaqueWin32 = 1u,
-        OpaqueFileDescriptor = 2u,
-    };
-
-    export struct GpuDeviceIdentity {
-        std::uint32_t vendor_id{};
-        std::uint32_t device_id{};
-        std::array<std::uint8_t, 16u> device_uuid{};
-        std::array<std::uint8_t, 8u> device_luid{};
-        std::uint32_t device_node_mask{};
-    };
-
-    export inline constexpr std::uint32_t GpuBufferKindVolumeChannel = 0u;
-    export inline constexpr std::uint32_t GpuBufferKindViewportVoxelGrid = 1u;
-    export inline constexpr std::uint32_t GpuBufferKindPointCloud = 2u;
-    export inline constexpr std::uint32_t GpuBufferKindViewportSegmentSet = 3u;
-    export inline constexpr std::uint64_t PointCloudExternalPointBytes = static_cast<std::uint64_t>(8u * sizeof(float));
-    export inline constexpr std::uint64_t ViewportSegmentExternalSegmentBytes = static_cast<std::uint64_t>(12u * sizeof(float));
-
-    export struct GpuBufferRequest {
-        std::uint32_t kind{};
-        std::uint64_t byte_size{};
-    };
-
-    export struct GpuBufferSlotAllocation {
-        GpuResourceHandleKind handle_kind{GpuResourceHandleKind::OpaqueWin32};
-        std::uintptr_t handle{};
-    };
-
-    export struct GpuBufferAllocation {
-        std::uint64_t resource_id{};
-        std::uint64_t byte_size{};
-        std::uint32_t kind{};
-        std::vector<GpuBufferSlotAllocation> slots{};
-        GpuDeviceIdentity device_identity{};
-    };
-
-    export class HostServices {
-    public:
-        HostServices() = default;
-        HostServices(const HostServices& other) = delete;
-        HostServices(HostServices&& other) = delete;
-        HostServices& operator=(const HostServices& other) = delete;
-        HostServices& operator=(HostServices&& other) = delete;
-        virtual ~HostServices() noexcept = default;
-
-        [[nodiscard]] virtual GpuBufferAllocation request_gpu_buffer(const GpuBufferRequest& request) = 0;
-        virtual void release_gpu_buffer(std::uint64_t resource_id) = 0;
-        [[nodiscard]] virtual std::string_view last_error() const = 0;
-    };
-
-    export class HostServiceRouter final : public HostServices {
-    public:
-        HostServiceRouter() = default;
-        HostServiceRouter(const HostServiceRouter& other) = delete;
-        HostServiceRouter(HostServiceRouter&& other) = delete;
-        HostServiceRouter& operator=(const HostServiceRouter& other) = delete;
-        HostServiceRouter& operator=(HostServiceRouter&& other) = delete;
-        ~HostServiceRouter() noexcept override = default;
-
-        void set_gpu_buffer_backend(std::move_only_function<GpuBufferAllocation(const GpuBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback);
-        void clear_gpu_buffer_backend() noexcept;
-        [[nodiscard]] GpuBufferAllocation request_gpu_buffer(const GpuBufferRequest& request) override;
-        void release_gpu_buffer(std::uint64_t resource_id) override;
-        [[nodiscard]] std::string_view last_error() const override;
-
-    private:
-        std::move_only_function<GpuBufferAllocation(const GpuBufferRequest&)> request_gpu_buffer_callback{};
-        std::move_only_function<void(std::uint64_t)> release_gpu_buffer_callback{};
-        std::map<std::uint64_t, GpuBufferAllocation> gpu_buffer_allocations{};
-        std::string last_error_message{};
-    };
-
-    export inline constexpr std::uint32_t ControlMetricDisplayPrimary = 1u << 0u;
-
-    export struct ControlAction {
-        std::string id{};
-        std::string label{};
-        std::string description{};
-        std::string section_id{};
-        std::vector<ControlOptionSchema> options{};
-    };
-
-    export struct ControlMetric {
-        std::string key{};
-        std::string label{};
-        std::string value{};
-        std::string section_id{};
-        std::uint32_t display_flags{};
-        bool has_color{};
-        std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
-    };
-
-    export struct ControlActionState {
-        std::string action_id{};
-        bool enabled{};
-        std::string disabled_reason{};
-    };
-
-    export struct ControlSettingState {
-        std::string key{};
-        std::string value{};
-        bool has_unsigned_range{};
-        std::uint64_t unsigned_min{};
-        std::uint64_t unsigned_max{};
-        std::uint64_t unsigned_step{};
-    };
-
-    export struct ControlState {
-        std::string phase{};
-        std::string headline{};
-        std::string detail{};
-        std::vector<ControlMetric> metrics{};
-        std::vector<ControlActionState> action_states{};
-        std::vector<ControlSettingState> setting_states{};
-    };
-
-    export struct UpdateInfo {
-        double wall_delta_seconds{};
-        double update_delta_seconds{};
-        double timeline_time_seconds{};
-        std::uint64_t timeline_frame_index{};
-        std::uint32_t frame_slot_index{};
-        std::uint32_t frame_slot_count{};
-        bool update_running{};
-    };
-
-    export enum class Kind {
-        Static,
-        Dynamic,
-    };
-
-    export struct Descriptor {
-        std::string id{};
-        std::string title{};
-        Kind kind{Kind::Static};
-    };
-
-    export struct PluginOpenRequest {
-        std::filesystem::path plugin_path{};
-        std::vector<ControlOption> options{};
-    };
-
-    export struct PluginInfo {
-        std::string id{};
-        std::string title{};
-        std::string open_action_label{};
-        std::filesystem::path path{};
-        std::vector<ControlSection> sections{};
-        std::vector<ControlOptionSchema> open_options{};
-        std::vector<ControlAction> control_actions{};
-        std::vector<ControlOptionSchema> control_settings{};
-    };
-
-    export class Scene {
-    public:
-        struct Revision {
-            std::uint64_t value{};
-
-            friend auto operator<=>(const Revision&, const Revision&) = default;
-        };
-
-        struct SourceLocation {
-            std::string filename{};
-            int line{1};
-            int column{1};
-        };
-
-        enum class ColorSpace { sRGB, DCI_P3, Rec2020, ACES2065_1 };
-
-        struct Parameter {
-            std::string type{};
-            std::string name{};
-            std::variant<std::vector<float>, std::vector<int>, std::vector<std::string>, std::vector<std::uint8_t>> values{std::vector<float>{}};
-            bool may_be_unused{false};
-            ColorSpace color_space{ColorSpace::sRGB};
-            SourceLocation source{};
-        };
-
-        struct Entity {
-            std::string type{};
-            std::vector<Parameter> parameters{};
-            ColorSpace color_space{ColorSpace::sRGB};
-            SourceLocation source{};
-        };
-
-        struct Option {
-            std::string name{};
-            std::string value{};
-            SourceLocation source{};
-        };
-
-        struct MediumInterface {
-            std::string inside{};
-            std::string outside{};
-        };
-
-        struct RenderSettings {
-            Entity filter{.type = "gaussian"};
-            Entity film{.type = "rgb"};
-            Entity camera{.type = "perspective"};
-            Entity sampler{.type = "zsobol"};
-            Entity integrator{.type = "volpath"};
-            Entity accelerator{.type = "bvh"};
-            SceneTransformSet camera_transform{};
-            std::string camera_medium{};
-            std::vector<Option> options{};
-        };
-
-        struct Material {
-            std::string name{};
-            Entity entity{};
-        };
-
-        struct Texture {
-            std::string name{};
-            std::string kind{};
-            Entity entity{};
-            SceneTransformSet transform{};
-        };
-
-        struct Medium {
-            std::string name{};
-            Entity entity{};
-            SceneTransformSet transform{};
-        };
-
-        struct Light {
-            std::string name{};
-            Entity entity{};
-            SceneTransformSet transform{};
-            std::string medium{};
-        };
-
-        struct AreaLight {
-            Entity entity{};
-        };
-
-        struct Shape {
-            std::string name{};
-            Entity entity{};
-            SceneTransformSet transform{};
-            bool reverse_orientation{false};
-            std::string material_name{};
-            std::optional<AreaLight> area_light{};
-            MediumInterface medium_interface{};
-        };
-
-        struct ObjectDefinition {
-            std::string name{};
-            std::vector<Shape> shapes{};
-            SourceLocation source{};
-        };
-
-        struct ObjectInstance {
-            std::string name{};
-            std::string definition_name{};
-            SceneTransformSet transform{};
-            SourceLocation source{};
-        };
-
-        struct PreviewMaterial;
-        struct VolumeGrid;
-
-        struct ResolvedScene {
-            Revision revision{};
-            std::string name{};
-            std::string title{};
-            std::string source{};
-            RenderSettings render_settings{};
-            std::vector<Material> materials{};
-            std::vector<Texture> textures{};
-            std::vector<Medium> media{};
-            std::vector<Light> lights{};
-            std::vector<Shape> shapes{};
-            std::vector<ObjectDefinition> object_definitions{};
-            std::vector<ObjectInstance> object_instances{};
-            std::vector<PreviewMaterial> preview_materials{};
-            std::vector<VolumeGrid> volumes{};
-        };
-
-        struct Info {
-            std::string name{};
-            std::string title{};
-            std::string camera{};
-            std::string sampler{};
-            std::string integrator{};
-            std::string accelerator{};
-            std::size_t shape_count{};
-            std::size_t material_count{};
-            std::size_t texture_count{};
-            std::size_t medium_count{};
-            std::size_t light_count{};
-            std::size_t area_light_count{};
-            std::size_t infinite_light_count{};
-            std::size_t object_definition_count{};
-            std::size_t object_instance_count{};
-            float camera_fov_degrees{};
-        };
-
-        struct Diagnostic {
-            SourceLocation source{};
-            std::string message{};
-        };
-
-        enum class PreviewSurfaceKind : std::uint32_t {
-            LitSurface      = 0u,
-            UnlitSurface    = 1u,
-            EmissiveSurface = 2u,
-            Volume          = 3u,
-            PointGlyph      = 4u,
-        };
-
-        enum class PreviewAlphaMode : std::uint32_t {
-            Opaque = 0u,
-            Masked = 1u,
-            Blend  = 2u,
-        };
-
-        enum class VolumeMaterialMode : std::uint32_t {
-            Medium      = 0u,
-            ScalarDebug = 1u,
-        };
-
-        struct VolumeChannelBinding {
-            std::string channel_name{};
-            std::uint32_t component{};
-            float scale{1.0f};
-            float bias{};
-            bool enabled{};
-        };
-
-        struct VolumeMaterial {
-            VolumeMaterialMode mode{VolumeMaterialMode::Medium};
-            VolumeChannelBinding density{.channel_name = "density", .scale = 0.08f, .enabled = true};
-            VolumeChannelBinding emission{};
-            VolumeChannelBinding color{};
-            VolumeChannelBinding debug_scalar{};
-        };
-
-        struct PreviewMaterial {
-            std::string name{};
-            PreviewSurfaceKind surface_kind{PreviewSurfaceKind::LitSurface};
-            PreviewAlphaMode alpha_mode{PreviewAlphaMode::Opaque};
-            Vector4 base_color{0.8f, 0.8f, 0.8f, 1.0f};
-            std::string base_color_texture{};
-            Vector3 emission_color{};
-            std::string emission_texture{};
-            float emission_strength{};
-            float roughness{0.5f};
-            std::string roughness_texture{};
-            float metallic{};
-            float alpha_cutoff{0.5f};
-            std::string normal_texture{};
-            VolumeMaterial volume{};
-            Entity pathtracer_material{};
-        };
-
-        enum class PreviewLightKind {
-            Directional,
-            Point,
-            Spot,
-            Area,
-            Environment,
-        };
-
-        struct PreviewLight {
-            std::string name{};
-            PreviewLightKind kind{PreviewLightKind::Directional};
-            Transform transform{};
-            Vector3 color{1.0f, 1.0f, 1.0f};
-            float intensity{};
-            float cone_angle_degrees{45.0f};
-            SourceLocation source{};
-        };
-
-        struct Mesh {
-            std::string name{};
-            std::vector<Vector3> positions{};
-            std::vector<Vector3> normals{};
-            std::vector<std::uint32_t> indices{};
-            std::vector<std::array<float, 2>> uvs{};
-            std::string material_name{};
-            Transform transform{};
-            SourceLocation source{};
-        };
-
-        struct Sphere {
-            std::string name{};
-            float radius{1.0f};
-            std::string material_name{};
-            Transform transform{};
-            SourceLocation source{};
-        };
-
-        struct PointCloudBounds {
-            Vector3 minimum{};
-            Vector3 maximum{};
-        };
-
-        struct PointCloud {
-            enum class SourceKind : std::uint32_t {
-                Values            = 0u,
-                ExternalGpuBuffer = 1u,
-            };
-
-            std::string name{};
-            std::vector<Vector3> positions{};
-            std::vector<Vector4> colors{};
-            std::vector<float> radii{};
-            SourceKind source_kind{SourceKind::Values};
-            std::uint64_t point_count{};
-            std::uint64_t buffer_id{};
-            std::uint64_t source_byte_size{};
-            std::string material_name{};
-            Transform transform{};
-            std::optional<PointCloudBounds> bounds{};
-            SourceLocation source{};
-        };
-
-        enum class VolumeChannelSourceKind : std::uint32_t {
-            Values            = 0u,
-            ExternalGpuBuffer = 1u,
-        };
-
-        enum class VolumeChannelIndexEncoding : std::uint32_t {
-            Linear   = 0u,
-            Morton3D = 1u,
-        };
-
-        enum class VolumeChannelFormat : std::uint32_t {
-            Float32   = 0u,
-            Float32x2 = 1u,
-            Float32x3 = 2u,
-            Float32x4 = 3u,
-        };
-
-        struct VolumeChannel {
-            std::string name{};
-            std::vector<float> values{};
-            VolumeChannelFormat format{VolumeChannelFormat::Float32};
-            VolumeChannelSourceKind source_kind{VolumeChannelSourceKind::Values};
-            VolumeChannelIndexEncoding index_encoding{VolumeChannelIndexEncoding::Linear};
-            std::uint64_t buffer_id{};
-            std::uintptr_t external_device_pointer{};
-            std::uintptr_t external_ready_event{};
-            std::uint64_t source_byte_size{};
-        };
-
-        struct VolumeGrid {
-            std::string name{};
-            std::array<std::uint32_t, 3> dimensions{};
-            Vector3 origin{};
-            Vector3 voxel_size{1.0f, 1.0f, 1.0f};
-            std::vector<VolumeChannel> channels{};
-            std::string material_name{};
-            SourceLocation source{};
-        };
-
-        enum class SceneEntityKind : std::uint32_t {
-            Mesh       = 0u,
-            Sphere     = 1u,
-            PointCloud = 2u,
-            VolumeGrid = 3u,
-            Camera     = 4u,
-            Light      = 5u,
-        };
-
-        struct SceneEntityRef {
-            SceneEntityKind kind{SceneEntityKind::Mesh};
-            std::string name{};
-        };
-
-        struct ViewportSegment {
-            Vector3 start{};
-            Vector3 end{};
-        };
-
-        enum class ViewportSegmentWidthMode : std::uint32_t {
-            Screen = 0u,
-            World  = 1u,
-        };
-
-        enum class ViewportSegmentDepthMode : std::uint32_t {
-            DepthTested   = 0u,
-            AlwaysVisible = 1u,
-        };
-
-        enum class ViewportVoxelGridSourceKind : std::uint32_t {
-            IndexList = 0u,
-            Bitfield  = 1u,
-        };
-
-        enum class ViewportVoxelGridIndexEncoding : std::uint32_t {
-            Linear   = 0u,
-            Morton3D = 1u,
-        };
-
-        struct CameraImage {
-            std::uint32_t width{};
-            std::uint32_t height{};
-            const std::uint8_t* rgba8{};
-            std::uint64_t rgba8_size{};
-            std::uint64_t revision{};
-        };
-
-        struct Camera {
-            std::string name{};
-            CameraPose pose{};
-            CameraProjection projection{};
-            std::optional<CameraImage> image{};
-            SourceLocation source{};
-        };
-
-        struct ViewportSegmentSet {
-            enum class SourceKind : std::uint32_t {
-                Values            = 0u,
-                ExternalGpuBuffer = 1u,
-            };
-
-            std::string name{};
-            SceneEntityRef owner{};
-            std::vector<ViewportSegment> segments{};
-            std::vector<Vector4> colors{};
-            std::vector<float> widths{};
-            SourceKind source_kind{SourceKind::Values};
-            std::uint64_t segment_count{};
-            std::uint64_t buffer_id{};
-            std::uint64_t source_byte_size{};
-            float width{2.0f};
-            ViewportSegmentWidthMode width_mode{ViewportSegmentWidthMode::Screen};
-            ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};
-            Transform transform{};
-            SourceLocation source{};
-        };
-
-        struct ViewportVoxelGrid {
-            std::string name{};
-            SceneEntityRef owner{};
-            std::array<std::uint32_t, 3> dimensions{};
-            Vector3 origin{};
-            Vector3 voxel_size{1.0f, 1.0f, 1.0f};
-            Vector4 color{0.15f, 0.85f, 1.0f, 0.28f};
-            float cell_scale{1.0f};
-            ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};
-            ViewportVoxelGridSourceKind source_kind{ViewportVoxelGridSourceKind::IndexList};
-            ViewportVoxelGridIndexEncoding index_encoding{ViewportVoxelGridIndexEncoding::Linear};
-            std::uint64_t buffer_id{};
-            std::uint64_t source_byte_size{};
-            std::uint64_t index_count{};
-            SourceLocation source{};
-        };
-
-        struct DebugAttachmentSet {
-            std::vector<ViewportSegmentSet> viewport_segment_sets{};
-            std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
-        };
-
-        enum class TimelineKind : std::uint32_t {
-            Static  = 0u,
-            Indexed = 1u,
-        };
-
-        struct TimelineDescriptor {
-            TimelineKind kind{TimelineKind::Static};
-            double frame_rate{};
-            std::uint64_t frame_count{};
-        };
-
-        struct UpdateDescriptor {
-            bool enabled{};
-            bool initial_running{};
-            double step_delta_seconds{1.0 / 60.0};
-        };
-
-        struct Document {
-            Revision revision{};
-            std::string name{};
-            std::string title{};
-            std::string source{};
-            TimelineDescriptor timeline{};
-            UpdateDescriptor update{};
-            std::optional<ViewportNavigationTarget> navigation_target{};
-            std::vector<Camera> cameras{};
-            std::string active_camera_name{};
-            std::vector<PreviewMaterial> materials{};
-            std::vector<Texture> textures{};
-            std::vector<PreviewLight> lights{};
-            std::vector<Mesh> meshes{};
-            std::vector<Sphere> spheres{};
-            std::vector<PointCloud> point_clouds{};
-            std::vector<VolumeGrid> volumes{};
-            DebugAttachmentSet debug_attachments{};
-        };
-
-        struct FrameCursor {
-            std::uint64_t frame_index{};
-            double time_seconds{};
-        };
-
-        struct FrameSnapshot {
-            FrameCursor cursor{};
-            std::vector<Mesh> meshes{};
-            std::vector<Sphere> spheres{};
-            std::vector<PointCloud> point_clouds{};
-            std::vector<VolumeGrid> volumes{};
-            std::vector<Camera> cameras{};
-            DebugAttachmentSet debug_attachments{};
-        };
-
-        struct Timeline {
-            TimelineDescriptor descriptor{};
-            FrameCursor cursor{};
-            std::optional<FrameSnapshot> current_frame{};
-        };
-
-        struct UpdateClock {
-            UpdateDescriptor descriptor{};
-            bool running{};
-            bool step_requested{};
-        };
-
-        struct ResolvedFrame {
-            std::vector<Mesh> meshes{};
-            std::vector<Sphere> spheres{};
-            std::vector<PointCloud> point_clouds{};
-            std::vector<VolumeGrid> volumes{};
-            std::vector<Camera> cameras{};
-            DebugAttachmentSet debug_attachments{};
-        };
-
-        class Builder {
-        public:
-            Builder(std::string name, std::string title, std::string source);
-
-            Builder(const Builder& other) = delete;
-            Builder(Builder&& other) noexcept = default;
-            Builder& operator=(const Builder& other) = delete;
-            Builder& operator=(Builder&& other) noexcept = default;
-            ~Builder() noexcept = default;
-
-            void set_revision(Revision revision);
-            void set_render_settings(RenderSettings render_settings);
-            void add_material(Material material);
-            void add_texture(Texture texture);
-            void add_medium(Medium medium);
-            void add_light(Light light);
-            void add_shape(Shape shape);
-            void add_object_definition(ObjectDefinition definition);
-            void add_object_instance(ObjectInstance instance);
-
-            [[nodiscard]] ResolvedScene resolved_scene() &&;
-            [[nodiscard]] Scene build() &&;
-
-        private:
-            ResolvedScene scene{};
-        };
-
-        class Edit {
-        public:
-            void replace_document(Document document);
-            void replace_timeline(Timeline timeline);
-            void replace_frame(FrameSnapshot frame);
-
-        private:
-            std::optional<Document> document_replacement{};
-            std::optional<Timeline> timeline_replacement{};
-            std::optional<FrameSnapshot> frame_replacement{};
-
-            friend class Scene;
-        };
-
-        struct FrameInfo {
-            double time_seconds{};
-            std::uint64_t frame_index{};
-        };
-
-        Scene();
-        explicit Scene(Document document);
-        explicit Scene(ResolvedScene scene);
-        Scene(ResolvedScene scene, Document preview_document);
-        Scene(const Scene& other) = delete;
-        Scene(Scene&& other) noexcept;
-        Scene& operator=(const Scene& other) = delete;
-        Scene& operator=(Scene&& other) noexcept;
-        ~Scene() noexcept;
-
-        [[nodiscard]] Revision revision() const;
-        [[nodiscard]] std::shared_ptr<const Document> document() const;
-        [[nodiscard]] Timeline timeline() const;
-        [[nodiscard]] ResolvedFrame resolved_frame() const;
-        [[nodiscard]] ResolvedScene resolved_scene() const;
-        [[nodiscard]] Info info() const;
-        void commit(Edit edit);
-        [[nodiscard]] Kind kind() const;
-        [[nodiscard]] bool has_descriptor() const;
-        [[nodiscard]] const Descriptor& descriptor() const;
-        [[nodiscard]] bool has_controls() const;
-        [[nodiscard]] bool has_plugin_info() const;
-        [[nodiscard]] const PluginInfo& plugin_info() const;
-        [[nodiscard]] std::shared_ptr<HostServiceRouter> host_services() const;
-        [[nodiscard]] ControlState control_state() const;
-        [[nodiscard]] UpdateClock update_clock() const;
-        [[nodiscard]] std::optional<ViewportNavigationTarget> navigation_target() const;
-        void close();
-        void open_static_scene(std::string id, std::string title, Scene scene);
-        void open_pbrt_file(const std::filesystem::path& scene_path);
-        void open_plugin(PluginOpenRequest request);
-        void advance(std::uint64_t frame_number, std::uint32_t frame_slot_index, std::uint32_t frame_slot_count, double delta_seconds);
-        void set_update_running(bool running);
-        void toggle_update_running();
-        void step_update();
-        void seek_timeline_frame(std::uint64_t frame_index);
-        void execute_control_action(std::string_view action_id, std::span<const ControlOption> options);
-        void update_control_setting(std::string_view key, std::string_view value);
-
-        [[nodiscard]] static Scene parse_pbrt(std::string_view scene_id);
-        [[nodiscard]] static Scene parse_pbrt_file(const std::filesystem::path& scene_path);
-
-        [[nodiscard]] static FrameCursor make_frame_cursor(const FrameInfo& info);
-
-    private:
-        struct PluginRuntime;
-
-        struct DriverRuntime {
-            DriverRuntime();
-            DriverRuntime(const DriverRuntime& other) = delete;
-            DriverRuntime(DriverRuntime&& other) noexcept;
-            DriverRuntime& operator=(const DriverRuntime& other) = delete;
-            DriverRuntime& operator=(DriverRuntime&& other) noexcept;
-            ~DriverRuntime() noexcept;
-
-            std::unique_ptr<PluginRuntime> plugin{};
-            std::uint64_t observed_scene_revision{};
-            std::optional<std::uint64_t> updated_frame_number{};
-        };
-
-        [[nodiscard]] const Document& preview_document() const;
-        void replace_with_scene(Scene scene);
-        void reset_driver_runtime();
-        [[nodiscard]] PluginRuntime& active_plugin_runtime() const;
-        void commit_driver_revision(std::string_view context);
-
-        Revision current_revision{};
-        mutable std::shared_ptr<const Document> current_document{};
-        Timeline current_timeline{};
-        UpdateClock current_update{};
-        std::optional<ResolvedScene> canonical_scene{};
-        Descriptor current_descriptor{};
-        bool descriptor_valid{};
-        PluginInfo current_plugin_info{};
-        bool plugin_info_valid{};
-        std::shared_ptr<HostServiceRouter> host{std::make_shared<HostServiceRouter>()};
-        DriverRuntime driver_runtime{};
-    };
-
-    class PluginHost final : public std::enable_shared_from_this<PluginHost> {
-    public:
-        class Instance;
-
-        explicit PluginHost(std::filesystem::path plugin_path);
-        PluginHost(std::filesystem::path plugin_path, std::vector<ControlOption> options, std::shared_ptr<HostServices> host);
-        PluginHost(const PluginHost& other) = delete;
-        PluginHost(PluginHost&& other) = delete;
-        PluginHost& operator=(const PluginHost& other) = delete;
-        PluginHost& operator=(PluginHost&& other) = delete;
-        ~PluginHost() noexcept;
-
-        [[nodiscard]] PluginInfo info() const;
-        [[nodiscard]] std::string scene_id() const;
-        [[nodiscard]] std::shared_ptr<Instance> create_instance();
-        void update(Instance& instance, const UpdateInfo& update) const;
-        [[nodiscard]] std::uint64_t scene_revision(Instance& instance) const;
-        void execute_control_action(Instance& instance, std::string_view action_id, std::span<const ControlOption> options) const;
-        void update_control_setting(Instance& instance, std::string_view key, std::string_view value) const;
-        [[nodiscard]] ControlState control_state(Instance& instance) const;
-        [[nodiscard]] Scene::Document create_scene_document(Instance& instance) const;
-        [[nodiscard]] Scene::FrameSnapshot create_scene_frame(Instance& instance, const Scene::FrameInfo& frame) const;
-
-    private:
-        struct State;
-        std::unique_ptr<State> state{};
-    };
-
-    export [[nodiscard]] constexpr std::uint32_t volume_channel_component_count(const Scene::VolumeChannelFormat format) {
-        switch (format) {
-        case Scene::VolumeChannelFormat::Float32: return 1u;
-        case Scene::VolumeChannelFormat::Float32x2: return 2u;
-        case Scene::VolumeChannelFormat::Float32x3: return 3u;
-        case Scene::VolumeChannelFormat::Float32x4: return 4u;
-        }
-        throw std::runtime_error("Unknown Spectra volume channel format");
+    export [[nodiscard]] constexpr SceneChange operator|(const SceneChange left, const SceneChange right) noexcept {
+        return static_cast<SceneChange>(std::to_underlying(left) | std::to_underlying(right));
     }
 
-    export [[nodiscard]] bool is_plugin_file(const std::filesystem::path& path);
-    export [[nodiscard]] PluginInfo inspect_plugin(const std::filesystem::path& plugin_path);
-    export void WritePbrtScene(const Scene::ResolvedScene& scene, const std::filesystem::path& path);
+    export [[nodiscard]] constexpr SceneChange operator&(const SceneChange left, const SceneChange right) noexcept {
+        return static_cast<SceneChange>(std::to_underlying(left) & std::to_underlying(right));
+    }
+
+    export struct SceneRevision {
+        std::uint64_t value{1};
+        SceneChange changes{SceneChange::All};
+
+        friend auto operator<=>(const SceneRevision&, const SceneRevision&) = default;
+    };
+
+    export struct SceneView {
+        const ResourceTables& resources;
+        const CameraResource& camera;
+        const Film& film;
+        const Sampler& sampler;
+        const TransportSettings& transport;
+        SceneRevision revision{};
+
+        [[nodiscard]] Bounds3 bounds() const noexcept;
+        [[nodiscard]] std::optional<Bounds3> local_bounds(InstanceId instance) const noexcept;
+        [[nodiscard]] std::optional<Bounds3> bounds(std::span<const InstanceId> instances) const noexcept;
+    };
+
+    export struct Scene {
+        std::uint32_t format_version{current_scene_format_version};
+        std::string name{};
+        ResourceTables resources{};
+        CameraId active_camera{};
+        FilmId active_film{};
+        SamplerId active_sampler{};
+        TransportSettings transport{};
+
+        [[nodiscard]] SceneView view() const noexcept;
+        [[nodiscard]] const CameraResource& camera() const noexcept;
+        [[nodiscard]] const Film& film() const noexcept;
+        [[nodiscard]] const Sampler& sampler() const noexcept;
+        [[nodiscard]] SceneRevision revision() const noexcept;
+        void acknowledge_changes() noexcept;
+        void rebuild_resource_state() noexcept;
+
+    private:
+        friend struct SceneWriter;
+
+        void publish(SceneChange changes) noexcept;
+
+        SceneRevision current_revision{};
+        std::uint64_t next_geometry_id{1};
+        std::uint64_t next_particle_set_id{1};
+        std::uint64_t next_volume_id{1};
+        std::uint64_t next_texture_id{1};
+        std::uint64_t next_material_id{1};
+        std::uint64_t next_medium_id{1};
+        std::uint64_t next_light_id{1};
+        std::uint64_t next_prototype_id{1};
+        std::uint64_t next_instance_id{1};
+        std::uint64_t next_camera_id{1};
+        std::uint64_t next_film_id{1};
+        std::uint64_t next_sampler_id{1};
+    };
+
+    export struct SceneWriter {
+        explicit SceneWriter(Scene& scene) noexcept;
+
+        [[nodiscard]] MaterialId create_diffuse_material(Float3 reflectance);
+        [[nodiscard]] LightId create_diffuse_area_light(Float3 radiance, EmissionSidedness sidedness);
+        [[nodiscard]] GeometryId create_triangle_mesh(std::span<const Float3> positions, std::span<const Float3> normals, std::span<const Float3> tangents, std::span<const Float2> texture_coordinates, std::span<const std::uint32_t> indices, GeometryUpdateMode update_mode);
+        [[nodiscard]] ParticleSetId create_particle_set(std::span<const Float3> positions, std::span<const float> radii, std::span<const Float3> velocities, std::span<const Float3> colors, std::span<const float> temperatures, MaterialId material, std::span<const MaterialId> particle_materials, GeometryUpdateMode update_mode);
+        [[nodiscard]] PrototypeId create_prototype(Primitive primitive);
+        [[nodiscard]] InstanceId create_instance(PrototypeId prototype, Transform transform);
+        [[nodiscard]] CameraId define_perspective_camera(Transform transform, float vertical_fov, float near_plane, float far_plane);
+        [[nodiscard]] FilmId define_rgb_film(std::array<std::uint32_t, 2> resolution, Filter filter);
+        [[nodiscard]] SamplerId define_sampler(SamplerKind kind, std::uint32_t samples_per_pixel, std::uint32_t seed);
+
+        void update_triangle_mesh(GeometryId geometry, std::span<const Float3> positions, std::span<const Float3> normals, std::span<const Float3> tangents, std::span<const Float2> texture_coordinates, std::span<const std::uint32_t> indices);
+        void update_particle_set(ParticleSetId particles, std::span<const Float3> positions, std::span<const float> radii, std::span<const Float3> velocities, std::span<const Float3> colors, std::span<const float> temperatures, std::span<const MaterialId> particle_materials);
+        void replace_density_grid(VolumeId volume, UInt3 resolution, std::span<const float> density, std::span<const float> temperature, std::span<const float> emission_scale);
+        void update_density_grid(VolumeId volume, VolumeRegion region, std::span<const float> density, std::span<const float> temperature, std::span<const float> emission_scale);
+        void replace_rgb_grid(VolumeId volume, UInt3 resolution, std::span<const Float3> sigma_a, std::span<const Float3> sigma_s, std::span<const Float3> emission);
+        void update_rgb_grid(VolumeId volume, VolumeRegion region, std::span<const Float3> sigma_a, std::span<const Float3> sigma_s, std::span<const Float3> emission);
+        void replace_nanovdb(VolumeId volume, Bounds3 bounds, NanoVdbVolume data);
+        void update_procedural_cloud(VolumeId volume, ProceduralCloudVolume data);
+        void update_transform(InstanceId instance, Transform transform);
+        void update_diffuse_material(MaterialId material, Float3 reflectance);
+        void update_camera(CameraResource camera);
+        void update_sampler(Sampler sampler);
+        void update_film(Film film);
+        void update_transport(TransportSettings transport);
+        void rename_geometry(GeometryId geometry, std::string name);
+        void rename_instance(InstanceId instance, std::string name);
+        void rename_material(MaterialId material, std::string name);
+        void rename_camera(std::string name);
+
+    private:
+        Scene* scene{};
+    };
 } // namespace spectra::scene
