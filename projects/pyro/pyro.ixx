@@ -79,19 +79,18 @@ namespace xayah::projects::pyro {
         float falloff{2.2f};
     };
 
-    export struct Frame {
-        int frame_index{0};
-        std::array<std::uint32_t, 3> resolution{0, 0, 0};
-        float cell_size{0.0f};
-        std::vector<float> density{};
-        std::vector<float> temperature{};
-        std::vector<float> velocity_x{};
-        std::vector<float> velocity_y{};
-        std::vector<float> velocity_z{};
+    export struct DeviceFrame {
+        void* stream{};
+        std::array<std::uint32_t, 3> resolution{};
+        const float* density{};
+        const float* temperature{};
+        const float* velocity_x{};
+        const float* velocity_y{};
+        const float* velocity_z{};
+        std::uint64_t cell_count{};
     };
 
-    export class Solver {
-    public:
+    export struct Solver {
         explicit Solver(const Config& config = {});
         ~Solver() noexcept;
 
@@ -101,9 +100,10 @@ namespace xayah::projects::pyro {
         Solver& operator=(Solver&& other) noexcept;
 
         void reset();
+        void set_initial_fields(std::span<const float> density, std::span<const float> temperature);
         void set_plume_source(const PlumeSource& source);
         void step(float delta_seconds);
-        [[nodiscard]] Frame read_frame(int frame_index);
+        [[nodiscard]] DeviceFrame device_frame() const noexcept;
 
     private:
         struct {
@@ -146,6 +146,8 @@ namespace xayah::projects::pyro {
             PlumeSource plume_source{};
             std::vector<float> density_source{};
             std::vector<float> temperature_source{};
+            std::vector<float> initial_density{};
+            std::vector<float> initial_temperature{};
         } host;
 
         struct {

@@ -185,53 +185,6 @@ namespace {
         velocity_z[index] = (position_z[index] - previous_z[index]) / substep_seconds;
     }
 
-    __global__ void accumulate_normals_kernel(const float* position_x, const float* position_y, const float* position_z, float* normal_x, float* normal_y, float* normal_z, const std::uint32_t* indices, int* error_flag, const std::uint32_t triangle_count) {
-        const std::uint32_t triangle = blockIdx.x * blockDim.x + threadIdx.x;
-        if (triangle >= triangle_count) return;
-        const std::uint32_t i0 = indices[triangle * 3u + 0u];
-        const std::uint32_t i1 = indices[triangle * 3u + 1u];
-        const std::uint32_t i2 = indices[triangle * 3u + 2u];
-        const float e0x        = position_x[i1] - position_x[i0];
-        const float e0y        = position_y[i1] - position_y[i0];
-        const float e0z        = position_z[i1] - position_z[i0];
-        const float e1x        = position_x[i2] - position_x[i0];
-        const float e1y        = position_y[i2] - position_y[i0];
-        const float e1z        = position_z[i2] - position_z[i0];
-        float nx               = e0y * e1z - e0z * e1y;
-        float ny               = e0z * e1x - e0x * e1z;
-        float nz               = e0x * e1y - e0y * e1x;
-        const float length     = vector_length(nx, ny, nz);
-        if (length <= 0.000001f) {
-            *error_flag = 1;
-            return;
-        }
-        nx /= length;
-        ny /= length;
-        nz /= length;
-        atomicAdd(&normal_x[i0], nx);
-        atomicAdd(&normal_y[i0], ny);
-        atomicAdd(&normal_z[i0], nz);
-        atomicAdd(&normal_x[i1], nx);
-        atomicAdd(&normal_y[i1], ny);
-        atomicAdd(&normal_z[i1], nz);
-        atomicAdd(&normal_x[i2], nx);
-        atomicAdd(&normal_y[i2], ny);
-        atomicAdd(&normal_z[i2], nz);
-    }
-
-    __global__ void normalize_normals_kernel(float* normal_x, float* normal_y, float* normal_z, int* error_flag, const std::uint32_t vertex_count) {
-        const std::uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
-        if (index >= vertex_count) return;
-        const float length = vector_length(normal_x[index], normal_y[index], normal_z[index]);
-        if (length <= 0.000001f) {
-            *error_flag = 1;
-            return;
-        }
-        normal_x[index] /= length;
-        normal_y[index] /= length;
-        normal_z[index] /= length;
-    }
-
     void check_cuda(const cudaError_t status, const char* what) {
         if (status == cudaSuccess) return;
         throw std::runtime_error(std::string{what} + ": " + cudaGetErrorString(status));
@@ -270,13 +223,4 @@ namespace xayah::projects::cloth::cuda {
         check_cuda(cudaGetLastError(), "update cloth velocities kernel");
     }
 
-    void launch_accumulate_normals(const cudaStream_t stream, const unsigned grid, const unsigned block, const float* position_x, const float* position_y, const float* position_z, float* normal_x, float* normal_y, float* normal_z, const std::uint32_t* indices, int* error_flag, const std::uint32_t triangle_count) {
-        accumulate_normals_kernel<<<grid, block, 0, stream>>>(position_x, position_y, position_z, normal_x, normal_y, normal_z, indices, error_flag, triangle_count);
-        check_cuda(cudaGetLastError(), "accumulate cloth normals kernel");
-    }
-
-    void launch_normalize_normals(const cudaStream_t stream, const unsigned grid, const unsigned block, float* normal_x, float* normal_y, float* normal_z, int* error_flag, const std::uint32_t vertex_count) {
-        normalize_normals_kernel<<<grid, block, 0, stream>>>(normal_x, normal_y, normal_z, error_flag, vertex_count);
-        check_cuda(cudaGetLastError(), "normalize cloth normals kernel");
-    }
 } // namespace xayah::projects::cloth::cuda

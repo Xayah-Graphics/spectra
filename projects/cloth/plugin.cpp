@@ -1,677 +1,262 @@
-#if defined(_WIN32)
-#define SPECTRA_DYNAMIC_SCENE_EXPORT __declspec(dllexport)
-#else
-#define SPECTRA_DYNAMIC_SCENE_EXPORT __attribute__((visibility("default")))
-#endif
+#include "cuda_interop.h"
+#include <spectra/plugin_api.h>
 
 import std;
 import xayah.projects.cloth;
 
-struct SpectraDynamicSceneInstance;
+namespace {
+    template <std::size_t Size>
+    constexpr SpectraPluginString text(const char (&value)[Size]) noexcept {
+        return {value, Size - 1};
+    }
 
-enum SpectraDynamicSceneResult {
-    SPECTRA_DYNAMIC_SCENE_RESULT_OK = 0,
-    SPECTRA_DYNAMIC_SCENE_RESULT_ERROR = 1,
-};
-
-struct SpectraDynamicSceneString {
-    const char* data;
-    std::uint64_t size;
-};
-
-struct SpectraDynamicSceneTransform {
-    float position[3];
-    float rotation[4];
-    float scale[3];
-};
-
-struct SpectraDynamicSceneMaterial {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneString model;
-    SpectraDynamicSceneString alpha_mode;
-    float base_color[4];
-    float emission_color[3];
-    float emission_strength;
-    float roughness;
-    float metallic;
-    float alpha_cutoff;
-    float volume_density_scale;
-    float volume_temperature_scale;
-};
-
-struct SpectraDynamicSceneMaterialSpan {
-    const SpectraDynamicSceneMaterial* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneLight {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneString kind;
-    SpectraDynamicSceneTransform transform;
-    float color[3];
-    float intensity;
-    float cone_angle_degrees;
-};
-
-struct SpectraDynamicSceneLightSpan {
-    const SpectraDynamicSceneLight* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneCamera {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneTransform transform;
-    float target[3];
-    float up[3];
-    float vertical_fov_degrees;
-    float near_plane;
-    float far_plane;
-};
-
-struct SpectraDynamicSceneMeshVertex {
-    float position[3];
-    float normal[3];
-};
-
-struct SpectraDynamicSceneMeshVertexSpan {
-    const SpectraDynamicSceneMeshVertex* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneUInt32Span {
-    const std::uint32_t* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneMesh {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneMeshVertexSpan vertices;
-    SpectraDynamicSceneUInt32Span indices;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicSceneMeshSpan {
-    const SpectraDynamicSceneMesh* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneSphere {
-    SpectraDynamicSceneString name;
-    float radius;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicSceneSphereSpan {
-    const SpectraDynamicSceneSphere* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicScenePoint {
-    float position[3];
-    float normal[3];
-    float color[4];
-    float radius;
-};
-
-struct SpectraDynamicScenePointSpan {
-    const SpectraDynamicScenePoint* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicScenePointCloud {
-    SpectraDynamicSceneString name;
-    SpectraDynamicScenePointSpan points;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicScenePointCloudSpan {
-    const SpectraDynamicScenePointCloud* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneFloatSpan {
-    const float* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneVolumeChannel {
-    SpectraDynamicSceneString name;
-    std::uint32_t dimensions[3];
-    SpectraDynamicSceneFloatSpan values;
-};
-
-struct SpectraDynamicSceneVolumeChannelSpan {
-    const SpectraDynamicSceneVolumeChannel* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneVolume {
-    SpectraDynamicSceneString name;
-    std::uint32_t dimensions[3];
-    float origin[3];
-    float voxel_size[3];
-    SpectraDynamicSceneVolumeChannelSpan channels;
-    SpectraDynamicSceneString material_name;
-};
-
-struct SpectraDynamicSceneVolumeSpan {
-    const SpectraDynamicSceneVolume* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneDocumentView {
-    std::uint64_t struct_size;
-    std::uint32_t has_camera;
-    SpectraDynamicSceneCamera camera;
-    SpectraDynamicSceneMaterialSpan materials;
-    SpectraDynamicSceneLightSpan lights;
-    SpectraDynamicSceneMeshSpan meshes;
-    SpectraDynamicSceneSphereSpan spheres;
-    SpectraDynamicScenePointCloudSpan point_clouds;
-    SpectraDynamicSceneVolumeSpan volumes;
-};
-
-struct SpectraDynamicSceneFrameInfo {
-    double delta_seconds;
-    double time_seconds;
-    std::uint64_t frame_index;
-};
-
-struct SpectraDynamicSceneFrameView {
-    std::uint64_t struct_size;
-    SpectraDynamicSceneMeshSpan meshes;
-    SpectraDynamicSceneSphereSpan spheres;
-    SpectraDynamicScenePointCloudSpan point_clouds;
-    SpectraDynamicSceneVolumeSpan volumes;
-};
-
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneCreateFn)(SpectraDynamicSceneInstance** instance);
-typedef void (*SpectraDynamicSceneDestroyFn)(SpectraDynamicSceneInstance* instance);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneResetFn)(SpectraDynamicSceneInstance* instance);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneStepFn)(SpectraDynamicSceneInstance* instance, float delta_seconds);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneDocumentFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* document);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneFrameFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneFrameInfo frame, SpectraDynamicSceneFrameView* snapshot);
-typedef SpectraDynamicSceneString (*SpectraDynamicSceneLastErrorFn)(SpectraDynamicSceneInstance* instance);
-
-struct SpectraDynamicScenePlugin {
-    std::uint32_t abi_version;
-    std::uint64_t struct_size;
-    SpectraDynamicSceneString id;
-    SpectraDynamicSceneString title;
-    SpectraDynamicSceneString pbrt_template_path;
-    double frames_per_second;
-    SpectraDynamicSceneCreateFn create;
-    SpectraDynamicSceneDestroyFn destroy;
-    SpectraDynamicSceneResetFn reset;
-    SpectraDynamicSceneStepFn step;
-    SpectraDynamicSceneDocumentFn document;
-    SpectraDynamicSceneFrameFn frame;
-    SpectraDynamicSceneLastErrorFn last_error;
-};
-
-namespace xayah::projects::cloth {
-    struct VisualTransform {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 4> rotation{0.0f, 0.0f, 0.0f, 1.0f};
-        std::array<float, 3> scale{1.0f, 1.0f, 1.0f};
+    constexpr std::uint64_t cloth_vertex_count = 45ull * 37ull;
+    constexpr std::uint64_t cloth_index_count  = 44ull * 36ull * 6ull;
+    constexpr std::array ports{
+        SpectraPluginPortDescriptor{text("collider"), text("Sphere Collider"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Bounds)), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("initial_mesh"), text("Initial Cloth Mesh"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::TriangleMesh, SpectraPluginMemoryDomain::Host, cloth_vertex_count, 0, 1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Position), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("mesh"), text("Cloth Mesh"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::TriangleMesh, SpectraPluginMemoryDomain::CudaExternal, cloth_vertex_count, cloth_index_count, 1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Position), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("debug"), text("Constraint Debug"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::DebugDraw, SpectraPluginMemoryDomain::Host, 8, 0, 0, SpectraPluginMeshUpdateMode::Deformable, {}},
+    };
+    constexpr std::array parameters{
+        SpectraPluginParameterDescriptor{text("gravity"), text("Gravity"), text("m/s²"), SpectraPluginParameterKind::Float3, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float3, 0, {0.0, -9.8, 0.0}}, {SpectraPluginParameterKind::Float3, 0, {-100.0, -100.0, -100.0}}, {SpectraPluginParameterKind::Float3, 0, {100.0, 100.0, 100.0}}, nullptr, 0},
+        SpectraPluginParameterDescriptor{text("solver_iterations"), text("Solver iterations"), {}, SpectraPluginParameterKind::Integer, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Integer, 10, {}}, {SpectraPluginParameterKind::Integer, 1, {}}, {SpectraPluginParameterKind::Integer, 64, {}}, nullptr, 0},
+        SpectraPluginParameterDescriptor{text("stretch_compliance"), text("Stretch compliance"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {0.000001, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.01, 0.0, 0.0}}, nullptr, 0},
+        SpectraPluginParameterDescriptor{text("bend_compliance"), text("Bend compliance"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {0.00045, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.1, 0.0, 0.0}}, nullptr, 0},
+    };
+    constexpr std::array telemetry_descriptors{
+        SpectraPluginTelemetryDescriptor{text("vertex_count"), text("Vertices"), {}},
+        SpectraPluginTelemetryDescriptor{text("triangle_count"), text("Triangles"), {}},
+    };
+    constexpr SpectraPluginProviderDescriptor provider{
+        text("xayah.cloth.xpbd"),
+        text("XPBD Cloth"),
+        text("spectra.dynamic.deformable-surface"),
+        1,
+        ports.data(),
+        ports.size(),
+        parameters.data(),
+        parameters.size(),
+        telemetry_descriptors.data(),
+        telemetry_descriptors.size(),
     };
 
-    struct VisualMaterial {
-        std::string_view name{};
-        std::string_view model{"lit_surface"};
-        std::string_view alpha_mode{"opaque"};
-        std::array<float, 4> base_color{0.8f, 0.8f, 0.8f, 1.0f};
-        std::array<float, 3> emission_color{0.0f, 0.0f, 0.0f};
-        float emission_strength{0.0f};
-        float roughness{0.5f};
-        float metallic{0.0f};
-        float alpha_cutoff{0.5f};
-        float volume_density_scale{0.08f};
-        float volume_temperature_scale{0.035f};
-    };
+    struct Plugin {
+        struct Slot {
+            xayah::projects::cuda_interop::Buffer positions{};
+        };
 
-    struct VisualLight {
-        std::string_view name{};
-        std::string_view kind{};
-        VisualTransform transform{};
-        std::array<float, 3> color{};
-        float intensity{};
-        float cone_angle_degrees{};
-    };
+        struct InputSlot {
+            const SpectraPluginTransform* transform{};
+            const SpectraPluginFloat3* bounds{};
+        };
 
-    struct VisualCamera {
-        std::string_view name{};
-        VisualTransform transform{};
-        std::array<float, 3> target{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> up{0.0f, 1.0f, 0.0f};
-        float vertical_fov_degrees{45.0f};
-        float near_plane{0.01f};
-        float far_plane{200.0f};
-    };
+        struct InitialMeshInput {
+            const SpectraPluginFloat3* positions{};
+        };
 
-    struct VisualMeshVertex {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
-    };
-
-    struct VisualMesh {
-        std::string_view name{};
-        std::vector<VisualMeshVertex> vertices{};
-        std::vector<std::uint32_t> indices{};
-        std::string_view material_name{};
-        VisualTransform transform{};
-        bool dynamic{true};
-    };
-
-    class Visualization final {
-    public:
-        Visualization() : solver(this->config, this->collider) {}
-
-        [[nodiscard]] static std::string_view visualization_id() {
-            return "project.cloth";
+        xayah::projects::cloth::Config config{};
+        xayah::projects::cloth::SphereCollider collider{};
+        std::optional<xayah::projects::cloth::Solver> solver{std::in_place, this->config, this->collider};
+        std::array<Slot, 2> slots{};
+        InputSlot collider_input{};
+        InitialMeshInput initial_mesh_input{};
+        xayah::projects::cuda_interop::Timeline timeline{};
+        std::uint64_t ready_value{};
+        std::uint32_t next_slot{};
+        ~Plugin() {
+            for (Slot& slot : this->slots) {
+                xayah::projects::cuda_interop::destroy(slot.positions);
+            }
+            xayah::projects::cuda_interop::destroy(this->timeline);
         }
 
-        [[nodiscard]] static std::string_view visualization_title() {
-            return "Cloth";
+        void configure(const SpectraPluginPortConfiguration& configuration) {
+            for (Slot& slot : this->slots) {
+                xayah::projects::cuda_interop::destroy(slot.positions);
+            }
+            xayah::projects::cuda_interop::destroy(this->timeline);
+            xayah::projects::cuda_interop::select_device(configuration.vulkan_device_uuid, configuration.vulkan_device_luid, configuration.vulkan_device_node_mask);
+            for (std::uint64_t slot_index = 0; slot_index < configuration.slot_count; ++slot_index) {
+                const SpectraPluginPortSlot& source = configuration.slots[slot_index];
+                Slot& destination                   = this->slots[source.index];
+                for (std::uint64_t index = 0; index < source.buffer_count; ++index) {
+                    const SpectraPluginBuffer& buffer = source.buffers[index];
+                    if (buffer.attribute == SpectraPluginAttribute::Position) destination.positions = xayah::projects::cuda_interop::import_buffer(buffer.memory_handle, buffer.byte_size);
+                }
+            }
+            this->timeline    = xayah::projects::cuda_interop::import_timeline(configuration.timeline_semaphore_handle);
+            this->ready_value = 0;
+            this->next_slot   = 0;
         }
 
-        [[nodiscard]] double frames_per_second() const {
-            return 60.0;
+        void configure_input(const SpectraPluginPortConfiguration& configuration) {
+            for (std::uint64_t slot = 0; slot < configuration.slot_count; ++slot)
+                for (std::uint64_t buffer = 0; buffer < configuration.slots[slot].buffer_count; ++buffer) {
+                    const SpectraPluginBuffer& source = configuration.slots[slot].buffers[buffer];
+                    if (source.attribute == SpectraPluginAttribute::Transform)
+                        this->collider_input.transform = static_cast<const SpectraPluginTransform*>(source.host_address);
+                    else if (source.attribute == SpectraPluginAttribute::Bounds)
+                        this->collider_input.bounds = static_cast<const SpectraPluginFloat3*>(source.host_address);
+                    else if (source.attribute == SpectraPluginAttribute::Position)
+                        this->initial_mesh_input.positions = static_cast<const SpectraPluginFloat3*>(source.host_address);
+                }
+        }
+
+        void set_input(const SpectraPluginInputFrame& frame) {
+            if (frame.port == 0) {
+                this->collider.center = {this->collider_input.transform->matrix[3], this->collider_input.transform->matrix[7], this->collider_input.transform->matrix[11]};
+                this->collider.radius = std::max({(this->collider_input.bounds[1].x - this->collider_input.bounds[0].x) * 0.5f, (this->collider_input.bounds[1].y - this->collider_input.bounds[0].y) * 0.5f, (this->collider_input.bounds[1].z - this->collider_input.bounds[0].z) * 0.5f});
+            } else {
+                const SpectraPluginFloat3& origin     = this->initial_mesh_input.positions[0];
+                const SpectraPluginFloat3& column_end = this->initial_mesh_input.positions[this->config.columns - 1];
+                const SpectraPluginFloat3& row_end    = this->initial_mesh_input.positions[(this->config.rows - 1) * this->config.columns];
+                this->config.origin                   = {origin.x, origin.y, origin.z};
+                this->config.width                    = std::hypot(column_end.x - origin.x, column_end.z - origin.z);
+                this->config.depth                    = std::hypot(row_end.x - origin.x, row_end.z - origin.z);
+            }
+        }
+
+        void apply_parameters(const SpectraPluginParameterValue* values, const std::uint64_t count) {
+            if (count != parameters.size()) throw std::runtime_error("Cloth Plugin parameter count mismatch");
+            this->config.gravity = {
+                static_cast<float>(values[0].floating[0]),
+                static_cast<float>(values[0].floating[1]),
+                static_cast<float>(values[0].floating[2]),
+            };
+            this->config.solver_iterations  = static_cast<std::uint32_t>(values[1].integer);
+            this->config.stretch_compliance = static_cast<float>(values[2].floating[0]);
+            this->config.bend_compliance    = static_cast<float>(values[3].floating[0]);
         }
 
         void reset() {
-            this->solver.reset();
-            this->rebuild_meshes();
+            this->solver.emplace(this->config, this->collider);
         }
 
-        void step(const float delta_seconds) {
-            this->solver.step(delta_seconds);
-            this->rebuild_meshes();
+        void iterate(const double step_seconds, const std::uint64_t count) {
+            for (std::uint64_t step = 0; step < count; ++step) this->solver->step(static_cast<float>(step_seconds));
+            xayah::projects::cuda_interop::synchronize(this->solver->device_frame().stream);
         }
 
-        [[nodiscard]] const std::vector<VisualMaterial>& materials() const {
-            return this->visual_materials;
-        }
+        void publish(const SpectraPluginFrameSink& sink) {
+            const xayah::projects::cloth::DeviceFrame frame = this->solver->device_frame();
+            if (this->ready_value != 0) xayah::projects::cuda_interop::wait(frame.stream, this->timeline, this->ready_value + 1);
+            Slot& slot = this->slots[this->next_slot];
+            xayah::projects::cuda_interop::pack_float3(frame.stream, slot.positions.pointer, frame.position_x, frame.position_y, frame.position_z, frame.vertex_count);
+            this->ready_value += this->ready_value == 0 ? 1 : 2;
+            xayah::projects::cuda_interop::signal(frame.stream, this->timeline, this->ready_value);
+            const SpectraPluginOutputCommit commit{
+                this->next_slot,
+                frame.vertex_count,
+                ports[2].secondary_capacity,
+                this->ready_value,
+                {},
+                {},
+                0,
+            };
+            sink.commit_output(sink.state, 2, &commit);
+            this->next_slot = (this->next_slot + 1) % this->slots.size();
 
-        [[nodiscard]] const std::vector<VisualLight>& lights() const {
-            return this->visual_lights;
-        }
-
-        [[nodiscard]] const VisualCamera& camera() const {
-            return this->visual_camera;
-        }
-
-        [[nodiscard]] const std::vector<VisualMesh>& meshes() const {
-            return this->visual_meshes;
-        }
-
-    private:
-        Config config{};
-        SphereCollider collider{};
-        Solver solver;
-        std::vector<VisualMaterial> visual_materials{
-            VisualMaterial{.name = "cloth", .base_color = std::array<float, 4>{0.18f, 0.42f, 0.88f, 1.0f}, .roughness = 0.64f},
-            VisualMaterial{.name = "cloth.floor", .base_color = std::array<float, 4>{0.34f, 0.38f, 0.36f, 1.0f}, .roughness = 0.78f},
-            VisualMaterial{.name = "cloth.collider", .alpha_mode = "blend", .base_color = std::array<float, 4>{0.90f, 0.44f, 0.28f, 0.36f}, .roughness = 0.46f},
-        };
-        std::vector<VisualLight> visual_lights{
-            VisualLight{
-                .name      = "key",
-                .kind      = "directional",
-                .transform = VisualTransform{.rotation = std::array<float, 4>{-0.45f, 0.18f, 0.0f, 0.87f}},
-                .color     = std::array<float, 3>{0.92f, 0.96f, 1.0f},
-                .intensity = 3.6f,
-            },
-        };
-        VisualCamera visual_camera{
-            .name                 = "camera.main",
-            .transform            = VisualTransform{.position = std::array<float, 3>{3.8f, 2.8f, 5.2f}},
-            .target               = std::array<float, 3>{0.0f, 1.05f, 0.0f},
-            .vertical_fov_degrees = 42.0f,
-            .near_plane           = 0.05f,
-            .far_plane            = 90.0f,
-        };
-        std::vector<VisualMesh> visual_meshes{};
-
-        [[nodiscard]] VisualMesh make_floor_mesh() const {
-            return VisualMesh{
-                .name = "cloth.floor.mesh",
-                .vertices = {
-                    VisualMeshVertex{.position = std::array<float, 3>{-3.8f, -0.02f, -3.2f}},
-                    VisualMeshVertex{.position = std::array<float, 3>{3.8f, -0.02f, -3.2f}},
-                    VisualMeshVertex{.position = std::array<float, 3>{3.8f, -0.02f, 3.2f}},
-                    VisualMeshVertex{.position = std::array<float, 3>{-3.8f, -0.02f, 3.2f}},
+            const std::array debug{
+                SpectraPluginDebugPrimitive{
+                    SpectraPluginDebugPrimitiveKind::AxisAlignedBox,
+                    SpectraPluginDebugDepthMode::Tested,
+                    {
+                        this->collider.center[0] - this->collider.radius,
+                        this->collider.center[1] - this->collider.radius,
+                        this->collider.center[2] - this->collider.radius,
+                    },
+                    {
+                        this->collider.center[0] + this->collider.radius,
+                        this->collider.center[1] + this->collider.radius,
+                        this->collider.center[2] + this->collider.radius,
+                    },
+                    {0.9f, 0.65f, 0.2f},
+                    1.0f,
+                    1,
                 },
-                .indices       = {0u, 1u, 2u, 0u, 2u, 3u},
-                .material_name = "cloth.floor",
-                .dynamic       = false,
+                SpectraPluginDebugPrimitive{
+                    SpectraPluginDebugPrimitiveKind::Point,
+                    SpectraPluginDebugDepthMode::XRay,
+                    {this->config.origin[0], this->config.origin[1], this->config.origin[2]},
+                    {},
+                    {0.18f, 0.72f, 0.98f},
+                    0.06f,
+                    2,
+                },
+                SpectraPluginDebugPrimitive{
+                    SpectraPluginDebugPrimitiveKind::Point,
+                    SpectraPluginDebugDepthMode::XRay,
+                    {this->config.origin[0] + this->config.width, this->config.origin[1], this->config.origin[2]},
+                    {},
+                    {0.18f, 0.72f, 0.98f},
+                    0.06f,
+                    3,
+                },
             };
-        }
-
-        [[nodiscard]] VisualMesh make_collider_mesh() const {
-            VisualMesh mesh{
-                .name          = "cloth.collider.mesh",
-                .material_name = "cloth.collider",
-                .transform     = VisualTransform{.position = this->collider.center},
-                .dynamic       = false,
-            };
-            constexpr std::uint32_t latitude_segments = 18u;
-            constexpr std::uint32_t longitude_segments = 32u;
-            for (std::uint32_t latitude = 0; latitude <= latitude_segments; ++latitude) {
-                const float theta = std::numbers::pi_v<float> * static_cast<float>(latitude) / static_cast<float>(latitude_segments);
-                const float y = std::cos(theta);
-                const float ring = std::sin(theta);
-                for (std::uint32_t longitude = 0; longitude < longitude_segments; ++longitude) {
-                    const float phi = 2.0f * std::numbers::pi_v<float> * static_cast<float>(longitude) / static_cast<float>(longitude_segments);
-                    const std::array<float, 3> normal{ring * std::cos(phi), y, ring * std::sin(phi)};
-                    mesh.vertices.push_back(VisualMeshVertex{
-                        .position = std::array<float, 3>{normal[0] * this->collider.radius, normal[1] * this->collider.radius, normal[2] * this->collider.radius},
-                        .normal   = normal,
-                    });
-                }
-            }
-            for (std::uint32_t latitude = 0; latitude < latitude_segments; ++latitude) {
-                for (std::uint32_t longitude = 0; longitude < longitude_segments; ++longitude) {
-                    const std::uint32_t next_longitude = (longitude + 1u) % longitude_segments;
-                    const std::uint32_t i0 = latitude * longitude_segments + longitude;
-                    const std::uint32_t i1 = latitude * longitude_segments + next_longitude;
-                    const std::uint32_t i2 = (latitude + 1u) * longitude_segments + longitude;
-                    const std::uint32_t i3 = (latitude + 1u) * longitude_segments + next_longitude;
-                    mesh.indices.push_back(i0);
-                    mesh.indices.push_back(i2);
-                    mesh.indices.push_back(i1);
-                    mesh.indices.push_back(i1);
-                    mesh.indices.push_back(i2);
-                    mesh.indices.push_back(i3);
-                }
-            }
-            return mesh;
-        }
-
-        [[nodiscard]] VisualMesh make_cloth_mesh() const {
-            VisualMesh mesh{
-                .name          = "cloth.mesh",
-                .material_name = "cloth",
-                .dynamic       = true,
-            };
-            const std::vector<Vertex>& vertices = this->solver.mesh_vertices();
-            mesh.vertices.reserve(vertices.size());
-            for (const Vertex& vertex : vertices) {
-                mesh.vertices.push_back(VisualMeshVertex{
-                    .position = vertex.position,
-                    .normal   = vertex.normal,
-                });
-            }
-            mesh.indices = this->solver.mesh_indices();
-            return mesh;
-        }
-
-        void rebuild_meshes() {
-            this->visual_meshes.clear();
-            this->visual_meshes.push_back(this->make_floor_mesh());
-            this->visual_meshes.push_back(this->make_collider_mesh());
-            this->visual_meshes.push_back(this->make_cloth_mesh());
-        }
-    };
-} // namespace xayah::projects::cloth
-
-namespace {
-    [[nodiscard]] SpectraDynamicSceneString make_string(const std::string_view value) noexcept {
-        return SpectraDynamicSceneString{.data = value.data(), .size = static_cast<std::uint64_t>(value.size())};
-    }
-
-    template <typename Array>
-    void copy3(float (&output)[3], const Array& input) noexcept {
-        output[0] = static_cast<float>(input[0]);
-        output[1] = static_cast<float>(input[1]);
-        output[2] = static_cast<float>(input[2]);
-    }
-
-    template <typename Array>
-    void copy4(float (&output)[4], const Array& input) noexcept {
-        output[0] = static_cast<float>(input[0]);
-        output[1] = static_cast<float>(input[1]);
-        output[2] = static_cast<float>(input[2]);
-        output[3] = static_cast<float>(input[3]);
-    }
-
-    [[nodiscard]] SpectraDynamicSceneTransform make_transform(const xayah::projects::cloth::VisualTransform& transform) noexcept {
-        SpectraDynamicSceneTransform result{};
-        copy3(result.position, transform.position);
-        copy4(result.rotation, transform.rotation);
-        copy3(result.scale, transform.scale);
-        return result;
-    }
-
-    [[nodiscard]] SpectraDynamicSceneMaterial make_material(const xayah::projects::cloth::VisualMaterial& material) noexcept {
-        SpectraDynamicSceneMaterial result{};
-        result.name = make_string(material.name);
-        result.model = make_string(material.model);
-        result.alpha_mode = make_string(material.alpha_mode);
-        copy4(result.base_color, material.base_color);
-        copy3(result.emission_color, material.emission_color);
-        result.emission_strength = material.emission_strength;
-        result.roughness = material.roughness;
-        result.metallic = material.metallic;
-        result.alpha_cutoff = material.alpha_cutoff;
-        result.volume_density_scale = material.volume_density_scale;
-        result.volume_temperature_scale = material.volume_temperature_scale;
-        return result;
-    }
-
-    [[nodiscard]] SpectraDynamicSceneLight make_light(const xayah::projects::cloth::VisualLight& light) noexcept {
-        SpectraDynamicSceneLight result{};
-        result.name = make_string(light.name);
-        result.kind = make_string(light.kind);
-        result.transform = make_transform(light.transform);
-        copy3(result.color, light.color);
-        result.intensity = light.intensity;
-        result.cone_angle_degrees = light.cone_angle_degrees;
-        return result;
-    }
-
-    [[nodiscard]] SpectraDynamicSceneCamera make_camera(const xayah::projects::cloth::VisualCamera& camera) noexcept {
-        SpectraDynamicSceneCamera result{};
-        result.name = make_string(camera.name);
-        result.transform = make_transform(camera.transform);
-        copy3(result.target, camera.target);
-        copy3(result.up, camera.up);
-        result.vertical_fov_degrees = camera.vertical_fov_degrees;
-        result.near_plane = camera.near_plane;
-        result.far_plane = camera.far_plane;
-        return result;
-    }
-
-    struct MeshStorage {
-        std::vector<SpectraDynamicSceneMeshVertex> vertices{};
-        std::vector<std::uint32_t> indices{};
-        SpectraDynamicSceneMesh view{};
-    };
-
-    struct SceneViewStorage {
-        std::vector<SpectraDynamicSceneMaterial> materials{};
-        std::vector<SpectraDynamicSceneLight> lights{};
-        SpectraDynamicSceneCamera camera{};
-        std::vector<MeshStorage> meshes{};
-        std::vector<SpectraDynamicSceneMesh> mesh_views{};
-        SpectraDynamicSceneDocumentView document_view{};
-        SpectraDynamicSceneFrameView frame_view{};
-
-        void clear() {
-            this->materials.clear();
-            this->lights.clear();
-            this->meshes.clear();
-            this->mesh_views.clear();
-            this->camera = SpectraDynamicSceneCamera{};
-            this->document_view = SpectraDynamicSceneDocumentView{};
-            this->frame_view = SpectraDynamicSceneFrameView{};
-        }
-
-        void append_meshes(const std::vector<xayah::projects::cloth::VisualMesh>& meshes, const bool dynamic) {
-            for (const xayah::projects::cloth::VisualMesh& mesh : meshes) {
-                if (mesh.dynamic != dynamic) continue;
-                MeshStorage& storage = this->meshes.emplace_back();
-                storage.view.name = make_string(mesh.name);
-                storage.view.material_name = make_string(mesh.material_name);
-                storage.view.transform = make_transform(mesh.transform);
-                for (const xayah::projects::cloth::VisualMeshVertex& vertex : mesh.vertices) {
-                    SpectraDynamicSceneMeshVertex converted{};
-                    copy3(converted.position, vertex.position);
-                    copy3(converted.normal, vertex.normal);
-                    storage.vertices.push_back(converted);
-                }
-                for (const std::uint32_t index : mesh.indices) storage.indices.push_back(index);
-                storage.view.vertices = SpectraDynamicSceneMeshVertexSpan{.data = storage.vertices.data(), .count = static_cast<std::uint64_t>(storage.vertices.size())};
-                storage.view.indices = SpectraDynamicSceneUInt32Span{.data = storage.indices.data(), .count = static_cast<std::uint64_t>(storage.indices.size())};
-            }
-            this->mesh_views.reserve(this->meshes.size());
-            for (const MeshStorage& storage : this->meshes) this->mesh_views.push_back(storage.view);
-        }
-
-        [[nodiscard]] SpectraDynamicSceneDocumentView build_document(const xayah::projects::cloth::Visualization& source) {
-            this->clear();
-            for (const xayah::projects::cloth::VisualMaterial& material : source.materials()) this->materials.push_back(make_material(material));
-            for (const xayah::projects::cloth::VisualLight& light : source.lights()) this->lights.push_back(make_light(light));
-            this->camera = make_camera(source.camera());
-            this->append_meshes(source.meshes(), false);
-            this->document_view = SpectraDynamicSceneDocumentView{
-                .struct_size = sizeof(SpectraDynamicSceneDocumentView),
-                .has_camera = 1u,
-                .camera = this->camera,
-                .materials = SpectraDynamicSceneMaterialSpan{.data = this->materials.data(), .count = static_cast<std::uint64_t>(this->materials.size())},
-                .lights = SpectraDynamicSceneLightSpan{.data = this->lights.data(), .count = static_cast<std::uint64_t>(this->lights.size())},
-                .meshes = SpectraDynamicSceneMeshSpan{.data = this->mesh_views.data(), .count = static_cast<std::uint64_t>(this->mesh_views.size())},
-            };
-            return this->document_view;
-        }
-
-        [[nodiscard]] SpectraDynamicSceneFrameView build_frame(const xayah::projects::cloth::Visualization& source) {
-            this->clear();
-            this->append_meshes(source.meshes(), true);
-            this->frame_view = SpectraDynamicSceneFrameView{
-                .struct_size = sizeof(SpectraDynamicSceneFrameView),
-                .meshes = SpectraDynamicSceneMeshSpan{.data = this->mesh_views.data(), .count = static_cast<std::uint64_t>(this->mesh_views.size())},
-            };
-            return this->frame_view;
+            sink.write_debug_draw(sink.state, 3, debug.data(), debug.size());
         }
     };
 
-    struct PluginInstance {
-        xayah::projects::cloth::Visualization source{};
-        SceneViewStorage document_storage{};
-        SceneViewStorage frame_storage{};
-        std::string error{};
-    };
-
-    [[nodiscard]] PluginInstance* typed_instance(SpectraDynamicSceneInstance* instance) noexcept {
-        return reinterpret_cast<PluginInstance*>(instance);
+    SpectraPluginProviderDescriptor describe_provider() {
+        return provider;
     }
 
-    [[nodiscard]] std::string& thread_error() noexcept {
-        static thread_local std::string error{};
-        return error;
+    void* create_provider() {
+        return new Plugin{};
     }
 
-    template <typename Function>
-    [[nodiscard]] SpectraDynamicSceneResult guard(PluginInstance* instance, Function&& function) noexcept {
-        try {
-            if (instance == nullptr) throw std::runtime_error("Dynamic scene plugin instance is null");
-            std::forward<Function>(function)();
-            instance->error.clear();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
-        } catch (const std::exception& exception) {
-            if (instance != nullptr) instance->error = exception.what();
-            else thread_error() = exception.what();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        } catch (...) {
-            if (instance != nullptr) instance->error = "Unknown dynamic scene plugin error";
-            else thread_error() = "Unknown dynamic scene plugin error";
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        }
+    void destroy_provider(void* instance) {
+        delete static_cast<Plugin*>(instance);
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult create(SpectraDynamicSceneInstance** instance) noexcept {
-        try {
-            if (instance == nullptr) throw std::runtime_error("Dynamic scene create output pointer is null");
-            *instance = reinterpret_cast<SpectraDynamicSceneInstance*>(new PluginInstance{});
-            thread_error().clear();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
-        } catch (const std::exception& exception) {
-            thread_error() = exception.what();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        } catch (...) {
-            thread_error() = "Unknown dynamic scene plugin creation error";
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        }
+    void configure_port(void* instance, const SpectraPluginPortConfiguration* configuration) {
+        if (configuration->direction == SpectraPluginPortDirection::Input)
+            static_cast<Plugin*>(instance)->configure_input(*configuration);
+        else
+            static_cast<Plugin*>(instance)->configure(*configuration);
+    }
+    void set_input_frame(void* instance, const SpectraPluginInputFrame* frame) {
+        static_cast<Plugin*>(instance)->set_input(*frame);
     }
 
-    void destroy(SpectraDynamicSceneInstance* instance) noexcept {
-        delete typed_instance(instance);
+    void apply_parameters(void* instance, const SpectraPluginParameterValue* values, const std::uint64_t count) {
+        static_cast<Plugin*>(instance)->apply_parameters(values, count);
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult reset(SpectraDynamicSceneInstance* instance) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin] { plugin->source.reset(); });
+    void reset(void* instance, std::uint64_t) {
+        static_cast<Plugin*>(instance)->reset();
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult step(SpectraDynamicSceneInstance* instance, const float delta_seconds) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin, delta_seconds] { plugin->source.step(delta_seconds); });
+    void step(void* instance, const double step_seconds, const std::uint64_t count) {
+        static_cast<Plugin*>(instance)->iterate(step_seconds, count);
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult document(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* output) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin, output] {
-            if (output == nullptr) throw std::runtime_error("Dynamic scene document output pointer is null");
-            *output = plugin->document_storage.build_document(plugin->source);
-        });
+    double telemetry_value(const void* instance, const std::uint64_t index) {
+        const Plugin& plugin = *static_cast<const Plugin*>(instance);
+        if (index == 0) return static_cast<double>(plugin.config.columns * plugin.config.rows);
+        return static_cast<double>((plugin.config.columns - 1) * (plugin.config.rows - 1) * 2);
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult frame(SpectraDynamicSceneInstance* instance, const SpectraDynamicSceneFrameInfo frame_info, SpectraDynamicSceneFrameView* output) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin, frame_info, output] {
-            static_cast<void>(frame_info);
-            if (output == nullptr) throw std::runtime_error("Dynamic scene frame output pointer is null");
-            *output = plugin->frame_storage.build_frame(plugin->source);
-        });
-    }
-
-    [[nodiscard]] SpectraDynamicSceneString last_error(SpectraDynamicSceneInstance* instance) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        if (plugin == nullptr) return make_string(thread_error());
-        return make_string(plugin->error);
-    }
-
-    [[nodiscard]] double frames_per_second() noexcept {
-        try {
-            xayah::projects::cloth::Visualization source{};
-            return source.frames_per_second();
-        } catch (...) {
-            return 0.0;
-        }
+    void publish_frame(void* instance, std::uint64_t, const SpectraPluginFrameSink* sink) {
+        static_cast<Plugin*>(instance)->publish(*sink);
     }
 } // namespace
 
-extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra_dynamic_scene_plugin(void) {
-    static const std::string id{std::string{xayah::projects::cloth::Visualization::visualization_id()}};
-    static const std::string title{std::string{xayah::projects::cloth::Visualization::visualization_title()}};
-    static const SpectraDynamicScenePlugin plugin{
-        .abi_version = 1u,
-        .struct_size = sizeof(SpectraDynamicScenePlugin),
-        .id = make_string(id),
-        .title = make_string(title),
-        .pbrt_template_path = SpectraDynamicSceneString{},
-        .frames_per_second = frames_per_second(),
-        .create = &create,
-        .destroy = &destroy,
-        .reset = &reset,
-        .step = &step,
-        .document = &document,
-        .frame = &frame,
-        .last_error = &last_error,
+extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11() {
+    static constexpr SpectraPluginApi api{
+        SPECTRA_PLUGIN_API_VERSION,
+        sizeof(SpectraPluginApi),
+        &describe_provider,
+        &create_provider,
+        &destroy_provider,
+        &configure_port,
+        &set_input_frame,
+        &apply_parameters,
+        &reset,
+        &step,
+        &telemetry_value,
+        &publish_frame,
     };
-    return &plugin;
+    return &api;
 }

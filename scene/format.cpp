@@ -73,18 +73,60 @@ SPECTRA_ID_META(InstanceId);
 #undef SPECTRA_ID_META
 
 template <>
-struct glz::meta<spectra::scene::GeometryUpdateMode> {
-    static constexpr auto value = glz::enumerate("static", spectra::scene::GeometryUpdateMode::Static, "deformable", spectra::scene::GeometryUpdateMode::Deformable, "topology_changing", spectra::scene::GeometryUpdateMode::TopologyChanging);
+struct glz::meta<spectra::scene::DynamicSystemId> {
+    static constexpr auto read  = [](spectra::scene::DynamicSystemId& id, std::string value) { id.value = std::move(value); };
+    static constexpr auto write = [](const spectra::scene::DynamicSystemId& id) -> const std::string& { return id.value; };
+    static constexpr auto value = glz::custom<read, write>;
+};
+
+template <>
+struct glz::meta<spectra::scene::DynamicResourceKind> {
+    static constexpr auto value = glz::enumerate("Instance", spectra::scene::DynamicResourceKind::Instance, "Geometry", spectra::scene::DynamicResourceKind::Geometry, "ParticleSet", spectra::scene::DynamicResourceKind::ParticleSet, "Volume", spectra::scene::DynamicResourceKind::Volume);
+};
+
+template <>
+struct glz::meta<spectra::scene::DynamicParameterKind> {
+    static constexpr auto value = glz::enumerate("Boolean", spectra::scene::DynamicParameterKind::Boolean, "Integer", spectra::scene::DynamicParameterKind::Integer, "Float", spectra::scene::DynamicParameterKind::Float, "Float3", spectra::scene::DynamicParameterKind::Float3, "Enumeration", spectra::scene::DynamicParameterKind::Enumeration);
+};
+
+template <>
+struct glz::meta<spectra::scene::DynamicParameterValue> {
+    static constexpr auto value = glz::object("kind", &spectra::scene::DynamicParameterValue::kind, "integer", &spectra::scene::DynamicParameterValue::integer, "floating", &spectra::scene::DynamicParameterValue::floating);
+};
+
+template <>
+struct glz::meta<spectra::scene::DynamicParameterSetting> {
+    static constexpr auto value = glz::object("id", &spectra::scene::DynamicParameterSetting::id, "value", &spectra::scene::DynamicParameterSetting::value);
+};
+
+template <>
+struct glz::meta<spectra::scene::DynamicPortBinding> {
+    static constexpr auto value = glz::object("port", &spectra::scene::DynamicPortBinding::port, "resource_kind", &spectra::scene::DynamicPortBinding::resource_kind, "resource", &spectra::scene::DynamicPortBinding::resource);
+};
+
+template <>
+struct glz::meta<spectra::scene::DynamicSystem> {
+    static constexpr auto value = glz::object("id", &spectra::scene::DynamicSystem::id, "name", &spectra::scene::DynamicSystem::name, "provider", &spectra::scene::DynamicSystem::provider, "enabled", &spectra::scene::DynamicSystem::enabled, "visible", &spectra::scene::DynamicSystem::visible, "parameters", &spectra::scene::DynamicSystem::parameters, "bindings", &spectra::scene::DynamicSystem::bindings);
+};
+
+template <>
+struct glz::meta<spectra::scene::DynamicClock> {
+    static constexpr auto value = glz::object("step_seconds", &spectra::scene::DynamicClock::step_seconds, "start_step", &spectra::scene::DynamicClock::start_step, "end_step", &spectra::scene::DynamicClock::end_step, "loop", &spectra::scene::DynamicClock::loop);
+};
+
+template <>
+struct glz::meta<spectra::scene::DynamicSetup> {
+    static constexpr auto value = glz::object("clock", &spectra::scene::DynamicSetup::clock, "seed", &spectra::scene::DynamicSetup::seed, "systems", &spectra::scene::DynamicSetup::systems);
 };
 
 template <>
 struct glz::meta<spectra::scene::TriangleMeshGeometry> {
-    static constexpr auto value = glz::object("update_mode", &spectra::scene::TriangleMeshGeometry::update_mode, "asset", &spectra::scene::TriangleMeshGeometry::asset);
+    static constexpr auto value = glz::object("asset", &spectra::scene::TriangleMeshGeometry::asset);
 };
 
 template <>
 struct glz::meta<spectra::scene::ParticleSet> {
-    static constexpr auto value = glz::object("id", &spectra::scene::ParticleSet::id, "name", &spectra::scene::ParticleSet::name, "revision", &spectra::scene::ParticleSet::revision, "asset", &spectra::scene::ParticleSet::asset, "update_mode", &spectra::scene::ParticleSet::update_mode, "material", &spectra::scene::ParticleSet::material);
+    static constexpr auto value = glz::object("id", &spectra::scene::ParticleSet::id, "name", &spectra::scene::ParticleSet::name, "asset", &spectra::scene::ParticleSet::asset, "material", &spectra::scene::ParticleSet::material);
 };
 
 template <>
@@ -238,11 +280,11 @@ static_assert(glz::variant_is_auto_deducible<decltype(spectra::scene::Volume{}.d
 
 template <>
 struct glz::meta<spectra::scene::Volume> {
-    static constexpr auto value = glz::object("id", &spectra::scene::Volume::id, "name", &spectra::scene::Volume::name, "revision", &spectra::scene::Volume::revision, "bounds", &spectra::scene::Volume::bounds, "transform", &spectra::scene::Volume::transform, "data", &spectra::scene::Volume::data);
+    static constexpr auto value = glz::object("id", &spectra::scene::Volume::id, "name", &spectra::scene::Volume::name, "bounds", &spectra::scene::Volume::bounds, "transform", &spectra::scene::Volume::transform, "data", &spectra::scene::Volume::data);
 };
 
-static_assert(glz::reflect<spectra::scene::Volume>::size == 6);
-static_assert(glz::reflect<spectra::scene::Volume>::keys[5] == "data");
+static_assert(glz::reflect<spectra::scene::Volume>::size == 5);
+static_assert(glz::reflect<spectra::scene::Volume>::keys[4] == "data");
 
 template <>
 struct glz::meta<std::variant<spectra::scene::ConstantTexture, spectra::scene::ImageTexture, spectra::scene::CheckerboardTexture, spectra::scene::ScaleTexture, spectra::scene::MixTexture, spectra::scene::DirectionMixTexture, spectra::scene::BilerpTexture>> {
@@ -315,11 +357,65 @@ struct glz::meta<std::variant<spectra::scene::PerspectiveCameraData, spectra::sc
 };
 
 template <>
+struct glz::meta<spectra::scene::Geometry> {
+    static constexpr auto value = glz::object("id", &spectra::scene::Geometry::id, "name", &spectra::scene::Geometry::name, "data", &spectra::scene::Geometry::data);
+};
+
+template <>
+struct glz::meta<spectra::scene::Texture> {
+    static constexpr auto value = glz::object("id", &spectra::scene::Texture::id, "name", &spectra::scene::Texture::name, "value_kind", &spectra::scene::Texture::value_kind, "spectrum_type", &spectra::scene::Texture::spectrum_type, "color_space", &spectra::scene::Texture::color_space, "data", &spectra::scene::Texture::data);
+};
+
+template <>
+struct glz::meta<spectra::scene::MaterialResource> {
+    static constexpr auto value = glz::object("id", &spectra::scene::MaterialResource::id, "name", &spectra::scene::MaterialResource::name, "data", &spectra::scene::MaterialResource::data);
+};
+
+template <>
+struct glz::meta<spectra::scene::Medium> {
+    static constexpr auto value = glz::object("id", &spectra::scene::Medium::id, "name", &spectra::scene::Medium::name, "data", &spectra::scene::Medium::data);
+};
+
+template <>
+struct glz::meta<spectra::scene::Light> {
+    static constexpr auto value = glz::object("id", &spectra::scene::Light::id, "name", &spectra::scene::Light::name, "data", &spectra::scene::Light::data);
+};
+
+template <>
+struct glz::meta<spectra::scene::Prototype> {
+    static constexpr auto value = glz::object("id", &spectra::scene::Prototype::id, "name", &spectra::scene::Prototype::name, "primitives", &spectra::scene::Prototype::primitives);
+};
+
+template <>
+struct glz::meta<spectra::scene::Instance> {
+    static constexpr auto value = glz::object("id", &spectra::scene::Instance::id, "name", &spectra::scene::Instance::name, "prototype", &spectra::scene::Instance::prototype, "transform", &spectra::scene::Instance::transform, "visible", &spectra::scene::Instance::visible);
+};
+
+template <>
+struct glz::meta<spectra::scene::CameraResource> {
+    static constexpr auto value = glz::object("id", &spectra::scene::CameraResource::id, "name", &spectra::scene::CameraResource::name, "transform", &spectra::scene::CameraResource::transform, "exposure_time", &spectra::scene::CameraResource::exposure_time, "medium", &spectra::scene::CameraResource::medium, "data", &spectra::scene::CameraResource::data);
+};
+
+template <>
+struct glz::meta<spectra::scene::Film> {
+    static constexpr auto value = glz::object("id", &spectra::scene::Film::id, "name", &spectra::scene::Film::name, "resolution", &spectra::scene::Film::resolution, "pixel_minimum", &spectra::scene::Film::pixel_minimum, "pixel_maximum", &spectra::scene::Film::pixel_maximum, "exposure", &spectra::scene::Film::exposure, "iso", &spectra::scene::Film::iso, "color_space", &spectra::scene::Film::color_space, "sensor_response", &spectra::scene::Film::sensor_response, "sensor_to_output_rgb", &spectra::scene::Film::sensor_to_output_rgb, "maximum_component_value", &spectra::scene::Film::maximum_component_value, "filter", &spectra::scene::Film::filter, "gbuffer", &spectra::scene::Film::gbuffer, "gbuffer_camera_space", &spectra::scene::Film::gbuffer_camera_space);
+};
+
+template <>
+struct glz::meta<spectra::scene::Sampler> {
+    static constexpr auto value = glz::object("id", &spectra::scene::Sampler::id, "name", &spectra::scene::Sampler::name, "kind", &spectra::scene::Sampler::kind, "samples_per_pixel", &spectra::scene::Sampler::samples_per_pixel, "seed", &spectra::scene::Sampler::seed, "jitter", &spectra::scene::Sampler::jitter, "x_strata", &spectra::scene::Sampler::x_strata, "y_strata", &spectra::scene::Sampler::y_strata, "randomization", &spectra::scene::Sampler::randomization);
+};
+
+template <>
 struct glz::meta<spectra::scene::Scene> {
-    static constexpr auto value = glz::object("format_version", &spectra::scene::Scene::format_version, "name", &spectra::scene::Scene::name, "resources", &spectra::scene::Scene::resources, "active_camera", &spectra::scene::Scene::active_camera, "active_film", &spectra::scene::Scene::active_film, "active_sampler", &spectra::scene::Scene::active_sampler, "transport", &spectra::scene::Scene::transport);
+    static constexpr auto value = glz::object("format_version", &spectra::scene::Scene::format_version, "name", &spectra::scene::Scene::name, "resources", &spectra::scene::Scene::resources, "active_camera", &spectra::scene::Scene::active_camera, "active_film", &spectra::scene::Scene::active_film, "active_sampler", &spectra::scene::Scene::active_sampler, "transport", &spectra::scene::Scene::transport, "dynamic_setup", &spectra::scene::Scene::dynamic_setup);
 };
 
 namespace spectra::scene {
+    struct SceneHeader {
+        std::uint32_t format_version{};
+    };
+
     namespace {
         struct Sha256 {
             Sha256() {
@@ -459,11 +555,16 @@ namespace spectra::scene {
             return package_root / relative;
         }
 
-        void verify_asset(const std::filesystem::path& package_root, const AssetReference& reference, const std::string_view extension) {
+        void inspect_asset(const std::filesystem::path& package_root, const AssetReference& reference, const std::string_view extension) {
             const std::filesystem::path path = asset_path(package_root, reference, extension);
             std::error_code error{};
             const std::uint64_t byte_size = std::filesystem::file_size(path, error);
             if (error || byte_size != reference.byte_size) throw std::runtime_error(std::format("Spectra asset size mismatch: {}", path.string()));
+        }
+
+        void verify_asset(const std::filesystem::path& package_root, const AssetReference& reference, const std::string_view extension) {
+            inspect_asset(package_root, reference, extension);
+            const std::filesystem::path path = asset_path(package_root, reference, extension);
             if (hash_file(path) != reference.content_hash) throw std::runtime_error(std::format("Spectra asset SHA-256 mismatch: {}", path.string()));
         }
 
@@ -815,24 +916,71 @@ namespace spectra::scene {
             }
             std::filesystem::copy_file(source, target, std::filesystem::copy_options::none);
         }
+
+        [[nodiscard]] Scene parse_scene(const std::filesystem::path& path) {
+            std::ifstream stream{path, std::ios::binary};
+            if (!stream) throw std::runtime_error(std::format("Failed to open Spectra scene: {}", path.string()));
+            const std::string json{
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{},
+            };
+
+            SceneHeader header{};
+            constexpr glz::opts header_options{
+                .error_on_unknown_keys = false,
+                .error_on_missing_keys = true,
+            };
+            const glz::error_ctx header_error = glz::read<header_options>(header, json);
+            if (header_error) throw std::runtime_error(std::format("Failed to read Spectra scene format_version {}:\n{}", path.string(), glz::format_error(header_error, json)));
+            if (header.format_version != current_scene_format_version) throw std::runtime_error(std::format("Unsupported Spectra scene format_version {}", header.format_version));
+            Scene scene{};
+            constexpr glz::opts options{
+                .error_on_unknown_keys = true,
+                .error_on_missing_keys = true,
+            };
+            const glz::error_ctx error = glz::read<options>(scene, json);
+            if (error) throw std::runtime_error(std::format("Failed to parse Spectra scene {}:\n{}", path.string(), glz::format_error(error, json)));
+            return scene;
+        }
     } // namespace
 
-    Scene load_scene(const std::filesystem::path& path) {
-        std::ifstream stream{path, std::ios::binary};
-        if (!stream) throw std::runtime_error(std::format("Failed to open Spectra scene: {}", path.string()));
-        const std::string json{
-            std::istreambuf_iterator<char>{stream},
-            std::istreambuf_iterator<char>{},
-        };
+    SceneSummary inspect_scene(const std::filesystem::path& path) {
+        const Scene scene                        = parse_scene(path);
+        const std::filesystem::path package_root = path.parent_path();
+        for (const Geometry& geometry : scene.resources.geometries)
+            if (const TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data)) inspect_asset(package_root, mesh->asset, ".geometry");
+        for (const ParticleSet& particles : scene.resources.particle_sets) inspect_asset(package_root, particles.asset, ".particles");
+        for (const Volume& volume : scene.resources.volumes) {
+            if (const DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data))
+                inspect_asset(package_root, density->asset, ".volume");
+            else if (const RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data))
+                inspect_asset(package_root, rgb->asset, ".volume");
+            else if (const NanoVdbVolume* nanovdb = std::get_if<NanoVdbVolume>(&volume.data))
+                inspect_asset(package_root, nanovdb->asset, ".volume");
+        }
+        for (const Texture& texture : scene.resources.textures)
+            if (const ImageTexture* image = std::get_if<ImageTexture>(&texture.data)) inspect_asset(package_root, image->asset, ".texture");
 
-        Scene scene{};
-        constexpr glz::opts options{
-            .error_on_unknown_keys = true,
-            .error_on_missing_keys = true,
+        SceneSummary summary{
+            .path    = std::filesystem::weakly_canonical(path),
+            .name    = scene.name,
+            .dynamic = scene.dynamic_setup.has_value(),
         };
-        const glz::error_ctx error = glz::read<options>(scene, json);
-        if (error) throw std::runtime_error(std::format("Failed to parse Spectra scene {}:\n{}", path.string(), glz::format_error(error, json)));
-        if (scene.format_version != current_scene_format_version) throw std::runtime_error(std::format("Unsupported Spectra scene format_version {}", scene.format_version));
+        if (scene.dynamic_setup)
+            for (const DynamicSystem& system : scene.dynamic_setup->systems)
+                if (!std::ranges::contains(summary.providers, system.provider)) summary.providers.emplace_back(system.provider);
+        std::ranges::sort(summary.providers);
+        for (const std::string& provider : summary.providers) {
+            const std::filesystem::path provider_path = package_root / std::filesystem::path{provider + ".spectra-plugin.dll"};
+            std::error_code error{};
+            const std::uint64_t byte_size = std::filesystem::file_size(provider_path, error);
+            if (error || byte_size == 0) throw std::runtime_error(std::format("Missing or empty Spectra Provider Library: {}", provider_path.string()));
+        }
+        return summary;
+    }
+
+    Scene load_scene(const std::filesystem::path& path) {
+        Scene scene                              = parse_scene(path);
         const std::filesystem::path package_root = path.parent_path();
         for (Geometry& geometry : scene.resources.geometries)
             if (TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data)) load_geometry_asset(*mesh, package_root);
@@ -847,13 +995,13 @@ namespace spectra::scene {
         }
         for (Texture& texture : scene.resources.textures)
             if (ImageTexture* image = std::get_if<ImageTexture>(&texture.data)) load_texture_asset(*image, package_root);
-        scene.rebuild_resource_state();
+        scene.mark_all_changed();
         scene.acknowledge_changes();
         return scene;
     }
 
     void save_scene(Scene package, const std::filesystem::path& path, const std::filesystem::path& source_path) {
-        package.format_version = current_scene_format_version;
+        package.format_version                   = current_scene_format_version;
         const std::filesystem::path package_root = path.parent_path();
         const std::filesystem::path source_root  = source_path.empty() ? package_root : source_path.parent_path();
         for (Geometry& geometry : package.resources.geometries)

@@ -1,7 +1,8 @@
 module;
 
-#include <GLFW/glfw3.h>
 #include <Windows.h>
+
+#include <GLFW/glfw3.h>
 
 export module spectra;
 
@@ -10,21 +11,21 @@ import std;
 
 namespace spectra {
     struct GpuAllocator;
-    export struct GpuDevice;
+    export struct Spectra;
 
     export struct DescriptorHandle {
         std::uint32_t index{};
         std::uint32_t reserved{};
 
-        friend auto operator<=>(const DescriptorHandle&, const DescriptorHandle&) = default;
+        auto operator<=>(const DescriptorHandle&) const = default;
     };
 
-    export struct GpuAllocation {
+    struct GpuAllocation {
         GpuAllocation() = default;
         ~GpuAllocation();
         GpuAllocation(GpuAllocation&& other) noexcept;
         GpuAllocation& operator=(GpuAllocation&& other) noexcept;
-        GpuAllocation(const GpuAllocation&) = delete;
+        GpuAllocation(const GpuAllocation&)            = delete;
         GpuAllocation& operator=(const GpuAllocation&) = delete;
 
     private:
@@ -38,9 +39,10 @@ namespace spectra {
 
     export struct GpuBuffer {
     private:
-        friend GpuDevice;
+        friend Spectra;
 
         GpuAllocation allocation{};
+        vk::raii::DeviceMemory external_memory{nullptr};
 
     public:
         vk::raii::Buffer buffer{nullptr};
@@ -51,13 +53,29 @@ namespace spectra {
         GpuBuffer() = default;
         GpuBuffer(GpuBuffer&& other) noexcept;
         GpuBuffer& operator=(GpuBuffer&& other) noexcept;
-        GpuBuffer(const GpuBuffer&) = delete;
+        GpuBuffer(const GpuBuffer&)            = delete;
         GpuBuffer& operator=(const GpuBuffer&) = delete;
+    };
+
+    export struct GpuExternalTimeline {
+        vk::raii::Semaphore semaphore{nullptr};
+
+        GpuExternalTimeline()                                          = default;
+        GpuExternalTimeline(GpuExternalTimeline&&) noexcept            = default;
+        GpuExternalTimeline& operator=(GpuExternalTimeline&&) noexcept = default;
+        GpuExternalTimeline(const GpuExternalTimeline&)                = delete;
+        GpuExternalTimeline& operator=(const GpuExternalTimeline&)     = delete;
+    };
+
+    export struct GpuIdentity {
+        std::array<std::uint8_t, 16> uuid{};
+        std::array<std::uint8_t, 8> luid{};
+        std::uint32_t node_mask{};
     };
 
     export struct GpuImage {
     private:
-        friend GpuDevice;
+        friend Spectra;
 
         GpuAllocation allocation{};
 
@@ -71,7 +89,7 @@ namespace spectra {
         GpuImage() = default;
         GpuImage(GpuImage&& other) noexcept;
         GpuImage& operator=(GpuImage&& other) noexcept;
-        GpuImage(const GpuImage&) = delete;
+        GpuImage(const GpuImage&)            = delete;
         GpuImage& operator=(const GpuImage&) = delete;
     };
 
@@ -94,34 +112,42 @@ namespace spectra {
         vk::DeviceSize size{};
     };
 
-    export [[nodiscard]] std::vector<std::uint32_t> load_spirv(const std::filesystem::path& path);
+    export struct Spectra {
+        static constexpr std::uint32_t frames_in_flight = 2;
 
-    export struct Spectra;
+        explicit Spectra(std::string_view application_name = "Spectra", vk::Extent2D initial_extent = {1920, 1080});
+        ~Spectra();
 
-    export struct GpuDevice {
-        GpuDevice(const GpuDevice&) = delete;
-        GpuDevice(GpuDevice&&) = delete;
-        GpuDevice& operator=(const GpuDevice&) = delete;
-        GpuDevice& operator=(GpuDevice&&) = delete;
+        Spectra(const Spectra&)            = delete;
+        Spectra(Spectra&&)                 = delete;
+        Spectra& operator=(const Spectra&) = delete;
+        Spectra& operator=(Spectra&&)      = delete;
 
-        const vk::raii::Device& device;
-        const vk::PhysicalDeviceAccelerationStructurePropertiesKHR& acceleration_structure_properties;
-        const vk::PhysicalDeviceRayTracingPipelinePropertiesKHR& ray_tracing_properties;
-        const std::uint32_t& frame_index;
+        void poll_events() noexcept;
+        void wait_events() noexcept;
+        [[nodiscard]] bool take_close_request() noexcept;
+        [[nodiscard]] std::vector<std::filesystem::path> take_dropped_paths() noexcept;
 
+        void request_close() noexcept;
+
+        [[nodiscard]] std::optional<FrameContext> begin_frame();
+        [[nodiscard]] bool present_frame();
         void wait_idle() const;
-        [[nodiscard]] GpuBuffer create_buffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags memory_properties, bool mapped) const;
-        [[nodiscard]] GpuImage create_image_2d(
-            vk::Extent2D extent,
-            vk::Format format,
-            vk::ImageUsageFlags usage,
-            vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor,
-            std::uint32_t mip_levels = 1) const;
-        [[nodiscard]] GpuUploadSlice stage_upload(
-            std::span<const std::byte> data,
-            vk::DeviceSize alignment = 16) const;
+
+        [[nodiscard]] GpuBuffer create_buffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags memory_properties, bool mapped);
+        [[nodiscard]] GpuBuffer create_external_buffer(vk::DeviceSize size, vk::BufferUsageFlags usage);
+        [[nodiscard]] void* export_memory_handle(const GpuBuffer& buffer) const;
+        [[nodiscard]] GpuExternalTimeline create_external_timeline();
+        [[nodiscard]] void* export_semaphore_handle(const GpuExternalTimeline& timeline) const;
+        [[nodiscard]] GpuIdentity identity() const noexcept;
+        void wait_external_consumed(const GpuExternalTimeline& timeline, std::uint64_t value) const;
+        void signal_external_host(const GpuExternalTimeline& timeline, std::uint64_t value) const;
+        void wait_external(const GpuExternalTimeline& timeline, std::uint64_t value, vk::PipelineStageFlags2 stages);
+        void signal_external(const GpuExternalTimeline& timeline, std::uint64_t value, vk::PipelineStageFlags2 stages);
+        [[nodiscard]] GpuImage create_image_2d(vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor, std::uint32_t mip_levels = 1);
+        [[nodiscard]] GpuUploadSlice stage_upload(std::span<const std::byte> data, vk::DeviceSize alignment = 16);
         void defer(std::move_only_function<void()> destruction);
-        void immediate(std::move_only_function<void(const vk::raii::CommandBuffer&)> record) const;
+        void immediate(std::move_only_function<void(const vk::raii::CommandBuffer&)> record);
 
         [[nodiscard]] DescriptorHandle allocate_resource_descriptor();
         [[nodiscard]] DescriptorHandle allocate_sampler_descriptor();
@@ -135,49 +161,14 @@ namespace spectra {
         void push_data(const vk::raii::CommandBuffer& command_buffer, std::span<const std::byte> data, std::uint32_t offset = 0) const noexcept;
 
     private:
-        friend Spectra;
-
-        explicit GpuDevice(Spectra& runtime) noexcept;
-
-        Spectra* runtime{};
-    };
-
-    export struct Spectra {
-        static constexpr std::uint32_t frames_in_flight = 2;
-
-        explicit Spectra(
-            std::string_view application_name = "Spectra",
-            vk::Extent2D initial_extent = {1920, 1080});
-        ~Spectra();
-
-        Spectra(const Spectra&) = delete;
-        Spectra(Spectra&&) = delete;
-        Spectra& operator=(const Spectra&) = delete;
-        Spectra& operator=(Spectra&&) = delete;
-
-        void poll_events() noexcept;
-        void wait_events() noexcept;
-        [[nodiscard]] bool take_close_request() noexcept;
-        [[nodiscard]] std::vector<std::filesystem::path> take_dropped_paths() noexcept;
-
-        void request_close() noexcept;
-
-        [[nodiscard]] std::optional<FrameContext> begin_frame();
-        [[nodiscard]] bool present_frame();
-        void wait_idle() const;
-
-    private:
-        friend GpuDevice;
-        friend GpuAllocator;
-
         struct GlfwLifetime {
             GlfwLifetime();
             ~GlfwLifetime();
 
-            GlfwLifetime(const GlfwLifetime&) = delete;
-            GlfwLifetime(GlfwLifetime&&) = delete;
+            GlfwLifetime(const GlfwLifetime&)            = delete;
+            GlfwLifetime(GlfwLifetime&&)                 = delete;
             GlfwLifetime& operator=(const GlfwLifetime&) = delete;
-            GlfwLifetime& operator=(GlfwLifetime&&) = delete;
+            GlfwLifetime& operator=(GlfwLifetime&&)      = delete;
         };
 
         static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
@@ -205,7 +196,8 @@ namespace spectra {
             std::uint32_t queue_family_index{};
             vk::PhysicalDeviceAccelerationStructurePropertiesKHR acceleration_structure_properties{};
             vk::PhysicalDeviceRayTracingPipelinePropertiesKHR ray_tracing_properties{};
-        } device;
+            GpuIdentity identity{};
+        } graphics;
 
         struct {
             std::unique_ptr<GpuAllocator> allocator{};
@@ -241,13 +233,15 @@ namespace spectra {
 
         struct {
             vk::raii::CommandPool command_pool{nullptr};
-        } immediate;
+        } immediate_submission;
 
         struct {
             vk::raii::CommandPool command_pool{nullptr};
             vk::raii::CommandBuffers command_buffers{nullptr};
             std::vector<vk::raii::Semaphore> image_available{};
             std::vector<vk::raii::Fence> fences{};
+            std::array<std::vector<vk::SemaphoreSubmitInfo>, frames_in_flight> external_waits{};
+            std::array<std::vector<vk::SemaphoreSubmitInfo>, frames_in_flight> external_signals{};
             std::uint32_t index{};
         } frames;
 
@@ -258,7 +252,10 @@ namespace spectra {
         } deferred;
 
     public:
-        GpuDevice gpu;
+        const vk::raii::Device& device;
+        const vk::PhysicalDeviceAccelerationStructurePropertiesKHR& acceleration_structure_properties;
+        const vk::PhysicalDeviceRayTracingPipelinePropertiesKHR& ray_tracing_properties;
+        const std::uint32_t& frame_index;
         GLFWwindow* window{};
         std::array<std::array<float, 4>, 2> drag_regions{};
     };

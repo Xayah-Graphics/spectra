@@ -1,658 +1,177 @@
-#if defined(_WIN32)
-#define SPECTRA_DYNAMIC_SCENE_EXPORT __declspec(dllexport)
-#else
-#define SPECTRA_DYNAMIC_SCENE_EXPORT __attribute__((visibility("default")))
-#endif
+#include <spectra/plugin_api.h>
 
 import std;
 import xayah.projects.bouncing_ball;
 
-struct SpectraDynamicSceneInstance;
-
-enum SpectraDynamicSceneResult {
-    SPECTRA_DYNAMIC_SCENE_RESULT_OK = 0,
-    SPECTRA_DYNAMIC_SCENE_RESULT_ERROR = 1,
-};
-
-struct SpectraDynamicSceneString {
-    const char* data;
-    std::uint64_t size;
-};
-
-struct SpectraDynamicSceneTransform {
-    float position[3];
-    float rotation[4];
-    float scale[3];
-};
-
-struct SpectraDynamicSceneMaterial {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneString model;
-    SpectraDynamicSceneString alpha_mode;
-    float base_color[4];
-    float emission_color[3];
-    float emission_strength;
-    float roughness;
-    float metallic;
-    float alpha_cutoff;
-    float volume_density_scale;
-    float volume_temperature_scale;
-};
-
-struct SpectraDynamicSceneMaterialSpan {
-    const SpectraDynamicSceneMaterial* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneLight {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneString kind;
-    SpectraDynamicSceneTransform transform;
-    float color[3];
-    float intensity;
-    float cone_angle_degrees;
-};
-
-struct SpectraDynamicSceneLightSpan {
-    const SpectraDynamicSceneLight* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneCamera {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneTransform transform;
-    float target[3];
-    float up[3];
-    float vertical_fov_degrees;
-    float near_plane;
-    float far_plane;
-};
-
-struct SpectraDynamicSceneMeshVertex {
-    float position[3];
-    float normal[3];
-};
-
-struct SpectraDynamicSceneMeshVertexSpan {
-    const SpectraDynamicSceneMeshVertex* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneUInt32Span {
-    const std::uint32_t* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneMesh {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneMeshVertexSpan vertices;
-    SpectraDynamicSceneUInt32Span indices;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicSceneMeshSpan {
-    const SpectraDynamicSceneMesh* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneSphere {
-    SpectraDynamicSceneString name;
-    float radius;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicSceneSphereSpan {
-    const SpectraDynamicSceneSphere* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicScenePoint {
-    float position[3];
-    float normal[3];
-    float color[4];
-    float radius;
-};
-
-struct SpectraDynamicScenePointSpan {
-    const SpectraDynamicScenePoint* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicScenePointCloud {
-    SpectraDynamicSceneString name;
-    SpectraDynamicScenePointSpan points;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicScenePointCloudSpan {
-    const SpectraDynamicScenePointCloud* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneFloatSpan {
-    const float* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneVolumeChannel {
-    SpectraDynamicSceneString name;
-    std::uint32_t dimensions[3];
-    SpectraDynamicSceneFloatSpan values;
-};
-
-struct SpectraDynamicSceneVolumeChannelSpan {
-    const SpectraDynamicSceneVolumeChannel* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneVolume {
-    SpectraDynamicSceneString name;
-    std::uint32_t dimensions[3];
-    float origin[3];
-    float voxel_size[3];
-    SpectraDynamicSceneVolumeChannelSpan channels;
-    SpectraDynamicSceneString material_name;
-};
-
-struct SpectraDynamicSceneVolumeSpan {
-    const SpectraDynamicSceneVolume* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneDocumentView {
-    std::uint64_t struct_size;
-    std::uint32_t has_camera;
-    SpectraDynamicSceneCamera camera;
-    SpectraDynamicSceneMaterialSpan materials;
-    SpectraDynamicSceneLightSpan lights;
-    SpectraDynamicSceneMeshSpan meshes;
-    SpectraDynamicSceneSphereSpan spheres;
-    SpectraDynamicScenePointCloudSpan point_clouds;
-    SpectraDynamicSceneVolumeSpan volumes;
-};
-
-struct SpectraDynamicSceneFrameInfo {
-    double delta_seconds;
-    double time_seconds;
-    std::uint64_t frame_index;
-};
-
-struct SpectraDynamicSceneFrameView {
-    std::uint64_t struct_size;
-    SpectraDynamicSceneMeshSpan meshes;
-    SpectraDynamicSceneSphereSpan spheres;
-    SpectraDynamicScenePointCloudSpan point_clouds;
-    SpectraDynamicSceneVolumeSpan volumes;
-};
-
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneCreateFn)(SpectraDynamicSceneInstance** instance);
-typedef void (*SpectraDynamicSceneDestroyFn)(SpectraDynamicSceneInstance* instance);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneResetFn)(SpectraDynamicSceneInstance* instance);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneStepFn)(SpectraDynamicSceneInstance* instance, float delta_seconds);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneDocumentFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* document);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneFrameFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneFrameInfo frame, SpectraDynamicSceneFrameView* snapshot);
-typedef SpectraDynamicSceneString (*SpectraDynamicSceneLastErrorFn)(SpectraDynamicSceneInstance* instance);
-
-struct SpectraDynamicScenePlugin {
-    std::uint32_t abi_version;
-    std::uint64_t struct_size;
-    SpectraDynamicSceneString id;
-    SpectraDynamicSceneString title;
-    SpectraDynamicSceneString pbrt_template_path;
-    double frames_per_second;
-    SpectraDynamicSceneCreateFn create;
-    SpectraDynamicSceneDestroyFn destroy;
-    SpectraDynamicSceneResetFn reset;
-    SpectraDynamicSceneStepFn step;
-    SpectraDynamicSceneDocumentFn document;
-    SpectraDynamicSceneFrameFn frame;
-    SpectraDynamicSceneLastErrorFn last_error;
-};
-
-namespace xayah::projects::bouncing_ball {
-    struct VisualTransform {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 4> rotation{0.0f, 0.0f, 0.0f, 1.0f};
-        std::array<float, 3> scale{1.0f, 1.0f, 1.0f};
-    };
-
-    struct VisualMaterial {
-        std::string_view name{};
-        std::string_view model{"lit_surface"};
-        std::string_view alpha_mode{"opaque"};
-        std::array<float, 4> base_color{0.8f, 0.8f, 0.8f, 1.0f};
-        std::array<float, 3> emission_color{0.0f, 0.0f, 0.0f};
-        float emission_strength{0.0f};
-        float roughness{0.5f};
-        float metallic{0.0f};
-        float alpha_cutoff{0.5f};
-        float volume_density_scale{0.08f};
-        float volume_temperature_scale{0.035f};
-    };
-
-    struct VisualLight {
-        std::string_view name{};
-        std::string_view kind{};
-        VisualTransform transform{};
-        std::array<float, 3> color{};
-        float intensity{};
-        float cone_angle_degrees{};
-    };
-
-    struct VisualCamera {
-        std::string_view name{};
-        VisualTransform transform{};
-        std::array<float, 3> target{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> up{0.0f, 1.0f, 0.0f};
-        float vertical_fov_degrees{45.0f};
-        float near_plane{0.01f};
-        float far_plane{200.0f};
-    };
-
-    struct VisualMeshVertex {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
-    };
-
-    struct VisualMesh {
-        std::string_view name{};
-        std::vector<VisualMeshVertex> vertices{};
-        std::vector<std::uint32_t> indices{};
-        std::string_view material_name{};
-        VisualTransform transform{};
-        bool dynamic{true};
-    };
-
-    struct VisualSphere {
-        std::string_view name{};
-        float radius{1.0f};
-        std::string_view material_name{};
-        VisualTransform transform{};
-        bool dynamic{true};
-    };
-
-    class Visualization final {
-    public:
-        Visualization() : solver(this->config) {}
-
-        [[nodiscard]] static std::string_view visualization_id() {
-            return "project.bouncing_ball";
-        }
-
-        [[nodiscard]] static std::string_view visualization_title() {
-            return "Bouncing Ball";
-        }
-
-        [[nodiscard]] double frames_per_second() const {
-            return 60.0;
-        }
-
-        void reset() {
-            this->solver.reset();
-            this->rebuild_primitives();
-        }
-
-        void step(const float delta_seconds) {
-            this->solver.step(delta_seconds);
-            this->rebuild_primitives();
-        }
-
-        [[nodiscard]] const std::vector<VisualMaterial>& materials() const {
-            return this->visual_materials;
-        }
-
-        [[nodiscard]] const std::vector<VisualLight>& lights() const {
-            return this->visual_lights;
-        }
-
-        [[nodiscard]] const VisualCamera& camera() const {
-            return this->visual_camera;
-        }
-
-        [[nodiscard]] const std::vector<VisualMesh>& meshes() const {
-            return this->visual_meshes;
-        }
-
-        [[nodiscard]] const std::vector<VisualSphere>& spheres() const {
-            return this->visual_spheres;
-        }
-
-    private:
-        Config config{};
-        Solver solver;
-        std::vector<VisualMaterial> visual_materials{
-            VisualMaterial{.name = "ball", .base_color = std::array<float, 4>{0.95f, 0.28f, 0.18f, 1.0f}, .roughness = 0.42f},
-            VisualMaterial{.name = "floor", .base_color = std::array<float, 4>{0.38f, 0.43f, 0.38f, 1.0f}, .roughness = 0.74f},
-        };
-        std::vector<VisualLight> visual_lights{
-            VisualLight{
-                .name      = "key",
-                .kind      = "directional",
-                .transform = VisualTransform{.rotation = std::array<float, 4>{-0.35f, 0.0f, 0.0f, 0.94f}},
-                .color     = std::array<float, 3>{1.0f, 0.97f, 0.92f},
-                .intensity = 3.0f,
-            },
-        };
-        VisualCamera visual_camera{
-            .name                 = "camera.main",
-            .transform            = VisualTransform{.position = std::array<float, 3>{4.4f, 2.7f, 5.8f}},
-            .target               = std::array<float, 3>{0.0f, 1.25f, 0.0f},
-            .vertical_fov_degrees = 42.0f,
-            .near_plane           = 0.05f,
-            .far_plane            = 80.0f,
-        };
-        std::vector<VisualMesh> visual_meshes{};
-        std::vector<VisualSphere> visual_spheres{};
-
-        [[nodiscard]] VisualMesh make_floor_mesh() const {
-            return VisualMesh{
-                .name = "floor.mesh",
-                .vertices = {
-                    VisualMeshVertex{.position = std::array<float, 3>{-5.5f, 0.0f, -5.5f}},
-                    VisualMeshVertex{.position = std::array<float, 3>{5.5f, 0.0f, -5.5f}},
-                    VisualMeshVertex{.position = std::array<float, 3>{5.5f, 0.0f, 5.5f}},
-                    VisualMeshVertex{.position = std::array<float, 3>{-5.5f, 0.0f, 5.5f}},
-                },
-                .indices       = {0u, 1u, 2u, 0u, 2u, 3u},
-                .material_name = "floor",
-                .dynamic       = false,
-            };
-        }
-
-        [[nodiscard]] VisualSphere make_ball_sphere() const {
-            return VisualSphere{
-                .name          = "ball.sphere",
-                .radius        = this->config.radius,
-                .material_name = "ball",
-                .transform     = VisualTransform{.position = this->solver.current_position()},
-                .dynamic       = true,
-            };
-        }
-
-        void rebuild_primitives() {
-            this->visual_meshes.clear();
-            this->visual_meshes.push_back(this->make_floor_mesh());
-            this->visual_spheres.clear();
-            this->visual_spheres.push_back(this->make_ball_sphere());
-        }
-    };
-} // namespace xayah::projects::bouncing_ball
-
 namespace {
-    [[nodiscard]] SpectraDynamicSceneString make_string(const std::string_view value) noexcept {
-        return SpectraDynamicSceneString{.data = value.data(), .size = static_cast<std::uint64_t>(value.size())};
+    template <std::size_t Size>
+    constexpr SpectraPluginString text(const char (&value)[Size]) noexcept {
+        return {value, Size - 1};
     }
 
-    template <typename Array>
-    void copy3(float (&output)[3], const Array& input) noexcept {
-        output[0] = static_cast<float>(input[0]);
-        output[1] = static_cast<float>(input[1]);
-        output[2] = static_cast<float>(input[2]);
-    }
-
-    template <typename Array>
-    void copy4(float (&output)[4], const Array& input) noexcept {
-        output[0] = static_cast<float>(input[0]);
-        output[1] = static_cast<float>(input[1]);
-        output[2] = static_cast<float>(input[2]);
-        output[3] = static_cast<float>(input[3]);
-    }
-
-    [[nodiscard]] SpectraDynamicSceneTransform make_transform(const xayah::projects::bouncing_ball::VisualTransform& transform) noexcept {
-        SpectraDynamicSceneTransform result{};
-        copy3(result.position, transform.position);
-        copy4(result.rotation, transform.rotation);
-        copy3(result.scale, transform.scale);
-        return result;
-    }
-
-    [[nodiscard]] SpectraDynamicSceneMaterial make_material(const xayah::projects::bouncing_ball::VisualMaterial& material) noexcept {
-        SpectraDynamicSceneMaterial result{};
-        result.name = make_string(material.name);
-        result.model = make_string(material.model);
-        result.alpha_mode = make_string(material.alpha_mode);
-        copy4(result.base_color, material.base_color);
-        copy3(result.emission_color, material.emission_color);
-        result.emission_strength = material.emission_strength;
-        result.roughness = material.roughness;
-        result.metallic = material.metallic;
-        result.alpha_cutoff = material.alpha_cutoff;
-        result.volume_density_scale = material.volume_density_scale;
-        result.volume_temperature_scale = material.volume_temperature_scale;
-        return result;
-    }
-
-    [[nodiscard]] SpectraDynamicSceneLight make_light(const xayah::projects::bouncing_ball::VisualLight& light) noexcept {
-        SpectraDynamicSceneLight result{};
-        result.name = make_string(light.name);
-        result.kind = make_string(light.kind);
-        result.transform = make_transform(light.transform);
-        copy3(result.color, light.color);
-        result.intensity = light.intensity;
-        result.cone_angle_degrees = light.cone_angle_degrees;
-        return result;
-    }
-
-    [[nodiscard]] SpectraDynamicSceneCamera make_camera(const xayah::projects::bouncing_ball::VisualCamera& camera) noexcept {
-        SpectraDynamicSceneCamera result{};
-        result.name = make_string(camera.name);
-        result.transform = make_transform(camera.transform);
-        copy3(result.target, camera.target);
-        copy3(result.up, camera.up);
-        result.vertical_fov_degrees = camera.vertical_fov_degrees;
-        result.near_plane = camera.near_plane;
-        result.far_plane = camera.far_plane;
-        return result;
-    }
-
-    struct MeshStorage {
-        std::vector<SpectraDynamicSceneMeshVertex> vertices{};
-        std::vector<std::uint32_t> indices{};
-        SpectraDynamicSceneMesh view{};
+    constexpr std::array ports{
+        SpectraPluginPortDescriptor{text("collider"), text("Floor Collider"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Bounds)), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("initial_ball"), text("Initial Ball"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Bounds)), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("ball_transform"), text("Ball Transform"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, 1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("debug"), text("Collision Debug"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::DebugDraw, SpectraPluginMemoryDomain::Host, 4, 0, 0, SpectraPluginMeshUpdateMode::Deformable, {}},
+    };
+    constexpr std::array parameters{
+        SpectraPluginParameterDescriptor{text("restitution"), text("Restitution"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {0.82, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {1.0, 0.0, 0.0}}, nullptr, 0},
+        SpectraPluginParameterDescriptor{text("gravity"), text("Gravity"), text("m/s²"), SpectraPluginParameterKind::Float3, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float3, 0, {0.0, -9.8, 0.0}}, {SpectraPluginParameterKind::Float3, 0, {-100.0, -100.0, -100.0}}, {SpectraPluginParameterKind::Float3, 0, {100.0, 100.0, 100.0}}, nullptr, 0},
+    };
+    constexpr SpectraPluginProviderDescriptor provider{
+        text("xayah.rigid.bouncing-ball"),
+        text("Bouncing Ball"),
+        text("spectra.dynamic.rigid-body"),
+        1,
+        ports.data(),
+        ports.size(),
+        parameters.data(),
+        parameters.size(),
+        nullptr,
+        0,
     };
 
-    struct SceneViewStorage {
-        std::vector<SpectraDynamicSceneMaterial> materials{};
-        std::vector<SpectraDynamicSceneLight> lights{};
-        SpectraDynamicSceneCamera camera{};
-        std::vector<MeshStorage> meshes{};
-        std::vector<SpectraDynamicSceneMesh> mesh_views{};
-        std::vector<SpectraDynamicSceneSphere> spheres{};
-        SpectraDynamicSceneDocumentView document_view{};
-        SpectraDynamicSceneFrameView frame_view{};
+    struct Plugin {
+        struct Slot {
+            SpectraPluginTransform* transform{};
+        };
 
-        void clear() {
-            this->materials.clear();
-            this->lights.clear();
-            this->meshes.clear();
-            this->mesh_views.clear();
-            this->spheres.clear();
-            this->camera = SpectraDynamicSceneCamera{};
-            this->document_view = SpectraDynamicSceneDocumentView{};
-            this->frame_view = SpectraDynamicSceneFrameView{};
+        struct InputSlot {
+            const SpectraPluginTransform* transform{};
+            const SpectraPluginFloat3* bounds{};
+        };
+
+        xayah::projects::bouncing_ball::Config config{};
+        std::optional<xayah::projects::bouncing_ball::Solver> solver{std::in_place, this->config};
+        std::array<Slot, 1> slots{};
+        InputSlot collider_input{};
+        InputSlot initial_ball_input{};
+        void reset() {
+            this->solver.emplace(this->config);
         }
 
-        void append_meshes(const std::vector<xayah::projects::bouncing_ball::VisualMesh>& meshes, const bool dynamic) {
-            for (const xayah::projects::bouncing_ball::VisualMesh& mesh : meshes) {
-                if (mesh.dynamic != dynamic) continue;
-                MeshStorage& storage = this->meshes.emplace_back();
-                storage.view.name = make_string(mesh.name);
-                storage.view.material_name = make_string(mesh.material_name);
-                storage.view.transform = make_transform(mesh.transform);
-                for (const xayah::projects::bouncing_ball::VisualMeshVertex& vertex : mesh.vertices) {
-                    SpectraDynamicSceneMeshVertex converted{};
-                    copy3(converted.position, vertex.position);
-                    copy3(converted.normal, vertex.normal);
-                    storage.vertices.push_back(converted);
+        void iterate(const double step_seconds, const std::uint64_t count) {
+            for (std::uint64_t step = 0; step < count; ++step) this->solver->step(static_cast<float>(step_seconds));
+        }
+
+        void configure_output(const SpectraPluginPortConfiguration& configuration) {
+            for (std::uint64_t slot = 0; slot < configuration.slot_count; ++slot)
+                for (std::uint64_t buffer = 0; buffer < configuration.slots[slot].buffer_count; ++buffer)
+                    if (configuration.slots[slot].buffers[buffer].attribute == SpectraPluginAttribute::Transform) this->slots[configuration.slots[slot].index].transform = static_cast<SpectraPluginTransform*>(configuration.slots[slot].buffers[buffer].host_address);
+        }
+
+        void configure_input(const SpectraPluginPortConfiguration& configuration) {
+            InputSlot& destination = configuration.port == 0 ? this->collider_input : this->initial_ball_input;
+            for (std::uint64_t slot = 0; slot < configuration.slot_count; ++slot)
+                for (std::uint64_t buffer = 0; buffer < configuration.slots[slot].buffer_count; ++buffer) {
+                    const SpectraPluginBuffer& source = configuration.slots[slot].buffers[buffer];
+                    if (source.attribute == SpectraPluginAttribute::Transform)
+                        destination.transform = static_cast<const SpectraPluginTransform*>(source.host_address);
+                    else if (source.attribute == SpectraPluginAttribute::Bounds)
+                        destination.bounds = static_cast<const SpectraPluginFloat3*>(source.host_address);
                 }
-                for (const std::uint32_t index : mesh.indices) storage.indices.push_back(index);
-                storage.view.vertices = SpectraDynamicSceneMeshVertexSpan{.data = storage.vertices.data(), .count = static_cast<std::uint64_t>(storage.vertices.size())};
-                storage.view.indices = SpectraDynamicSceneUInt32Span{.data = storage.indices.data(), .count = static_cast<std::uint64_t>(storage.indices.size())};
-            }
-            this->mesh_views.reserve(this->meshes.size());
-            for (const MeshStorage& storage : this->meshes) this->mesh_views.push_back(storage.view);
         }
 
-        void append_spheres(const std::vector<xayah::projects::bouncing_ball::VisualSphere>& spheres, const bool dynamic) {
-            for (const xayah::projects::bouncing_ball::VisualSphere& sphere : spheres) {
-                if (sphere.dynamic != dynamic) continue;
-                this->spheres.push_back(SpectraDynamicSceneSphere{
-                    .name = make_string(sphere.name),
-                    .radius = sphere.radius,
-                    .material_name = make_string(sphere.material_name),
-                    .transform = make_transform(sphere.transform),
-                });
+        void set_input(const SpectraPluginInputFrame& frame) {
+            if (frame.port == 0)
+                this->config.floor_y = this->collider_input.transform->matrix[7] + this->collider_input.bounds[1].y;
+            else {
+                this->config.start_position = {this->initial_ball_input.transform->matrix[3], this->initial_ball_input.transform->matrix[7], this->initial_ball_input.transform->matrix[11]};
+                this->config.radius         = std::max({(this->initial_ball_input.bounds[1].x - this->initial_ball_input.bounds[0].x) * 0.5f, (this->initial_ball_input.bounds[1].y - this->initial_ball_input.bounds[0].y) * 0.5f, (this->initial_ball_input.bounds[1].z - this->initial_ball_input.bounds[0].z) * 0.5f});
             }
         }
 
-        [[nodiscard]] SpectraDynamicSceneDocumentView build_document(const xayah::projects::bouncing_ball::Visualization& source) {
-            this->clear();
-            for (const xayah::projects::bouncing_ball::VisualMaterial& material : source.materials()) this->materials.push_back(make_material(material));
-            for (const xayah::projects::bouncing_ball::VisualLight& light : source.lights()) this->lights.push_back(make_light(light));
-            this->camera = make_camera(source.camera());
-            this->append_meshes(source.meshes(), false);
-            this->append_spheres(source.spheres(), false);
-            this->document_view = SpectraDynamicSceneDocumentView{
-                .struct_size = sizeof(SpectraDynamicSceneDocumentView),
-                .has_camera = 1u,
-                .camera = this->camera,
-                .materials = SpectraDynamicSceneMaterialSpan{.data = this->materials.data(), .count = static_cast<std::uint64_t>(this->materials.size())},
-                .lights = SpectraDynamicSceneLightSpan{.data = this->lights.data(), .count = static_cast<std::uint64_t>(this->lights.size())},
-                .meshes = SpectraDynamicSceneMeshSpan{.data = this->mesh_views.data(), .count = static_cast<std::uint64_t>(this->mesh_views.size())},
-                .spheres = SpectraDynamicSceneSphereSpan{.data = this->spheres.data(), .count = static_cast<std::uint64_t>(this->spheres.size())},
+        void publish(const SpectraPluginFrameSink& sink) {
+            *this->slots[0].transform = SpectraPluginTransform{
+                1.0f,
+                0.0f,
+                0.0f,
+                this->solver->current_position()[0],
+                0.0f,
+                1.0f,
+                0.0f,
+                this->solver->current_position()[1],
+                0.0f,
+                0.0f,
+                1.0f,
+                this->solver->current_position()[2],
+                0.0f,
+                0.0f,
+                0.0f,
+                1.0f,
             };
-            return this->document_view;
-        }
-
-        [[nodiscard]] SpectraDynamicSceneFrameView build_frame(const xayah::projects::bouncing_ball::Visualization& source) {
-            this->clear();
-            this->append_meshes(source.meshes(), true);
-            this->append_spheres(source.spheres(), true);
-            this->frame_view = SpectraDynamicSceneFrameView{
-                .struct_size = sizeof(SpectraDynamicSceneFrameView),
-                .meshes = SpectraDynamicSceneMeshSpan{.data = this->mesh_views.data(), .count = static_cast<std::uint64_t>(this->mesh_views.size())},
-                .spheres = SpectraDynamicSceneSphereSpan{.data = this->spheres.data(), .count = static_cast<std::uint64_t>(this->spheres.size())},
+            const SpectraPluginOutputCommit commit{0, 1, 0, 0, {}, {}, 0};
+            sink.commit_output(sink.state, 2, &commit);
+            const SpectraPluginFloat3 position{this->solver->current_position()[0], this->solver->current_position()[1], this->solver->current_position()[2]};
+            const SpectraPluginFloat3 velocity_end{
+                position.x + this->solver->current_velocity()[0] * 0.15f,
+                position.y + this->solver->current_velocity()[1] * 0.15f,
+                position.z + this->solver->current_velocity()[2] * 0.15f,
             };
-            return this->frame_view;
+            const SpectraPluginFloat3 center{position.x, this->config.floor_y, position.z};
+            const std::array debug{
+                SpectraPluginDebugPrimitive{SpectraPluginDebugPrimitiveKind::Arrow, SpectraPluginDebugDepthMode::XRay, position, velocity_end, {0.18f, 0.72f, 0.98f}, 0.025f, 1},
+                SpectraPluginDebugPrimitive{SpectraPluginDebugPrimitiveKind::Contact, SpectraPluginDebugDepthMode::XRay, center, {center.x, center.y + 0.55f, center.z}, {0.95f, 0.72f, 0.22f}, 0.035f, 1},
+            };
+            const bool contact = std::abs(position.y - (this->config.floor_y + this->config.radius)) <= 0.0001f;
+            sink.write_debug_draw(sink.state, 3, debug.data(), contact ? debug.size() : 1);
         }
     };
 
-    struct PluginInstance {
-        xayah::projects::bouncing_ball::Visualization source{};
-        SceneViewStorage document_storage{};
-        SceneViewStorage frame_storage{};
-        std::string error{};
-    };
-
-    [[nodiscard]] PluginInstance* typed_instance(SpectraDynamicSceneInstance* instance) noexcept {
-        return reinterpret_cast<PluginInstance*>(instance);
+    SpectraPluginProviderDescriptor describe_provider() {
+        return provider;
     }
 
-    [[nodiscard]] std::string& thread_error() noexcept {
-        static thread_local std::string error{};
-        return error;
+    void* create_provider() {
+        return new Plugin{};
     }
 
-    template <typename Function>
-    [[nodiscard]] SpectraDynamicSceneResult guard(PluginInstance* instance, Function&& function) noexcept {
-        try {
-            if (instance == nullptr) throw std::runtime_error("Dynamic scene plugin instance is null");
-            std::forward<Function>(function)();
-            instance->error.clear();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
-        } catch (const std::exception& exception) {
-            if (instance != nullptr) instance->error = exception.what();
-            else thread_error() = exception.what();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        } catch (...) {
-            if (instance != nullptr) instance->error = "Unknown dynamic scene plugin error";
-            else thread_error() = "Unknown dynamic scene plugin error";
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        }
+    void destroy_provider(void* instance) {
+        delete static_cast<Plugin*>(instance);
+    }
+    void configure_port(void* instance, const SpectraPluginPortConfiguration* configuration) {
+        if (configuration->direction == SpectraPluginPortDirection::Input)
+            static_cast<Plugin*>(instance)->configure_input(*configuration);
+        else
+            static_cast<Plugin*>(instance)->configure_output(*configuration);
+    }
+    void set_input_frame(void* instance, const SpectraPluginInputFrame* frame) {
+        static_cast<Plugin*>(instance)->set_input(*frame);
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult create(SpectraDynamicSceneInstance** instance) noexcept {
-        try {
-            if (instance == nullptr) throw std::runtime_error("Dynamic scene create output pointer is null");
-            *instance = reinterpret_cast<SpectraDynamicSceneInstance*>(new PluginInstance{});
-            thread_error().clear();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
-        } catch (const std::exception& exception) {
-            thread_error() = exception.what();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        } catch (...) {
-            thread_error() = "Unknown dynamic scene plugin creation error";
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        }
+    void apply_parameters(void* instance, const SpectraPluginParameterValue* values, const std::uint64_t count) {
+        Plugin& plugin = *static_cast<Plugin*>(instance);
+        if (count != parameters.size()) throw std::runtime_error("Bouncing Ball parameter count mismatch");
+        plugin.config.restitution = static_cast<float>(values[0].floating[0]);
+        plugin.config.gravity     = {static_cast<float>(values[1].floating[0]), static_cast<float>(values[1].floating[1]), static_cast<float>(values[1].floating[2])};
     }
 
-    void destroy(SpectraDynamicSceneInstance* instance) noexcept {
-        delete typed_instance(instance);
+    void reset(void* instance, std::uint64_t) {
+        static_cast<Plugin*>(instance)->reset();
     }
-
-    [[nodiscard]] SpectraDynamicSceneResult reset(SpectraDynamicSceneInstance* instance) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin] { plugin->source.reset(); });
+    void step(void* instance, const double step_seconds, const std::uint64_t count) {
+        static_cast<Plugin*>(instance)->iterate(step_seconds, count);
     }
-
-    [[nodiscard]] SpectraDynamicSceneResult step(SpectraDynamicSceneInstance* instance, const float delta_seconds) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin, delta_seconds] { plugin->source.step(delta_seconds); });
-    }
-
-    [[nodiscard]] SpectraDynamicSceneResult document(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* output) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin, output] {
-            if (output == nullptr) throw std::runtime_error("Dynamic scene document output pointer is null");
-            *output = plugin->document_storage.build_document(plugin->source);
-        });
-    }
-
-    [[nodiscard]] SpectraDynamicSceneResult frame(SpectraDynamicSceneInstance* instance, const SpectraDynamicSceneFrameInfo frame_info, SpectraDynamicSceneFrameView* output) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin, frame_info, output] {
-            static_cast<void>(frame_info);
-            if (output == nullptr) throw std::runtime_error("Dynamic scene frame output pointer is null");
-            *output = plugin->frame_storage.build_frame(plugin->source);
-        });
-    }
-
-    [[nodiscard]] SpectraDynamicSceneString last_error(SpectraDynamicSceneInstance* instance) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        if (plugin == nullptr) return make_string(thread_error());
-        return make_string(plugin->error);
-    }
-
-    [[nodiscard]] double frames_per_second() noexcept {
-        try {
-            xayah::projects::bouncing_ball::Visualization source{};
-            return source.frames_per_second();
-        } catch (...) {
-            return 0.0;
-        }
+    void publish_frame(void* instance, std::uint64_t, const SpectraPluginFrameSink* sink) {
+        static_cast<Plugin*>(instance)->publish(*sink);
     }
 } // namespace
 
-extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra_dynamic_scene_plugin(void) {
-    static const std::string id{std::string{xayah::projects::bouncing_ball::Visualization::visualization_id()}};
-    static const std::string title{std::string{xayah::projects::bouncing_ball::Visualization::visualization_title()}};
-    static const SpectraDynamicScenePlugin plugin{
-        .abi_version = 1u,
-        .struct_size = sizeof(SpectraDynamicScenePlugin),
-        .id = make_string(id),
-        .title = make_string(title),
-        .pbrt_template_path = SpectraDynamicSceneString{},
-        .frames_per_second = frames_per_second(),
-        .create = &create,
-        .destroy = &destroy,
-        .reset = &reset,
-        .step = &step,
-        .document = &document,
-        .frame = &frame,
-        .last_error = &last_error,
+extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11() {
+    static constexpr SpectraPluginApi api{
+        SPECTRA_PLUGIN_API_VERSION,
+        sizeof(SpectraPluginApi),
+        &describe_provider,
+        &create_provider,
+        &destroy_provider,
+        &configure_port,
+        &set_input_frame,
+        &apply_parameters,
+        &reset,
+        &step,
+        nullptr,
+        &publish_frame,
     };
-    return &plugin;
+    return &api;
 }

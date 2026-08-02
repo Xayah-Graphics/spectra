@@ -17,18 +17,24 @@ IncludeBlocks: Regroup
 IncludeCategories:
   - Regex: '^<yvals(_core)?\.h>$'
     Priority: 1
-  - Regex: '^<(Windows|userenv)\.h>$'
-    Priority: 3
-    SortPriority: 3
-  - Regex: '^<WinIoCtl\.h>$'
-    Priority: 3
-    SortPriority: 4
-  - Regex: '^<__.*\.hpp>$'
+  - Regex: '^<[Ww]indows\.h>$'
+    Priority: 1
+  - Regex: '^<GLFW/.*\.h>$'
     Priority: 2
-  - Regex: '\.hpp[>"]$'
+  - Regex: '^<imgui(_internal)?\.h>$'
+    Priority: 4
+  - Regex: '^<ImGuizmo\.h>$'
     Priority: 5
+  - Regex: '^<userenv\.h>$'
+    Priority: 4
+  - Regex: '^<WinIoCtl\.h>$'
+    Priority: 4
+  - Regex: '^<__.*\.hpp>$'
+    Priority: 5
+  - Regex: '\.hpp[>"]$'
+    Priority: 6
   - Regex: '.*'
-    Priority: 2
+    Priority: 4
 IndentCaseBlocks: true
 IndentWidth: 4
 IndentWrappedFunctionNames: true

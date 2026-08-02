@@ -2,11 +2,6 @@ export module xayah.projects.cloth;
 import std;
 
 namespace xayah::projects::cloth {
-    export struct Vertex {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
-    };
-
     export struct SphereCollider {
         std::array<float, 3> center{0.0f, 0.65f, 0.0f};
         float radius{0.72f};
@@ -28,8 +23,15 @@ namespace xayah::projects::cloth {
         float collision_margin{0.018f};
     };
 
-    export class Solver {
-    public:
+    export struct DeviceFrame {
+        void* stream{};
+        const float* position_x{};
+        const float* position_y{};
+        const float* position_z{};
+        std::uint64_t vertex_count{};
+    };
+
+    export struct Solver {
         explicit Solver(const Config& config, const SphereCollider& collider);
         ~Solver() noexcept;
 
@@ -40,8 +42,8 @@ namespace xayah::projects::cloth {
 
         void reset();
         void step(float delta_seconds);
-        [[nodiscard]] const std::vector<Vertex>& mesh_vertices() const;
         [[nodiscard]] const std::vector<std::uint32_t>& mesh_indices() const;
+        [[nodiscard]] DeviceFrame device_frame() const noexcept;
 
     private:
         struct HostState {
@@ -52,21 +54,12 @@ namespace xayah::projects::cloth {
             float shear_rest_length{0.0f};
             std::uint32_t block_size{256};
             unsigned vertex_grid{0};
-            unsigned triangle_grid{0};
             std::uint32_t vertex_count{0};
-            std::uint32_t triangle_count{0};
             std::uint32_t horizontal_constraint_count{0};
             std::uint32_t vertical_constraint_count{0};
             std::uint32_t shear_constraint_count{0};
             std::uint32_t horizontal_bend_constraint_count{0};
             std::uint32_t vertical_bend_constraint_count{0};
-            std::vector<float> position_x{};
-            std::vector<float> position_y{};
-            std::vector<float> position_z{};
-            std::vector<float> normal_x{};
-            std::vector<float> normal_y{};
-            std::vector<float> normal_z{};
-            std::vector<Vertex> vertices{};
             std::vector<std::uint32_t> indices{};
         };
 
@@ -82,9 +75,6 @@ namespace xayah::projects::cloth {
             float* velocity_y{nullptr};
             float* velocity_z{nullptr};
             float* inverse_mass{nullptr};
-            float* normal_x{nullptr};
-            float* normal_y{nullptr};
-            float* normal_z{nullptr};
             std::uint32_t* indices{nullptr};
             float* horizontal_lambda{nullptr};
             float* vertical_lambda{nullptr};
@@ -104,7 +94,5 @@ namespace xayah::projects::cloth {
         void destroy_device() noexcept;
         void clear_constraint_lambdas(float* lambda, std::uint32_t count);
         void solve_constraint_batch(std::uint32_t kind, std::uint32_t color, float* lambda, std::uint32_t count, float compliance, float rest_length, float substep_seconds);
-        void compute_normals();
-        [[nodiscard]] const std::vector<Vertex>& download_vertices() const;
     };
 } // namespace xayah::projects::cloth

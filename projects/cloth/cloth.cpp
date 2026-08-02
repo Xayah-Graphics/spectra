@@ -80,16 +80,6 @@ namespace {
             }
         }
 
-        this->host.triangle_count = static_cast<std::uint32_t>(this->host.indices.size() / 3u);
-        this->host.triangle_grid  = ceil_div_u32(this->host.triangle_count, this->host.block_size);
-        this->host.position_x.resize(this->host.vertex_count);
-        this->host.position_y.resize(this->host.vertex_count);
-        this->host.position_z.resize(this->host.vertex_count);
-        this->host.normal_x.resize(this->host.vertex_count);
-        this->host.normal_y.resize(this->host.vertex_count);
-        this->host.normal_z.resize(this->host.vertex_count);
-        this->host.vertices.resize(this->host.vertex_count);
-
         this->create_device();
         this->reset();
     }
@@ -115,9 +105,6 @@ namespace {
             cuda_malloc_float(this->device.velocity_y, this->host.vertex_count, "cudaMalloc cloth velocity_y");
             cuda_malloc_float(this->device.velocity_z, this->host.vertex_count, "cudaMalloc cloth velocity_z");
             cuda_malloc_float(this->device.inverse_mass, this->host.vertex_count, "cudaMalloc cloth inverse_mass");
-            cuda_malloc_float(this->device.normal_x, this->host.vertex_count, "cudaMalloc cloth normal_x");
-            cuda_malloc_float(this->device.normal_y, this->host.vertex_count, "cudaMalloc cloth normal_y");
-            cuda_malloc_float(this->device.normal_z, this->host.vertex_count, "cudaMalloc cloth normal_z");
             cuda_malloc_float(this->device.horizontal_lambda, this->host.horizontal_constraint_count, "cudaMalloc cloth horizontal_lambda");
             cuda_malloc_float(this->device.vertical_lambda, this->host.vertical_constraint_count, "cudaMalloc cloth vertical_lambda");
             cuda_malloc_float(this->device.shear_down_lambda, this->host.shear_constraint_count, "cudaMalloc cloth shear_down_lambda");
@@ -148,9 +135,6 @@ namespace {
             if (this->device.velocity_y != nullptr) cudaFree(this->device.velocity_y);
             if (this->device.velocity_z != nullptr) cudaFree(this->device.velocity_z);
             if (this->device.inverse_mass != nullptr) cudaFree(this->device.inverse_mass);
-            if (this->device.normal_x != nullptr) cudaFree(this->device.normal_x);
-            if (this->device.normal_y != nullptr) cudaFree(this->device.normal_y);
-            if (this->device.normal_z != nullptr) cudaFree(this->device.normal_z);
             if (this->device.indices != nullptr) cudaFree(this->device.indices);
             if (this->device.horizontal_lambda != nullptr) cudaFree(this->device.horizontal_lambda);
             if (this->device.vertical_lambda != nullptr) cudaFree(this->device.vertical_lambda);
@@ -179,7 +163,6 @@ namespace {
         if (this->device.stream == nullptr) throw std::runtime_error("Cannot reset cloth before CUDA device creation");
         check_cuda(cudaMemsetAsync(this->device.error_flag, 0, sizeof(int), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth error_flag");
         cuda::launch_reset(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.columns, this->host.rows, this->config.origin[0], this->config.origin[1], this->config.origin[2], this->host.dx, this->host.dz);
-        this->compute_normals();
     }
 
     void Solver::step(const float delta_seconds) {
@@ -217,39 +200,16 @@ namespace {
             }
             cuda::launch_update_velocities(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.vertex_count, substep_seconds);
         }
-        this->compute_normals();
     }
 
-    void Solver::compute_normals() {
-        check_cuda(cudaMemsetAsync(this->device.normal_x, 0, static_cast<std::size_t>(this->host.vertex_count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth normal_x");
-        check_cuda(cudaMemsetAsync(this->device.normal_y, 0, static_cast<std::size_t>(this->host.vertex_count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth normal_y");
-        check_cuda(cudaMemsetAsync(this->device.normal_z, 0, static_cast<std::size_t>(this->host.vertex_count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth normal_z");
-        cuda::launch_accumulate_normals(cloth_stream(this->device.stream), this->host.triangle_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.indices, this->device.error_flag, this->host.triangle_count);
-        cuda::launch_normalize_normals(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.error_flag, this->host.vertex_count);
-    }
-
-    const std::vector<Vertex>& Solver::download_vertices() const {
-        int error_flag          = 0;
-        const std::size_t bytes = static_cast<std::size_t>(this->host.vertex_count) * sizeof(float);
-        check_cuda(cudaMemcpyAsync(this->host.position_x.data(), this->device.position_x, bytes, cudaMemcpyDeviceToHost, cloth_stream(this->device.stream)), "cudaMemcpyAsync cloth position_x download");
-        check_cuda(cudaMemcpyAsync(this->host.position_y.data(), this->device.position_y, bytes, cudaMemcpyDeviceToHost, cloth_stream(this->device.stream)), "cudaMemcpyAsync cloth position_y download");
-        check_cuda(cudaMemcpyAsync(this->host.position_z.data(), this->device.position_z, bytes, cudaMemcpyDeviceToHost, cloth_stream(this->device.stream)), "cudaMemcpyAsync cloth position_z download");
-        check_cuda(cudaMemcpyAsync(this->host.normal_x.data(), this->device.normal_x, bytes, cudaMemcpyDeviceToHost, cloth_stream(this->device.stream)), "cudaMemcpyAsync cloth normal_x download");
-        check_cuda(cudaMemcpyAsync(this->host.normal_y.data(), this->device.normal_y, bytes, cudaMemcpyDeviceToHost, cloth_stream(this->device.stream)), "cudaMemcpyAsync cloth normal_y download");
-        check_cuda(cudaMemcpyAsync(this->host.normal_z.data(), this->device.normal_z, bytes, cudaMemcpyDeviceToHost, cloth_stream(this->device.stream)), "cudaMemcpyAsync cloth normal_z download");
-        check_cuda(cudaMemcpyAsync(&error_flag, this->device.error_flag, sizeof(int), cudaMemcpyDeviceToHost, cloth_stream(this->device.stream)), "cudaMemcpyAsync cloth error download");
-        check_cuda(cudaStreamSynchronize(cloth_stream(this->device.stream)), "cudaStreamSynchronize cloth download");
-        if (error_flag != 0) throw std::runtime_error("Cloth CUDA kernel reported an invalid simulation state");
-
-        for (std::uint32_t index = 0; index < this->host.vertex_count; ++index) {
-            this->host.vertices[index].position = {this->host.position_x[index], this->host.position_y[index], this->host.position_z[index]};
-            this->host.vertices[index].normal   = {this->host.normal_x[index], this->host.normal_y[index], this->host.normal_z[index]};
-        }
-        return this->host.vertices;
-    }
-
-    const std::vector<Vertex>& Solver::mesh_vertices() const {
-        return this->download_vertices();
+    DeviceFrame Solver::device_frame() const noexcept {
+        return {
+            this->device.stream,
+            this->device.position_x,
+            this->device.position_y,
+            this->device.position_z,
+            this->host.vertex_count,
+        };
     }
 
     const std::vector<std::uint32_t>& Solver::mesh_indices() const {

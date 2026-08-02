@@ -25,8 +25,7 @@ namespace xayah::projects::sparkles {
         bool automatic_relaunch{true};
     };
 
-    export class Solver {
-    public:
+    export struct Solver {
         explicit Solver(const Config& config = {});
 
         void reset();

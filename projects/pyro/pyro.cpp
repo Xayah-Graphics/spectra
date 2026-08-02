@@ -172,7 +172,17 @@ namespace {
         this->create_device();
         check_cuda(cudaMemcpyAsync(this->device.density_source, this->host.density_source.data(), this->host.cell_bytes, cudaMemcpyHostToDevice, this->host.stream), "cudaMemcpyAsync density_source");
         check_cuda(cudaMemcpyAsync(this->device.temperature_source, this->host.temperature_source.data(), this->host.cell_bytes, cudaMemcpyHostToDevice, this->host.stream), "cudaMemcpyAsync temperature_source");
+        if (!this->host.initial_density.empty()) check_cuda(cudaMemcpyAsync(this->device.density_data, this->host.initial_density.data(), this->host.cell_bytes, cudaMemcpyHostToDevice, this->host.stream), "cudaMemcpyAsync initial density");
+        if (!this->host.initial_temperature.empty()) check_cuda(cudaMemcpyAsync(this->device.temperature_data, this->host.initial_temperature.data(), this->host.cell_bytes, cudaMemcpyHostToDevice, this->host.stream), "cudaMemcpyAsync initial temperature");
         check_cuda(cudaStreamSynchronize(this->host.stream), "cudaStreamSynchronize reset sources");
+    }
+
+    void Solver::set_initial_fields(const std::span<const float> density, const std::span<const float> temperature) {
+        this->host.initial_density.assign(density.begin(), density.end());
+        this->host.initial_temperature.assign(temperature.begin(), temperature.end());
+        if (!this->host.initial_density.empty()) check_cuda(cudaMemcpyAsync(this->device.density_data, this->host.initial_density.data(), this->host.cell_bytes, cudaMemcpyHostToDevice, this->host.stream), "cudaMemcpyAsync initial density");
+        if (!this->host.initial_temperature.empty()) check_cuda(cudaMemcpyAsync(this->device.temperature_data, this->host.initial_temperature.data(), this->host.cell_bytes, cudaMemcpyHostToDevice, this->host.stream), "cudaMemcpyAsync initial temperature");
+        check_cuda(cudaStreamSynchronize(this->host.stream), "cudaStreamSynchronize initial fields");
     }
 
     void Solver::set_plume_source(const PlumeSource& source) {
@@ -270,23 +280,17 @@ namespace {
         check_cuda(cudaMemcpyAsync(this->device.density_data, this->device.density_temp, this->host.cell_bytes, cudaMemcpyDeviceToDevice, this->host.stream), "cudaMemcpyAsync density");
     }
 
-    Frame Solver::read_frame(const int frame_index) {
-        Frame frame{};
-        frame.frame_index = frame_index;
-        frame.resolution  = this->host.resolution;
-        frame.cell_size   = this->host.cell_size;
-        frame.density.resize(static_cast<std::size_t>(this->host.cell_count));
-        frame.temperature.resize(static_cast<std::size_t>(this->host.cell_count));
-        frame.velocity_x.resize(static_cast<std::size_t>(this->host.velocity_count[0]));
-        frame.velocity_y.resize(static_cast<std::size_t>(this->host.velocity_count[1]));
-        frame.velocity_z.resize(static_cast<std::size_t>(this->host.velocity_count[2]));
-        check_cuda(cudaMemcpyAsync(frame.density.data(), this->device.density_data, this->host.cell_bytes, cudaMemcpyDeviceToHost, this->host.stream), "cudaMemcpyAsync density download");
-        check_cuda(cudaMemcpyAsync(frame.temperature.data(), this->device.temperature_data, this->host.cell_bytes, cudaMemcpyDeviceToHost, this->host.stream), "cudaMemcpyAsync temperature download");
-        check_cuda(cudaMemcpyAsync(frame.velocity_x.data(), this->device.velocity[0], this->host.velocity_bytes[0], cudaMemcpyDeviceToHost, this->host.stream), "cudaMemcpyAsync velocity_x download");
-        check_cuda(cudaMemcpyAsync(frame.velocity_y.data(), this->device.velocity[1], this->host.velocity_bytes[1], cudaMemcpyDeviceToHost, this->host.stream), "cudaMemcpyAsync velocity_y download");
-        check_cuda(cudaMemcpyAsync(frame.velocity_z.data(), this->device.velocity[2], this->host.velocity_bytes[2], cudaMemcpyDeviceToHost, this->host.stream), "cudaMemcpyAsync velocity_z download");
-        check_cuda(cudaStreamSynchronize(this->host.stream), "cudaStreamSynchronize pyro download");
-        return frame;
+    DeviceFrame Solver::device_frame() const noexcept {
+        return {
+            this->host.stream,
+            this->host.resolution,
+            this->device.density_data,
+            this->device.temperature_data,
+            this->device.centered_velocity[0],
+            this->device.centered_velocity[1],
+            this->device.centered_velocity[2],
+            this->host.cell_count,
+        };
     }
 
     void Solver::create_device() {

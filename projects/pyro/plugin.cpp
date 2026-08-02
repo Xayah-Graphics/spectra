@@ -1,638 +1,222 @@
-#if defined(_WIN32)
-#define SPECTRA_DYNAMIC_SCENE_EXPORT __declspec(dllexport)
-#else
-#define SPECTRA_DYNAMIC_SCENE_EXPORT __attribute__((visibility("default")))
-#endif
+#include "cuda_interop.h"
+#include <spectra/plugin_api.h>
 
 import std;
 import xayah.projects.pyro;
 
-struct SpectraDynamicSceneInstance;
+namespace {
+    template <std::size_t Size>
+    constexpr SpectraPluginString text(const char (&value)[Size]) noexcept {
+        return {value, Size - 1};
+    }
 
-enum SpectraDynamicSceneResult {
-    SPECTRA_DYNAMIC_SCENE_RESULT_OK = 0,
-    SPECTRA_DYNAMIC_SCENE_RESULT_ERROR = 1,
-};
-
-struct SpectraDynamicSceneString {
-    const char* data;
-    std::uint64_t size;
-};
-
-struct SpectraDynamicSceneTransform {
-    float position[3];
-    float rotation[4];
-    float scale[3];
-};
-
-struct SpectraDynamicSceneMaterial {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneString model;
-    SpectraDynamicSceneString alpha_mode;
-    float base_color[4];
-    float emission_color[3];
-    float emission_strength;
-    float roughness;
-    float metallic;
-    float alpha_cutoff;
-    float volume_density_scale;
-    float volume_temperature_scale;
-};
-
-struct SpectraDynamicSceneMaterialSpan {
-    const SpectraDynamicSceneMaterial* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneLight {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneString kind;
-    SpectraDynamicSceneTransform transform;
-    float color[3];
-    float intensity;
-    float cone_angle_degrees;
-};
-
-struct SpectraDynamicSceneLightSpan {
-    const SpectraDynamicSceneLight* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneCamera {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneTransform transform;
-    float target[3];
-    float up[3];
-    float vertical_fov_degrees;
-    float near_plane;
-    float far_plane;
-};
-
-struct SpectraDynamicSceneMeshVertex {
-    float position[3];
-    float normal[3];
-};
-
-struct SpectraDynamicSceneMeshVertexSpan {
-    const SpectraDynamicSceneMeshVertex* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneUInt32Span {
-    const std::uint32_t* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneMesh {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneMeshVertexSpan vertices;
-    SpectraDynamicSceneUInt32Span indices;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicSceneMeshSpan {
-    const SpectraDynamicSceneMesh* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneSphere {
-    SpectraDynamicSceneString name;
-    float radius;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicSceneSphereSpan {
-    const SpectraDynamicSceneSphere* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicScenePoint {
-    float position[3];
-    float normal[3];
-    float color[4];
-    float radius;
-};
-
-struct SpectraDynamicScenePointSpan {
-    const SpectraDynamicScenePoint* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicScenePointCloud {
-    SpectraDynamicSceneString name;
-    SpectraDynamicScenePointSpan points;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicScenePointCloudSpan {
-    const SpectraDynamicScenePointCloud* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneFloatSpan {
-    const float* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneVolumeChannel {
-    SpectraDynamicSceneString name;
-    std::uint32_t dimensions[3];
-    SpectraDynamicSceneFloatSpan values;
-};
-
-struct SpectraDynamicSceneVolumeChannelSpan {
-    const SpectraDynamicSceneVolumeChannel* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneVolume {
-    SpectraDynamicSceneString name;
-    std::uint32_t dimensions[3];
-    float origin[3];
-    float voxel_size[3];
-    SpectraDynamicSceneVolumeChannelSpan channels;
-    SpectraDynamicSceneString material_name;
-};
-
-struct SpectraDynamicSceneVolumeSpan {
-    const SpectraDynamicSceneVolume* data;
-    std::uint64_t count;
-};
-
-struct SpectraDynamicSceneDocumentView {
-    std::uint64_t struct_size;
-    std::uint32_t has_camera;
-    SpectraDynamicSceneCamera camera;
-    SpectraDynamicSceneMaterialSpan materials;
-    SpectraDynamicSceneLightSpan lights;
-    SpectraDynamicSceneMeshSpan meshes;
-    SpectraDynamicSceneSphereSpan spheres;
-    SpectraDynamicScenePointCloudSpan point_clouds;
-    SpectraDynamicSceneVolumeSpan volumes;
-};
-
-struct SpectraDynamicSceneFrameInfo {
-    double delta_seconds;
-    double time_seconds;
-    std::uint64_t frame_index;
-};
-
-struct SpectraDynamicSceneFrameView {
-    std::uint64_t struct_size;
-    SpectraDynamicSceneMeshSpan meshes;
-    SpectraDynamicSceneSphereSpan spheres;
-    SpectraDynamicScenePointCloudSpan point_clouds;
-    SpectraDynamicSceneVolumeSpan volumes;
-};
-
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneCreateFn)(SpectraDynamicSceneInstance** instance);
-typedef void (*SpectraDynamicSceneDestroyFn)(SpectraDynamicSceneInstance* instance);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneResetFn)(SpectraDynamicSceneInstance* instance);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneStepFn)(SpectraDynamicSceneInstance* instance, float delta_seconds);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneDocumentFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* document);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneFrameFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneFrameInfo frame, SpectraDynamicSceneFrameView* snapshot);
-typedef SpectraDynamicSceneString (*SpectraDynamicSceneLastErrorFn)(SpectraDynamicSceneInstance* instance);
-
-struct SpectraDynamicScenePlugin {
-    std::uint32_t abi_version;
-    std::uint64_t struct_size;
-    SpectraDynamicSceneString id;
-    SpectraDynamicSceneString title;
-    SpectraDynamicSceneString pbrt_template_path;
-    double frames_per_second;
-    SpectraDynamicSceneCreateFn create;
-    SpectraDynamicSceneDestroyFn destroy;
-    SpectraDynamicSceneResetFn reset;
-    SpectraDynamicSceneStepFn step;
-    SpectraDynamicSceneDocumentFn document;
-    SpectraDynamicSceneFrameFn frame;
-    SpectraDynamicSceneLastErrorFn last_error;
-};
-
-namespace xayah::projects::pyro {
-    struct VisualTransform {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 4> rotation{0.0f, 0.0f, 0.0f, 1.0f};
-        std::array<float, 3> scale{1.0f, 1.0f, 1.0f};
+    constexpr std::uint64_t pyro_voxel_count = 64ull * 96ull * 64ull;
+    constexpr std::array ports{
+        SpectraPluginPortDescriptor{text("initial_volume"), text("Initial Volume"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::Volume, SpectraPluginMemoryDomain::Host, pyro_voxel_count, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Density)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Temperature)), SpectraPluginMeshUpdateMode::Deformable, {64, 96, 64}},
+        SpectraPluginPortDescriptor{text("volume"), text("Pyro Volume"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::Volume, SpectraPluginMemoryDomain::CudaExternal, pyro_voxel_count, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Density)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Temperature)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Velocity)), SpectraPluginMeshUpdateMode::Deformable, {64, 96, 64}},
+    };
+    constexpr std::array parameters{
+        SpectraPluginParameterDescriptor{text("pressure_iterations"), text("Pressure iterations"), {}, SpectraPluginParameterKind::Integer, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Integer, 64, {}}, {SpectraPluginParameterKind::Integer, 1, {}}, {SpectraPluginParameterKind::Integer, 256, {}}, nullptr, 0},
+        SpectraPluginParameterDescriptor{text("density_buoyancy"), text("Density buoyancy"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {0.15, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {5.0, 0.0, 0.0}}, nullptr, 0},
+        SpectraPluginParameterDescriptor{text("temperature_buoyancy"), text("Temperature buoyancy"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {1.2, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {10.0, 0.0, 0.0}}, nullptr, 0},
+        SpectraPluginParameterDescriptor{text("vorticity"), text("Vorticity"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {0.22, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {5.0, 0.0, 0.0}}, nullptr, 0},
+        SpectraPluginParameterDescriptor{text("source_density"), text("Source density"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::Live, {SpectraPluginParameterKind::Float, 0, {18.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {100.0, 0.0, 0.0}}, nullptr, 0},
+    };
+    constexpr std::array telemetry_descriptors{
+        SpectraPluginTelemetryDescriptor{text("voxel_count"), text("Voxels"), {}},
+        SpectraPluginTelemetryDescriptor{text("resolution"), text("Resolution"), {}},
+    };
+    constexpr SpectraPluginProviderDescriptor provider{
+        text("xayah.volume.pyro"),
+        text("Pyro"),
+        text("spectra.dynamic.volume"),
+        1,
+        ports.data(),
+        ports.size(),
+        parameters.data(),
+        parameters.size(),
+        telemetry_descriptors.data(),
+        telemetry_descriptors.size(),
     };
 
-    struct VisualMaterial {
-        std::string_view name{};
-        std::string_view model{"lit_surface"};
-        std::string_view alpha_mode{"opaque"};
-        std::array<float, 4> base_color{0.8f, 0.8f, 0.8f, 1.0f};
-        std::array<float, 3> emission_color{0.0f, 0.0f, 0.0f};
-        float emission_strength{0.0f};
-        float roughness{0.5f};
-        float metallic{0.0f};
-        float alpha_cutoff{0.5f};
-        float volume_density_scale{0.08f};
-        float volume_temperature_scale{0.035f};
-    };
+    struct Plugin {
+        struct Slot {
+            xayah::projects::cuda_interop::Buffer density{};
+            xayah::projects::cuda_interop::Buffer temperature{};
+            xayah::projects::cuda_interop::Buffer velocity{};
+        };
 
-    struct VisualLight {
-        std::string_view name{};
-        std::string_view kind{};
-        VisualTransform transform{};
-        std::array<float, 3> color{};
-        float intensity{};
-        float cone_angle_degrees{};
-    };
-
-    struct VisualCamera {
-        std::string_view name{};
-        VisualTransform transform{};
-        std::array<float, 3> target{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> up{0.0f, 1.0f, 0.0f};
-        float vertical_fov_degrees{45.0f};
-        float near_plane{0.01f};
-        float far_plane{200.0f};
-    };
-
-    struct VisualVolumeChannel {
-        std::string_view name{};
-        std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
-        std::span<const float> values{};
-    };
-
-    struct VisualVolume {
-        std::string_view name{};
-        std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
-        std::array<float, 3> origin{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> voxel_size{1.0f, 1.0f, 1.0f};
-        std::vector<VisualVolumeChannel> channels{};
-        std::string_view material_name{};
-        bool dynamic{true};
-    };
-
-    class Visualization final {
-    public:
-        Visualization() = default;
-
-        [[nodiscard]] static std::string_view visualization_id() {
-            return "project.pyro";
+        xayah::projects::pyro::Config config{};
+        xayah::projects::pyro::PlumeSource source{};
+        std::optional<xayah::projects::pyro::Solver> solver{std::in_place, this->config};
+        std::array<Slot, 2> slots{};
+        const float* initial_density{};
+        const float* initial_temperature{};
+        std::uint64_t initial_voxel_count{};
+        xayah::projects::cuda_interop::Timeline timeline{};
+        std::uint64_t ready_value{};
+        std::uint32_t next_slot{};
+        Plugin() {
+            this->solver->set_plume_source(this->source);
         }
 
-        [[nodiscard]] static std::string_view visualization_title() {
-            return "Pyro";
+        ~Plugin() {
+            for (Slot& slot : this->slots) {
+                xayah::projects::cuda_interop::destroy(slot.density);
+                xayah::projects::cuda_interop::destroy(slot.temperature);
+                xayah::projects::cuda_interop::destroy(slot.velocity);
+            }
+            xayah::projects::cuda_interop::destroy(this->timeline);
         }
 
-        [[nodiscard]] double frames_per_second() const {
-            return 60.0;
+        void configure(const SpectraPluginPortConfiguration& configuration) {
+            for (Slot& slot : this->slots) {
+                xayah::projects::cuda_interop::destroy(slot.density);
+                xayah::projects::cuda_interop::destroy(slot.temperature);
+                xayah::projects::cuda_interop::destroy(slot.velocity);
+            }
+            xayah::projects::cuda_interop::destroy(this->timeline);
+            xayah::projects::cuda_interop::select_device(configuration.vulkan_device_uuid, configuration.vulkan_device_luid, configuration.vulkan_device_node_mask);
+            for (std::uint64_t slot_index = 0; slot_index < configuration.slot_count; ++slot_index) {
+                const SpectraPluginPortSlot& source_slot = configuration.slots[slot_index];
+                Slot& destination                        = this->slots[source_slot.index];
+                for (std::uint64_t index = 0; index < source_slot.buffer_count; ++index) {
+                    const SpectraPluginBuffer& buffer = source_slot.buffers[index];
+                    if (buffer.attribute == SpectraPluginAttribute::Density)
+                        destination.density = xayah::projects::cuda_interop::import_buffer(buffer.memory_handle, buffer.byte_size);
+                    else if (buffer.attribute == SpectraPluginAttribute::Temperature)
+                        destination.temperature = xayah::projects::cuda_interop::import_buffer(buffer.memory_handle, buffer.byte_size);
+                    else if (buffer.attribute == SpectraPluginAttribute::Velocity)
+                        destination.velocity = xayah::projects::cuda_interop::import_buffer(buffer.memory_handle, buffer.byte_size);
+                }
+            }
+            this->timeline    = xayah::projects::cuda_interop::import_timeline(configuration.timeline_semaphore_handle);
+            this->ready_value = 0;
+            this->next_slot   = 0;
+        }
+
+        void configure_input(const SpectraPluginPortConfiguration& configuration) {
+            for (std::uint64_t slot = 0; slot < configuration.slot_count; ++slot)
+                for (std::uint64_t index = 0; index < configuration.slots[slot].buffer_count; ++index) {
+                    const SpectraPluginBuffer& buffer = configuration.slots[slot].buffers[index];
+                    if (buffer.attribute == SpectraPluginAttribute::Density)
+                        this->initial_density = static_cast<const float*>(buffer.host_address);
+                    else if (buffer.attribute == SpectraPluginAttribute::Temperature)
+                        this->initial_temperature = static_cast<const float*>(buffer.host_address);
+                }
+        }
+
+        void set_input(const SpectraPluginInputFrame& frame) {
+            this->initial_voxel_count = frame.active_count;
+        }
+
+        void apply_parameters(const SpectraPluginParameterValue* values, const std::uint64_t count) {
+            if (count != parameters.size()) throw std::runtime_error("Pyro Plugin parameter count mismatch");
+            this->config.pressure_iterations         = static_cast<std::int32_t>(values[0].integer);
+            this->config.buoyancy_density_factor     = static_cast<float>(values[1].floating[0]);
+            this->config.buoyancy_temperature_factor = static_cast<float>(values[2].floating[0]);
+            this->config.vorticity_confinement       = static_cast<float>(values[3].floating[0]);
+            this->source.density                     = static_cast<float>(values[4].floating[0]);
+            this->solver->set_plume_source(this->source);
         }
 
         void reset() {
-            this->solver.reset();
-            this->frame_index = 0u;
-            this->rebuild_volume(0);
+            this->solver.emplace(this->config);
+            this->solver->set_initial_fields(std::span<const float>{this->initial_density, this->initial_voxel_count}, std::span<const float>{this->initial_temperature, this->initial_voxel_count});
+            this->solver->set_plume_source(this->source);
         }
 
-        void step(const float delta_seconds) {
-            this->solver.step(delta_seconds);
-            ++this->frame_index;
-            this->rebuild_volume(this->to_solver_frame_index(this->frame_index));
+        void iterate(const double step_seconds, const std::uint64_t count) {
+            for (std::uint64_t step = 0; step < count; ++step) this->solver->step(static_cast<float>(step_seconds));
+            xayah::projects::cuda_interop::synchronize(this->solver->device_frame().stream);
         }
 
-        [[nodiscard]] const std::vector<VisualMaterial>& materials() const {
-            return this->visual_materials;
-        }
-
-        [[nodiscard]] const std::vector<VisualLight>& lights() const {
-            return this->visual_lights;
-        }
-
-        [[nodiscard]] const VisualCamera& camera() const {
-            return this->visual_camera;
-        }
-
-        [[nodiscard]] const std::vector<VisualVolume>& volumes() const {
-            return this->visual_volumes;
-        }
-
-    private:
-        Solver solver{};
-        Frame current_frame{};
-        std::uint64_t frame_index{};
-        std::vector<VisualMaterial> visual_materials{
-            VisualMaterial{
-                .name              = "smoke",
-                .model             = "volume",
-                .alpha_mode        = "blend",
-                .base_color        = std::array<float, 4>{0.58f, 0.62f, 0.68f, 0.72f},
-                .emission_color    = std::array<float, 3>{0.95f, 0.48f, 0.18f},
-                .emission_strength = 0.3f,
-                .roughness         = 0.9f,
-            },
-        };
-        std::vector<VisualLight> visual_lights{
-            VisualLight{
-                .name      = "environment",
-                .kind      = "environment",
-                .color     = std::array<float, 3>{0.24f, 0.26f, 0.30f},
-                .intensity = 0.7f,
-            },
-        };
-        VisualCamera visual_camera{
-            .name                 = "camera.main",
-            .transform            = VisualTransform{.position = std::array<float, 3>{2.35f, 1.65f, 2.8f}},
-            .target               = std::array<float, 3>{0.6f, 0.86f, 0.6f},
-            .vertical_fov_degrees = 39.0f,
-            .near_plane           = 0.03f,
-            .far_plane            = 80.0f,
-        };
-        std::vector<VisualVolume> visual_volumes{};
-
-        [[nodiscard]] static int to_solver_frame_index(const std::uint64_t index) {
-            if (index > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Pyro visualization frame index exceeds int range");
-            return static_cast<int>(index);
-        }
-
-        void rebuild_volume(const int solver_frame_index) {
-            this->current_frame = this->solver.read_frame(solver_frame_index);
-            VisualVolume volume{
-                .name          = "pyro.volume",
-                .dimensions    = this->current_frame.resolution,
-                .origin        = std::array<float, 3>{0.0f, 0.0f, 0.0f},
-                .voxel_size    = std::array<float, 3>{this->current_frame.cell_size, this->current_frame.cell_size, this->current_frame.cell_size},
-                .material_name = "smoke",
-                .dynamic       = true,
+        void publish(const SpectraPluginFrameSink& sink) {
+            const xayah::projects::pyro::DeviceFrame frame = this->solver->device_frame();
+            if (this->ready_value != 0) xayah::projects::cuda_interop::wait(frame.stream, this->timeline, this->ready_value + 1);
+            Slot& slot = this->slots[this->next_slot];
+            xayah::projects::cuda_interop::copy_float(frame.stream, slot.density.pointer, frame.density, frame.cell_count);
+            xayah::projects::cuda_interop::copy_float(frame.stream, slot.temperature.pointer, frame.temperature, frame.cell_count);
+            xayah::projects::cuda_interop::pack_float3(frame.stream, slot.velocity.pointer, frame.velocity_x, frame.velocity_y, frame.velocity_z, frame.cell_count);
+            this->ready_value += this->ready_value == 0 ? 1 : 2;
+            xayah::projects::cuda_interop::signal(frame.stream, this->timeline, this->ready_value);
+            const SpectraPluginOutputCommit commit{
+                this->next_slot,
+                frame.cell_count,
+                0,
+                this->ready_value,
+                {},
+                {
+                    this->config.resolution[0],
+                    this->config.resolution[1],
+                    this->config.resolution[2],
+                },
+                0,
             };
-            volume.channels.push_back(VisualVolumeChannel{
-                .name       = "density",
-                .dimensions = this->current_frame.resolution,
-                .values     = std::span<const float>{this->current_frame.density.data(), this->current_frame.density.size()},
-            });
-            volume.channels.push_back(VisualVolumeChannel{
-                .name       = "temperature",
-                .dimensions = this->current_frame.resolution,
-                .values     = std::span<const float>{this->current_frame.temperature.data(), this->current_frame.temperature.size()},
-            });
-            this->visual_volumes.clear();
-            this->visual_volumes.push_back(std::move(volume));
-        }
-    };
-} // namespace xayah::projects::pyro
-
-namespace {
-    [[nodiscard]] SpectraDynamicSceneString make_string(const std::string_view value) noexcept {
-        return SpectraDynamicSceneString{.data = value.data(), .size = static_cast<std::uint64_t>(value.size())};
-    }
-
-    template <typename Array>
-    void copy3(float (&output)[3], const Array& input) noexcept {
-        output[0] = static_cast<float>(input[0]);
-        output[1] = static_cast<float>(input[1]);
-        output[2] = static_cast<float>(input[2]);
-    }
-
-    template <typename Array>
-    void copy4(float (&output)[4], const Array& input) noexcept {
-        output[0] = static_cast<float>(input[0]);
-        output[1] = static_cast<float>(input[1]);
-        output[2] = static_cast<float>(input[2]);
-        output[3] = static_cast<float>(input[3]);
-    }
-
-    [[nodiscard]] SpectraDynamicSceneTransform make_transform(const xayah::projects::pyro::VisualTransform& transform) noexcept {
-        SpectraDynamicSceneTransform result{};
-        copy3(result.position, transform.position);
-        copy4(result.rotation, transform.rotation);
-        copy3(result.scale, transform.scale);
-        return result;
-    }
-
-    [[nodiscard]] SpectraDynamicSceneMaterial make_material(const xayah::projects::pyro::VisualMaterial& material) noexcept {
-        SpectraDynamicSceneMaterial result{};
-        result.name = make_string(material.name);
-        result.model = make_string(material.model);
-        result.alpha_mode = make_string(material.alpha_mode);
-        copy4(result.base_color, material.base_color);
-        copy3(result.emission_color, material.emission_color);
-        result.emission_strength = material.emission_strength;
-        result.roughness = material.roughness;
-        result.metallic = material.metallic;
-        result.alpha_cutoff = material.alpha_cutoff;
-        result.volume_density_scale = material.volume_density_scale;
-        result.volume_temperature_scale = material.volume_temperature_scale;
-        return result;
-    }
-
-    [[nodiscard]] SpectraDynamicSceneLight make_light(const xayah::projects::pyro::VisualLight& light) noexcept {
-        SpectraDynamicSceneLight result{};
-        result.name = make_string(light.name);
-        result.kind = make_string(light.kind);
-        result.transform = make_transform(light.transform);
-        copy3(result.color, light.color);
-        result.intensity = light.intensity;
-        result.cone_angle_degrees = light.cone_angle_degrees;
-        return result;
-    }
-
-    [[nodiscard]] SpectraDynamicSceneCamera make_camera(const xayah::projects::pyro::VisualCamera& camera) noexcept {
-        SpectraDynamicSceneCamera result{};
-        result.name = make_string(camera.name);
-        result.transform = make_transform(camera.transform);
-        copy3(result.target, camera.target);
-        copy3(result.up, camera.up);
-        result.vertical_fov_degrees = camera.vertical_fov_degrees;
-        result.near_plane = camera.near_plane;
-        result.far_plane = camera.far_plane;
-        return result;
-    }
-
-    struct VolumeStorage {
-        std::vector<SpectraDynamicSceneVolumeChannel> channel_views{};
-        SpectraDynamicSceneVolume view{};
-    };
-
-    struct SceneViewStorage {
-        std::vector<SpectraDynamicSceneMaterial> materials{};
-        std::vector<SpectraDynamicSceneLight> lights{};
-        SpectraDynamicSceneCamera camera{};
-        std::vector<VolumeStorage> volumes{};
-        std::vector<SpectraDynamicSceneVolume> volume_views{};
-        SpectraDynamicSceneDocumentView document_view{};
-        SpectraDynamicSceneFrameView frame_view{};
-
-        void clear() {
-            this->materials.clear();
-            this->lights.clear();
-            this->volumes.clear();
-            this->volume_views.clear();
-            this->camera = SpectraDynamicSceneCamera{};
-            this->document_view = SpectraDynamicSceneDocumentView{};
-            this->frame_view = SpectraDynamicSceneFrameView{};
-        }
-
-        void append_volumes(const std::vector<xayah::projects::pyro::VisualVolume>& volumes, const bool dynamic) {
-            for (const xayah::projects::pyro::VisualVolume& volume : volumes) {
-                if (volume.dynamic != dynamic) continue;
-                VolumeStorage& storage = this->volumes.emplace_back();
-                storage.view.name = make_string(volume.name);
-                storage.view.dimensions[0] = volume.dimensions[0];
-                storage.view.dimensions[1] = volume.dimensions[1];
-                storage.view.dimensions[2] = volume.dimensions[2];
-                copy3(storage.view.origin, volume.origin);
-                copy3(storage.view.voxel_size, volume.voxel_size);
-                storage.view.material_name = make_string(volume.material_name);
-                for (const xayah::projects::pyro::VisualVolumeChannel& channel : volume.channels) {
-                    SpectraDynamicSceneVolumeChannel& channel_view = storage.channel_views.emplace_back();
-                    channel_view.name = make_string(channel.name);
-                    channel_view.dimensions[0] = channel.dimensions[0];
-                    channel_view.dimensions[1] = channel.dimensions[1];
-                    channel_view.dimensions[2] = channel.dimensions[2];
-                    channel_view.values = SpectraDynamicSceneFloatSpan{.data = channel.values.data(), .count = static_cast<std::uint64_t>(channel.values.size())};
-                }
-                storage.view.channels = SpectraDynamicSceneVolumeChannelSpan{.data = storage.channel_views.data(), .count = static_cast<std::uint64_t>(storage.channel_views.size())};
-            }
-            this->volume_views.reserve(this->volumes.size());
-            for (const VolumeStorage& storage : this->volumes) this->volume_views.push_back(storage.view);
-        }
-
-        [[nodiscard]] SpectraDynamicSceneDocumentView build_document(const xayah::projects::pyro::Visualization& source) {
-            this->clear();
-            for (const xayah::projects::pyro::VisualMaterial& material : source.materials()) this->materials.push_back(make_material(material));
-            for (const xayah::projects::pyro::VisualLight& light : source.lights()) this->lights.push_back(make_light(light));
-            this->camera = make_camera(source.camera());
-            this->append_volumes(source.volumes(), false);
-            this->document_view = SpectraDynamicSceneDocumentView{
-                .struct_size = sizeof(SpectraDynamicSceneDocumentView),
-                .has_camera = 1u,
-                .camera = this->camera,
-                .materials = SpectraDynamicSceneMaterialSpan{.data = this->materials.data(), .count = static_cast<std::uint64_t>(this->materials.size())},
-                .lights = SpectraDynamicSceneLightSpan{.data = this->lights.data(), .count = static_cast<std::uint64_t>(this->lights.size())},
-                .volumes = SpectraDynamicSceneVolumeSpan{.data = this->volume_views.data(), .count = static_cast<std::uint64_t>(this->volume_views.size())},
-            };
-            return this->document_view;
-        }
-
-        [[nodiscard]] SpectraDynamicSceneFrameView build_frame(const xayah::projects::pyro::Visualization& source) {
-            this->clear();
-            this->append_volumes(source.volumes(), true);
-            this->frame_view = SpectraDynamicSceneFrameView{
-                .struct_size = sizeof(SpectraDynamicSceneFrameView),
-                .volumes = SpectraDynamicSceneVolumeSpan{.data = this->volume_views.data(), .count = static_cast<std::uint64_t>(this->volume_views.size())},
-            };
-            return this->frame_view;
+            sink.commit_output(sink.state, 1, &commit);
+            this->next_slot = (this->next_slot + 1) % this->slots.size();
         }
     };
 
-    struct PluginInstance {
-        xayah::projects::pyro::Visualization source{};
-        SceneViewStorage document_storage{};
-        SceneViewStorage frame_storage{};
-        std::string error{};
-    };
-
-    [[nodiscard]] PluginInstance* typed_instance(SpectraDynamicSceneInstance* instance) noexcept {
-        return reinterpret_cast<PluginInstance*>(instance);
+    SpectraPluginProviderDescriptor describe_provider() {
+        return provider;
     }
 
-    [[nodiscard]] std::string& thread_error() noexcept {
-        static thread_local std::string error{};
-        return error;
+    void* create_provider() {
+        return new Plugin{};
     }
 
-    template <typename Function>
-    [[nodiscard]] SpectraDynamicSceneResult guard(PluginInstance* instance, Function&& function) noexcept {
-        try {
-            if (instance == nullptr) throw std::runtime_error("Dynamic scene plugin instance is null");
-            std::forward<Function>(function)();
-            instance->error.clear();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
-        } catch (const std::exception& exception) {
-            if (instance != nullptr) instance->error = exception.what();
-            else thread_error() = exception.what();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        } catch (...) {
-            if (instance != nullptr) instance->error = "Unknown dynamic scene plugin error";
-            else thread_error() = "Unknown dynamic scene plugin error";
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        }
+    void destroy_provider(void* instance) {
+        delete static_cast<Plugin*>(instance);
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult create(SpectraDynamicSceneInstance** instance) noexcept {
-        try {
-            if (instance == nullptr) throw std::runtime_error("Dynamic scene create output pointer is null");
-            *instance = reinterpret_cast<SpectraDynamicSceneInstance*>(new PluginInstance{});
-            thread_error().clear();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
-        } catch (const std::exception& exception) {
-            thread_error() = exception.what();
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        } catch (...) {
-            thread_error() = "Unknown dynamic scene plugin creation error";
-            return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
-        }
+    void configure_port(void* instance, const SpectraPluginPortConfiguration* configuration) {
+        if (configuration->direction == SpectraPluginPortDirection::Input)
+            static_cast<Plugin*>(instance)->configure_input(*configuration);
+        else
+            static_cast<Plugin*>(instance)->configure(*configuration);
+    }
+    void set_input_frame(void* instance, const SpectraPluginInputFrame* frame) {
+        static_cast<Plugin*>(instance)->set_input(*frame);
     }
 
-    void destroy(SpectraDynamicSceneInstance* instance) noexcept {
-        delete typed_instance(instance);
+    void apply_parameters(void* instance, const SpectraPluginParameterValue* values, const std::uint64_t count) {
+        static_cast<Plugin*>(instance)->apply_parameters(values, count);
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult reset(SpectraDynamicSceneInstance* instance) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin] { plugin->source.reset(); });
+    void reset(void* instance, std::uint64_t) {
+        static_cast<Plugin*>(instance)->reset();
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult step(SpectraDynamicSceneInstance* instance, const float delta_seconds) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin, delta_seconds] { plugin->source.step(delta_seconds); });
+    void step(void* instance, const double step_seconds, const std::uint64_t count) {
+        static_cast<Plugin*>(instance)->iterate(step_seconds, count);
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult document(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* output) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin, output] {
-            if (output == nullptr) throw std::runtime_error("Dynamic scene document output pointer is null");
-            *output = plugin->document_storage.build_document(plugin->source);
-        });
+    double telemetry_value(const void* instance, const std::uint64_t index) {
+        const Plugin& plugin = *static_cast<const Plugin*>(instance);
+        if (index == 0) return static_cast<double>(ports[0].capacity);
+        return static_cast<double>(plugin.config.resolution[0]);
     }
 
-    [[nodiscard]] SpectraDynamicSceneResult frame(SpectraDynamicSceneInstance* instance, const SpectraDynamicSceneFrameInfo frame_info, SpectraDynamicSceneFrameView* output) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        return guard(plugin, [plugin, frame_info, output] {
-            static_cast<void>(frame_info);
-            if (output == nullptr) throw std::runtime_error("Dynamic scene frame output pointer is null");
-            *output = plugin->frame_storage.build_frame(plugin->source);
-        });
-    }
-
-    [[nodiscard]] SpectraDynamicSceneString last_error(SpectraDynamicSceneInstance* instance) noexcept {
-        PluginInstance* plugin = typed_instance(instance);
-        if (plugin == nullptr) return make_string(thread_error());
-        return make_string(plugin->error);
-    }
-
-    [[nodiscard]] double frames_per_second() noexcept {
-        try {
-            xayah::projects::pyro::Visualization source{};
-            return source.frames_per_second();
-        } catch (...) {
-            return 0.0;
-        }
+    void publish_frame(void* instance, std::uint64_t, const SpectraPluginFrameSink* sink) {
+        static_cast<Plugin*>(instance)->publish(*sink);
     }
 } // namespace
 
-extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra_dynamic_scene_plugin(void) {
-    static const std::string id{std::string{xayah::projects::pyro::Visualization::visualization_id()}};
-    static const std::string title{std::string{xayah::projects::pyro::Visualization::visualization_title()}};
-    static const SpectraDynamicScenePlugin plugin{
-        .abi_version = 1u,
-        .struct_size = sizeof(SpectraDynamicScenePlugin),
-        .id = make_string(id),
-        .title = make_string(title),
-        .pbrt_template_path = SpectraDynamicSceneString{},
-        .frames_per_second = frames_per_second(),
-        .create = &create,
-        .destroy = &destroy,
-        .reset = &reset,
-        .step = &step,
-        .document = &document,
-        .frame = &frame,
-        .last_error = &last_error,
+extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11() {
+    static constexpr SpectraPluginApi api{
+        SPECTRA_PLUGIN_API_VERSION,
+        sizeof(SpectraPluginApi),
+        &describe_provider,
+        &create_provider,
+        &destroy_provider,
+        &configure_port,
+        &set_input_frame,
+        &apply_parameters,
+        &reset,
+        &step,
+        &telemetry_value,
+        &publish_frame,
     };
-    return &plugin;
+    return &api;
 }

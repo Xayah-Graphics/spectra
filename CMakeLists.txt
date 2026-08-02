@@ -124,13 +124,13 @@ function(spectra_prepare_commit_dependency out_source_dir owner repository commi
     set(${out_source_dir} "${source_dir}" PARENT_SCOPE)
 endfunction()
 
-set(SPECTRA_GLAZE_TAG "v7.5.0")
-spectra_prepare_archive_dependency(
+set(SPECTRA_GLAZE_COMMIT "8b60d82c66311c145c4d03be3b556b555a9cb111")
+spectra_prepare_commit_dependency(
         SPECTRA_GLAZE_SOURCE_DIR
         stephenberry
         glaze
-        "${SPECTRA_GLAZE_TAG}"
-        "AABC62B0C0A10FB99DE9245822DC3136B6F3F8346C880B5BBE673ABA1218D952"
+        "${SPECTRA_GLAZE_COMMIT}"
+        "46E33D85846B3A36B0ABB688BA4568BC79A9ACD8BFBFEF851D93241997648776"
 )
 
 set(SPECTRA_GLFW_TAG "3.4")
@@ -167,7 +167,7 @@ target_include_directories(spectra_imgui PUBLIC
         "${SPECTRA_IMGUI_SOURCE_DIR}"
         "${SPECTRA_IMGUI_SOURCE_DIR}/backends"
 )
-target_compile_definitions(spectra_imgui PUBLIC GLFW_INCLUDE_NONE)
+target_compile_definitions(spectra_imgui PRIVATE GLFW_INCLUDE_NONE)
 target_link_libraries(spectra_imgui PUBLIC glfw)
 
 set(SPECTRA_IMGUIZMO_COMMIT "dc25afb98bc3ebe00dfc9a23ba7235fead2ccb1d")
@@ -290,11 +290,9 @@ target_link_libraries(spectra_vulkan PUBLIC Vulkan::Vulkan)
 
 
 # ============================================================================
-# Plugin API 5
+# Dynamic Provider SDK
 # ============================================================================
-add_library(spectra_plugin_contract INTERFACE)
-add_library(spectra::plugin_contract ALIAS spectra_plugin_contract)
-target_include_directories(spectra_plugin_contract INTERFACE "${SPECTRA_ROOT_DIR}")
+add_subdirectory(sdk)
 
 # ============================================================================
 # Slang
@@ -333,10 +331,7 @@ file(
         SPECTRA_SHADER_SOURCES
         CONFIGURE_DEPENDS
         "${SPECTRA_ROOT_DIR}/app/shaders/*.slang"
-        "${SPECTRA_ROOT_DIR}/rasterizer/shaders/*.slang"
-        "${SPECTRA_ROOT_DIR}/pathtracer/shaders/*.slang"
-        "${SPECTRA_ROOT_DIR}/workspace/shaders/*.slang"
-        "${SPECTRA_ROOT_DIR}/ui/shaders/*.slang"
+        "${SPECTRA_ROOT_DIR}/render/shaders/*.slang"
 )
 add_custom_command(
         OUTPUT "${SPECTRA_SHADER_STAMP}"
@@ -347,16 +342,13 @@ add_custom_command(
         "${CMAKE_COMMAND}" -E env
         "PATH=$<TARGET_FILE_DIR:spectra_slang>;$ENV{PATH}"
         "$<TARGET_FILE:spectra_shader_build>"
-        "${SPECTRA_ROOT_DIR}/pathtracer/shaders/abi.types"
+        "${SPECTRA_ROOT_DIR}/render/shaders/abi.types"
         "${SPECTRA_PATH_ABI_MODULE}"
         "${SPECTRA_SHADER_ENTRY_LIST}"
         "${SPECTRA_SHADER_OUTPUT_DIR}"
         "${SPECTRA_SPIRV_VAL}"
         "${SPECTRA_ROOT_DIR}/app/shaders"
-        "${SPECTRA_ROOT_DIR}/rasterizer/shaders"
-        "${SPECTRA_ROOT_DIR}/pathtracer/shaders"
-        "${SPECTRA_ROOT_DIR}/workspace/shaders"
-        "${SPECTRA_ROOT_DIR}/ui/shaders"
+        "${SPECTRA_ROOT_DIR}/render/shaders"
         "${SPECTRA_PNANOVDB_INCLUDE_DIR}"
         COMMAND
         "${CMAKE_COMMAND}" -E touch
@@ -364,7 +356,7 @@ add_custom_command(
         DEPENDS
         spectra_shader_build
         "$<TARGET_FILE:spectra_slang>"
-        "${SPECTRA_ROOT_DIR}/pathtracer/shaders/abi.types"
+        "${SPECTRA_ROOT_DIR}/render/shaders/abi.types"
         "${SPECTRA_SHADER_ENTRY_LIST}"
         "${SPECTRA_PNANOVDB_HEADER}"
         ${SPECTRA_SHADER_SOURCES}
@@ -382,47 +374,28 @@ target_sources(
         PRIVATE
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         spectra/spectra.ixx
-        scene/schema.ixx
         scene/scene.ixx
         scene/format.ixx
-        plugin/plugin.ixx
-        render/assets.ixx
-        render/output.ixx
-        ui/ui.ixx
-        pathtracer/renderer.ixx
-        pathtracer/spectrum.ixx
+        scene/dynamics.ixx
+        render/render.ixx
+        render/pathtracer.ixx
         "${SPECTRA_PATH_ABI_MODULE}"
-        rasterizer/renderer.ixx
-        workspace/workspace.ixx
-        workspace/picker.ixx
-        workspace/overlay.ixx
+        render/rasterizer.ixx
+        app/workspace.ixx
+        app/ui.ixx
         app/application.ixx
-        app/workspace_ui.ixx
-        app/image_io.ixx
-        app/presenter.ixx
         PRIVATE
         main.cpp
         spectra/spectra.cpp
-        scene/schema.cpp
         scene/scene.cpp
         scene/format.cpp
-        plugin/plugin.cpp
-        render/assets.cpp
-        ui/ui.cpp
-        pathtracer/spectrum.cpp
-        pathtracer/scene.cpp
-        pathtracer/session.cpp
-        pathtracer/integrator.cpp
-        pathtracer/renderer.cpp
-        rasterizer/scene.cpp
-        rasterizer/renderer.cpp
-        workspace/workspace.cpp
-        workspace/picker.cpp
-        workspace/overlay.cpp
+        scene/dynamics.cpp
+        render/render.cpp
+        render/pathtracer.cpp
+        render/rasterizer.cpp
+        app/workspace.cpp
+        app/ui.cpp
         app/application.cpp
-        app/workspace_ui.cpp
-        app/image_io.cpp
-        app/presenter.cpp
 )
 target_include_directories(spectra PRIVATE "${SPECTRA_GLAZE_SOURCE_DIR}/include")
 target_link_libraries(spectra PRIVATE
@@ -439,14 +412,15 @@ target_link_libraries(spectra PRIVATE
         windowscodecs
 )
 target_compile_definitions(spectra PRIVATE
+        GLFW_INCLUDE_NONE
         GLFW_EXPOSE_NATIVE_WIN32
-        "SPECTRA_DEFAULT_SCENE=\"${SPECTRA_ROOT_DIR}/scenes/cornell-box.spectra\""
+        "SPECTRA_SCENE_LIBRARY=\"${SPECTRA_ROOT_DIR}/scenes/library.json\""
         "SPECTRA_SHADER_DIRECTORY=\"${SPECTRA_SHADER_OUTPUT_DIR}\""
 )
 set_property(
-        SOURCE pathtracer/scene.cpp
+        SOURCE render/pathtracer.cpp
         APPEND
         PROPERTY COMPILE_DEFINITIONS
-        "SPECTRA_SPECTRAL_ASSET_DIRECTORY=\"${SPECTRA_ROOT_DIR}/pathtracer/assets\""
+        "SPECTRA_SPECTRAL_ASSET_DIRECTORY=\"${SPECTRA_ROOT_DIR}/render/assets\""
 )
 add_dependencies(spectra spectra_shaders)
