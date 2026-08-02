@@ -361,7 +361,7 @@ namespace spectra::rasterizer {
             GpuBuffer staging = runtime.create_buffer(elements.size_bytes(), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
             std::memcpy(staging.mapped, elements.data(), elements.size_bytes());
             GpuBuffer destination = runtime.create_buffer(elements.size_bytes(), usage | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            runtime.immediate([&staging, &destination, usage](const vk::raii::CommandBuffer& command_buffer) {
+            runtime.submit_immediate([&staging, &destination, usage](const vk::raii::CommandBuffer& command_buffer) {
                 command_buffer.copyBuffer(*staging.buffer, *destination.buffer, vk::BufferCopy{0, 0, staging.size});
                 const vk::BufferMemoryBarrier2 upload_dependency{
                     vk::PipelineStageFlagBits2::eCopy,
@@ -452,7 +452,7 @@ namespace spectra::rasterizer {
         this->volume_majorant_shader          = vk::raii::ShaderEXT{runtime.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, code.size() * sizeof(std::uint32_t), code.data(), "build_majorant"}};
         const std::array<scene::Float3, 1> zero{};
         this->volume_zero_buffer = upload_buffer(runtime, std::span<const scene::Float3>{zero}, vk::BufferUsageFlagBits::eStorageBuffer);
-        runtime.write_buffer(this->volume_zero_descriptor, vk::DescriptorType::eStorageBuffer, this->volume_zero_buffer);
+        runtime.write_buffer_descriptor(this->volume_zero_descriptor, vk::DescriptorType::eStorageBuffer, this->volume_zero_buffer);
         this->upload(scene);
     }
 
@@ -610,7 +610,7 @@ namespace spectra::rasterizer {
                 },
                 volume.data);
             gpu_data.majorant = upload_texture_buffer(std::span<const float>{majorant});
-            this->runtime->write_buffer(gpu_data.majorant_descriptor, vk::DescriptorType::eStorageBuffer, gpu_data.majorant);
+            this->runtime->write_buffer_descriptor(gpu_data.majorant_descriptor, vk::DescriptorType::eStorageBuffer, gpu_data.majorant);
             const auto field = [this, &shared](const render::GpuVolumeField field) {
                 const std::size_t index = std::to_underlying(field);
                 return shared.present[index] ? shared.descriptors[index] : this->volume_zero_descriptor;
@@ -719,8 +719,8 @@ namespace spectra::rasterizer {
         if (volume_lights.empty()) volume_lights.emplace_back();
         GpuBuffer new_volume_buffer       = upload_texture_buffer(std::span<const RasterVolume>{raster_volumes});
         GpuBuffer new_volume_light_buffer = upload_texture_buffer(std::span<const RasterVolumeLight>{volume_lights});
-        this->runtime->write_buffer(this->volumes_descriptor, vk::DescriptorType::eStorageBuffer, new_volume_buffer);
-        this->runtime->write_buffer(this->volume_lights_descriptor, vk::DescriptorType::eStorageBuffer, new_volume_light_buffer);
+        this->runtime->write_buffer_descriptor(this->volumes_descriptor, vk::DescriptorType::eStorageBuffer, new_volume_buffer);
+        this->runtime->write_buffer_descriptor(this->volume_lights_descriptor, vk::DescriptorType::eStorageBuffer, new_volume_light_buffer);
         std::array<GpuBuffer, 9> new_texture_buffers{};
         new_texture_buffers[0] = upload_texture_buffer(std::span<const RasterTextureHeader>{textures.headers});
         new_texture_buffers[1] = upload_texture_buffer(std::span<const RasterTextureMapping>{textures.mappings});
@@ -739,21 +739,21 @@ namespace spectra::rasterizer {
             const DescriptorHandle face_material_descriptor   = this->runtime->allocate_resource_descriptor();
             const DescriptorHandle area_light_descriptor      = this->runtime->allocate_resource_descriptor();
             const DescriptorHandle pick_primitives_descriptor = this->runtime->allocate_resource_descriptor();
-            this->runtime->write_buffer(primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            this->runtime->write_buffer(transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
-            this->runtime->write_buffer(material_descriptor, vk::DescriptorType::eStorageBuffer, new_materials);
-            this->runtime->write_buffer(face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
-            this->runtime->write_buffer(area_light_descriptor, vk::DescriptorType::eStorageBuffer, new_area_lights);
-            this->runtime->write_buffer(pick_primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_pick_primitives);
+            this->runtime->write_buffer_descriptor(primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
+            this->runtime->write_buffer_descriptor(transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
+            this->runtime->write_buffer_descriptor(material_descriptor, vk::DescriptorType::eStorageBuffer, new_materials);
+            this->runtime->write_buffer_descriptor(face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
+            this->runtime->write_buffer_descriptor(area_light_descriptor, vk::DescriptorType::eStorageBuffer, new_area_lights);
+            this->runtime->write_buffer_descriptor(pick_primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_pick_primitives);
             std::array<DescriptorHandle, 9> texture_descriptors{};
             for (std::size_t index = 0; index != texture_descriptors.size(); ++index) {
                 texture_descriptors[index] = this->runtime->allocate_resource_descriptor();
-                this->runtime->write_buffer(texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_texture_buffers[index]);
+                this->runtime->write_buffer_descriptor(texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_texture_buffers[index]);
             }
             const RasterSceneBindings bindings{primitives_descriptor, transforms_descriptor, material_descriptor, face_material_descriptor, area_light_descriptor, texture_descriptors[0], texture_descriptors[1], texture_descriptors[2], texture_descriptors[3], texture_descriptors[4], texture_descriptors[5], texture_descriptors[6], texture_descriptors[7], texture_descriptors[8], {this->texture_count, this->texture_stack_size, 0, 0}};
             new_binding_buffer                         = upload_texture_buffer(std::span{&bindings, 1});
             const DescriptorHandle bindings_descriptor = this->runtime->allocate_resource_descriptor();
-            this->runtime->write_buffer(bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_binding_buffer);
+            this->runtime->write_buffer_descriptor(bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_binding_buffer);
             this->runtime->release_resource_descriptor(this->primitives_descriptor);
             this->runtime->release_resource_descriptor(this->transforms_descriptor);
             this->runtime->release_resource_descriptor(this->material_descriptor);
@@ -762,8 +762,8 @@ namespace spectra::rasterizer {
             this->runtime->release_resource_descriptor(this->pick_primitives_descriptor);
             for (const DescriptorHandle descriptor : this->texture_descriptors) this->runtime->release_resource_descriptor(descriptor);
             this->runtime->release_resource_descriptor(this->bindings_descriptor);
-            this->runtime->defer([primitives = std::move(this->primitive_buffer), transforms = std::move(this->transform_buffer), materials = std::move(this->material_buffer), face_materials = std::move(this->face_material_buffer), area_lights = std::move(this->area_light_buffer), pick_primitives = std::move(this->pick_primitive_buffer)]() mutable {});
-            this->runtime->defer([texture_buffers = std::move(this->texture_buffers), bindings = std::move(this->binding_buffer)]() mutable {});
+            this->runtime->defer_destruction([primitives = std::move(this->primitive_buffer), transforms = std::move(this->transform_buffer), materials = std::move(this->material_buffer), face_materials = std::move(this->face_material_buffer), area_lights = std::move(this->area_light_buffer), pick_primitives = std::move(this->pick_primitive_buffer)]() mutable {});
+            this->runtime->defer_destruction([texture_buffers = std::move(this->texture_buffers), bindings = std::move(this->binding_buffer)]() mutable {});
             this->primitives_descriptor      = primitives_descriptor;
             this->transforms_descriptor      = transforms_descriptor;
             this->material_descriptor        = material_descriptor;
@@ -773,16 +773,16 @@ namespace spectra::rasterizer {
             this->texture_descriptors        = texture_descriptors;
             this->bindings_descriptor        = bindings_descriptor;
         } else {
-            this->runtime->write_buffer(this->primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            this->runtime->write_buffer(this->transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
-            this->runtime->write_buffer(this->material_descriptor, vk::DescriptorType::eStorageBuffer, new_materials);
-            this->runtime->write_buffer(this->face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
-            this->runtime->write_buffer(this->area_light_descriptor, vk::DescriptorType::eStorageBuffer, new_area_lights);
-            this->runtime->write_buffer(this->pick_primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_pick_primitives);
-            for (std::size_t index = 0; index != this->texture_descriptors.size(); ++index) this->runtime->write_buffer(this->texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_texture_buffers[index]);
+            this->runtime->write_buffer_descriptor(this->primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
+            this->runtime->write_buffer_descriptor(this->transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
+            this->runtime->write_buffer_descriptor(this->material_descriptor, vk::DescriptorType::eStorageBuffer, new_materials);
+            this->runtime->write_buffer_descriptor(this->face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
+            this->runtime->write_buffer_descriptor(this->area_light_descriptor, vk::DescriptorType::eStorageBuffer, new_area_lights);
+            this->runtime->write_buffer_descriptor(this->pick_primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_pick_primitives);
+            for (std::size_t index = 0; index != this->texture_descriptors.size(); ++index) this->runtime->write_buffer_descriptor(this->texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_texture_buffers[index]);
             const RasterSceneBindings bindings{this->primitives_descriptor, this->transforms_descriptor, this->material_descriptor, this->face_material_descriptor, this->area_light_descriptor, this->texture_descriptors[0], this->texture_descriptors[1], this->texture_descriptors[2], this->texture_descriptors[3], this->texture_descriptors[4], this->texture_descriptors[5], this->texture_descriptors[6], this->texture_descriptors[7], this->texture_descriptors[8], {this->texture_count, this->texture_stack_size, 0, 0}};
             new_binding_buffer = upload_texture_buffer(std::span{&bindings, 1});
-            this->runtime->write_buffer(this->bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_binding_buffer);
+            this->runtime->write_buffer_descriptor(this->bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_binding_buffer);
         }
         this->primitive_buffer      = std::move(new_primitives);
         this->transform_buffer      = std::move(new_transforms);
@@ -791,7 +791,7 @@ namespace spectra::rasterizer {
         this->area_light_buffer     = std::move(new_area_lights);
         this->pick_primitive_buffer = std::move(new_pick_primitives);
         for (const VolumeGpuData& volume : this->volume_gpu_data) this->runtime->release_resource_descriptor(volume.majorant_descriptor);
-        if (!this->volume_gpu_data.empty()) this->runtime->defer([volumes = std::move(this->volume_gpu_data), records = std::move(this->volume_buffer), lights = std::move(this->volume_light_buffer)]() mutable {});
+        if (!this->volume_gpu_data.empty()) this->runtime->defer_destruction([volumes = std::move(this->volume_gpu_data), records = std::move(this->volume_buffer), lights = std::move(this->volume_light_buffer)]() mutable {});
         this->volume_gpu_data     = std::move(new_volume_gpu_data);
         this->volume_buffer       = std::move(new_volume_buffer);
         this->volume_light_buffer = std::move(new_volume_light_buffer);
@@ -804,14 +804,14 @@ namespace spectra::rasterizer {
         if (transforms.empty()) transforms.emplace_back();
         GpuBuffer new_transforms                     = upload_buffer(*this->runtime, command_buffer, std::span<const RasterTransform>{transforms}, vk::BufferUsageFlagBits::eStorageBuffer);
         const DescriptorHandle transforms_descriptor = this->runtime->allocate_resource_descriptor();
-        this->runtime->write_buffer(transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
+        this->runtime->write_buffer_descriptor(transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
         const RasterSceneBindings bindings{this->primitives_descriptor, transforms_descriptor, this->material_descriptor, this->face_material_descriptor, this->area_light_descriptor, this->texture_descriptors[0], this->texture_descriptors[1], this->texture_descriptors[2], this->texture_descriptors[3], this->texture_descriptors[4], this->texture_descriptors[5], this->texture_descriptors[6], this->texture_descriptors[7], this->texture_descriptors[8], {this->texture_count, this->texture_stack_size, 0, 0}};
         GpuBuffer new_bindings                     = upload_buffer(*this->runtime, command_buffer, std::span{&bindings, 1}, vk::BufferUsageFlagBits::eStorageBuffer);
         const DescriptorHandle bindings_descriptor = this->runtime->allocate_resource_descriptor();
-        this->runtime->write_buffer(bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
+        this->runtime->write_buffer_descriptor(bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
         this->runtime->release_resource_descriptor(this->transforms_descriptor);
         this->runtime->release_resource_descriptor(this->bindings_descriptor);
-        this->runtime->defer([transforms = std::move(this->transform_buffer), bindings = std::move(this->binding_buffer)]() mutable {});
+        this->runtime->defer_destruction([transforms = std::move(this->transform_buffer), bindings = std::move(this->binding_buffer)]() mutable {});
         this->transform_buffer      = std::move(new_transforms);
         this->binding_buffer        = std::move(new_bindings);
         this->transforms_descriptor = transforms_descriptor;
@@ -948,9 +948,9 @@ namespace spectra::rasterizer {
     void Rasterizer::create_output(const vk::Extent2D extent) {
         this->output_image = this->runtime->create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage);
         this->depth_image  = this->runtime->create_image_2d(extent, vk::Format::eD32Sfloat, vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eDepth);
-        this->runtime->write_sampled_image(this->sampled_output_descriptor, this->output_image, vk::ImageLayout::eShaderReadOnlyOptimal);
-        this->runtime->write_storage_image(this->storage_output_descriptor, this->output_image, vk::ImageLayout::eGeneral);
-        this->runtime->write_sampled_image(this->sampled_depth_descriptor, this->depth_image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->runtime->write_sampled_image_descriptor(this->sampled_output_descriptor, this->output_image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->runtime->write_storage_image_descriptor(this->storage_output_descriptor, this->output_image, vk::ImageLayout::eGeneral);
+        this->runtime->write_sampled_image_descriptor(this->sampled_depth_descriptor, this->depth_image, vk::ImageLayout::eShaderReadOnlyOptimal);
         this->output_layout = vk::ImageLayout::eUndefined;
         this->depth_layout  = vk::ImageLayout::eUndefined;
     }

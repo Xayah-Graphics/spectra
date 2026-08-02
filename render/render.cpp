@@ -30,10 +30,10 @@ namespace spectra::render {
 
     GpuTextureImage upload_texture_image(Spectra& runtime, const scene::ImageTexture& data, const vk::Format format, const vk::PipelineStageFlags2 destination_stages, const vk::raii::CommandBuffer* command_buffer) {
         GpuTextureImage result{runtime.create_image_2d({data.width, data.height}, format, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageAspectFlagBits::eColor, static_cast<std::uint32_t>(data.mip_offsets.size())), runtime.allocate_resource_descriptor(), runtime.allocate_sampler_descriptor()};
-        runtime.write_sampled_image(result.image_descriptor, result.image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        runtime.write_sampled_image_descriptor(result.image_descriptor, result.image, vk::ImageLayout::eShaderReadOnlyOptimal);
         const vk::SamplerAddressMode address_mode = data.wrap == scene::TextureWrapMode::Repeat ? vk::SamplerAddressMode::eRepeat : data.wrap == scene::TextureWrapMode::Clamp ? vk::SamplerAddressMode::eClampToEdge : vk::SamplerAddressMode::eClampToBorder;
         const bool linear                         = data.filter != scene::TextureFilter::Point;
-        runtime.write_sampler(result.sampler_descriptor, vk::SamplerCreateInfo{{}, linear ? vk::Filter::eLinear : vk::Filter::eNearest, linear ? vk::Filter::eLinear : vk::Filter::eNearest, data.filter == scene::TextureFilter::Trilinear || data.filter == scene::TextureFilter::Ewa ? vk::SamplerMipmapMode::eLinear : vk::SamplerMipmapMode::eNearest, address_mode, address_mode, address_mode, 0.0f, data.filter == scene::TextureFilter::Ewa ? vk::True : vk::False, data.maximum_anisotropy, vk::False, vk::CompareOp::eNever, 0.0f, static_cast<float>(data.mip_offsets.size() - 1u), vk::BorderColor::eFloatTransparentBlack});
+        runtime.write_sampler_descriptor(result.sampler_descriptor, vk::SamplerCreateInfo{{}, linear ? vk::Filter::eLinear : vk::Filter::eNearest, linear ? vk::Filter::eLinear : vk::Filter::eNearest, data.filter == scene::TextureFilter::Trilinear || data.filter == scene::TextureFilter::Ewa ? vk::SamplerMipmapMode::eLinear : vk::SamplerMipmapMode::eNearest, address_mode, address_mode, address_mode, 0.0f, data.filter == scene::TextureFilter::Ewa ? vk::True : vk::False, data.maximum_anisotropy, vk::False, vk::CompareOp::eNever, 0.0f, static_cast<float>(data.mip_offsets.size() - 1u), vk::BorderColor::eFloatTransparentBlack});
         vk::DeviceSize texel_size{};
         GpuBuffer staging{};
         if (format == vk::Format::eR16G16B16A16Sfloat) {
@@ -77,9 +77,9 @@ namespace spectra::render {
         };
         if (command_buffer) {
             record(*command_buffer);
-            runtime.defer([upload = std::move(staging)]() mutable {});
+            runtime.defer_destruction([upload = std::move(staging)]() mutable {});
         } else
-            runtime.immediate(record);
+            runtime.submit_immediate(record);
         return result;
     }
 
@@ -200,7 +200,7 @@ namespace spectra::render {
             GpuBuffer staging = runtime.create_buffer(elements.size_bytes(), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
             std::memcpy(staging.mapped, elements.data(), elements.size_bytes());
             GpuBuffer destination = runtime.create_buffer(std::max(elements.size(), element_capacity) * sizeof(Element), usage | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            runtime.immediate([&staging, &destination, usage](const vk::raii::CommandBuffer& command_buffer) {
+            runtime.submit_immediate([&staging, &destination, usage](const vk::raii::CommandBuffer& command_buffer) {
                 command_buffer.copyBuffer(*staging.buffer, *destination.buffer, vk::BufferCopy{0, 0, staging.size});
                 const bool acceleration_structure = static_cast<bool>(usage & vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
                 const vk::BufferMemoryBarrier2 dependency{
@@ -270,7 +270,7 @@ namespace spectra::render {
         this->material_count             = static_cast<std::uint32_t>(scene.resources.materials.size());
         this->material_lookup            = upload_buffer(runtime, std::span<const std::array<std::uint32_t, 4>>{material_lookup}, vk::BufferUsageFlagBits::eStorageBuffer);
         this->material_lookup_descriptor = runtime.allocate_resource_descriptor();
-        runtime.write_buffer(this->material_lookup_descriptor, vk::DescriptorType::eStorageBuffer, this->material_lookup);
+        runtime.write_buffer_descriptor(this->material_lookup_descriptor, vk::DescriptorType::eStorageBuffer, this->material_lookup);
         this->cache_texture_images(scene);
         this->geometries.reserve(scene.resources.geometries.size());
         for (const scene::Geometry& geometry : scene.resources.geometries) this->geometries.emplace_back(this->create_geometry(geometry));
@@ -518,11 +518,11 @@ namespace spectra::render {
         result.tangents_descriptor            = this->runtime->allocate_resource_descriptor();
         result.texture_coordinates_descriptor = this->runtime->allocate_resource_descriptor();
         result.indices_descriptor             = this->runtime->allocate_resource_descriptor();
-        this->runtime->write_buffer(result.positions_descriptor, vk::DescriptorType::eStorageBuffer, result.positions);
-        this->runtime->write_buffer(result.normals_descriptor, vk::DescriptorType::eStorageBuffer, result.normals);
-        this->runtime->write_buffer(result.tangents_descriptor, vk::DescriptorType::eStorageBuffer, result.tangents);
-        this->runtime->write_buffer(result.texture_coordinates_descriptor, vk::DescriptorType::eStorageBuffer, result.texture_coordinates);
-        this->runtime->write_buffer(result.indices_descriptor, vk::DescriptorType::eStorageBuffer, result.indices);
+        this->runtime->write_buffer_descriptor(result.positions_descriptor, vk::DescriptorType::eStorageBuffer, result.positions);
+        this->runtime->write_buffer_descriptor(result.normals_descriptor, vk::DescriptorType::eStorageBuffer, result.normals);
+        this->runtime->write_buffer_descriptor(result.tangents_descriptor, vk::DescriptorType::eStorageBuffer, result.tangents);
+        this->runtime->write_buffer_descriptor(result.texture_coordinates_descriptor, vk::DescriptorType::eStorageBuffer, result.texture_coordinates);
+        this->runtime->write_buffer_descriptor(result.indices_descriptor, vk::DescriptorType::eStorageBuffer, result.indices);
         if (command_buffer && result.mode != GpuMeshUpdateMode::Immutable && (mesh.normals.empty() || mesh.tangents.empty())) this->generate_dynamic_attributes(result, mesh.normals.empty(), mesh.tangents.empty(), *command_buffer);
         result.blas         = this->build_bottom_level(result.acceleration_kind == GpuGeometryKind::Triangle ? triangle_geometry(result) : procedural_geometry(result), result.acceleration_primitive_count, result.mode, command_buffer);
         result.gpu_modified = command_buffer && result.mode != GpuMeshUpdateMode::Immutable;
@@ -557,12 +557,12 @@ namespace spectra::render {
         result.colors_descriptor                   = this->runtime->allocate_resource_descriptor();
         result.temperatures_descriptor             = this->runtime->allocate_resource_descriptor();
         result.materials_descriptor                = this->runtime->allocate_resource_descriptor();
-        this->runtime->write_buffer(result.positions_descriptor, vk::DescriptorType::eStorageBuffer, result.positions);
-        this->runtime->write_buffer(result.radii_descriptor, vk::DescriptorType::eStorageBuffer, result.radii);
-        this->runtime->write_buffer(result.velocities_descriptor, vk::DescriptorType::eStorageBuffer, result.velocities);
-        this->runtime->write_buffer(result.colors_descriptor, vk::DescriptorType::eStorageBuffer, result.colors);
-        this->runtime->write_buffer(result.temperatures_descriptor, vk::DescriptorType::eStorageBuffer, result.temperatures);
-        this->runtime->write_buffer(result.materials_descriptor, vk::DescriptorType::eStorageBuffer, result.materials);
+        this->runtime->write_buffer_descriptor(result.positions_descriptor, vk::DescriptorType::eStorageBuffer, result.positions);
+        this->runtime->write_buffer_descriptor(result.radii_descriptor, vk::DescriptorType::eStorageBuffer, result.radii);
+        this->runtime->write_buffer_descriptor(result.velocities_descriptor, vk::DescriptorType::eStorageBuffer, result.velocities);
+        this->runtime->write_buffer_descriptor(result.colors_descriptor, vk::DescriptorType::eStorageBuffer, result.colors);
+        this->runtime->write_buffer_descriptor(result.temperatures_descriptor, vk::DescriptorType::eStorageBuffer, result.temperatures);
+        this->runtime->write_buffer_descriptor(result.materials_descriptor, vk::DescriptorType::eStorageBuffer, result.materials);
         return result;
     }
 
@@ -575,7 +575,7 @@ namespace spectra::render {
             const std::size_t index   = std::to_underlying(field);
             result.fields[index]      = command_buffer ? upload_buffer(*this->runtime, *command_buffer, values, vk::BufferUsageFlagBits::eStorageBuffer) : upload_buffer(*this->runtime, values, vk::BufferUsageFlagBits::eStorageBuffer);
             result.descriptors[index] = this->runtime->allocate_resource_descriptor();
-            this->runtime->write_buffer(result.descriptors[index], vk::DescriptorType::eStorageBuffer, result.fields[index]);
+            this->runtime->write_buffer_descriptor(result.descriptors[index], vk::DescriptorType::eStorageBuffer, result.fields[index]);
             result.present[index] = true;
         };
         std::visit(
@@ -658,7 +658,7 @@ namespace spectra::render {
         const bool available                = buffer->buffer != nullptr && address + size <= buffer->address + buffer->size;
         if (!available) {
             GpuBuffer replacement = this->runtime->create_buffer(std::max(size + alignment - 1u, buffer->size * 2u), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            if (!immediate && buffer->buffer != nullptr) this->runtime->defer([previous = std::move(*buffer)]() mutable {});
+            if (!immediate && buffer->buffer != nullptr) this->runtime->defer_destruction([previous = std::move(*buffer)]() mutable {});
             *buffer = std::move(replacement);
             if (offset) *offset = 0;
             address = (buffer->address + alignment - 1u) & ~(alignment - 1u);
@@ -853,11 +853,11 @@ namespace spectra::render {
                 replacement.tangents_descriptor            = this->runtime->allocate_resource_descriptor();
                 replacement.texture_coordinates_descriptor = this->runtime->allocate_resource_descriptor();
                 replacement.indices_descriptor             = this->runtime->allocate_resource_descriptor();
-                this->runtime->write_buffer(replacement.positions_descriptor, vk::DescriptorType::eStorageBuffer, replacement.positions);
-                this->runtime->write_buffer(replacement.normals_descriptor, vk::DescriptorType::eStorageBuffer, replacement.normals);
-                this->runtime->write_buffer(replacement.tangents_descriptor, vk::DescriptorType::eStorageBuffer, replacement.tangents);
-                this->runtime->write_buffer(replacement.texture_coordinates_descriptor, vk::DescriptorType::eStorageBuffer, replacement.texture_coordinates);
-                this->runtime->write_buffer(replacement.indices_descriptor, vk::DescriptorType::eStorageBuffer, replacement.indices);
+                this->runtime->write_buffer_descriptor(replacement.positions_descriptor, vk::DescriptorType::eStorageBuffer, replacement.positions);
+                this->runtime->write_buffer_descriptor(replacement.normals_descriptor, vk::DescriptorType::eStorageBuffer, replacement.normals);
+                this->runtime->write_buffer_descriptor(replacement.tangents_descriptor, vk::DescriptorType::eStorageBuffer, replacement.tangents);
+                this->runtime->write_buffer_descriptor(replacement.texture_coordinates_descriptor, vk::DescriptorType::eStorageBuffer, replacement.texture_coordinates);
+                this->runtime->write_buffer_descriptor(replacement.indices_descriptor, vk::DescriptorType::eStorageBuffer, replacement.indices);
                 const std::uint32_t preserved_vertices = std::min(mesh.vertex_count, updated_vertex_count);
                 if (preserved_vertices != 0 && !positions) command_buffer.copyBuffer(*mesh.positions.buffer, *replacement.positions.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(scene::Float3)});
                 if (preserved_vertices != 0 && !normals && (mesh.attribute_flags & 1u) != 0) command_buffer.copyBuffer(*mesh.normals.buffer, *replacement.normals.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(scene::Float3)});
@@ -870,7 +870,7 @@ namespace spectra::render {
                 this->runtime->release_resource_descriptor(mesh.tangents_descriptor);
                 this->runtime->release_resource_descriptor(mesh.texture_coordinates_descriptor);
                 this->runtime->release_resource_descriptor(mesh.indices_descriptor);
-                this->runtime->defer([previous = std::move(mesh)]() mutable {});
+                this->runtime->defer_destruction([previous = std::move(mesh)]() mutable {});
                 mesh                  = std::move(replacement);
                 this->binding_changes = this->binding_changes | scene::SceneChange::Geometry;
             } else {
@@ -904,7 +904,7 @@ namespace spectra::render {
         const vk::AccelerationStructureGeometryKHR geometry = triangle_geometry(mesh);
         if (mesh.mode == GpuMeshUpdateMode::TopologyChanging) {
             GpuAccelerationStructure replacement = this->build_bottom_level(geometry, mesh.acceleration_primitive_count, mesh.mode, &command_buffer);
-            if (*mesh.blas.structure) this->runtime->defer([previous = std::move(mesh.blas)]() mutable {});
+            if (*mesh.blas.structure) this->runtime->defer_destruction([previous = std::move(mesh.blas)]() mutable {});
             mesh.blas                           = std::move(replacement);
             this->rebuilt_external_bottom_level = true;
             return;
@@ -971,12 +971,12 @@ namespace spectra::render {
             replacement.colors_descriptor              = this->runtime->allocate_resource_descriptor();
             replacement.temperatures_descriptor        = this->runtime->allocate_resource_descriptor();
             replacement.materials_descriptor           = this->runtime->allocate_resource_descriptor();
-            this->runtime->write_buffer(replacement.positions_descriptor, vk::DescriptorType::eStorageBuffer, replacement.positions);
-            this->runtime->write_buffer(replacement.radii_descriptor, vk::DescriptorType::eStorageBuffer, replacement.radii);
-            this->runtime->write_buffer(replacement.velocities_descriptor, vk::DescriptorType::eStorageBuffer, replacement.velocities);
-            this->runtime->write_buffer(replacement.colors_descriptor, vk::DescriptorType::eStorageBuffer, replacement.colors);
-            this->runtime->write_buffer(replacement.temperatures_descriptor, vk::DescriptorType::eStorageBuffer, replacement.temperatures);
-            this->runtime->write_buffer(replacement.materials_descriptor, vk::DescriptorType::eStorageBuffer, replacement.materials);
+            this->runtime->write_buffer_descriptor(replacement.positions_descriptor, vk::DescriptorType::eStorageBuffer, replacement.positions);
+            this->runtime->write_buffer_descriptor(replacement.radii_descriptor, vk::DescriptorType::eStorageBuffer, replacement.radii);
+            this->runtime->write_buffer_descriptor(replacement.velocities_descriptor, vk::DescriptorType::eStorageBuffer, replacement.velocities);
+            this->runtime->write_buffer_descriptor(replacement.colors_descriptor, vk::DescriptorType::eStorageBuffer, replacement.colors);
+            this->runtime->write_buffer_descriptor(replacement.temperatures_descriptor, vk::DescriptorType::eStorageBuffer, replacement.temperatures);
+            this->runtime->write_buffer_descriptor(replacement.materials_descriptor, vk::DescriptorType::eStorageBuffer, replacement.materials);
             const std::uint32_t preserved_particles = std::min(particles.particle_count, particle_count);
             if (preserved_particles != 0 && !positions) command_buffer.copyBuffer(*particles.positions.buffer, *replacement.positions.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_particles) * sizeof(scene::Float3)});
             if (preserved_particles != 0 && !radii) command_buffer.copyBuffer(*particles.radii.buffer, *replacement.radii.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_particles) * sizeof(float)});
@@ -990,7 +990,7 @@ namespace spectra::render {
             this->runtime->release_resource_descriptor(particles.colors_descriptor);
             this->runtime->release_resource_descriptor(particles.temperatures_descriptor);
             this->runtime->release_resource_descriptor(particles.materials_descriptor);
-            this->runtime->defer([previous = std::move(particles)]() mutable {});
+            this->runtime->defer_destruction([previous = std::move(particles)]() mutable {});
             particles             = std::move(replacement);
             this->binding_changes = this->binding_changes | scene::SceneChange::Visualization;
         } else
@@ -1081,7 +1081,7 @@ namespace spectra::render {
             GpuVolume replacement = this->create_volume(source, &command_buffer);
             for (std::size_t field = 0; field != volume.fields.size(); ++field)
                 if (volume.present[field]) this->runtime->release_resource_descriptor(volume.descriptors[field]);
-            this->runtime->defer([previous = std::move(volume)]() mutable {});
+            this->runtime->defer_destruction([previous = std::move(volume)]() mutable {});
             volume                = std::move(replacement);
             this->binding_changes = this->binding_changes | scene::SceneChange::Volume;
         }
@@ -1173,10 +1173,10 @@ namespace spectra::render {
                     storage = std::to_address(found);
                 const std::uint64_t capacity = static_cast<std::uint64_t>(update.resolution.x) * update.resolution.y * update.resolution.z;
                 if (storage->capacity < capacity) {
-                    if (*storage->buffer.buffer) this->runtime->defer([previous = std::move(storage->buffer)]() mutable {});
+                    if (*storage->buffer.buffer) this->runtime->defer_destruction([previous = std::move(storage->buffer)]() mutable {});
                     storage->buffer   = this->runtime->create_buffer(capacity * sizeof(scene::Float3), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
                     storage->capacity = capacity;
-                    this->runtime->write_buffer(storage->descriptor, vk::DescriptorType::eStorageBuffer, storage->buffer);
+                    this->runtime->write_buffer_descriptor(storage->descriptor, vk::DescriptorType::eStorageBuffer, storage->buffer);
                     command_buffer.fillBuffer(*storage->buffer.buffer, 0, storage->buffer.size, 0);
                 }
                 const GpuUploadSlice upload = this->runtime->stage_upload(std::as_bytes(std::span<const scene::Float3>{update.velocity}));
@@ -1368,7 +1368,7 @@ namespace spectra::render {
                     this->runtime->release_resource_descriptor(mesh.tangents_descriptor);
                     this->runtime->release_resource_descriptor(mesh.texture_coordinates_descriptor);
                     this->runtime->release_resource_descriptor(mesh.indices_descriptor);
-                    this->runtime->defer([previous = std::move(mesh)]() mutable {});
+                    this->runtime->defer_destruction([previous = std::move(mesh)]() mutable {});
                     mesh                  = std::move(replacement);
                     this->binding_changes = this->binding_changes | scene::SceneChange::Geometry;
                     rebuilt_bottom_level  = true;
@@ -1390,7 +1390,7 @@ namespace spectra::render {
                     this->runtime->release_resource_descriptor(particles.colors_descriptor);
                     this->runtime->release_resource_descriptor(particles.temperatures_descriptor);
                     this->runtime->release_resource_descriptor(particles.materials_descriptor);
-                    this->runtime->defer([previous = std::move(particles)]() mutable {});
+                    this->runtime->defer_destruction([previous = std::move(particles)]() mutable {});
                     particles             = std::move(replacement);
                     this->binding_changes = this->binding_changes | scene::SceneChange::Visualization;
                     continue;
@@ -1460,7 +1460,7 @@ namespace spectra::render {
         }
         std::optional<vk::raii::QueryPool> compaction_query{};
         if (mode == GpuMeshUpdateMode::Immutable) compaction_query.emplace(this->runtime->device, vk::QueryPoolCreateInfo{{}, vk::QueryType::eAccelerationStructureCompactedSizeKHR, 1});
-        this->runtime->immediate([&build_info, &ranges, &result, &compaction_query](const vk::raii::CommandBuffer& command_buffer) {
+        this->runtime->submit_immediate([&build_info, &ranges, &result, &compaction_query](const vk::raii::CommandBuffer& command_buffer) {
             if (compaction_query) command_buffer.resetQueryPool(**compaction_query, 0, 1);
             command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
             if (compaction_query) {
@@ -1482,7 +1482,7 @@ namespace spectra::render {
                 GpuAccelerationStructure compacted{};
                 compacted.storage   = this->runtime->create_buffer(compacted_size, vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
                 compacted.structure = vk::raii::AccelerationStructureKHR{this->runtime->device, vk::AccelerationStructureCreateInfoKHR{{}, *compacted.storage.buffer, 0, compacted_size, vk::AccelerationStructureTypeKHR::eBottomLevel}};
-                this->runtime->immediate([&result, &compacted](const vk::raii::CommandBuffer& command_buffer) { command_buffer.copyAccelerationStructureKHR(vk::CopyAccelerationStructureInfoKHR{*result.structure, *compacted.structure, vk::CopyAccelerationStructureModeKHR::eCompact}); });
+                this->runtime->submit_immediate([&result, &compacted](const vk::raii::CommandBuffer& command_buffer) { command_buffer.copyAccelerationStructureKHR(vk::CopyAccelerationStructureInfoKHR{*result.structure, *compacted.structure, vk::CopyAccelerationStructureModeKHR::eCompact}); });
                 result = std::move(compacted);
             }
         }
@@ -1521,7 +1521,7 @@ namespace spectra::render {
         build_info.scratchData              = vk::DeviceOrHostAddressKHR{this->acquire_scratch(sizes.buildScratchSize, true)};
         const vk::AccelerationStructureBuildRangeInfoKHR range{primitive_count, 0, 0, 0};
         const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
-        this->runtime->immediate([&build_info, &ranges](const vk::raii::CommandBuffer& command_buffer) {
+        this->runtime->submit_immediate([&build_info, &ranges](const vk::raii::CommandBuffer& command_buffer) {
             const vk::MemoryBarrier2 blas_build_dependency{
                 vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
                 vk::AccessFlagBits2::eAccelerationStructureWriteKHR,

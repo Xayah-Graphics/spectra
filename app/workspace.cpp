@@ -32,7 +32,7 @@ namespace spectra::workspace {
             Slot slot{};
             slot.result     = runtime.create_buffer(sizeof(std::uint32_t), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
             slot.descriptor = runtime.allocate_resource_descriptor();
-            runtime.write_buffer(slot.descriptor, vk::DescriptorType::eStorageBuffer, slot.result);
+            runtime.write_buffer_descriptor(slot.descriptor, vk::DescriptorType::eStorageBuffer, slot.result);
             this->slots.emplace_back(std::move(slot));
         }
     }
@@ -319,15 +319,15 @@ namespace spectra::workspace {
         const std::vector<std::uint32_t> volume_vector_vertex_code = render::load_spirv(shader_directory / "overlay_volume_vector_vertex.spv");
         const std::array volume_vector_create_infos{vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eLinkStage | vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment, vk::ShaderCodeTypeEXT::eSpirv, volume_vector_vertex_code.size() * sizeof(std::uint32_t), volume_vector_vertex_code.data(), "overlay_volume_vector_vertex"}, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eLinkStage | vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eFragment, {}, vk::ShaderCodeTypeEXT::eSpirv, debug_fragment_code.size() * sizeof(std::uint32_t), debug_fragment_code.data(), "overlay_debug_fragment"}};
         this->volume_vector_shaders = vk::raii::ShaderEXTs{runtime.device, volume_vector_create_infos};
-        runtime.write_sampler(this->sampler_descriptor, vk::SamplerCreateInfo{
-                                                        {},
-                                                        vk::Filter::eNearest,
-                                                        vk::Filter::eNearest,
-                                                        vk::SamplerMipmapMode::eNearest,
-                                                        vk::SamplerAddressMode::eClampToEdge,
-                                                        vk::SamplerAddressMode::eClampToEdge,
-                                                        vk::SamplerAddressMode::eClampToEdge,
-                                                    });
+        runtime.write_sampler_descriptor(this->sampler_descriptor, vk::SamplerCreateInfo{
+                                                                       {},
+                                                                       vk::Filter::eNearest,
+                                                                       vk::Filter::eNearest,
+                                                                       vk::SamplerMipmapMode::eNearest,
+                                                                       vk::SamplerAddressMode::eClampToEdge,
+                                                                       vk::SamplerAddressMode::eClampToEdge,
+                                                                       vk::SamplerAddressMode::eClampToEdge,
+                                                                   });
     }
 
     OverlayRenderer::~OverlayRenderer() {
@@ -339,7 +339,7 @@ namespace spectra::workspace {
     void OverlayRenderer::create_images(const vk::Extent2D extent) {
         this->mask  = this->runtime->create_image_2d(extent, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
         this->depth = this->runtime->create_image_2d(extent, vk::Format::eD32Sfloat, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageAspectFlagBits::eDepth);
-        this->runtime->write_sampled_image(this->mask_descriptor, this->mask, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->runtime->write_sampled_image_descriptor(this->mask_descriptor, this->mask, vk::ImageLayout::eShaderReadOnlyOptimal);
         this->mask_layout  = vk::ImageLayout::eUndefined;
         this->depth_layout = vk::ImageLayout::eUndefined;
     }
@@ -386,8 +386,8 @@ namespace spectra::workspace {
             const std::uint64_t required_capacity = std::bit_ceil(static_cast<std::uint64_t>(tested_vertices.size()));
             if (required_capacity > this->debug_capacity) {
                 GpuBuffer buffer = this->runtime->create_buffer(required_capacity * sizeof(DebugVertex), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-                this->runtime->write_buffer(this->debug_descriptor, vk::DescriptorType::eStorageBuffer, buffer);
-                if (*this->debug_buffer.buffer) this->runtime->defer([old = std::move(this->debug_buffer)]() mutable {});
+                this->runtime->write_buffer_descriptor(this->debug_descriptor, vk::DescriptorType::eStorageBuffer, buffer);
+                if (*this->debug_buffer.buffer) this->runtime->defer_destruction([old = std::move(this->debug_buffer)]() mutable {});
                 this->debug_buffer   = std::move(buffer);
                 this->debug_capacity = required_capacity;
             }
@@ -844,8 +844,8 @@ namespace spectra::workspace {
             geometry_bindings.reserve(dynamics->mesh_bindings.size());
             for (const scene::dynamics::MeshOutputBinding& binding : dynamics->mesh_bindings) geometry_bindings.emplace_back(binding.geometry, binding.mode == scene::dynamics::MeshUpdateMode::Deformable ? render::GpuMeshUpdateMode::Deformable : render::GpuMeshUpdateMode::TopologyChanging, binding.vertex_capacity, binding.index_capacity);
         }
-        std::unique_ptr<render::GpuScene> gpu_scene                  = std::make_unique<render::GpuScene>(*this->runtime, source, this->shader_directory, geometry_bindings, dynamics ? std::span{dynamics->particle_capacities} : std::span<const std::pair<scene::ParticleSetId, std::uint32_t>>{}, dynamics ? std::span{dynamics->hidden_instances} : std::span<const scene::InstanceId>{});
-        std::unique_ptr<rasterizer::RasterScene> raster_scene       = std::make_unique<rasterizer::RasterScene>(*this->runtime, *gpu_scene, gpu_scene->state.view(), this->shader_directory);
+        std::unique_ptr<render::GpuScene> gpu_scene                 = std::make_unique<render::GpuScene>(*this->runtime, source, this->shader_directory, geometry_bindings, dynamics ? std::span{dynamics->particle_capacities} : std::span<const std::pair<scene::ParticleSetId, std::uint32_t>>{}, dynamics ? std::span{dynamics->hidden_instances} : std::span<const scene::InstanceId>{});
+                        std::unique_ptr<rasterizer::RasterScene> raster_scene = std::make_unique<rasterizer::RasterScene>(*this->runtime, *gpu_scene, gpu_scene->state.view(), this->shader_directory);
         std::unique_ptr<rasterizer::Rasterizer> rasterizer_renderer = std::make_unique<rasterizer::Rasterizer>(*this->runtime, *raster_scene, this->shader_directory);
         std::unique_ptr<pathtracer::PathTracer> pathtracer_renderer = std::make_unique<pathtracer::PathTracer>(*this->runtime, *gpu_scene, gpu_scene->state.view(), this->shader_directory, this->frame_count);
         std::unique_ptr<Picker> picker                              = std::make_unique<Picker>(*this->runtime, *raster_scene, this->shader_directory, this->frame_count);
@@ -870,8 +870,8 @@ namespace spectra::workspace {
         std::unique_ptr<scene::dynamics::Runtime> next_dynamics{};
         if (next_scene.dynamic_setup) next_dynamics = std::make_unique<scene::dynamics::Runtime>(*this->runtime, path, next_scene);
         this->rebuild_renderers(next_scene, next_dynamics.get());
-        this->scene         = std::move(next_scene);
-        this->dynamics      = std::move(next_dynamics);
+        this->scene    = std::move(next_scene);
+        this->dynamics = std::move(next_dynamics);
         if (this->dynamics) this->dynamics->bind_scene(this->scene);
         this->source_path       = path;
         this->viewport_camera   = ViewportCamera{this->scene.camera(), this->scene.view().bounds()};
@@ -1105,14 +1105,6 @@ namespace spectra::workspace {
         this->dynamics->seek(step);
     }
 
-    void Workspace::set_export_frame(const std::uint64_t frame, const bool reset) {
-        if (!this->dynamics) throw std::runtime_error("Animation export requires a Dynamic Setup");
-        this->dynamics->set_running(false);
-        if (!reset && frame < this->dynamics->timeline().step) throw std::runtime_error("Live animation export frames must increase monotonically");
-        if (reset) this->reset_playback();
-        this->set_simulation_step(frame);
-    }
-
     void Workspace::set_dynamic_parameters(const std::size_t system, std::vector<scene::DynamicParameterSetting> parameters, const bool reset) {
         scene::DynamicSetup setup                       = *this->scene.dynamic_setup;
         scene::DynamicSystem& destination_system        = setup.systems[system];
@@ -1156,7 +1148,7 @@ namespace spectra::workspace {
     void Workspace::commit_dynamic_setup(std::optional<scene::DynamicSetup> setup, const bool preserve_simulation) {
         if (setup == this->scene.dynamic_setup) return;
         const std::optional<scene::dynamics::TimelineState> timeline = preserve_simulation && this->dynamics ? std::optional{this->dynamics->timeline()} : std::nullopt;
-        const bool running                                        = preserve_simulation && this->dynamics && this->dynamics->running();
+        const bool running                                           = preserve_simulation && this->dynamics && this->dynamics->running();
         DynamicSetupEdit edit{.before = this->scene.dynamic_setup, .after = setup, .preserve_simulation = preserve_simulation};
         scene::Scene next_scene = this->scene;
         scene::SceneUpdate{next_scene}.update_dynamic_setup(std::move(setup));
@@ -1204,8 +1196,8 @@ namespace spectra::workspace {
     }
 
     void Workspace::set_dynamic_system_provider(const std::size_t system, const scene::dynamics::ProviderDescriptor& provider, std::vector<scene::DynamicPortBinding> bindings) {
-        scene::DynamicSetup setup                  = *this->scene.dynamic_setup;
-        scene::DynamicSystem& destination          = setup.systems[system];
+        scene::DynamicSetup setup                          = *this->scene.dynamic_setup;
+        scene::DynamicSystem& destination                  = setup.systems[system];
         const scene::dynamics::ProviderDescriptor& current = this->dynamics->provider(destination.provider);
         if (provider.interface_id != current.interface_id || provider.interface_version != current.interface_version) throw std::runtime_error("A comparison System can only replace its Provider with the same interface contract");
         destination.provider = provider.id;
@@ -1464,8 +1456,8 @@ namespace spectra::workspace {
                     scene::SceneUpdate{this->gpu_scene->state}.update_transform(value.instance, transform);
                 } else {
                     const std::optional<scene::dynamics::TimelineState> timeline = value.preserve_simulation && this->dynamics ? std::optional{this->dynamics->timeline()} : std::nullopt;
-                    const bool running                                        = value.preserve_simulation && this->dynamics && this->dynamics->running();
-                    scene::Scene next_scene                                   = this->scene;
+                    const bool running                                           = value.preserve_simulation && this->dynamics && this->dynamics->running();
+                    scene::Scene next_scene                                      = this->scene;
                     scene::SceneUpdate{next_scene}.update_dynamic_setup(before ? value.before : value.after);
                     std::unique_ptr<scene::dynamics::Runtime> next_dynamics{};
                     if (next_scene.dynamic_setup) next_dynamics = std::make_unique<scene::dynamics::Runtime>(*this->runtime, this->source_path, next_scene);

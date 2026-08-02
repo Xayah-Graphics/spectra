@@ -56,32 +56,43 @@ namespace spectra {
             OptimalImage,
         };
 
+        struct AllocationRequest {
+            vk::MemoryRequirements requirements{};
+            vk::MemoryPropertyFlags properties{};
+            ResourceClass resource_class{ResourceClass::Buffer};
+            bool device_address{};
+            bool requires_dedicated{};
+            bool prefers_dedicated{};
+            vk::Buffer dedicated_buffer{};
+            vk::Image dedicated_image{};
+        };
+
         GpuAllocator(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device) : physical_device(&physical_device), device(&device) {}
 
-        [[nodiscard]] GpuAllocation allocate(const vk::MemoryRequirements requirements, const vk::MemoryPropertyFlags properties, const bool device_address, const ResourceClass resource_class, const bool requires_dedicated, const bool prefers_dedicated, const vk::Buffer dedicated_buffer, const vk::Image dedicated_image) {
-            const std::uint32_t memory_type         = this->find_memory_type(requirements.memoryTypeBits, properties);
-            const vk::DeviceSize default_block_size = static_cast<bool>(properties & vk::MemoryPropertyFlagBits::eHostVisible) ? host_memory_block_size : device_memory_block_size;
-            const bool dedicated                    = requires_dedicated || prefers_dedicated || requirements.size > default_block_size / 2u;
+        [[nodiscard]] GpuAllocation allocate(const AllocationRequest& request) {
+            const std::uint32_t memory_type         = this->find_memory_type(request.requirements.memoryTypeBits, request.properties);
+            const vk::DeviceSize default_block_size = static_cast<bool>(request.properties & vk::MemoryPropertyFlagBits::eHostVisible) ? host_memory_block_size : device_memory_block_size;
+            const bool dedicated                    = request.requires_dedicated || request.prefers_dedicated || request.requirements.size > default_block_size / 2u;
 
             if (!dedicated) {
                 for (std::uint32_t block_index = 0; block_index < this->blocks.size(); ++block_index) {
                     Block& block = *this->blocks[block_index];
-                    if (block.dedicated || block.memory_type != memory_type || block.device_address != device_address || block.resource_class != resource_class) continue;
-                    if (const std::optional<vk::DeviceSize> offset = this->allocate_range(block, requirements.size, requirements.alignment)) return this->make_allocation(block_index, *offset, requirements.size);
+                    if (block.dedicated || block.memory_type != memory_type || block.device_address != request.device_address || block.resource_class != request.resource_class) continue;
+                    if (const std::optional<vk::DeviceSize> offset = this->allocate_range(block, request.requirements.size, request.requirements.alignment)) return this->make_allocation(block_index, *offset, request.requirements.size);
                 }
             }
 
-            const vk::DeviceSize allocation_size = dedicated ? requirements.size : std::max(default_block_size, align_up(requirements.size, 64u * 1024u));
+            const vk::DeviceSize allocation_size = dedicated ? request.requirements.size : std::max(default_block_size, align_up(request.requirements.size, 64u * 1024u));
             vk::MemoryDedicatedAllocateInfo dedicated_info{
-                dedicated_image,
-                dedicated_buffer,
+                request.dedicated_image,
+                request.dedicated_buffer,
             };
             vk::MemoryAllocateFlagsInfo allocate_flags{
-                device_address ? vk::MemoryAllocateFlagBits::eDeviceAddress : vk::MemoryAllocateFlags{},
+                request.device_address ? vk::MemoryAllocateFlagBits::eDeviceAddress : vk::MemoryAllocateFlags{},
             };
             const void* next = nullptr;
             if (dedicated) next = &dedicated_info;
-            if (device_address) {
+            if (request.device_address) {
                 allocate_flags.pNext = next;
                 next                 = &allocate_flags;
             }
@@ -97,19 +108,19 @@ namespace spectra {
             };
             block->size           = allocation_size;
             block->memory_type    = memory_type;
-            block->device_address = device_address;
+            block->device_address = request.device_address;
             block->dedicated      = dedicated;
-            block->resource_class = resource_class;
-            if (static_cast<bool>(properties & vk::MemoryPropertyFlagBits::eHostVisible)) block->mapped = block->memory.mapMemory(0, allocation_size);
+            block->resource_class = request.resource_class;
+            if (static_cast<bool>(request.properties & vk::MemoryPropertyFlagBits::eHostVisible)) block->mapped = block->memory.mapMemory(0, allocation_size);
             if (!dedicated) block->free_ranges.emplace_back(0, allocation_size);
 
             const std::uint32_t block_index = static_cast<std::uint32_t>(this->blocks.size());
             this->blocks.emplace_back(std::move(block));
-            if (dedicated) return this->make_allocation(block_index, 0, requirements.size);
+            if (dedicated) return this->make_allocation(block_index, 0, request.requirements.size);
 
-            const std::optional<vk::DeviceSize> offset = this->allocate_range(*this->blocks.back(), requirements.size, requirements.alignment);
+            const std::optional<vk::DeviceSize> offset = this->allocate_range(*this->blocks.back(), request.requirements.size, request.requirements.alignment);
             if (!offset) throw std::runtime_error("Spectra GPU allocator failed to suballocate a new memory block");
-            return this->make_allocation(block_index, *offset, requirements.size);
+            return this->make_allocation(block_index, *offset, request.requirements.size);
         }
 
         [[nodiscard]] vk::DeviceMemory memory(const GpuAllocation& allocation) const noexcept {
@@ -266,7 +277,24 @@ namespace spectra {
         glfwTerminate();
     }
 
-    Spectra::Spectra(const std::string_view application_name, const vk::Extent2D initial_extent) : device(this->graphics.logical_device), acceleration_structure_properties(this->graphics.acceleration_structure_properties), ray_tracing_properties(this->graphics.ray_tracing_properties), frame_index(this->frames.index) {
+    Spectra::Spectra(const std::string_view application_name, const vk::Extent2D initial_extent) : device(this->graphics.device), acceleration_structure_properties(this->graphics.acceleration_structure_properties), ray_tracing_properties(this->graphics.ray_tracing_properties), frame_index(this->frames.index) {
+        this->create_window(application_name, initial_extent);
+        this->create_instance_and_surface(application_name);
+        this->select_physical_device();
+        this->create_device();
+        this->create_descriptor_heaps();
+        this->create_frame_resources();
+        this->configure_native_window();
+        this->recreate_swapchain();
+    }
+
+    Spectra::~Spectra() {
+        this->graphics.device.waitIdle();
+        SetWindowLongPtrW(this->platform.native, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(this->platform.original_window_proc));
+        RemovePropW(this->platform.native, L"SpectraWindow");
+    }
+
+    void Spectra::create_window(const std::string_view application_name, const vk::Extent2D initial_extent) {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
         glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
@@ -287,7 +315,9 @@ namespace spectra {
             runtime.platform.close_requested = true;
             glfwSetWindowShouldClose(window, GLFW_FALSE);
         });
+    }
 
+    void Spectra::create_instance_and_surface(const std::string_view application_name) {
         const std::string application_name_string{application_name};
         const vk::ApplicationInfo application_info{
             application_name_string.c_str(),
@@ -311,7 +341,9 @@ namespace spectra {
         this->context.instance = vk::raii::Instance{this->context.loader, instance_create_info};
 
         this->platform.surface = vk::raii::SurfaceKHR{this->context.instance, vk::Win32SurfaceCreateInfoKHR{{}, GetModuleHandleW(nullptr), this->platform.native}};
+    }
 
+    void Spectra::select_physical_device() {
         constexpr std::array required_extensions = required_device_extensions();
         for (const vk::raii::PhysicalDevice& candidate : this->context.instance.enumeratePhysicalDevices()) {
             const vk::PhysicalDeviceProperties candidate_properties = candidate.getProperties();
@@ -352,7 +384,9 @@ namespace spectra {
             break;
         }
         if (!*this->graphics.physical_device) throw std::runtime_error("Spectra requires a discrete Vulkan 1.4 GPU with Descriptor Heap, Shader Untyped Pointers, Shader Object, Mesh Shader, and the complete KHR ray tracing pipeline profile");
+    }
 
+    void Spectra::create_device() {
         vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorHeapFeaturesEXT, vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR, vk::PhysicalDeviceAccelerationStructureFeaturesKHR, vk::PhysicalDeviceRayTracingPipelineFeaturesKHR, vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR, vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR, vk::PhysicalDeviceRayQueryFeaturesKHR, vk::PhysicalDeviceShaderObjectFeaturesEXT, vk::PhysicalDeviceMeshShaderFeaturesEXT, vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT> enabled_features{};
         enabled_features.get<vk::PhysicalDeviceFeatures2>().features.shaderInt64                                         = vk::True;
         enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters                                  = vk::True;
@@ -372,6 +406,7 @@ namespace spectra {
         enabled_features.get<vk::PhysicalDeviceMeshShaderFeaturesEXT>().meshShader                                       = vk::True;
         enabled_features.get<vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT>().shaderBufferFloat32AtomicAdd              = vk::True;
 
+        constexpr std::array required_extensions = required_device_extensions();
         constexpr std::array queue_priorities{1.0f};
         const vk::DeviceQueueCreateInfo queue_create_info{{}, this->graphics.queue_family_index, 1, queue_priorities.data()};
         const vk::DeviceCreateInfo device_create_info{
@@ -385,13 +420,13 @@ namespace spectra {
             nullptr,
             &enabled_features.get<vk::PhysicalDeviceFeatures2>(),
         };
-        this->graphics.logical_device = vk::raii::Device{this->graphics.physical_device, device_create_info};
-        this->graphics.queue          = vk::raii::Queue{
-            this->graphics.logical_device,
+        this->graphics.device = vk::raii::Device{this->graphics.physical_device, device_create_info};
+        this->graphics.queue  = vk::raii::Queue{
+            this->graphics.device,
             this->graphics.queue_family_index,
             0,
         };
-        this->memory.allocator = std::make_unique<GpuAllocator>(this->graphics.physical_device, this->graphics.logical_device);
+        this->allocator = std::make_unique<GpuAllocator>(this->graphics.physical_device, this->graphics.device);
 
         const auto properties                          = this->graphics.physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties, vk::PhysicalDeviceDescriptorHeapPropertiesEXT, vk::PhysicalDeviceAccelerationStructurePropertiesKHR, vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
         this->descriptors.properties                   = properties.get<vk::PhysicalDeviceDescriptorHeapPropertiesEXT>();
@@ -401,29 +436,40 @@ namespace spectra {
         this->graphics.identity.node_mask                = identity.deviceNodeMask;
         this->graphics.acceleration_structure_properties = properties.get<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>();
         this->graphics.ray_tracing_properties            = properties.get<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
-        this->descriptors.resource_stride                = std::max(align_up(this->descriptors.properties.imageDescriptorSize, this->descriptors.properties.imageDescriptorAlignment), align_up(this->descriptors.properties.bufferDescriptorSize, this->descriptors.properties.bufferDescriptorAlignment));
-        this->descriptors.sampler_stride                 = align_up(this->descriptors.properties.samplerDescriptorSize, this->descriptors.properties.samplerDescriptorAlignment);
-        this->descriptors.resource_heap                  = this->create_buffer(align_down(std::min(align_up(resource_heap_size + this->descriptors.properties.minResourceHeapReservedRange, this->descriptors.properties.resourceHeapAlignment), this->descriptors.properties.maxResourceHeapSize), this->descriptors.properties.resourceHeapAlignment), vk::BufferUsageFlagBits::eDescriptorHeapEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-        this->descriptors.sampler_heap                   = this->create_buffer(align_down(std::min(align_up(sampler_heap_size + this->descriptors.properties.minSamplerHeapReservedRange, this->descriptors.properties.samplerHeapAlignment), this->descriptors.properties.maxSamplerHeapSize), this->descriptors.properties.samplerHeapAlignment), vk::BufferUsageFlagBits::eDescriptorHeapEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+    }
 
+    void Spectra::create_descriptor_heaps() {
+        const vk::PhysicalDeviceDescriptorHeapPropertiesEXT& properties = this->descriptors.properties;
+        this->descriptors.resource_stride                               = std::max(align_up(properties.imageDescriptorSize, properties.imageDescriptorAlignment), align_up(properties.bufferDescriptorSize, properties.bufferDescriptorAlignment));
+        this->descriptors.sampler_stride                                = align_up(properties.samplerDescriptorSize, properties.samplerDescriptorAlignment);
+
+        const vk::DeviceSize resource_size       = align_down(std::min(align_up(resource_heap_size + properties.minResourceHeapReservedRange, properties.resourceHeapAlignment), properties.maxResourceHeapSize), properties.resourceHeapAlignment);
+        const vk::DeviceSize sampler_size        = align_down(std::min(align_up(sampler_heap_size + properties.minSamplerHeapReservedRange, properties.samplerHeapAlignment), properties.maxSamplerHeapSize), properties.samplerHeapAlignment);
+        constexpr vk::BufferUsageFlags usage     = vk::BufferUsageFlagBits::eDescriptorHeapEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress;
+        constexpr vk::MemoryPropertyFlags memory = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+        this->descriptors.resource_heap          = this->create_buffer(resource_size, usage, memory, true);
+        this->descriptors.sampler_heap           = this->create_buffer(sampler_size, usage, memory, true);
+    }
+
+    void Spectra::create_frame_resources() {
         this->uploads.buffer = this->create_buffer(upload_frame_size * frames_in_flight, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
 
-        this->immediate_submission.command_pool = vk::raii::CommandPool{
-            this->graphics.logical_device,
+        this->immediate_command_pool = vk::raii::CommandPool{
+            this->graphics.device,
             vk::CommandPoolCreateInfo{
                 vk::CommandPoolCreateFlagBits::eTransient,
                 this->graphics.queue_family_index,
             },
         };
         this->frames.command_pool = vk::raii::CommandPool{
-            this->graphics.logical_device,
+            this->graphics.device,
             vk::CommandPoolCreateInfo{
                 vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
                 this->graphics.queue_family_index,
             },
         };
         this->frames.command_buffers = vk::raii::CommandBuffers{
-            this->graphics.logical_device,
+            this->graphics.device,
             vk::CommandBufferAllocateInfo{
                 *this->frames.command_pool,
                 vk::CommandBufferLevel::ePrimary,
@@ -431,10 +477,12 @@ namespace spectra {
             },
         };
         for (std::uint32_t index = 0; index < frames_in_flight; ++index) {
-            this->frames.image_available.emplace_back(this->graphics.logical_device, vk::SemaphoreCreateInfo{});
-            this->frames.fences.emplace_back(this->graphics.logical_device, vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
+            this->frames.image_available.emplace_back(this->graphics.device, vk::SemaphoreCreateInfo{});
+            this->frames.fences.emplace_back(this->graphics.device, vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
         }
+    }
 
+    void Spectra::configure_native_window() {
         SetPropW(this->platform.native, L"SpectraWindow", this);
         this->platform.original_window_proc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(this->platform.native, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&Spectra::window_proc)));
         constexpr LONG_PTR style            = WS_POPUP | WS_VISIBLE | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU;
@@ -444,139 +492,6 @@ namespace spectra {
         constexpr DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_ROUND;
         DwmSetWindowAttribute(this->platform.native, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
         SetWindowPos(this->platform.native, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-
-        this->create_swapchain();
-    }
-
-    Spectra::~Spectra() {
-        this->graphics.logical_device.waitIdle();
-        SetWindowLongPtrW(this->platform.native, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(this->platform.original_window_proc));
-        RemovePropW(this->platform.native, L"SpectraWindow");
-    }
-
-    void Spectra::poll_events() noexcept {
-        glfwPollEvents();
-    }
-
-    void Spectra::wait_events() noexcept {
-        int width  = 0;
-        int height = 0;
-        glfwGetFramebufferSize(this->platform.window.get(), &width, &height);
-        if (width == 0 || height == 0)
-            glfwWaitEvents();
-        else
-            glfwPollEvents();
-    }
-
-    bool Spectra::take_close_request() noexcept {
-        return std::exchange(this->platform.close_requested, false);
-    }
-
-    std::vector<std::filesystem::path> Spectra::take_dropped_paths() noexcept {
-        return std::exchange(this->platform.dropped_paths, {});
-    }
-
-    void Spectra::request_close() noexcept {
-        this->platform.close_requested = true;
-    }
-
-    std::optional<FrameContext> Spectra::begin_frame() {
-        int width  = 0;
-        int height = 0;
-        glfwGetFramebufferSize(this->platform.window.get(), &width, &height);
-        if (width == 0 || height == 0) return std::nullopt;
-        const vk::Extent2D framebuffer_extent{
-            static_cast<std::uint32_t>(width),
-            static_cast<std::uint32_t>(height),
-        };
-        if (this->presentation.extent != framebuffer_extent) this->create_swapchain();
-
-        const vk::raii::Fence& fence = this->frames.fences[this->frames.index];
-        if (this->graphics.logical_device.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra frame fence wait failed");
-        this->uploads.offsets[this->frames.index] = 0;
-        this->deferred.destructions[this->frames.index].clear();
-        this->descriptors.free_resource_indices.append_range(this->deferred.resource_indices[this->frames.index]);
-        this->deferred.resource_indices[this->frames.index].clear();
-        this->descriptors.free_sampler_indices.append_range(this->deferred.sampler_indices[this->frames.index]);
-        this->deferred.sampler_indices[this->frames.index].clear();
-        this->frames.external_waits[this->frames.index].clear();
-        this->frames.external_signals[this->frames.index].clear();
-
-        vk::ResultValue<std::uint32_t> acquired{vk::Result::eSuccess, 0};
-        try {
-            acquired = this->presentation.swapchain.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->frames.image_available[this->frames.index]);
-        } catch (const vk::OutOfDateKHRError&) {
-            this->create_swapchain();
-            return std::nullopt;
-        }
-        this->presentation.acquired_image      = acquired.value;
-        this->presentation.acquired_suboptimal = acquired.result == vk::Result::eSuboptimalKHR;
-
-        this->graphics.logical_device.resetFences(*fence);
-        const vk::raii::CommandBuffer& command_buffer = this->frames.command_buffers[this->frames.index];
-        command_buffer.reset();
-        command_buffer.begin(vk::CommandBufferBeginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-        return FrameContext{
-            this->frames.index,
-            command_buffer,
-            {
-                this->presentation.images[acquired.value],
-                *this->presentation.views[acquired.value],
-                this->presentation.extent,
-                this->presentation.layouts[acquired.value],
-            },
-        };
-    }
-
-    bool Spectra::present_frame() {
-        const vk::raii::CommandBuffer& command_buffer = this->frames.command_buffers[this->frames.index];
-        command_buffer.end();
-        this->presentation.layouts[this->presentation.acquired_image] = vk::ImageLayout::ePresentSrcKHR;
-
-        std::vector<vk::SemaphoreSubmitInfo>& waits = this->frames.external_waits[this->frames.index];
-        waits.insert(waits.begin(), vk::SemaphoreSubmitInfo{
-                                        *this->frames.image_available[this->frames.index],
-                                        0,
-                                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                        0,
-                                    });
-        const vk::CommandBufferSubmitInfo command_info{*command_buffer};
-        std::vector<vk::SemaphoreSubmitInfo>& signals = this->frames.external_signals[this->frames.index];
-        signals.emplace_back(*this->presentation.render_finished[this->presentation.acquired_image], 0, vk::PipelineStageFlagBits2::eAllCommands, 0);
-        this->graphics.queue.submit2(
-            vk::SubmitInfo2{
-                {},
-                static_cast<std::uint32_t>(waits.size()),
-                waits.data(),
-                1,
-                &command_info,
-                static_cast<std::uint32_t>(signals.size()),
-                signals.data(),
-            },
-            *this->frames.fences[this->frames.index]);
-
-        const vk::Semaphore render_finished = *this->presentation.render_finished[this->presentation.acquired_image];
-        const vk::SwapchainKHR swapchain    = *this->presentation.swapchain;
-        vk::Result present_result{};
-        try {
-            present_result = this->graphics.queue.presentKHR(vk::PresentInfoKHR{
-                1,
-                &render_finished,
-                1,
-                &swapchain,
-                &this->presentation.acquired_image,
-            });
-        } catch (const vk::OutOfDateKHRError&) {
-            this->create_swapchain();
-            return false;
-        }
-        if (this->presentation.acquired_suboptimal || present_result == vk::Result::eSuboptimalKHR) this->create_swapchain();
-        this->frames.index = (this->frames.index + 1u) % frames_in_flight;
-        return true;
-    }
-
-    void Spectra::wait_idle() const {
-        this->graphics.logical_device.waitIdle();
     }
 
     LRESULT CALLBACK Spectra::window_proc(HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
@@ -608,7 +523,7 @@ namespace spectra {
                     if (top) return HTTOP;
                     if (bottom) return HTBOTTOM;
                 }
-                for (const std::array<float, 4>& region : runtime->drag_regions)
+                for (const std::array<float, 4>& region : runtime->window_drag_regions)
                     if (static_cast<float>(point.x) >= region[0] && static_cast<float>(point.y) >= region[1] && static_cast<float>(point.x) < region[2] && static_cast<float>(point.y) < region[3]) return HTCAPTION;
                 return HTCLIENT;
             }
@@ -638,7 +553,7 @@ namespace spectra {
         return CallWindowProcW(runtime->platform.original_window_proc, window, message, wparam, lparam);
     }
 
-    void Spectra::create_swapchain() {
+    void Spectra::recreate_swapchain() {
         this->wait_idle();
         int width  = 0;
         int height = 0;
@@ -683,7 +598,7 @@ namespace spectra {
             vk::True,
             old_swapchain,
         };
-        vk::raii::SwapchainKHR replacement{this->graphics.logical_device, create_info};
+        vk::raii::SwapchainKHR replacement{this->graphics.device, create_info};
         this->presentation.views.clear();
         this->presentation.swapchain = std::move(replacement);
         this->presentation.images    = this->presentation.swapchain.getImages();
@@ -691,121 +606,194 @@ namespace spectra {
         this->presentation.render_finished.clear();
         this->presentation.render_finished.reserve(this->presentation.images.size());
         for (const vk::Image image : this->presentation.images) {
-            this->presentation.views.emplace_back(this->graphics.logical_device, vk::ImageViewCreateInfo{
-                                                                                     {},
-                                                                                     image,
-                                                                                     vk::ImageViewType::e2D,
-                                                                                     required_format.format,
-                                                                                     {},
-                                                                                     {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                                                                                 });
-            this->presentation.render_finished.emplace_back(this->graphics.logical_device, vk::SemaphoreCreateInfo{});
+            this->presentation.views.emplace_back(this->graphics.device, vk::ImageViewCreateInfo{
+                                                                             {},
+                                                                             image,
+                                                                             vk::ImageViewType::e2D,
+                                                                             required_format.format,
+                                                                             {},
+                                                                             {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                                                                         });
+            this->presentation.render_finished.emplace_back(this->graphics.device, vk::SemaphoreCreateInfo{});
         }
     }
 
+    void Spectra::poll_events() noexcept {
+        glfwPollEvents();
+    }
+
+    void Spectra::wait_events() noexcept {
+        int width  = 0;
+        int height = 0;
+        glfwGetFramebufferSize(this->platform.window.get(), &width, &height);
+        if (width == 0 || height == 0)
+            glfwWaitEvents();
+        else
+            glfwPollEvents();
+    }
+
+    void Spectra::request_close() noexcept {
+        this->platform.close_requested = true;
+    }
+
+    bool Spectra::take_close_request() noexcept {
+        return std::exchange(this->platform.close_requested, false);
+    }
+
+    std::vector<std::filesystem::path> Spectra::take_dropped_paths() noexcept {
+        return std::exchange(this->platform.dropped_paths, {});
+    }
+
+    std::optional<FrameContext> Spectra::begin_frame() {
+        int width  = 0;
+        int height = 0;
+        glfwGetFramebufferSize(this->platform.window.get(), &width, &height);
+        if (width == 0 || height == 0) return std::nullopt;
+        const vk::Extent2D framebuffer_extent{
+            static_cast<std::uint32_t>(width),
+            static_cast<std::uint32_t>(height),
+        };
+        if (this->presentation.extent != framebuffer_extent) this->recreate_swapchain();
+
+        const vk::raii::Fence& fence = this->frames.fences[this->frames.index];
+        if (this->graphics.device.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra frame fence wait failed");
+        this->uploads.offsets[this->frames.index] = 0;
+        this->deferred.destructions[this->frames.index].clear();
+        this->descriptors.free_resource_indices.append_range(this->deferred.resource_indices[this->frames.index]);
+        this->deferred.resource_indices[this->frames.index].clear();
+        this->descriptors.free_sampler_indices.append_range(this->deferred.sampler_indices[this->frames.index]);
+        this->deferred.sampler_indices[this->frames.index].clear();
+        this->frames.waits[this->frames.index].clear();
+        this->frames.signals[this->frames.index].clear();
+
+        vk::ResultValue<std::uint32_t> acquired{vk::Result::eSuccess, 0};
+        try {
+            acquired = this->presentation.swapchain.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->frames.image_available[this->frames.index]);
+        } catch (const vk::OutOfDateKHRError&) {
+            this->recreate_swapchain();
+            return std::nullopt;
+        }
+        this->presentation.acquired_image      = acquired.value;
+        this->presentation.acquired_suboptimal = acquired.result == vk::Result::eSuboptimalKHR;
+
+        this->graphics.device.resetFences(*fence);
+        const vk::raii::CommandBuffer& command_buffer = this->frames.command_buffers[this->frames.index];
+        command_buffer.reset();
+        command_buffer.begin(vk::CommandBufferBeginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        return FrameContext{
+            this->frames.index,
+            command_buffer,
+            {
+                this->presentation.images[acquired.value],
+                *this->presentation.views[acquired.value],
+                this->presentation.extent,
+                this->presentation.layouts[acquired.value],
+            },
+        };
+    }
+
+    bool Spectra::present_frame() {
+        const vk::raii::CommandBuffer& command_buffer = this->frames.command_buffers[this->frames.index];
+        command_buffer.end();
+        this->presentation.layouts[this->presentation.acquired_image] = vk::ImageLayout::ePresentSrcKHR;
+
+        std::vector<vk::SemaphoreSubmitInfo>& waits = this->frames.waits[this->frames.index];
+        waits.insert(waits.begin(), vk::SemaphoreSubmitInfo{
+                                        *this->frames.image_available[this->frames.index],
+                                        0,
+                                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                        0,
+                                    });
+        const vk::CommandBufferSubmitInfo command_info{*command_buffer};
+        std::vector<vk::SemaphoreSubmitInfo>& signals = this->frames.signals[this->frames.index];
+        signals.emplace_back(*this->presentation.render_finished[this->presentation.acquired_image], 0, vk::PipelineStageFlagBits2::eAllCommands, 0);
+        this->graphics.queue.submit2(
+            vk::SubmitInfo2{
+                {},
+                static_cast<std::uint32_t>(waits.size()),
+                waits.data(),
+                1,
+                &command_info,
+                static_cast<std::uint32_t>(signals.size()),
+                signals.data(),
+            },
+            *this->frames.fences[this->frames.index]);
+
+        const vk::Semaphore render_finished = *this->presentation.render_finished[this->presentation.acquired_image];
+        const vk::SwapchainKHR swapchain    = *this->presentation.swapchain;
+        vk::Result present_result{};
+        try {
+            present_result = this->graphics.queue.presentKHR(vk::PresentInfoKHR{
+                1,
+                &render_finished,
+                1,
+                &swapchain,
+                &this->presentation.acquired_image,
+            });
+        } catch (const vk::OutOfDateKHRError&) {
+            this->recreate_swapchain();
+            return false;
+        }
+        if (this->presentation.acquired_suboptimal || present_result == vk::Result::eSuboptimalKHR) this->recreate_swapchain();
+        this->frames.index = (this->frames.index + 1u) % frames_in_flight;
+        return true;
+    }
+
+    GpuUploadSlice Spectra::stage_upload(const std::span<const std::byte> data, const vk::DeviceSize alignment) {
+        const std::uint32_t frame         = this->frames.index;
+        const vk::DeviceSize local_offset = align_up(this->uploads.offsets[frame], alignment);
+        if (local_offset + data.size_bytes() > upload_frame_size) throw std::runtime_error("Spectra per-frame upload ring is exhausted");
+        const vk::DeviceSize offset = frame * upload_frame_size + local_offset;
+        std::memcpy(static_cast<std::byte*>(this->uploads.buffer.mapped) + offset, data.data(), data.size_bytes());
+        this->uploads.offsets[frame] = local_offset + data.size_bytes();
+        return {
+            *this->uploads.buffer.buffer,
+            offset,
+            data.size_bytes(),
+        };
+    }
+
+    void Spectra::defer_destruction(std::move_only_function<void()> destruction) {
+        this->deferred.destructions[this->frames.index].push_back(std::move(destruction));
+    }
+
+    void Spectra::enqueue_external_wait(const GpuExternalTimeline& timeline, const std::uint64_t value, const vk::PipelineStageFlags2 stages) {
+        this->frames.waits[this->frames.index].emplace_back(*timeline.semaphore, value, stages, 0);
+    }
+
+    void Spectra::enqueue_external_signal(const GpuExternalTimeline& timeline, const std::uint64_t value, const vk::PipelineStageFlags2 stages) {
+        this->frames.signals[this->frames.index].emplace_back(*timeline.semaphore, value, stages, 0);
+    }
+
     GpuBuffer Spectra::create_buffer(const vk::DeviceSize size, const vk::BufferUsageFlags usage, const vk::MemoryPropertyFlags memory_properties, const bool mapped) {
-        const vk::raii::Device& logical_device = this->graphics.logical_device;
+        const vk::raii::Device& device = this->graphics.device;
         GpuBuffer result{};
         result.size   = size;
         result.buffer = vk::raii::Buffer{
-            logical_device,
+            device,
             vk::BufferCreateInfo{{}, size, usage, vk::SharingMode::eExclusive},
         };
-        const auto requirements = logical_device.getBufferMemoryRequirements2<vk::MemoryRequirements2, vk::MemoryDedicatedRequirements>(vk::BufferMemoryRequirementsInfo2{*result.buffer});
-        result.allocation       = this->memory.allocator->allocate(requirements.get<vk::MemoryRequirements2>().memoryRequirements, memory_properties, static_cast<bool>(usage & vk::BufferUsageFlagBits::eShaderDeviceAddress), GpuAllocator::ResourceClass::Buffer, requirements.get<vk::MemoryDedicatedRequirements>().requiresDedicatedAllocation, requirements.get<vk::MemoryDedicatedRequirements>().prefersDedicatedAllocation, *result.buffer, {});
-        result.buffer.bindMemory(this->memory.allocator->memory(result.allocation), this->memory.allocator->offset(result.allocation));
-        if (static_cast<bool>(usage & vk::BufferUsageFlagBits::eShaderDeviceAddress)) result.address = logical_device.getBufferAddress(vk::BufferDeviceAddressInfo{*result.buffer});
+        const auto requirements = device.getBufferMemoryRequirements2<vk::MemoryRequirements2, vk::MemoryDedicatedRequirements>(vk::BufferMemoryRequirementsInfo2{*result.buffer});
+        result.allocation       = this->allocator->allocate({
+                  .requirements       = requirements.get<vk::MemoryRequirements2>().memoryRequirements,
+                  .properties         = memory_properties,
+                  .resource_class     = GpuAllocator::ResourceClass::Buffer,
+                  .device_address     = static_cast<bool>(usage & vk::BufferUsageFlagBits::eShaderDeviceAddress),
+                  .requires_dedicated = static_cast<bool>(requirements.get<vk::MemoryDedicatedRequirements>().requiresDedicatedAllocation),
+                  .prefers_dedicated  = static_cast<bool>(requirements.get<vk::MemoryDedicatedRequirements>().prefersDedicatedAllocation),
+                  .dedicated_buffer   = *result.buffer,
+        });
+        result.buffer.bindMemory(this->allocator->memory(result.allocation), this->allocator->offset(result.allocation));
+        if (static_cast<bool>(usage & vk::BufferUsageFlagBits::eShaderDeviceAddress)) result.address = device.getBufferAddress(vk::BufferDeviceAddressInfo{*result.buffer});
         if (mapped) {
-            result.mapped = this->memory.allocator->mapped(result.allocation);
+            result.mapped = this->allocator->mapped(result.allocation);
             if (!result.mapped) throw std::runtime_error("Spectra cannot map a GPU buffer allocated from non-host-visible memory");
         }
         return result;
     }
 
-    GpuBuffer Spectra::create_external_buffer(const vk::DeviceSize size, const vk::BufferUsageFlags usage) {
-        const vk::raii::Device& logical_device = this->graphics.logical_device;
-        const vk::ExternalMemoryBufferCreateInfo external_buffer{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32};
-        GpuBuffer result{};
-        result.size   = size;
-        result.buffer = vk::raii::Buffer{
-            logical_device,
-            vk::BufferCreateInfo{
-                {},
-                size,
-                usage,
-                vk::SharingMode::eExclusive,
-                0,
-                nullptr,
-                &external_buffer,
-            },
-        };
-        const vk::MemoryRequirements requirements           = logical_device.getBufferMemoryRequirements2<vk::MemoryRequirements2, vk::MemoryDedicatedRequirements>(vk::BufferMemoryRequirementsInfo2{*result.buffer}).get<vk::MemoryRequirements2>().memoryRequirements;
-        const vk::PhysicalDeviceMemoryProperties properties = this->graphics.physical_device.getMemoryProperties();
-        std::uint32_t memory_type                           = properties.memoryTypeCount;
-        for (std::uint32_t index = 0; index < properties.memoryTypeCount; ++index)
-            if ((requirements.memoryTypeBits & (1u << index)) != 0 && static_cast<bool>(properties.memoryTypes[index].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal)) {
-                memory_type = index;
-                break;
-            }
-        if (memory_type == properties.memoryTypeCount) throw std::runtime_error("Spectra cannot allocate device-local exportable Vulkan memory");
-
-        const vk::MemoryDedicatedAllocateInfo dedicated{{}, *result.buffer};
-        const vk::MemoryAllocateFlagsInfo flags{vk::MemoryAllocateFlagBits::eDeviceAddress, 0, &dedicated};
-        const vk::ExportMemoryAllocateInfo external_memory{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32, &flags};
-        result.external_memory = vk::raii::DeviceMemory{
-            logical_device,
-            vk::MemoryAllocateInfo{
-                requirements.size,
-                memory_type,
-                &external_memory,
-            },
-        };
-        result.buffer.bindMemory(*result.external_memory, 0);
-        if (static_cast<bool>(usage & vk::BufferUsageFlagBits::eShaderDeviceAddress)) result.address = logical_device.getBufferAddress(vk::BufferDeviceAddressInfo{*result.buffer});
-        return result;
-    }
-
-    void* Spectra::export_memory_handle(const GpuBuffer& buffer) const {
-        if (!*buffer.external_memory) throw std::runtime_error("Spectra cannot export a non-external GPU buffer");
-        return this->graphics.logical_device.getMemoryWin32HandleKHR(vk::MemoryGetWin32HandleInfoKHR{*buffer.external_memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32});
-    }
-
-    GpuExternalTimeline Spectra::create_external_timeline() {
-        const vk::SemaphoreTypeCreateInfo timeline_type{vk::SemaphoreType::eTimeline, 0};
-        const vk::ExportSemaphoreCreateInfo export_info{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32, &timeline_type};
-        GpuExternalTimeline result{};
-        result.semaphore = vk::raii::Semaphore{this->graphics.logical_device, vk::SemaphoreCreateInfo{{}, &export_info}};
-        return result;
-    }
-
-    void* Spectra::export_semaphore_handle(const GpuExternalTimeline& timeline) const {
-        return this->graphics.logical_device.getSemaphoreWin32HandleKHR(vk::SemaphoreGetWin32HandleInfoKHR{*timeline.semaphore, vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32});
-    }
-
-    GpuIdentity Spectra::identity() const noexcept {
-        return this->graphics.identity;
-    }
-
-    void Spectra::wait_external_consumed(const GpuExternalTimeline& timeline, const std::uint64_t value) const {
-        const vk::Semaphore semaphore = *timeline.semaphore;
-        const vk::Result result       = this->graphics.logical_device.waitSemaphores(vk::SemaphoreWaitInfo{{}, 1, &semaphore, &value}, std::numeric_limits<std::uint64_t>::max());
-        if (result != vk::Result::eSuccess) throw std::runtime_error("Vulkan failed to wait for a consumed external output slot");
-    }
-
-    void Spectra::signal_external_host(const GpuExternalTimeline& timeline, const std::uint64_t value) const {
-        this->graphics.logical_device.signalSemaphore(vk::SemaphoreSignalInfo{*timeline.semaphore, value});
-    }
-
-    void Spectra::wait_external(const GpuExternalTimeline& timeline, const std::uint64_t value, const vk::PipelineStageFlags2 stages) {
-        this->frames.external_waits[this->frames.index].emplace_back(*timeline.semaphore, value, stages, 0);
-    }
-
-    void Spectra::signal_external(const GpuExternalTimeline& timeline, const std::uint64_t value, const vk::PipelineStageFlags2 stages) {
-        this->frames.external_signals[this->frames.index].emplace_back(*timeline.semaphore, value, stages, 0);
-    }
-
     GpuImage Spectra::create_image_2d(const vk::Extent2D extent, const vk::Format format, const vk::ImageUsageFlags usage, const vk::ImageAspectFlags aspect, const std::uint32_t mip_levels) {
-        const vk::raii::Device& logical_device = this->graphics.logical_device;
+        const vk::raii::Device& device = this->graphics.device;
         GpuImage result{};
         result.extent     = extent;
         result.format     = format;
@@ -825,12 +813,19 @@ namespace spectra {
             nullptr,
             vk::ImageLayout::eUndefined,
         };
-        result.image            = vk::raii::Image{logical_device, image_create_info};
-        const auto requirements = logical_device.getImageMemoryRequirements2<vk::MemoryRequirements2, vk::MemoryDedicatedRequirements>(vk::ImageMemoryRequirementsInfo2{*result.image});
-        result.allocation       = this->memory.allocator->allocate(requirements.get<vk::MemoryRequirements2>().memoryRequirements, vk::MemoryPropertyFlagBits::eDeviceLocal, false, GpuAllocator::ResourceClass::OptimalImage, requirements.get<vk::MemoryDedicatedRequirements>().requiresDedicatedAllocation, requirements.get<vk::MemoryDedicatedRequirements>().prefersDedicatedAllocation, {}, *result.image);
-        result.image.bindMemory(this->memory.allocator->memory(result.allocation), this->memory.allocator->offset(result.allocation));
+        result.image            = vk::raii::Image{device, image_create_info};
+        const auto requirements = device.getImageMemoryRequirements2<vk::MemoryRequirements2, vk::MemoryDedicatedRequirements>(vk::ImageMemoryRequirementsInfo2{*result.image});
+        result.allocation       = this->allocator->allocate({
+                  .requirements       = requirements.get<vk::MemoryRequirements2>().memoryRequirements,
+                  .properties         = vk::MemoryPropertyFlagBits::eDeviceLocal,
+                  .resource_class     = GpuAllocator::ResourceClass::OptimalImage,
+                  .requires_dedicated = static_cast<bool>(requirements.get<vk::MemoryDedicatedRequirements>().requiresDedicatedAllocation),
+                  .prefers_dedicated  = static_cast<bool>(requirements.get<vk::MemoryDedicatedRequirements>().prefersDedicatedAllocation),
+                  .dedicated_image    = *result.image,
+        });
+        result.image.bindMemory(this->allocator->memory(result.allocation), this->allocator->offset(result.allocation));
         result.view = vk::raii::ImageView{
-            logical_device,
+            device,
             vk::ImageViewCreateInfo{
                 {},
                 *result.image,
@@ -841,48 +836,6 @@ namespace spectra {
             },
         };
         return result;
-    }
-
-    GpuUploadSlice Spectra::stage_upload(const std::span<const std::byte> data, const vk::DeviceSize alignment) {
-        const std::uint32_t frame         = this->frames.index;
-        const vk::DeviceSize local_offset = align_up(this->uploads.offsets[frame], alignment);
-        if (local_offset + data.size_bytes() > upload_frame_size) throw std::runtime_error("Spectra per-frame upload ring is exhausted");
-        const vk::DeviceSize offset = frame * upload_frame_size + local_offset;
-        std::memcpy(static_cast<std::byte*>(this->uploads.buffer.mapped) + offset, data.data(), data.size_bytes());
-        this->uploads.offsets[frame] = local_offset + data.size_bytes();
-        return {
-            *this->uploads.buffer.buffer,
-            offset,
-            data.size_bytes(),
-        };
-    }
-
-    void Spectra::defer(std::move_only_function<void()> destruction) {
-        this->deferred.destructions[this->frames.index].push_back(std::move(destruction));
-    }
-
-    void Spectra::immediate(std::move_only_function<void(const vk::raii::CommandBuffer&)> record) {
-        vk::raii::CommandBuffers command_buffers{
-            this->graphics.logical_device,
-            vk::CommandBufferAllocateInfo{
-                *this->immediate_submission.command_pool,
-                vk::CommandBufferLevel::ePrimary,
-                1,
-            },
-        };
-        const vk::raii::CommandBuffer& command_buffer = command_buffers.front();
-        command_buffer.begin(vk::CommandBufferBeginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-        record(command_buffer);
-        command_buffer.end();
-        const vk::CommandBuffer raw_command_buffer = *command_buffer;
-        this->graphics.queue.submit(vk::SubmitInfo{
-            0,
-            nullptr,
-            nullptr,
-            1,
-            &raw_command_buffer,
-        });
-        this->graphics.queue.waitIdle();
     }
 
     DescriptorHandle Spectra::allocate_resource_descriptor() {
@@ -919,7 +872,7 @@ namespace spectra {
         this->deferred.sampler_indices[this->frames.index].push_back(handle.index);
     }
 
-    void Spectra::write_storage_image(const DescriptorHandle handle, const GpuImage& image, const vk::ImageLayout layout) {
+    void Spectra::write_storage_image_descriptor(const DescriptorHandle handle, const GpuImage& image, const vk::ImageLayout layout) {
         const vk::ImageViewCreateInfo view_create_info{
             {},
             *image.image,
@@ -937,10 +890,10 @@ namespace spectra {
             static_cast<std::byte*>(this->descriptors.resource_heap.mapped) + static_cast<std::size_t>(handle.index) * this->descriptors.resource_stride,
             static_cast<std::size_t>(align_up(this->descriptors.properties.imageDescriptorSize, this->descriptors.properties.imageDescriptorAlignment)),
         };
-        this->graphics.logical_device.writeResourceDescriptorsEXT(descriptor, destination);
+        this->graphics.device.writeResourceDescriptorsEXT(descriptor, destination);
     }
 
-    void Spectra::write_sampled_image(const DescriptorHandle handle, const GpuImage& image, const vk::ImageLayout layout) {
+    void Spectra::write_sampled_image_descriptor(const DescriptorHandle handle, const GpuImage& image, const vk::ImageLayout layout) {
         const vk::ImageViewCreateInfo view_create_info{
             {},
             *image.image,
@@ -958,10 +911,10 @@ namespace spectra {
             static_cast<std::byte*>(this->descriptors.resource_heap.mapped) + static_cast<std::size_t>(handle.index) * this->descriptors.resource_stride,
             static_cast<std::size_t>(align_up(this->descriptors.properties.imageDescriptorSize, this->descriptors.properties.imageDescriptorAlignment)),
         };
-        this->graphics.logical_device.writeResourceDescriptorsEXT(descriptor, destination);
+        this->graphics.device.writeResourceDescriptorsEXT(descriptor, destination);
     }
 
-    void Spectra::write_buffer(const DescriptorHandle handle, const vk::DescriptorType type, const GpuBuffer& buffer) {
+    void Spectra::write_buffer_descriptor(const DescriptorHandle handle, const vk::DescriptorType type, const GpuBuffer& buffer) {
         const vk::DeviceAddressRangeEXT address_range{buffer.address, buffer.size};
         const vk::ResourceDescriptorInfoEXT descriptor{
             type,
@@ -971,15 +924,113 @@ namespace spectra {
             static_cast<std::byte*>(this->descriptors.resource_heap.mapped) + static_cast<std::size_t>(handle.index) * this->descriptors.resource_stride,
             static_cast<std::size_t>(align_up(this->descriptors.properties.bufferDescriptorSize, this->descriptors.properties.bufferDescriptorAlignment)),
         };
-        this->graphics.logical_device.writeResourceDescriptorsEXT(descriptor, destination);
+        this->graphics.device.writeResourceDescriptorsEXT(descriptor, destination);
     }
 
-    void Spectra::write_sampler(const DescriptorHandle handle, const vk::SamplerCreateInfo& sampler) {
+    void Spectra::write_sampler_descriptor(const DescriptorHandle handle, const vk::SamplerCreateInfo& sampler) {
         const vk::HostAddressRangeEXT destination{
             static_cast<std::byte*>(this->descriptors.sampler_heap.mapped) + static_cast<std::size_t>(handle.index) * this->descriptors.sampler_stride,
             static_cast<std::size_t>(this->descriptors.sampler_stride),
         };
-        this->graphics.logical_device.writeSamplerDescriptorsEXT(sampler, destination);
+        this->graphics.device.writeSamplerDescriptorsEXT(sampler, destination);
+    }
+
+    GpuIdentity Spectra::gpu_identity() const noexcept {
+        return this->graphics.identity;
+    }
+
+    GpuBuffer Spectra::create_external_buffer(const vk::DeviceSize size, const vk::BufferUsageFlags usage) {
+        const vk::raii::Device& device = this->graphics.device;
+        const vk::ExternalMemoryBufferCreateInfo external_buffer{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32};
+        GpuBuffer result{};
+        result.size   = size;
+        result.buffer = vk::raii::Buffer{
+            device,
+            vk::BufferCreateInfo{
+                {},
+                size,
+                usage,
+                vk::SharingMode::eExclusive,
+                0,
+                nullptr,
+                &external_buffer,
+            },
+        };
+        const vk::MemoryRequirements requirements           = device.getBufferMemoryRequirements2<vk::MemoryRequirements2, vk::MemoryDedicatedRequirements>(vk::BufferMemoryRequirementsInfo2{*result.buffer}).get<vk::MemoryRequirements2>().memoryRequirements;
+        const vk::PhysicalDeviceMemoryProperties properties = this->graphics.physical_device.getMemoryProperties();
+        std::uint32_t memory_type                           = properties.memoryTypeCount;
+        for (std::uint32_t index = 0; index < properties.memoryTypeCount; ++index)
+            if ((requirements.memoryTypeBits & (1u << index)) != 0 && static_cast<bool>(properties.memoryTypes[index].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal)) {
+                memory_type = index;
+                break;
+            }
+        if (memory_type == properties.memoryTypeCount) throw std::runtime_error("Spectra cannot allocate device-local exportable Vulkan memory");
+
+        const vk::MemoryDedicatedAllocateInfo dedicated{{}, *result.buffer};
+        const vk::MemoryAllocateFlagsInfo flags{vk::MemoryAllocateFlagBits::eDeviceAddress, 0, &dedicated};
+        const vk::ExportMemoryAllocateInfo external_memory{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32, &flags};
+        result.external_memory = vk::raii::DeviceMemory{
+            device,
+            vk::MemoryAllocateInfo{
+                requirements.size,
+                memory_type,
+                &external_memory,
+            },
+        };
+        result.buffer.bindMemory(*result.external_memory, 0);
+        if (static_cast<bool>(usage & vk::BufferUsageFlagBits::eShaderDeviceAddress)) result.address = device.getBufferAddress(vk::BufferDeviceAddressInfo{*result.buffer});
+        return result;
+    }
+
+    void* Spectra::export_memory_handle(const GpuBuffer& buffer) const {
+        if (!*buffer.external_memory) throw std::runtime_error("Spectra cannot export a non-external GPU buffer");
+        return this->graphics.device.getMemoryWin32HandleKHR(vk::MemoryGetWin32HandleInfoKHR{*buffer.external_memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32});
+    }
+
+    GpuExternalTimeline Spectra::create_external_timeline() {
+        const vk::SemaphoreTypeCreateInfo timeline_type{vk::SemaphoreType::eTimeline, 0};
+        const vk::ExportSemaphoreCreateInfo export_info{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32, &timeline_type};
+        GpuExternalTimeline result{};
+        result.semaphore = vk::raii::Semaphore{this->graphics.device, vk::SemaphoreCreateInfo{{}, &export_info}};
+        return result;
+    }
+
+    void* Spectra::export_semaphore_handle(const GpuExternalTimeline& timeline) const {
+        return this->graphics.device.getSemaphoreWin32HandleKHR(vk::SemaphoreGetWin32HandleInfoKHR{*timeline.semaphore, vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32});
+    }
+
+    void Spectra::wait_external_timeline(const GpuExternalTimeline& timeline, const std::uint64_t value) const {
+        const vk::Semaphore semaphore = *timeline.semaphore;
+        const vk::Result result       = this->graphics.device.waitSemaphores(vk::SemaphoreWaitInfo{{}, 1, &semaphore, &value}, std::numeric_limits<std::uint64_t>::max());
+        if (result != vk::Result::eSuccess) throw std::runtime_error("Vulkan failed to wait for a consumed external output slot");
+    }
+
+    void Spectra::signal_external_timeline(const GpuExternalTimeline& timeline, const std::uint64_t value) const {
+        this->graphics.device.signalSemaphore(vk::SemaphoreSignalInfo{*timeline.semaphore, value});
+    }
+
+    void Spectra::submit_immediate(std::move_only_function<void(const vk::raii::CommandBuffer&)> record) {
+        vk::raii::CommandBuffers command_buffers{
+            this->graphics.device,
+            vk::CommandBufferAllocateInfo{
+                *this->immediate_command_pool,
+                vk::CommandBufferLevel::ePrimary,
+                1,
+            },
+        };
+        const vk::raii::CommandBuffer& command_buffer = command_buffers.front();
+        command_buffer.begin(vk::CommandBufferBeginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        record(command_buffer);
+        command_buffer.end();
+        const vk::CommandBuffer raw_command_buffer = *command_buffer;
+        this->graphics.queue.submit(vk::SubmitInfo{
+            0,
+            nullptr,
+            nullptr,
+            1,
+            &raw_command_buffer,
+        });
+        this->graphics.queue.waitIdle();
     }
 
     void Spectra::bind_descriptor_heaps(const vk::raii::CommandBuffer& command_buffer) const noexcept {
@@ -1006,5 +1057,9 @@ namespace spectra {
             offset,
             vk::HostAddressRangeConstEXT{data.data(), data.size_bytes()},
         });
+    }
+
+    void Spectra::wait_idle() const {
+        this->graphics.device.waitIdle();
     }
 } // namespace spectra

@@ -165,7 +165,6 @@ namespace spectra::workspace {
         void advance_playback();
         void reset_playback();
         void set_simulation_step(std::uint64_t step);
-        void set_export_frame(std::uint64_t frame, bool reset);
         void set_dynamic_parameters(std::size_t system, std::vector<scene::DynamicParameterSetting> parameters, bool reset);
         [[nodiscard]] std::vector<scene::dynamics::SystemState>& dynamic_systems() noexcept;
         [[nodiscard]] std::span<const scene::dynamics::ProviderDescriptor> dynamic_providers() const noexcept;

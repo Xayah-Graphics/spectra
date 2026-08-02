@@ -30,12 +30,5 @@ namespace spectra::app {
 } // namespace spectra::app
 
 namespace spectra {
-    export struct SequenceExport {
-        std::filesystem::path directory{};
-        std::uint64_t first_frame{};
-        std::uint64_t last_frame{};
-        render::ImageFileFormat format{render::ImageFileFormat::Exr};
-    };
-
-    export void run_application(std::optional<std::filesystem::path> scene_path, const std::filesystem::path& scene_library, std::vector<std::filesystem::path> scene_roots, const std::filesystem::path& shader_directory, std::optional<std::uint64_t> maximum_frame_count = std::nullopt, bool start_pathtracer = false, std::optional<SequenceExport> sequence_export = std::nullopt);
+    export void run_application(std::optional<std::filesystem::path> scene_path, const std::filesystem::path& scene_library, std::vector<std::filesystem::path> scene_roots, const std::filesystem::path& shader_directory, std::optional<std::uint64_t> maximum_frame_count = std::nullopt, bool start_pathtracer = false);
 } // namespace spectra

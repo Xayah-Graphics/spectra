@@ -6,12 +6,13 @@ module;
 #include <GLFW/glfw3native.h>
 
 #include <exr.h>
-#include <glaze/glaze.hpp>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <shlobj.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+
+#include <glaze/glaze.hpp>
 
 module spectra.application;
 
@@ -190,15 +191,15 @@ namespace spectra::app {
             },
         };
         this->shaders = vk::raii::ShaderEXTs{runtime.device, create_infos};
-        runtime.write_sampler(this->sampler_descriptor, vk::SamplerCreateInfo{
-                                                        {},
-                                                        vk::Filter::eLinear,
-                                                        vk::Filter::eLinear,
-                                                        vk::SamplerMipmapMode::eNearest,
-                                                        vk::SamplerAddressMode::eClampToEdge,
-                                                        vk::SamplerAddressMode::eClampToEdge,
-                                                        vk::SamplerAddressMode::eClampToEdge,
-                                                    });
+        runtime.write_sampler_descriptor(this->sampler_descriptor, vk::SamplerCreateInfo{
+                                                                       {},
+                                                                       vk::Filter::eLinear,
+                                                                       vk::Filter::eLinear,
+                                                                       vk::SamplerMipmapMode::eNearest,
+                                                                       vk::SamplerAddressMode::eClampToEdge,
+                                                                       vk::SamplerAddressMode::eClampToEdge,
+                                                                       vk::SamplerAddressMode::eClampToEdge,
+                                                                   });
     }
 
     Presenter::~Presenter() {
@@ -468,7 +469,7 @@ namespace spectra {
             void ensure(const vk::Extent2D extent) {
                 if (*this->image.image && this->image.extent == extent) return;
                 this->image = this->runtime->create_image_2d(extent, vk::Format::eB8G8R8A8Srgb, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc);
-                this->runtime->write_sampled_image(this->descriptor, this->image, vk::ImageLayout::eShaderReadOnlyOptimal);
+                this->runtime->write_sampled_image_descriptor(this->descriptor, this->image, vk::ImageLayout::eShaderReadOnlyOptimal);
                 this->layout = vk::ImageLayout::eUndefined;
             }
 
@@ -487,18 +488,15 @@ namespace spectra {
 
             CaptureManager(Spectra& runtime, const std::uint32_t frame_count) : runtime(&runtime), slots(frame_count) {}
 
-            void request(const render::ImageFileFormat format, const workspace::RenderMode mode, const scene::Film& film, std::optional<std::filesystem::path> path = std::nullopt) {
-                const std::int64_t timestamp         = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                const std::string_view renderer_name = mode == workspace::RenderMode::Rasterizer ? "rasterizer" : "pathtracer";
-                const std::string_view extension     = format == render::ImageFileFormat::Png ? "png" : "exr";
-                if (!path) {
-                    const std::filesystem::path directory = known_folder(FOLDERID_Pictures) / "Spectra";
-                    std::filesystem::create_directories(directory);
-                    path = directory / std::format("spectra-{}-{}.{}", renderer_name, timestamp, extension);
-                }
+            void request(const render::ImageFileFormat format, const workspace::RenderMode mode, const scene::Film& film) {
+                const std::int64_t timestamp          = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                const std::string_view renderer_name  = mode == workspace::RenderMode::Rasterizer ? "rasterizer" : "pathtracer";
+                const std::string_view extension      = format == render::ImageFileFormat::Png ? "png" : "exr";
+                const std::filesystem::path directory = known_folder(FOLDERID_Pictures) / "Spectra";
+                std::filesystem::create_directories(directory);
                 this->requested = Pending{
                     format,
-                    std::move(*path),
+                    directory / std::format("spectra-{}-{}.{}", renderer_name, timestamp, extension),
                     {},
                     format == render::ImageFileFormat::Exr && mode == workspace::RenderMode::PathTracer && film.gbuffer,
                     film.color_space,
@@ -611,26 +609,13 @@ namespace spectra {
         };
 
         struct Application {
-            enum class ExportPhase : std::uint8_t {
-                Prepare,
-                Advance,
-                Render,
-                Capture,
-                Complete,
-            };
-
-            Application(std::optional<std::filesystem::path> scene_path, const std::filesystem::path& scene_library, std::vector<std::filesystem::path> scene_roots, const std::filesystem::path& shader_directory, const bool start_pathtracer, std::optional<SequenceExport> sequence_export) : com{}, runtime{}, imgui_platform(this->runtime.window), scene_library_path(scene_library), session_scene_roots(std::move(scene_roots)), shader_directory(shader_directory), presenter(this->runtime, shader_directory), imgui_renderer(this->runtime, shader_directory, Spectra::frames_in_flight), viewport_display(this->runtime), capture(this->runtime, Spectra::frames_in_flight), sequence_export(std::move(sequence_export)) {
+            Application(std::optional<std::filesystem::path> scene_path, const std::filesystem::path& scene_library, std::vector<std::filesystem::path> scene_roots, const std::filesystem::path& shader_directory, const bool start_pathtracer) : com{}, runtime{}, imgui_platform(this->runtime.window), scene_library_path(scene_library), session_scene_roots(std::move(scene_roots)), shader_directory(shader_directory), presenter(this->runtime, shader_directory), imgui_renderer(this->runtime, shader_directory, Spectra::frames_in_flight), viewport_display(this->runtime), capture(this->runtime, Spectra::frames_in_flight) {
                 if (scene_path) {
                     this->workspace.emplace(this->runtime, shader_directory, *scene_path, Spectra::frames_in_flight);
                     if (start_pathtracer) this->workspace->mode = workspace::RenderMode::PathTracer;
                 } else {
                     this->scene_library_visible = true;
                     this->refresh_scene_library();
-                }
-                if (this->sequence_export) {
-                    if (!this->workspace->has_dynamic_setup()) throw std::runtime_error("Animation sequence export requires a Scene Dynamic Setup");
-                    std::filesystem::create_directories(this->sequence_export->directory);
-                    this->sequence_frame = this->sequence_export->first_frame;
                 }
             }
 
@@ -658,10 +643,9 @@ namespace spectra {
                         continue;
                     }
                     const std::chrono::steady_clock::time_point simulation_time = std::chrono::steady_clock::now();
-                    const bool simulation_clock_active                         = this->workspace && !this->sequence_export && !this->scene_library_visible;
+                    const bool simulation_clock_active                          = this->workspace && !this->scene_library_visible;
                     if (this->workspace) {
                         if (const std::optional<CaptureManager::Completed> completed = this->capture.consume(frame->index, *this->workspace)) {
-                            if (this->sequence_export) this->complete_sequence_frame(*completed);
                             if (completed->error.empty()) {
                                 this->workspace_ui.status       = std::format("Capture written  {}", completed->path.filename().string());
                                 this->workspace_ui.status_error = false;
@@ -684,15 +668,14 @@ namespace spectra {
                     ImGui_ImplGlfw_NewFrame();
                     ImGui::NewFrame();
                     const app::WorkspaceUiActions actions = this->scene_library_visible ? this->workspace_ui.draw_scene_library(this->scene_library_scenes, this->scene_library_problems, this->workspace.has_value()) : this->workspace_ui.draw(*this->workspace, this->viewport_display.texture_id);
-                    this->runtime.drag_regions            = actions.drag_regions;
+                    this->runtime.window_drag_regions     = actions.drag_regions;
                     this->handle_actions(actions);
-                    if (!this->simulation_clock_valid && this->workspace && !this->sequence_export && !this->scene_library_visible) {
+                    if (!this->simulation_clock_valid && this->workspace && !this->scene_library_visible) {
                         this->simulation_clock       = std::chrono::steady_clock::now();
                         this->simulation_clock_valid = true;
                     }
                     ImGui::Render();
                     if (this->workspace) {
-                        this->update_sequence_export();
                         this->resize_viewport(frame->target.extent);
                         const vk::Extent2D viewport_extent = this->viewport_display.image.extent;
                         this->workspace->prepare(frame->command_buffer, viewport_extent);
@@ -706,54 +689,7 @@ namespace spectra {
                     }
                     this->imgui_renderer.record(*ImGui::GetDrawData(), frame->command_buffer, frame->index, frame->target.image, frame->target.view, frame->target.extent, frame->target.layout, vk::ImageLayout::ePresentSrcKHR);
                     if (this->runtime.present_frame()) ++this->frame_number;
-                    if (this->export_phase == ExportPhase::Complete) break;
                 }
-            }
-
-            void update_sequence_export() {
-                if (!this->sequence_export) return;
-                if (this->export_phase == ExportPhase::Prepare) {
-                    this->workspace->set_export_frame(this->sequence_frame, this->sequence_frame == this->sequence_export->first_frame);
-                    this->export_phase = ExportPhase::Advance;
-                    return;
-                }
-                if (this->export_phase == ExportPhase::Advance) {
-                    if (this->workspace->timeline().step != this->sequence_frame) return;
-                    this->workspace->pathtracer_paused = false;
-                    this->export_phase                = ExportPhase::Render;
-                    return;
-                }
-                if (this->export_phase != ExportPhase::Render) return;
-                if (this->workspace->mode == workspace::RenderMode::PathTracer && this->workspace->accumulated_path_samples() < this->workspace->scene.sampler().samples_per_pixel) return;
-                const render::ImageFileFormat format = this->sequence_export->format;
-                const std::string_view extension     = format == render::ImageFileFormat::Png ? "png" : "exr";
-                this->sequence_path                  = this->sequence_export->directory / std::format("frame-{:06}.{}", this->sequence_frame, extension);
-                this->capture.request(format, this->workspace->mode, this->workspace->scene.film(), this->sequence_path);
-                this->workspace->pathtracer_paused = true;
-                this->export_phase                = ExportPhase::Capture;
-            }
-
-            void complete_sequence_frame(const CaptureManager::Completed& completed) {
-                if (this->export_phase != ExportPhase::Capture) return;
-                if (!completed.error.empty()) throw std::runtime_error(completed.error);
-                const scene::dynamics::TimelineState timeline = this->workspace->timeline();
-                const scene::Sampler& sampler                   = this->workspace->scene.sampler();
-                std::ofstream metadata{this->sequence_path.replace_extension(".json")};
-                if (!metadata) throw std::runtime_error("Failed to create animation frame metadata");
-                metadata << "{\n"
-                         << "  \"simulationStep\": " << this->sequence_frame << ",\n"
-                         << "  \"simulationSeconds\": " << std::setprecision(17) << timeline.seconds << ",\n"
-                         << "  \"renderer\": \"" << (this->workspace->mode == workspace::RenderMode::Rasterizer ? "rasterizer" : "pathtracer") << "\",\n"
-                         << "  \"samplesPerPixel\": " << (this->workspace->mode == workspace::RenderMode::PathTracer ? this->workspace->accumulated_path_samples() : 1u) << ",\n"
-                         << "  \"seed\": " << sampler.seed << "\n"
-                         << "}\n";
-                if (!metadata) throw std::runtime_error("Failed to write animation frame metadata");
-                if (this->sequence_frame == this->sequence_export->last_frame) {
-                    this->export_phase = ExportPhase::Complete;
-                    return;
-                }
-                ++this->sequence_frame;
-                this->export_phase = ExportPhase::Prepare;
             }
 
             void resize_viewport(const vk::Extent2D requested) {
@@ -765,7 +701,7 @@ namespace spectra {
             [[nodiscard]] bool confirm_scene_replacement() {
                 if (!this->workspace || !this->workspace->dirty()) return true;
                 this->simulation_clock_valid = false;
-                const int result = MessageBoxW(glfwGetWin32Window(this->runtime.window), L"The current Spectra scene has unsaved changes.\n\nSave before continuing?", L"Spectra", MB_ICONWARNING | MB_YESNOCANCEL);
+                const int result             = MessageBoxW(glfwGetWin32Window(this->runtime.window), L"The current Spectra scene has unsaved changes.\n\nSave before continuing?", L"Spectra", MB_ICONWARNING | MB_YESNOCANCEL);
                 if (result == IDCANCEL) return false;
                 if (result == IDYES) this->workspace->save();
                 return true;
@@ -843,7 +779,7 @@ namespace spectra {
                             this->workspace_ui.status_error = false;
                         }
                     }
-                    if (!this->sequence_export && actions.capture) this->capture.request(*actions.capture, this->workspace->mode, this->workspace->scene.film());
+                    if (actions.capture) this->capture.request(*actions.capture, this->workspace->mode, this->workspace->scene.film());
                 } catch (const std::exception& error) {
                     this->workspace_ui.status       = error.what();
                     this->workspace_ui.status_error = true;
@@ -923,18 +859,14 @@ namespace spectra {
             app::ImGuiRenderer imgui_renderer;
             ViewportDisplay viewport_display;
             CaptureManager capture;
-            std::optional<SequenceExport> sequence_export{};
-            std::filesystem::path sequence_path{};
-            std::uint64_t sequence_frame{};
-            ExportPhase export_phase{ExportPhase::Prepare};
             std::uint64_t frame_number{};
             std::chrono::steady_clock::time_point simulation_clock{};
             bool simulation_clock_valid{};
         };
     } // namespace
 
-    void run_application(std::optional<std::filesystem::path> scene_path, const std::filesystem::path& scene_library, std::vector<std::filesystem::path> scene_roots, const std::filesystem::path& shader_directory, const std::optional<std::uint64_t> maximum_frame_count, const bool start_pathtracer, std::optional<SequenceExport> sequence_export) {
-        Application application{std::move(scene_path), scene_library, std::move(scene_roots), shader_directory, start_pathtracer, std::move(sequence_export)};
+    void run_application(std::optional<std::filesystem::path> scene_path, const std::filesystem::path& scene_library, std::vector<std::filesystem::path> scene_roots, const std::filesystem::path& shader_directory, const std::optional<std::uint64_t> maximum_frame_count, const bool start_pathtracer) {
+        Application application{std::move(scene_path), scene_library, std::move(scene_roots), shader_directory, start_pathtracer};
         application.run(maximum_frame_count);
     }
 } // namespace spectra

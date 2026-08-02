@@ -370,7 +370,7 @@ namespace spectra::pathtracer {
             }
             GpuBuffer staging = runtime.create_buffer(elements.size_bytes(), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
             std::memcpy(staging.mapped, elements.data(), elements.size_bytes());
-            runtime.immediate([&staging, &destination](const vk::raii::CommandBuffer& command_buffer) {
+            runtime.submit_immediate([&staging, &destination](const vk::raii::CommandBuffer& command_buffer) {
                 command_buffer.copyBuffer(*staging.buffer, *destination.buffer, vk::BufferCopy{0, 0, staging.size});
                 const vk::BufferMemoryBarrier2 dependency{
                     vk::PipelineStageFlagBits2::eCopy,
@@ -500,17 +500,17 @@ namespace spectra::pathtracer {
         this->cie_samples.resize(5u * 471u);
         std::memcpy(this->cie_samples.data(), cie.data() + 16, this->cie_samples.size() * sizeof(float));
         this->cie_spectra.buffer = upload_path_buffer(runtime, std::span<const std::byte>{cie}, nullptr);
-        runtime.write_buffer(this->cie_spectra.descriptor, vk::DescriptorType::eStorageBuffer, this->cie_spectra.buffer);
+        runtime.write_buffer_descriptor(this->cie_spectra.descriptor, vk::DescriptorType::eStorageBuffer, this->cie_spectra.buffer);
         constexpr std::array<std::uint32_t, 4> volume_zero{};
         this->volume_zero.buffer = upload_path_buffer(runtime, std::span<const std::uint32_t>{volume_zero}, nullptr);
-        runtime.write_buffer(this->volume_zero.descriptor, vk::DescriptorType::eStorageBuffer, this->volume_zero.buffer);
+        runtime.write_buffer_descriptor(this->volume_zero.descriptor, vk::DescriptorType::eStorageBuffer, this->volume_zero.buffer);
         this->rgb_to_spectrum.buffer = upload_path_buffer(runtime, std::as_bytes(std::span<const std::uint32_t>{this->spectrum_table_data}), nullptr);
-        runtime.write_buffer(this->rgb_to_spectrum.descriptor, vk::DescriptorType::eStorageBuffer, this->rgb_to_spectrum.buffer);
+        runtime.write_buffer_descriptor(this->rgb_to_spectrum.descriptor, vk::DescriptorType::eStorageBuffer, this->rgb_to_spectrum.buffer);
         const std::vector<std::byte> sampling_tables = load_sampling_tables(std::filesystem::path{SPECTRA_SPECTRAL_ASSET_DIRECTORY} / "sampling.tables");
         this->sampler.table_data.resize(sampling_tables.size() / sizeof(std::uint32_t));
         std::memcpy(this->sampler.table_data.data(), sampling_tables.data(), sampling_tables.size());
         this->sampler.tables.buffer = upload_path_buffer(runtime, std::span<const std::uint32_t>{this->sampler.table_data}, nullptr);
-        runtime.write_buffer(this->sampler.tables.descriptor, vk::DescriptorType::eStorageBuffer, this->sampler.tables.buffer);
+        runtime.write_buffer_descriptor(this->sampler.tables.descriptor, vk::DescriptorType::eStorageBuffer, this->sampler.tables.buffer);
         this->compile_sampler(scene.sampler, nullptr);
         this->compile_filter(scene.film, nullptr);
         this->compile(scene, nullptr);
@@ -618,16 +618,16 @@ namespace spectra::pathtracer {
         if (*this->filter.distribution.buffer.buffer) {
             const DescriptorHandle distribution_descriptor = this->runtime->allocate_resource_descriptor();
             const DescriptorHandle sensor_descriptor       = this->runtime->allocate_resource_descriptor();
-            this->runtime->write_buffer(distribution_descriptor, vk::DescriptorType::eStorageBuffer, new_distribution);
-            this->runtime->write_buffer(sensor_descriptor, vk::DescriptorType::eStorageBuffer, new_sensor_response);
+            this->runtime->write_buffer_descriptor(distribution_descriptor, vk::DescriptorType::eStorageBuffer, new_distribution);
+            this->runtime->write_buffer_descriptor(sensor_descriptor, vk::DescriptorType::eStorageBuffer, new_sensor_response);
             this->runtime->release_resource_descriptor(this->filter.distribution.descriptor);
             this->runtime->release_resource_descriptor(this->filter.sensor_response.descriptor);
-            this->runtime->defer([distribution_buffer = std::move(this->filter.distribution.buffer), sensor_buffer = std::move(this->filter.sensor_response.buffer)]() mutable {});
+            this->runtime->defer_destruction([distribution_buffer = std::move(this->filter.distribution.buffer), sensor_buffer = std::move(this->filter.sensor_response.buffer)]() mutable {});
             this->filter.distribution.descriptor    = distribution_descriptor;
             this->filter.sensor_response.descriptor = sensor_descriptor;
         } else {
-            this->runtime->write_buffer(this->filter.distribution.descriptor, vk::DescriptorType::eStorageBuffer, new_distribution);
-            this->runtime->write_buffer(this->filter.sensor_response.descriptor, vk::DescriptorType::eStorageBuffer, new_sensor_response);
+            this->runtime->write_buffer_descriptor(this->filter.distribution.descriptor, vk::DescriptorType::eStorageBuffer, new_distribution);
+            this->runtime->write_buffer_descriptor(this->filter.sensor_response.descriptor, vk::DescriptorType::eStorageBuffer, new_sensor_response);
         }
         this->filter.description            = film;
         this->filter.distribution.buffer    = std::move(new_distribution);
@@ -673,12 +673,12 @@ namespace spectra::pathtracer {
         GpuBuffer new_pixel_samples = upload_path_buffer(*this->runtime, std::span<const scene::Float2>{pixel_samples}, command_buffer);
         if (command_buffer) {
             const DescriptorHandle descriptor = this->runtime->allocate_resource_descriptor();
-            this->runtime->write_buffer(descriptor, vk::DescriptorType::eStorageBuffer, new_pixel_samples);
+            this->runtime->write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_pixel_samples);
             this->runtime->release_resource_descriptor(this->sampler.pixel_samples.descriptor);
-            this->runtime->defer([buffer = std::move(this->sampler.pixel_samples.buffer)]() mutable {});
+            this->runtime->defer_destruction([buffer = std::move(this->sampler.pixel_samples.buffer)]() mutable {});
             this->sampler.pixel_samples.descriptor = descriptor;
         } else
-            this->runtime->write_buffer(this->sampler.pixel_samples.descriptor, vk::DescriptorType::eStorageBuffer, new_pixel_samples);
+            this->runtime->write_buffer_descriptor(this->sampler.pixel_samples.descriptor, vk::DescriptorType::eStorageBuffer, new_pixel_samples);
         this->sampler.description          = sampler;
         this->sampler.pixel_samples.buffer = std::move(new_pixel_samples);
         this->sampler.pixel_tile_size      = pixel_tile_size;
@@ -1202,7 +1202,7 @@ namespace spectra::pathtracer {
             const auto upload_majorant = [&](const auto values) {
                 GpuBuffer buffer                  = upload_path_buffer(*this->runtime, values, command_buffer);
                 const DescriptorHandle descriptor = this->runtime->allocate_resource_descriptor();
-                this->runtime->write_buffer(descriptor, vk::DescriptorType::eStorageBuffer, buffer);
+                this->runtime->write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, buffer);
                 gpu_data.majorant        = GpuBufferBinding{descriptor};
                 gpu_data.majorant.buffer = std::move(buffer);
                 return descriptor;
@@ -1857,21 +1857,21 @@ namespace spectra::pathtracer {
             const DescriptorHandle new_volume_descriptor                  = this->runtime->allocate_resource_descriptor();
             const DescriptorHandle new_spectrum_descriptor                = this->runtime->allocate_resource_descriptor();
             const DescriptorHandle new_piecewise_spectrum_descriptor      = this->runtime->allocate_resource_descriptor();
-            this->runtime->write_buffer(new_primitive_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            for (std::size_t index = 0; index != new_materials.size(); ++index) this->runtime->write_buffer(new_material_descriptors[index], vk::DescriptorType::eStorageBuffer, new_materials[index]);
-            for (std::size_t index = 0; index != new_textures.size(); ++index) this->runtime->write_buffer(new_texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_textures[index]);
-            this->runtime->write_buffer(new_light_descriptor, vk::DescriptorType::eStorageBuffer, new_lights);
-            this->runtime->write_buffer(new_light_shape_descriptor, vk::DescriptorType::eStorageBuffer, new_light_shapes);
-            this->runtime->write_buffer(new_light_distribution_descriptor, vk::DescriptorType::eStorageBuffer, new_light_distributions);
-            this->runtime->write_buffer(new_light_distribution_data_descriptor, vk::DescriptorType::eStorageBuffer, new_light_distribution_data);
-            this->runtime->write_buffer(new_portal_descriptor, vk::DescriptorType::eStorageBuffer, new_portals);
-            this->runtime->write_buffer(new_light_bvh_node_descriptor, vk::DescriptorType::eStorageBuffer, new_light_bvh_nodes);
-            this->runtime->write_buffer(new_light_bvh_bit_trail_descriptor, vk::DescriptorType::eStorageBuffer, new_light_bvh_bit_trails);
-            this->runtime->write_buffer(new_face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
-            this->runtime->write_buffer(new_medium_descriptor, vk::DescriptorType::eStorageBuffer, new_media);
-            this->runtime->write_buffer(new_volume_descriptor, vk::DescriptorType::eStorageBuffer, new_volumes);
-            this->runtime->write_buffer(new_spectrum_descriptor, vk::DescriptorType::eStorageBuffer, new_spectra);
-            this->runtime->write_buffer(new_piecewise_spectrum_descriptor, vk::DescriptorType::eStorageBuffer, new_piecewise_spectra);
+            this->runtime->write_buffer_descriptor(new_primitive_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
+            for (std::size_t index = 0; index != new_materials.size(); ++index) this->runtime->write_buffer_descriptor(new_material_descriptors[index], vk::DescriptorType::eStorageBuffer, new_materials[index]);
+            for (std::size_t index = 0; index != new_textures.size(); ++index) this->runtime->write_buffer_descriptor(new_texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_textures[index]);
+            this->runtime->write_buffer_descriptor(new_light_descriptor, vk::DescriptorType::eStorageBuffer, new_lights);
+            this->runtime->write_buffer_descriptor(new_light_shape_descriptor, vk::DescriptorType::eStorageBuffer, new_light_shapes);
+            this->runtime->write_buffer_descriptor(new_light_distribution_descriptor, vk::DescriptorType::eStorageBuffer, new_light_distributions);
+            this->runtime->write_buffer_descriptor(new_light_distribution_data_descriptor, vk::DescriptorType::eStorageBuffer, new_light_distribution_data);
+            this->runtime->write_buffer_descriptor(new_portal_descriptor, vk::DescriptorType::eStorageBuffer, new_portals);
+            this->runtime->write_buffer_descriptor(new_light_bvh_node_descriptor, vk::DescriptorType::eStorageBuffer, new_light_bvh_nodes);
+            this->runtime->write_buffer_descriptor(new_light_bvh_bit_trail_descriptor, vk::DescriptorType::eStorageBuffer, new_light_bvh_bit_trails);
+            this->runtime->write_buffer_descriptor(new_face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
+            this->runtime->write_buffer_descriptor(new_medium_descriptor, vk::DescriptorType::eStorageBuffer, new_media);
+            this->runtime->write_buffer_descriptor(new_volume_descriptor, vk::DescriptorType::eStorageBuffer, new_volumes);
+            this->runtime->write_buffer_descriptor(new_spectrum_descriptor, vk::DescriptorType::eStorageBuffer, new_spectra);
+            this->runtime->write_buffer_descriptor(new_piecewise_spectrum_descriptor, vk::DescriptorType::eStorageBuffer, new_piecewise_spectra);
             this->runtime->release_resource_descriptor(this->primitives.descriptor);
             for (const GpuBufferBinding& binding : this->materials) this->runtime->release_resource_descriptor(binding.descriptor);
             for (const GpuBufferBinding& binding : this->textures) this->runtime->release_resource_descriptor(binding.descriptor);
@@ -1888,7 +1888,7 @@ namespace spectra::pathtracer {
             for (const VolumeGpuData& volume : this->volume_gpu_data) this->runtime->release_resource_descriptor(volume.majorant.descriptor);
             this->runtime->release_resource_descriptor(this->spectra.descriptor);
             this->runtime->release_resource_descriptor(this->piecewise_spectra.descriptor);
-            this->runtime->defer([primitives = std::move(this->primitives.buffer), materials = std::move(this->materials), textures = std::move(this->textures), lights = std::move(this->light_table.buffer), light_shapes = std::move(this->light_shapes.buffer), light_distributions = std::move(this->light_distribution.buffer), light_distribution_data = std::move(this->light_distribution_data.buffer), portals = std::move(this->portals.buffer), light_bvh_nodes = std::move(this->light_bvh_nodes.buffer), light_bvh_bit_trails = std::move(this->light_bvh_bit_trails.buffer), face_materials = std::move(this->face_materials.buffer), media = std::move(this->media.buffer), volumes = std::move(this->volumes.buffer), volume_gpu_data = std::move(this->volume_gpu_data), spectra = std::move(this->spectra.buffer), piecewise_spectra = std::move(this->piecewise_spectra.buffer)]() mutable {});
+            this->runtime->defer_destruction([primitives = std::move(this->primitives.buffer), materials = std::move(this->materials), textures = std::move(this->textures), lights = std::move(this->light_table.buffer), light_shapes = std::move(this->light_shapes.buffer), light_distributions = std::move(this->light_distribution.buffer), light_distribution_data = std::move(this->light_distribution_data.buffer), portals = std::move(this->portals.buffer), light_bvh_nodes = std::move(this->light_bvh_nodes.buffer), light_bvh_bit_trails = std::move(this->light_bvh_bit_trails.buffer), face_materials = std::move(this->face_materials.buffer), media = std::move(this->media.buffer), volumes = std::move(this->volumes.buffer), volume_gpu_data = std::move(this->volume_gpu_data), spectra = std::move(this->spectra.buffer), piecewise_spectra = std::move(this->piecewise_spectra.buffer)]() mutable {});
             this->primitives.descriptor = new_primitive_descriptor;
             for (std::size_t index = 0; index != this->materials.size(); ++index) this->materials[index].descriptor = new_material_descriptors[index];
             for (std::size_t index = 0; index != this->textures.size(); ++index) this->textures[index].descriptor = new_texture_descriptors[index];
@@ -1907,21 +1907,21 @@ namespace spectra::pathtracer {
         } else {
             for (std::size_t index = 0; index != this->materials.size(); ++index) new_material_descriptors[index] = this->materials[index].descriptor;
             for (std::size_t index = 0; index != this->textures.size(); ++index) new_texture_descriptors[index] = this->textures[index].descriptor;
-            this->runtime->write_buffer(this->primitives.descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            for (std::size_t index = 0; index != new_materials.size(); ++index) this->runtime->write_buffer(new_material_descriptors[index], vk::DescriptorType::eStorageBuffer, new_materials[index]);
-            for (std::size_t index = 0; index != new_textures.size(); ++index) this->runtime->write_buffer(new_texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_textures[index]);
-            this->runtime->write_buffer(this->light_table.descriptor, vk::DescriptorType::eStorageBuffer, new_lights);
-            this->runtime->write_buffer(this->light_shapes.descriptor, vk::DescriptorType::eStorageBuffer, new_light_shapes);
-            this->runtime->write_buffer(this->light_distribution.descriptor, vk::DescriptorType::eStorageBuffer, new_light_distributions);
-            this->runtime->write_buffer(this->light_distribution_data.descriptor, vk::DescriptorType::eStorageBuffer, new_light_distribution_data);
-            this->runtime->write_buffer(this->portals.descriptor, vk::DescriptorType::eStorageBuffer, new_portals);
-            this->runtime->write_buffer(this->light_bvh_nodes.descriptor, vk::DescriptorType::eStorageBuffer, new_light_bvh_nodes);
-            this->runtime->write_buffer(this->light_bvh_bit_trails.descriptor, vk::DescriptorType::eStorageBuffer, new_light_bvh_bit_trails);
-            this->runtime->write_buffer(this->face_materials.descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
-            this->runtime->write_buffer(this->media.descriptor, vk::DescriptorType::eStorageBuffer, new_media);
-            this->runtime->write_buffer(this->volumes.descriptor, vk::DescriptorType::eStorageBuffer, new_volumes);
-            this->runtime->write_buffer(this->spectra.descriptor, vk::DescriptorType::eStorageBuffer, new_spectra);
-            this->runtime->write_buffer(this->piecewise_spectra.descriptor, vk::DescriptorType::eStorageBuffer, new_piecewise_spectra);
+            this->runtime->write_buffer_descriptor(this->primitives.descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
+            for (std::size_t index = 0; index != new_materials.size(); ++index) this->runtime->write_buffer_descriptor(new_material_descriptors[index], vk::DescriptorType::eStorageBuffer, new_materials[index]);
+            for (std::size_t index = 0; index != new_textures.size(); ++index) this->runtime->write_buffer_descriptor(new_texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_textures[index]);
+            this->runtime->write_buffer_descriptor(this->light_table.descriptor, vk::DescriptorType::eStorageBuffer, new_lights);
+            this->runtime->write_buffer_descriptor(this->light_shapes.descriptor, vk::DescriptorType::eStorageBuffer, new_light_shapes);
+            this->runtime->write_buffer_descriptor(this->light_distribution.descriptor, vk::DescriptorType::eStorageBuffer, new_light_distributions);
+            this->runtime->write_buffer_descriptor(this->light_distribution_data.descriptor, vk::DescriptorType::eStorageBuffer, new_light_distribution_data);
+            this->runtime->write_buffer_descriptor(this->portals.descriptor, vk::DescriptorType::eStorageBuffer, new_portals);
+            this->runtime->write_buffer_descriptor(this->light_bvh_nodes.descriptor, vk::DescriptorType::eStorageBuffer, new_light_bvh_nodes);
+            this->runtime->write_buffer_descriptor(this->light_bvh_bit_trails.descriptor, vk::DescriptorType::eStorageBuffer, new_light_bvh_bit_trails);
+            this->runtime->write_buffer_descriptor(this->face_materials.descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
+            this->runtime->write_buffer_descriptor(this->media.descriptor, vk::DescriptorType::eStorageBuffer, new_media);
+            this->runtime->write_buffer_descriptor(this->volumes.descriptor, vk::DescriptorType::eStorageBuffer, new_volumes);
+            this->runtime->write_buffer_descriptor(this->spectra.descriptor, vk::DescriptorType::eStorageBuffer, new_spectra);
+            this->runtime->write_buffer_descriptor(this->piecewise_spectra.descriptor, vk::DescriptorType::eStorageBuffer, new_piecewise_spectra);
         }
         this->primitives.buffer = std::move(new_primitives);
         for (std::size_t index = 0; index != this->materials.size(); ++index) this->materials[index].buffer = std::move(new_materials[index]);
@@ -1981,12 +1981,12 @@ namespace spectra::pathtracer {
         std::memcpy(new_bindings.mapped, &bindings, sizeof(bindings));
         if (*this->bindings_table.buffer.buffer) {
             const DescriptorHandle descriptor = this->runtime->allocate_resource_descriptor();
-            this->runtime->write_buffer(descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
+            this->runtime->write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
             this->runtime->release_resource_descriptor(this->bindings_table.descriptor);
-            this->runtime->defer([buffer = std::move(this->bindings_table.buffer)]() mutable {});
+            this->runtime->defer_destruction([buffer = std::move(this->bindings_table.buffer)]() mutable {});
             this->bindings_table.descriptor = descriptor;
         } else
-            this->runtime->write_buffer(this->bindings_table.descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
+            this->runtime->write_buffer_descriptor(this->bindings_table.descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
         this->bindings_table.buffer   = std::move(new_bindings);
         this->texture_stack_size      = maximum_texture_stack_size;
         this->material_texture_values = maximum_material_texture_requests;
@@ -2131,10 +2131,10 @@ namespace spectra::pathtracer {
         for (std::uint32_t index = 0; index != frames_in_flight; ++index) {
             this->parameters.emplace_back(runtime.allocate_resource_descriptor());
             this->parameters.back().buffer = runtime.create_buffer(sizeof(WavefrontParameters), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-            runtime.write_buffer(this->parameters.back().descriptor, vk::DescriptorType::eStorageBuffer, this->parameters.back().buffer);
+            runtime.write_buffer_descriptor(this->parameters.back().descriptor, vk::DescriptorType::eStorageBuffer, this->parameters.back().buffer);
         }
         this->bindings.buffer = runtime.create_buffer(sizeof(WavefrontBindings), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-        runtime.write_buffer(this->bindings.descriptor, vk::DescriptorType::eStorageBuffer, this->bindings.buffer);
+        runtime.write_buffer_descriptor(this->bindings.descriptor, vk::DescriptorType::eStorageBuffer, this->bindings.buffer);
         const WavefrontBindings binding_data{
             this->output_descriptor,
             this->queue_counts.descriptor,
@@ -2264,8 +2264,8 @@ namespace spectra::pathtracer {
         this->texture_value_count = texture_value_count;
         this->capacity            = extent.width * extent.height;
         this->output_image        = this->runtime->create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled);
-        this->runtime->write_storage_image(this->output_descriptor, this->output_image, vk::ImageLayout::eGeneral);
-        this->runtime->write_sampled_image(this->sampled_output_descriptor, this->output_image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->runtime->write_storage_image_descriptor(this->output_descriptor, this->output_image, vk::ImageLayout::eGeneral);
+        this->runtime->write_sampled_image_descriptor(this->sampled_output_descriptor, this->output_image, vk::ImageLayout::eShaderReadOnlyOptimal);
         this->queue_counts.buffer                    = create_storage_buffer(*this->runtime, sizeof(std::uint32_t) * 3, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst);
         this->ray_queue_0.buffer                     = create_storage_buffer(*this->runtime, sizeof(std::uint32_t) * this->capacity);
         this->ray_queue_1.buffer                     = create_storage_buffer(*this->runtime, sizeof(std::uint32_t) * this->capacity);
@@ -2321,59 +2321,59 @@ namespace spectra::pathtracer {
         this->gbuffer_identity_1.buffer              = create_storage_buffer(*this->runtime, sizeof(std::uint32_t) * 4 * this->capacity, vk::BufferUsageFlagBits::eTransferSrc);
         this->indirect_commands                      = this->runtime->create_buffer(sizeof(vk::TraceRaysIndirectCommand2KHR) * 2, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
 
-        this->runtime->write_buffer(this->queue_counts.descriptor, vk::DescriptorType::eStorageBuffer, this->queue_counts.buffer);
-        this->runtime->write_buffer(this->ray_queue_0.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_queue_0.buffer);
-        this->runtime->write_buffer(this->ray_queue_1.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_queue_1.buffer);
-        this->runtime->write_buffer(this->ray_origins.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_origins.buffer);
-        this->runtime->write_buffer(this->ray_directions.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_directions.buffer);
-        this->runtime->write_buffer(this->ray_origin_dx.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_origin_dx.buffer);
-        this->runtime->write_buffer(this->ray_origin_dy.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_origin_dy.buffer);
-        this->runtime->write_buffer(this->ray_direction_dx.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_direction_dx.buffer);
-        this->runtime->write_buffer(this->ray_direction_dy.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_direction_dy.buffer);
-        this->runtime->write_buffer(this->throughputs.descriptor, vk::DescriptorType::eStorageBuffer, this->throughputs.buffer);
-        this->runtime->write_buffer(this->radiances.descriptor, vk::DescriptorType::eStorageBuffer, this->radiances.buffer);
-        this->runtime->write_buffer(this->wavelengths.descriptor, vk::DescriptorType::eStorageBuffer, this->wavelengths.buffer);
-        this->runtime->write_buffer(this->wavelength_pdfs.descriptor, vk::DescriptorType::eStorageBuffer, this->wavelength_pdfs.buffer);
-        this->runtime->write_buffer(this->path_r_u.descriptor, vk::DescriptorType::eStorageBuffer, this->path_r_u.buffer);
-        this->runtime->write_buffer(this->path_r_l.descriptor, vk::DescriptorType::eStorageBuffer, this->path_r_l.buffer);
-        this->runtime->write_buffer(this->current_media.descriptor, vk::DescriptorType::eStorageBuffer, this->current_media.buffer);
-        this->runtime->write_buffer(this->light_context_normals.descriptor, vk::DescriptorType::eStorageBuffer, this->light_context_normals.buffer);
-        this->runtime->write_buffer(this->path_flags.descriptor, vk::DescriptorType::eStorageBuffer, this->path_flags.buffer);
-        this->runtime->write_buffer(this->eta_scales.descriptor, vk::DescriptorType::eStorageBuffer, this->eta_scales.buffer);
-        this->runtime->write_buffer(this->hit_normal_distances.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_normal_distances.buffer);
-        this->runtime->write_buffer(this->hit_geometric_normal_u.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_geometric_normal_u.buffer);
-        this->runtime->write_buffer(this->hit_tangent_v.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_tangent_v.buffer);
-        this->runtime->write_buffer(this->hit_dpdu.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_dpdu.buffer);
-        this->runtime->write_buffer(this->hit_dpdv.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_dpdv.buffer);
-        this->runtime->write_buffer(this->hit_dndu.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_dndu.buffer);
-        this->runtime->write_buffer(this->hit_dndv.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_dndv.buffer);
-        this->runtime->write_buffer(this->hit_identifiers.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_identifiers.buffer);
-        this->runtime->write_buffer(this->shadow_path_ids.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_path_ids.buffer);
-        this->runtime->write_buffer(this->shadow_origins.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_origins.buffer);
-        this->runtime->write_buffer(this->shadow_directions.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_directions.buffer);
-        this->runtime->write_buffer(this->shadow_contributions.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_contributions.buffer);
-        this->runtime->write_buffer(this->shadow_r_p.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_r_p.buffer);
-        this->runtime->write_buffer(this->shadow_pdfs.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_pdfs.buffer);
-        this->runtime->write_buffer(this->shadow_media.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_media.buffer);
-        this->runtime->write_buffer(this->texture_evaluation_stack.descriptor, vk::DescriptorType::eStorageBuffer, this->texture_evaluation_stack.buffer);
-        this->runtime->write_buffer(this->evaluated_texture_values.descriptor, vk::DescriptorType::eStorageBuffer, this->evaluated_texture_values.buffer);
-        this->runtime->write_buffer(this->filter_weights.descriptor, vk::DescriptorType::eStorageBuffer, this->filter_weights.buffer);
-        this->runtime->write_buffer(this->film_rgb_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->film_rgb_sums.buffer);
-        this->runtime->write_buffer(this->film_weight_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->film_weight_sums.buffer);
-        this->runtime->write_buffer(this->gbuffer_sample_albedo.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_albedo.buffer);
-        this->runtime->write_buffer(this->gbuffer_sample_shading_normal.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_shading_normal.buffer);
-        this->runtime->write_buffer(this->gbuffer_sample_geometric_normal.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_geometric_normal.buffer);
-        this->runtime->write_buffer(this->gbuffer_sample_position_depth.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_position_depth.buffer);
-        this->runtime->write_buffer(this->gbuffer_sample_uv.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_uv.buffer);
-        this->runtime->write_buffer(this->gbuffer_sample_identity_0.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_identity_0.buffer);
-        this->runtime->write_buffer(this->gbuffer_sample_identity_1.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_identity_1.buffer);
-        this->runtime->write_buffer(this->gbuffer_albedo_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_albedo_sums.buffer);
-        this->runtime->write_buffer(this->gbuffer_shading_normal_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_shading_normal_sums.buffer);
-        this->runtime->write_buffer(this->gbuffer_geometric_normal_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_geometric_normal_sums.buffer);
-        this->runtime->write_buffer(this->gbuffer_position_depth_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_position_depth_sums.buffer);
-        this->runtime->write_buffer(this->gbuffer_uv_weight_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_uv_weight_sums.buffer);
-        this->runtime->write_buffer(this->gbuffer_identity_0.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_identity_0.buffer);
-        this->runtime->write_buffer(this->gbuffer_identity_1.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_identity_1.buffer);
+        this->runtime->write_buffer_descriptor(this->queue_counts.descriptor, vk::DescriptorType::eStorageBuffer, this->queue_counts.buffer);
+        this->runtime->write_buffer_descriptor(this->ray_queue_0.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_queue_0.buffer);
+        this->runtime->write_buffer_descriptor(this->ray_queue_1.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_queue_1.buffer);
+        this->runtime->write_buffer_descriptor(this->ray_origins.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_origins.buffer);
+        this->runtime->write_buffer_descriptor(this->ray_directions.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_directions.buffer);
+        this->runtime->write_buffer_descriptor(this->ray_origin_dx.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_origin_dx.buffer);
+        this->runtime->write_buffer_descriptor(this->ray_origin_dy.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_origin_dy.buffer);
+        this->runtime->write_buffer_descriptor(this->ray_direction_dx.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_direction_dx.buffer);
+        this->runtime->write_buffer_descriptor(this->ray_direction_dy.descriptor, vk::DescriptorType::eStorageBuffer, this->ray_direction_dy.buffer);
+        this->runtime->write_buffer_descriptor(this->throughputs.descriptor, vk::DescriptorType::eStorageBuffer, this->throughputs.buffer);
+        this->runtime->write_buffer_descriptor(this->radiances.descriptor, vk::DescriptorType::eStorageBuffer, this->radiances.buffer);
+        this->runtime->write_buffer_descriptor(this->wavelengths.descriptor, vk::DescriptorType::eStorageBuffer, this->wavelengths.buffer);
+        this->runtime->write_buffer_descriptor(this->wavelength_pdfs.descriptor, vk::DescriptorType::eStorageBuffer, this->wavelength_pdfs.buffer);
+        this->runtime->write_buffer_descriptor(this->path_r_u.descriptor, vk::DescriptorType::eStorageBuffer, this->path_r_u.buffer);
+        this->runtime->write_buffer_descriptor(this->path_r_l.descriptor, vk::DescriptorType::eStorageBuffer, this->path_r_l.buffer);
+        this->runtime->write_buffer_descriptor(this->current_media.descriptor, vk::DescriptorType::eStorageBuffer, this->current_media.buffer);
+        this->runtime->write_buffer_descriptor(this->light_context_normals.descriptor, vk::DescriptorType::eStorageBuffer, this->light_context_normals.buffer);
+        this->runtime->write_buffer_descriptor(this->path_flags.descriptor, vk::DescriptorType::eStorageBuffer, this->path_flags.buffer);
+        this->runtime->write_buffer_descriptor(this->eta_scales.descriptor, vk::DescriptorType::eStorageBuffer, this->eta_scales.buffer);
+        this->runtime->write_buffer_descriptor(this->hit_normal_distances.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_normal_distances.buffer);
+        this->runtime->write_buffer_descriptor(this->hit_geometric_normal_u.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_geometric_normal_u.buffer);
+        this->runtime->write_buffer_descriptor(this->hit_tangent_v.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_tangent_v.buffer);
+        this->runtime->write_buffer_descriptor(this->hit_dpdu.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_dpdu.buffer);
+        this->runtime->write_buffer_descriptor(this->hit_dpdv.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_dpdv.buffer);
+        this->runtime->write_buffer_descriptor(this->hit_dndu.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_dndu.buffer);
+        this->runtime->write_buffer_descriptor(this->hit_dndv.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_dndv.buffer);
+        this->runtime->write_buffer_descriptor(this->hit_identifiers.descriptor, vk::DescriptorType::eStorageBuffer, this->hit_identifiers.buffer);
+        this->runtime->write_buffer_descriptor(this->shadow_path_ids.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_path_ids.buffer);
+        this->runtime->write_buffer_descriptor(this->shadow_origins.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_origins.buffer);
+        this->runtime->write_buffer_descriptor(this->shadow_directions.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_directions.buffer);
+        this->runtime->write_buffer_descriptor(this->shadow_contributions.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_contributions.buffer);
+        this->runtime->write_buffer_descriptor(this->shadow_r_p.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_r_p.buffer);
+        this->runtime->write_buffer_descriptor(this->shadow_pdfs.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_pdfs.buffer);
+        this->runtime->write_buffer_descriptor(this->shadow_media.descriptor, vk::DescriptorType::eStorageBuffer, this->shadow_media.buffer);
+        this->runtime->write_buffer_descriptor(this->texture_evaluation_stack.descriptor, vk::DescriptorType::eStorageBuffer, this->texture_evaluation_stack.buffer);
+        this->runtime->write_buffer_descriptor(this->evaluated_texture_values.descriptor, vk::DescriptorType::eStorageBuffer, this->evaluated_texture_values.buffer);
+        this->runtime->write_buffer_descriptor(this->filter_weights.descriptor, vk::DescriptorType::eStorageBuffer, this->filter_weights.buffer);
+        this->runtime->write_buffer_descriptor(this->film_rgb_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->film_rgb_sums.buffer);
+        this->runtime->write_buffer_descriptor(this->film_weight_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->film_weight_sums.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_sample_albedo.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_albedo.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_sample_shading_normal.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_shading_normal.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_sample_geometric_normal.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_geometric_normal.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_sample_position_depth.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_position_depth.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_sample_uv.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_uv.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_sample_identity_0.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_identity_0.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_sample_identity_1.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_sample_identity_1.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_albedo_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_albedo_sums.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_shading_normal_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_shading_normal_sums.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_geometric_normal_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_geometric_normal_sums.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_position_depth_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_position_depth_sums.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_uv_weight_sums.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_uv_weight_sums.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_identity_0.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_identity_0.buffer);
+        this->runtime->write_buffer_descriptor(this->gbuffer_identity_1.descriptor, vk::DescriptorType::eStorageBuffer, this->gbuffer_identity_1.buffer);
         this->output_layout                = vk::ImageLayout::eUndefined;
         this->sample_index                 = 0;
         this->indirect_commands_configured = false;
@@ -2386,7 +2386,7 @@ namespace spectra::pathtracer {
     std::vector<float> PathRenderSession::read_radiance() {
         const vk::DeviceSize readback_size = static_cast<vk::DeviceSize>(this->extent.width) * this->extent.height * sizeof(float) * 4u;
         GpuBuffer readback                 = this->runtime->create_buffer(readback_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-        this->runtime->immediate([this, &readback](const vk::raii::CommandBuffer& command_buffer) {
+        this->runtime->submit_immediate([this, &readback](const vk::raii::CommandBuffer& command_buffer) {
             const vk::ImageMemoryBarrier2 to_transfer{
                 vk::PipelineStageFlagBits2::eComputeShader,
                 vk::AccessFlagBits2::eShaderStorageWrite,
@@ -2463,7 +2463,7 @@ namespace spectra::pathtracer {
             &this->gbuffer_identity_0.buffer,
             &this->gbuffer_identity_1.buffer,
         };
-        this->runtime->immediate([&](const vk::raii::CommandBuffer& command_buffer) {
+        this->runtime->submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
             const vk::MemoryBarrier2 to_transfer{
                 vk::PipelineStageFlagBits2::eComputeShader,
                 vk::AccessFlagBits2::eShaderStorageWrite,

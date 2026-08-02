@@ -58,7 +58,7 @@ namespace spectra::app {
             },
         };
         this->shaders = vk::raii::ShaderEXTs{runtime.device, create_infos};
-        runtime.write_sampler(this->sampler_descriptor, vk::SamplerCreateInfo{
+        runtime.write_sampler_descriptor(this->sampler_descriptor, vk::SamplerCreateInfo{
                                                         {},
                                                         vk::Filter::eLinear,
                                                         vk::Filter::eLinear,
@@ -108,7 +108,7 @@ namespace spectra::app {
                 this->runtime->create_image_2d({static_cast<std::uint32_t>(texture.Width), static_cast<std::uint32_t>(texture.Height)}, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst),
                 this->runtime->allocate_resource_descriptor(),
             };
-            this->runtime->write_sampled_image(backend_texture->descriptor, backend_texture->image, vk::ImageLayout::eShaderReadOnlyOptimal);
+            this->runtime->write_sampled_image_descriptor(backend_texture->descriptor, backend_texture->image, vk::ImageLayout::eShaderReadOnlyOptimal);
             texture.BackendUserData = backend_texture;
             texture.SetTexID(static_cast<ImTextureID>(backend_texture->descriptor.index) + 1u);
         }
@@ -137,7 +137,7 @@ namespace spectra::app {
         }
 
         const bool creating = texture.Status == ImTextureStatus_WantCreate;
-        this->runtime->immediate([&](const vk::raii::CommandBuffer& command_buffer) {
+        this->runtime->submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
             const vk::ImageMemoryBarrier2 to_transfer{
                 creating ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader,
                 creating ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderSampledRead,
@@ -276,12 +276,12 @@ namespace spectra::app {
             if (required_vertex_bytes > frame.vertex_capacity) {
                 frame.vertex_capacity = std::bit_ceil(std::max(required_vertex_bytes, std::size_t{4096}));
                 frame.vertex_buffer   = this->runtime->create_buffer(frame.vertex_capacity, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-                this->runtime->write_buffer(frame.vertex_descriptor, vk::DescriptorType::eStorageBuffer, frame.vertex_buffer);
+                this->runtime->write_buffer_descriptor(frame.vertex_descriptor, vk::DescriptorType::eStorageBuffer, frame.vertex_buffer);
             }
             if (required_index_bytes > frame.index_capacity) {
                 frame.index_capacity = std::bit_ceil(std::max(required_index_bytes, std::size_t{4096}));
                 frame.index_buffer   = this->runtime->create_buffer(frame.index_capacity, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-                this->runtime->write_buffer(frame.index_descriptor, vk::DescriptorType::eStorageBuffer, frame.index_buffer);
+                this->runtime->write_buffer_descriptor(frame.index_descriptor, vk::DescriptorType::eStorageBuffer, frame.index_buffer);
             }
 
             std::byte* vertex_destination    = static_cast<std::byte*>(frame.vertex_buffer.mapped);

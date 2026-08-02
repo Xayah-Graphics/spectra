@@ -316,7 +316,7 @@ namespace spectra::scene::dynamics {
     void Runtime::configure(System& system, const std::size_t binding_index) {
         Binding& binding = system.bindings[binding_index];
         if (binding.descriptor.kind == ResourceKind::DebugDraw) return;
-        if (binding.signal_value != 0) this->runtime->wait_external_consumed(binding.timeline, binding.signal_value + 1);
+        if (binding.signal_value != 0) this->runtime->wait_external_timeline(binding.timeline, binding.signal_value + 1);
         for (std::vector<Buffer>& slot : binding.slots)
             for (Buffer& buffer : slot)
                 if (buffer.descriptor_allocated) this->runtime->release_resource_descriptor(buffer.descriptor);
@@ -342,7 +342,7 @@ namespace spectra::scene::dynamics {
                     buffer.storage                  = this->runtime->create_external_buffer(buffer.size, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress);
                     buffer.descriptor           = this->runtime->allocate_resource_descriptor();
                     buffer.descriptor_allocated = true;
-                    this->runtime->write_buffer(buffer.descriptor, vk::DescriptorType::eStorageBuffer, buffer.storage);
+                    this->runtime->write_buffer_descriptor(buffer.descriptor, vk::DescriptorType::eStorageBuffer, buffer.storage);
                 }
                 binding.slots[slot].emplace_back(std::move(buffer));
             }
@@ -364,7 +364,7 @@ namespace spectra::scene::dynamics {
         }
         Win32Handle timeline{};
         if (binding.descriptor.memory_domain == MemoryDomain::CudaExternal) timeline = Win32Handle{static_cast<HANDLE>(this->runtime->export_semaphore_handle(binding.timeline))};
-        const GpuIdentity identity = this->runtime->identity();
+        const GpuIdentity identity = this->runtime->gpu_identity();
         SpectraPluginPortConfiguration configuration{binding.port, static_cast<SpectraPluginPortDirection>(binding.descriptor.direction), static_cast<SpectraPluginMemoryDomain>(binding.descriptor.memory_domain), slots.data(), slots.size(), timeline.value, {}, {}, identity.node_mask};
         std::ranges::copy(identity.uuid, configuration.vulkan_device_uuid);
         std::ranges::copy(identity.luid, configuration.vulkan_device_luid);
@@ -561,8 +561,8 @@ namespace spectra::scene::dynamics {
             for (System& system : this->system_storage)
                 for (Binding& binding : system.bindings)
                     if (binding.pending) {
-                        this->runtime->wait_external_consumed(binding.timeline, binding.signal_value);
-                        this->runtime->signal_external_host(binding.timeline, binding.signal_value + 1);
+                        this->runtime->wait_external_timeline(binding.timeline, binding.signal_value);
+                        this->runtime->signal_external_timeline(binding.timeline, binding.signal_value + 1);
                         binding.pending = false;
                     }
             this->publication_pending = false;
@@ -685,7 +685,7 @@ namespace spectra::scene::dynamics {
         for (System& system : this->system_storage)
             for (Binding& binding : system.bindings) {
                 if (!binding.pending) continue;
-                this->runtime->wait_external(binding.timeline, binding.signal_value, vk::PipelineStageFlagBits2::eCopy | vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader);
+                this->runtime->enqueue_external_wait(binding.timeline, binding.signal_value, vk::PipelineStageFlagBits2::eCopy | vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader);
                 std::vector<ExternalBufferView> views{};
                 for (const Buffer& buffer : binding.slots[binding.current_slot]) {
                     if (binding.descriptor.kind == ResourceKind::Volume && buffer.attribute == SpectraPluginAttribute::Velocity && !this->setup.systems[system.scene_index].visible) continue;
@@ -701,7 +701,7 @@ namespace spectra::scene::dynamics {
         for (System& system : this->system_storage)
             for (Binding& binding : system.bindings)
                 if (binding.pending) {
-                    this->runtime->signal_external(binding.timeline, binding.signal_value + 1, vk::PipelineStageFlagBits2::eAllCommands);
+                    this->runtime->enqueue_external_signal(binding.timeline, binding.signal_value + 1, vk::PipelineStageFlagBits2::eAllCommands);
                     binding.pending = false;
                 }
         this->publication_pending = false;
