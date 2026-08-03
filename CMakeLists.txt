@@ -124,6 +124,16 @@ function(spectra_prepare_commit_dependency out_source_dir owner repository commi
     set(${out_source_dir} "${source_dir}" PARENT_SCOPE)
 endfunction()
 
+set(SPECTRA_XCLI_COMMIT "7c0e9f0ff76ea4dcf1c2ad10a04fe04f7bec845b")
+spectra_prepare_commit_dependency(
+        SPECTRA_XCLI_SOURCE_DIR
+        Xayah-Graphics
+        util
+        "${SPECTRA_XCLI_COMMIT}"
+        "CD2D94CC347F057E950A1EF51B68A53A63D8E880D83B3EED6162F7C84CD8AA9D"
+)
+add_subdirectory("${SPECTRA_XCLI_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/xcli" EXCLUDE_FROM_ALL)
+
 set(SPECTRA_GLAZE_COMMIT "8b60d82c66311c145c4d03be3b556b555a9cb111")
 spectra_prepare_commit_dependency(
         SPECTRA_GLAZE_SOURCE_DIR
@@ -422,6 +432,7 @@ target_sources(
 )
 target_include_directories(spectra PRIVATE "${SPECTRA_GLAZE_SOURCE_DIR}/include")
 target_link_libraries(spectra PRIVATE
+        xayah::util::xcli
         spectra::vulkan
         spectra::plugin_contract
         spectra::imgui
