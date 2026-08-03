@@ -262,14 +262,14 @@ set(CMAKE_CXX_MODULE_STD ON)
 add_link_options("$<$<LINK_LANGUAGE:CXX>:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib>")
 
 add_executable(
-        spectra_shader_build
-        tools/shader_build.cpp
+        spectra_shader_compiler
+        spectra/render/shaders/compiler.cpp
 )
 target_link_libraries(
-        spectra_shader_build
+        spectra_shader_compiler
         PRIVATE spectra::slang
 )
-target_compile_definitions(spectra_shader_build PRIVATE NOMINMAX)
+target_compile_definitions(spectra_shader_compiler PRIVATE NOMINMAX)
 
 
 # ============================================================================
@@ -298,18 +298,18 @@ add_subdirectory(sdk)
 # Slang
 # ============================================================================
 set(SPECTRA_SHADER_OUTPUT_DIR "${SPECTRA_GENERATED_DIR}/shaders")
-set(SPECTRA_PATH_ABI_MODULE "${SPECTRA_GENERATED_DIR}/pathtracer/abi.ixx")
-set(SPECTRA_SHADER_ENTRY_LIST "${SPECTRA_ROOT_DIR}/tools/shaders.entries")
+set(SPECTRA_PATH_TRACER_ABI_MODULE "${SPECTRA_GENERATED_DIR}/path_tracer/abi.ixx")
+set(SPECTRA_SHADER_ENTRIES "${SPECTRA_ROOT_DIR}/spectra/render/shaders/entries.txt")
 set(SPECTRA_SHADER_STAMP "${SPECTRA_SHADER_OUTPUT_DIR}/build.stamp")
 set_property(
         DIRECTORY
         APPEND
         PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${SPECTRA_SHADER_ENTRY_LIST}"
+        "${SPECTRA_SHADER_ENTRIES}"
 )
 file(
         STRINGS
-        "${SPECTRA_SHADER_ENTRY_LIST}"
+        "${SPECTRA_SHADER_ENTRIES}"
         SPECTRA_SHADER_ENTRY_LINES
         REGEX "^[^#].*"
 )
@@ -330,34 +330,34 @@ file(
         GLOB
         SPECTRA_SHADER_SOURCES
         CONFIGURE_DEPENDS
-        "${SPECTRA_ROOT_DIR}/app/shaders/*.slang"
-        "${SPECTRA_ROOT_DIR}/render/shaders/*.slang"
+        "${SPECTRA_ROOT_DIR}/spectra/editor/shaders/*.slang"
+        "${SPECTRA_ROOT_DIR}/spectra/render/shaders/*.slang"
 )
 add_custom_command(
         OUTPUT "${SPECTRA_SHADER_STAMP}"
         BYPRODUCTS
-        "${SPECTRA_PATH_ABI_MODULE}"
+        "${SPECTRA_PATH_TRACER_ABI_MODULE}"
         ${SPECTRA_SHADER_OUTPUTS}
         COMMAND
         "${CMAKE_COMMAND}" -E env
         "PATH=$<TARGET_FILE_DIR:spectra_slang>;$ENV{PATH}"
-        "$<TARGET_FILE:spectra_shader_build>"
-        "${SPECTRA_ROOT_DIR}/render/shaders/abi.types"
-        "${SPECTRA_PATH_ABI_MODULE}"
-        "${SPECTRA_SHADER_ENTRY_LIST}"
+        "$<TARGET_FILE:spectra_shader_compiler>"
+        "${SPECTRA_ROOT_DIR}/spectra/render/shaders/abi.types"
+        "${SPECTRA_PATH_TRACER_ABI_MODULE}"
+        "${SPECTRA_SHADER_ENTRIES}"
         "${SPECTRA_SHADER_OUTPUT_DIR}"
         "${SPECTRA_SPIRV_VAL}"
-        "${SPECTRA_ROOT_DIR}/app/shaders"
-        "${SPECTRA_ROOT_DIR}/render/shaders"
+        "${SPECTRA_ROOT_DIR}/spectra/editor/shaders"
+        "${SPECTRA_ROOT_DIR}/spectra/render/shaders"
         "${SPECTRA_PNANOVDB_INCLUDE_DIR}"
         COMMAND
         "${CMAKE_COMMAND}" -E touch
         "${SPECTRA_SHADER_STAMP}"
         DEPENDS
-        spectra_shader_build
+        spectra_shader_compiler
         "$<TARGET_FILE:spectra_slang>"
-        "${SPECTRA_ROOT_DIR}/render/shaders/abi.types"
-        "${SPECTRA_SHADER_ENTRY_LIST}"
+        "${SPECTRA_ROOT_DIR}/spectra/render/shaders/abi.types"
+        "${SPECTRA_SHADER_ENTRIES}"
         "${SPECTRA_PNANOVDB_HEADER}"
         ${SPECTRA_SHADER_SOURCES}
         VERBATIM
@@ -374,28 +374,51 @@ target_sources(
         PRIVATE
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         spectra/spectra.ixx
-        scene/scene.ixx
-        scene/format.ixx
-        scene/dynamics.ixx
-        render/render.ixx
-        render/pathtracer.ixx
-        "${SPECTRA_PATH_ABI_MODULE}"
-        render/rasterizer.ixx
-        app/workspace.ixx
-        app/ui.ixx
-        app/application.ixx
+        spectra/runtime/runtime.ixx
+        spectra/runtime/platform.ixx
+        spectra/runtime/graphics.ixx
+        spectra/runtime/resources.ixx
+        spectra/runtime/frames.ixx
+        spectra/util/math.ixx
+        spectra/util/hash.ixx
+        spectra/scene/scene.ixx
+        spectra/scene/model.ixx
+        spectra/scene/format.ixx
+        spectra/scene/document.ixx
+        spectra/scene/dynamics.ixx
+        spectra/render/render_common.ixx
+        spectra/render/rasterizer.ixx
+        spectra/render/pathtracer.ixx
+        spectra/render/render.ixx
+        spectra/editor/interaction.ixx
+        spectra/editor/viewport.ixx
+        spectra/editor/output.ixx
+        spectra/editor/ui.ixx
+        spectra/editor/editor.ixx
+        "${SPECTRA_PATH_TRACER_ABI_MODULE}"
         PRIVATE
         main.cpp
         spectra/spectra.cpp
-        scene/scene.cpp
-        scene/format.cpp
-        scene/dynamics.cpp
-        render/render.cpp
-        render/pathtracer.cpp
-        render/rasterizer.cpp
-        app/workspace.cpp
-        app/ui.cpp
-        app/application.cpp
+        spectra/runtime/runtime.cpp
+        spectra/runtime/platform.cpp
+        spectra/runtime/graphics.cpp
+        spectra/runtime/resources.cpp
+        spectra/runtime/frames.cpp
+        spectra/util/math.cpp
+        spectra/util/hash.cpp
+        spectra/scene/model.cpp
+        spectra/scene/format.cpp
+        spectra/scene/document.cpp
+        spectra/scene/dynamics.cpp
+        spectra/render/render_common.cpp
+        spectra/render/rasterizer.cpp
+        spectra/render/pathtracer.cpp
+        spectra/render/render.cpp
+        spectra/editor/interaction.cpp
+        spectra/editor/viewport.cpp
+        spectra/editor/output.cpp
+        spectra/editor/ui.cpp
+        spectra/editor/editor.cpp
 )
 target_include_directories(spectra PRIVATE "${SPECTRA_GLAZE_SOURCE_DIR}/include")
 target_link_libraries(spectra PRIVATE
@@ -418,9 +441,9 @@ target_compile_definitions(spectra PRIVATE
         "SPECTRA_SHADER_DIRECTORY=\"${SPECTRA_SHADER_OUTPUT_DIR}\""
 )
 set_property(
-        SOURCE render/pathtracer.cpp
+        SOURCE spectra/render/pathtracer.cpp
         APPEND
         PROPERTY COMPILE_DEFINITIONS
-        "SPECTRA_SPECTRAL_ASSET_DIRECTORY=\"${SPECTRA_ROOT_DIR}/render/assets\""
+        "SPECTRA_SPECTRAL_ASSET_DIRECTORY=\"${SPECTRA_ROOT_DIR}/spectra/render/assets\""
 )
 add_dependencies(spectra spectra_shaders)

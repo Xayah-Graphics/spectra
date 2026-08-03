@@ -9,25 +9,25 @@ import std;
 
 namespace xayah::projects::pyro {
     export enum class FlowBoundaryType : std::uint32_t {
-        no_slip_wall   = 0,
-        free_slip_wall = 1,
-        outflow        = 2,
-        periodic       = 3,
+        NoSlipWall   = 0,
+        FreeSlipWall = 1,
+        Outflow      = 2,
+        Periodic     = 3,
     };
 
     export enum class ScalarBoundaryType : std::uint32_t {
-        fixed_value = 0,
-        zero_flux   = 1,
-        periodic    = 2,
+        FixedValue = 0,
+        ZeroFlux   = 1,
+        Periodic   = 2,
     };
 
     export enum class ScalarAdvectionMode : std::uint32_t {
-        linear          = 0,
-        monotonic_cubic = 1,
+        Linear         = 0,
+        MonotonicCubic = 1,
     };
 
     export struct FlowBoundaryFace {
-        FlowBoundaryType type{FlowBoundaryType::no_slip_wall};
+        FlowBoundaryType type{FlowBoundaryType::NoSlipWall};
         float velocity_x{0.0f};
         float velocity_y{0.0f};
         float velocity_z{0.0f};
@@ -35,29 +35,29 @@ namespace xayah::projects::pyro {
     };
 
     export struct FlowBoundary {
-        FlowBoundaryFace x_minus{FlowBoundaryType::periodic};
-        FlowBoundaryFace x_plus{FlowBoundaryType::periodic};
-        FlowBoundaryFace y_minus{FlowBoundaryType::no_slip_wall};
-        FlowBoundaryFace y_plus{FlowBoundaryType::outflow};
-        FlowBoundaryFace z_minus{FlowBoundaryType::periodic};
-        FlowBoundaryFace z_plus{FlowBoundaryType::periodic};
+        FlowBoundaryFace x_minus{FlowBoundaryType::Periodic};
+        FlowBoundaryFace x_plus{FlowBoundaryType::Periodic};
+        FlowBoundaryFace y_minus{FlowBoundaryType::NoSlipWall};
+        FlowBoundaryFace y_plus{FlowBoundaryType::Outflow};
+        FlowBoundaryFace z_minus{FlowBoundaryType::Periodic};
+        FlowBoundaryFace z_plus{FlowBoundaryType::Periodic};
     };
 
     export struct ScalarBoundaryFace {
-        ScalarBoundaryType type{ScalarBoundaryType::fixed_value};
+        ScalarBoundaryType type{ScalarBoundaryType::FixedValue};
         float value{0.0f};
     };
 
     export struct ScalarBoundary {
-        ScalarBoundaryFace x_minus{ScalarBoundaryType::periodic, 0.0f};
-        ScalarBoundaryFace x_plus{ScalarBoundaryType::periodic, 0.0f};
-        ScalarBoundaryFace y_minus{ScalarBoundaryType::fixed_value, 0.0f};
-        ScalarBoundaryFace y_plus{ScalarBoundaryType::fixed_value, 0.0f};
-        ScalarBoundaryFace z_minus{ScalarBoundaryType::periodic, 0.0f};
-        ScalarBoundaryFace z_plus{ScalarBoundaryType::periodic, 0.0f};
+        ScalarBoundaryFace x_minus{ScalarBoundaryType::Periodic, 0.0f};
+        ScalarBoundaryFace x_plus{ScalarBoundaryType::Periodic, 0.0f};
+        ScalarBoundaryFace y_minus{ScalarBoundaryType::FixedValue, 0.0f};
+        ScalarBoundaryFace y_plus{ScalarBoundaryType::FixedValue, 0.0f};
+        ScalarBoundaryFace z_minus{ScalarBoundaryType::Periodic, 0.0f};
+        ScalarBoundaryFace z_plus{ScalarBoundaryType::Periodic, 0.0f};
     };
 
-    export struct Config {
+    export struct SolverConfiguration {
         std::array<std::uint32_t, 3> resolution{64, 96, 64};
         float cell_size{0.01875f};
         std::int32_t pressure_iterations{64};
@@ -65,7 +65,7 @@ namespace xayah::projects::pyro {
         float buoyancy_density_factor{0.15f};
         float buoyancy_temperature_factor{1.2f};
         float vorticity_confinement{0.22f};
-        ScalarAdvectionMode scalar_advection_mode{ScalarAdvectionMode::monotonic_cubic};
+        ScalarAdvectionMode scalar_advection_mode{ScalarAdvectionMode::MonotonicCubic};
         FlowBoundary flow_boundary{};
         ScalarBoundary density_boundary{};
         ScalarBoundary temperature_boundary{};
@@ -79,8 +79,8 @@ namespace xayah::projects::pyro {
         float falloff{2.2f};
     };
 
-    export struct DeviceFrame {
-        void* stream{};
+    export struct CudaVolumeView {
+        void* cuda_stream{};
         std::array<std::uint32_t, 3> resolution{};
         const float* density{};
         const float* temperature{};
@@ -91,7 +91,7 @@ namespace xayah::projects::pyro {
     };
 
     export struct Solver {
-        explicit Solver(const Config& config = {});
+        explicit Solver(const SolverConfiguration& configuration = {});
         ~Solver() noexcept;
 
         Solver(const Solver& other) = delete;
@@ -103,7 +103,7 @@ namespace xayah::projects::pyro {
         void set_initial_fields(std::span<const float> density, std::span<const float> temperature);
         void set_plume_source(const PlumeSource& source);
         void step(float delta_seconds);
-        [[nodiscard]] DeviceFrame device_frame() const noexcept;
+        [[nodiscard]] CudaVolumeView cuda_volume() const noexcept;
 
     private:
         struct {
@@ -129,7 +129,7 @@ namespace xayah::projects::pyro {
             std::array<std::uint64_t, 3> velocity_count{};
             std::size_t cell_bytes{0};
             std::array<std::size_t, 3> velocity_bytes{};
-            cudaStream_t stream{nullptr};
+            cudaStream_t cuda_stream{nullptr};
             dim3 block{};
             dim3 cells{};
             std::array<dim3, 3> velocity_cells{};
@@ -148,19 +148,19 @@ namespace xayah::projects::pyro {
             std::vector<float> temperature_source{};
             std::vector<float> initial_density{};
             std::vector<float> initial_temperature{};
-        } host;
+        } host_data;
 
         struct {
-            float* density_data{nullptr};
-            float* density_temp{nullptr};
+            float* density{nullptr};
+            float* density_scratch{nullptr};
             float* density_source{nullptr};
-            float* temperature_data{nullptr};
-            float* temperature_temp{nullptr};
+            float* temperature{nullptr};
+            float* temperature_scratch{nullptr};
             float* temperature_source{nullptr};
             std::array<float*, 3> force{};
             std::array<float*, 3> solid_velocity{};
             std::array<float*, 3> velocity{};
-            std::array<float*, 3> temp_velocity{};
+            std::array<float*, 3> velocity_scratch{};
             std::array<float*, 3> centered_velocity{};
             float* pressure{nullptr};
             float* pressure_rhs{nullptr};
@@ -183,10 +183,10 @@ namespace xayah::projects::pyro {
             float* solid_temperature{nullptr};
             std::uint8_t* occupancy{nullptr};
             void* spmv_buffer{nullptr};
-        } device;
+        } device_data;
 
-        void create_device();
-        void destroy_device() noexcept;
+        void allocate_device_data();
+        void release_device_data() noexcept;
         void initialize_pressure_system();
         void solve_pressure(float delta_seconds);
         void reset_moved_from() noexcept;

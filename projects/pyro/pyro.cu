@@ -15,7 +15,7 @@ namespace xayah::projects::pyro::cuda {
 
     constexpr std::uint32_t SMOKE_SIMULATION_SCALAR_ADVECTION_MONOTONIC_CUBIC = 1;
 
-    struct SmokeSimulationFlowBoundaryFaceDesc {
+    struct FlowBoundaryFaceData {
         std::uint32_t type{SMOKE_SIMULATION_FLOW_BOUNDARY_NO_SLIP_WALL};
         float velocity_x{0.0f};
         float velocity_y{0.0f};
@@ -23,32 +23,32 @@ namespace xayah::projects::pyro::cuda {
         float pressure{0.0f};
     };
 
-    struct SmokeSimulationFlowBoundaryConfig {
-        SmokeSimulationFlowBoundaryFaceDesc x_minus{};
-        SmokeSimulationFlowBoundaryFaceDesc x_plus{};
-        SmokeSimulationFlowBoundaryFaceDesc y_minus{};
-        SmokeSimulationFlowBoundaryFaceDesc y_plus{};
-        SmokeSimulationFlowBoundaryFaceDesc z_minus{};
-        SmokeSimulationFlowBoundaryFaceDesc z_plus{};
+    struct FlowBoundaryData {
+        FlowBoundaryFaceData x_minus{};
+        FlowBoundaryFaceData x_plus{};
+        FlowBoundaryFaceData y_minus{};
+        FlowBoundaryFaceData y_plus{};
+        FlowBoundaryFaceData z_minus{};
+        FlowBoundaryFaceData z_plus{};
     };
 
-    struct SmokeSimulationScalarBoundaryFaceDesc {
+    struct ScalarBoundaryFaceData {
         std::uint32_t type{SMOKE_SIMULATION_SCALAR_BOUNDARY_FIXED_VALUE};
         float value{0.0f};
     };
 
-    struct SmokeSimulationScalarBoundaryConfig {
-        SmokeSimulationScalarBoundaryFaceDesc x_minus{};
-        SmokeSimulationScalarBoundaryFaceDesc x_plus{};
-        SmokeSimulationScalarBoundaryFaceDesc y_minus{};
-        SmokeSimulationScalarBoundaryFaceDesc y_plus{};
-        SmokeSimulationScalarBoundaryFaceDesc z_minus{};
-        SmokeSimulationScalarBoundaryFaceDesc z_plus{};
+    struct ScalarBoundaryData {
+        ScalarBoundaryFaceData x_minus{};
+        ScalarBoundaryFaceData x_plus{};
+        ScalarBoundaryFaceData y_minus{};
+        ScalarBoundaryFaceData y_plus{};
+        ScalarBoundaryFaceData z_minus{};
+        ScalarBoundaryFaceData z_plus{};
     };
 
-    SmokeSimulationFlowBoundaryConfig make_flow_boundary(const std::uint32_t* types, const float* velocity, const float* pressure) {
+    FlowBoundaryData make_flow_boundary(const std::uint32_t* types, const float* velocity, const float* pressure) {
         if (types == nullptr || velocity == nullptr || pressure == nullptr) throw std::runtime_error("Pyro flow boundary arrays must not be null");
-        return SmokeSimulationFlowBoundaryConfig{
+        return FlowBoundaryData{
             {types[0], velocity[0], velocity[1], velocity[2], pressure[0]},
             {types[1], velocity[3], velocity[4], velocity[5], pressure[1]},
             {types[2], velocity[6], velocity[7], velocity[8], pressure[2]},
@@ -58,9 +58,9 @@ namespace xayah::projects::pyro::cuda {
         };
     }
 
-    SmokeSimulationScalarBoundaryConfig make_scalar_boundary(const std::uint32_t* types, const float* values) {
+    ScalarBoundaryData make_scalar_boundary(const std::uint32_t* types, const float* values) {
         if (types == nullptr || values == nullptr) throw std::runtime_error("Pyro scalar boundary arrays must not be null");
-        return SmokeSimulationScalarBoundaryConfig{
+        return ScalarBoundaryData{
             {types[0], values[0]},
             {types[1], values[1]},
             {types[2], values[2]},
@@ -101,27 +101,27 @@ namespace xayah::projects::pyro::cuda {
         return x >= 0 && x < nx && y >= 0 && y < ny && z >= 0 && z < nz;
     }
 
-    __host__ __device__ bool resolve_cell_coordinates(int& x, int& y, int& z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __host__ __device__ bool resolve_cell_coordinates(int& x, int& y, int& z, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) x = wrap_index(x, nx);
         if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) y = wrap_index(y, ny);
         if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) z = wrap_index(z, nz);
         return cell_in_bounds(x, y, z, nx, ny, nz);
     }
 
-    __host__ __device__ bool resolve_scalar_cell_coordinates(int& x, int& y, int& z, const int nx, const int ny, const int nz, const SmokeSimulationScalarBoundaryConfig boundary) {
+    __host__ __device__ bool resolve_scalar_cell_coordinates(int& x, int& y, int& z, const int nx, const int ny, const int nz, const ScalarBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nx > 0) x = wrap_index(x, nx);
         if (boundary.y_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && ny > 0) y = wrap_index(y, ny);
         if (boundary.z_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nz > 0) z = wrap_index(z, nz);
         return cell_in_bounds(x, y, z, nx, ny, nz);
     }
 
-    __device__ bool load_occupancy(const uint8_t* occupancy, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ bool load_occupancy(const uint8_t* occupancy, int x, int y, int z, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         if (occupancy == nullptr) return false;
         if (!resolve_cell_coordinates(x, y, z, nx, ny, nz, boundary)) return true;
         return occupancy[index_3d(x, y, z, nx, ny)] != 0;
     }
 
-    __device__ float load_scalar(const float* field, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationScalarBoundaryConfig boundary) {
+    __device__ float load_scalar(const float* field, int x, int y, int z, const int nx, const int ny, const int nz, const ScalarBoundaryData boundary) {
         if (x < 0 || x >= nx) {
             const auto [type, value] = x < 0 ? boundary.x_minus : boundary.x_plus;
             if (boundary.x_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nx > 0) {
@@ -155,7 +155,7 @@ namespace xayah::projects::pyro::cuda {
         return field[index_3d(x, y, z, nx, ny)];
     }
 
-    __device__ float load_flow_cell(const float* field, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float load_flow_cell(const float* field, int x, int y, int z, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         if (x < 0 || x >= nx) {
             if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
                 x = wrap_index(x, nx);
@@ -180,7 +180,7 @@ namespace xayah::projects::pyro::cuda {
         return field[index_3d(x, y, z, nx, ny)];
     }
 
-    __device__ float load_center_velocity_component(const float* field, const int component_axis, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float load_center_velocity_component(const float* field, const int component_axis, int x, int y, int z, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         if (x < 0 || x >= nx) {
             const auto face = x < 0 ? boundary.x_minus : boundary.x_plus;
             if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
@@ -229,7 +229,7 @@ namespace xayah::projects::pyro::cuda {
         return field[index_3d(x, y, z, nx, ny)];
     }
 
-    __device__ float load_velocity_x(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float load_velocity_x(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         if (i < 0 || i > nx) {
             const auto face = i < 0 ? boundary.x_minus : boundary.x_plus;
             if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
@@ -263,7 +263,7 @@ namespace xayah::projects::pyro::cuda {
         return field[index_velocity_x(i, j, k, nx, ny)];
     }
 
-    __device__ float load_velocity_y(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float load_velocity_y(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         if (i < 0 || i >= nx) {
             const auto face = i < 0 ? boundary.x_minus : boundary.x_plus;
             if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
@@ -297,7 +297,7 @@ namespace xayah::projects::pyro::cuda {
         return field[index_velocity_y(i, j, k, nx, ny)];
     }
 
-    __device__ float load_velocity_z(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float load_velocity_z(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         if (i < 0 || i >= nx) {
             const auto face = i < 0 ? boundary.x_minus : boundary.x_plus;
             if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
@@ -347,7 +347,7 @@ namespace xayah::projects::pyro::cuda {
         return (2.0f * t3 - 3.0f * t2 + 1.0f) * p1 + (t3 - 2.0f * t2 + t) * m1 + (-2.0f * t3 + 3.0f * t2) * p2 + (t3 - t2) * m2;
     }
 
-    __device__ float sample_scalar_linear(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationScalarBoundaryConfig boundary) {
+    __device__ float sample_scalar_linear(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const ScalarBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
@@ -395,7 +395,7 @@ namespace xayah::projects::pyro::cuda {
         return c0 + (c1 - c0) * tz;
     }
 
-    __device__ float sample_scalar_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationScalarBoundaryConfig boundary) {
+    __device__ float sample_scalar_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const ScalarBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
@@ -439,7 +439,7 @@ namespace xayah::projects::pyro::cuda {
         return monotonic_cubic_1d(z_samples[0], z_samples[1], z_samples[2], z_samples[3], tz);
     }
 
-    __device__ float sample_velocity_x(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float sample_velocity_x(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const FlowBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
@@ -487,7 +487,7 @@ namespace xayah::projects::pyro::cuda {
         return c0 + (c1 - c0) * tz;
     }
 
-    __device__ float sample_velocity_x_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float sample_velocity_x_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const FlowBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
@@ -529,7 +529,7 @@ namespace xayah::projects::pyro::cuda {
         return monotonic_cubic_1d(z_samples[0], z_samples[1], z_samples[2], z_samples[3], tz);
     }
 
-    __device__ float sample_velocity_y(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float sample_velocity_y(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const FlowBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
@@ -577,7 +577,7 @@ namespace xayah::projects::pyro::cuda {
         return c0 + (c1 - c0) * tz;
     }
 
-    __device__ float sample_velocity_y_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float sample_velocity_y_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const FlowBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
@@ -619,7 +619,7 @@ namespace xayah::projects::pyro::cuda {
         return monotonic_cubic_1d(z_samples[0], z_samples[1], z_samples[2], z_samples[3], tz);
     }
 
-    __device__ float sample_velocity_z(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float sample_velocity_z(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const FlowBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
@@ -667,7 +667,7 @@ namespace xayah::projects::pyro::cuda {
         return c0 + (c1 - c0) * tz;
     }
 
-    __device__ float sample_velocity_z_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float sample_velocity_z_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const FlowBoundaryData boundary) {
         if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
@@ -709,11 +709,11 @@ namespace xayah::projects::pyro::cuda {
         return monotonic_cubic_1d(z_samples[0], z_samples[1], z_samples[2], z_samples[3], tz);
     }
 
-    __device__ float3 sample_velocity(const float* velocity_x, const float* velocity_y, const float* velocity_z, const float x, const float y, const float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float3 sample_velocity(const float* velocity_x, const float* velocity_y, const float* velocity_z, const float x, const float y, const float z, const int nx, const int ny, const int nz, const float h, const FlowBoundaryData boundary) {
         return make_float3(sample_velocity_x(velocity_x, x, y, z, nx, ny, nz, h, boundary), sample_velocity_y(velocity_y, x, y, z, nx, ny, nz, h, boundary), sample_velocity_z(velocity_z, x, y, z, nx, ny, nz, h, boundary));
     }
 
-    __device__ float3 trace_particle_rk2(const float3 start, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const float dt, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float3 trace_particle_rk2(const float3 start, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const float dt, const int nx, const int ny, const int nz, const float h, const FlowBoundaryData boundary) {
         const auto [v0_x, v0_y, v0_z]    = sample_velocity(velocity_x, velocity_y, velocity_z, start.x, start.y, start.z, nx, ny, nz, h, boundary);
         const auto [mid_x, mid_y, mid_z] = make_float3(start.x - 0.5f * dt * v0_x, start.y - 0.5f * dt * v0_y, start.z - 0.5f * dt * v0_z);
         const auto [v1_x, v1_y, v1_z]    = sample_velocity(velocity_x, velocity_y, velocity_z, mid_x, mid_y, mid_z, nx, ny, nz, h, boundary);
@@ -817,7 +817,7 @@ namespace xayah::projects::pyro::cuda {
         cell_z[index]    = 0.5f * (velocity_z[index_velocity_z(x, y, z, nx, ny)] + velocity_z[index_velocity_z(x, y, z + 1, nx, ny)]);
     }
 
-    __global__ void compute_vorticity_kernel(float* omega_x, float* omega_y, float* omega_z, float* omega_magnitude, const float* cell_x, const float* cell_y, const float* cell_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void compute_vorticity_kernel(float* omega_x, float* omega_y, float* omega_z, float* omega_magnitude, const float* cell_x, const float* cell_y, const float* cell_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const FlowBoundaryData boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -849,7 +849,7 @@ namespace xayah::projects::pyro::cuda {
         omega_magnitude[index] = sqrtf(wx * wx + wy * wy + wz * wz);
     }
 
-    __global__ void add_buoyancy_kernel(float* force_y, const float* density, const float* temperature, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float ambient_temperature, const float density_factor, const float temperature_factor, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void add_buoyancy_kernel(float* force_y, const float* density, const float* temperature, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float ambient_temperature, const float density_factor, const float temperature_factor, const FlowBoundaryData boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -859,7 +859,7 @@ namespace xayah::projects::pyro::cuda {
         force_y[index] += -density_factor * density[index] + temperature_factor * (temperature[index] - ambient_temperature);
     }
 
-    __global__ void add_confinement_kernel(float* force_x, float* force_y, float* force_z, const float* omega_x, const float* omega_y, const float* omega_z, const float* omega_magnitude, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float epsilon, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void add_confinement_kernel(float* force_x, float* force_y, float* force_z, const float* omega_x, const float* omega_y, const float* omega_z, const float* omega_magnitude, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float epsilon, const FlowBoundaryData boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -946,14 +946,14 @@ namespace xayah::projects::pyro::cuda {
         if (weight > 0.0f) velocity_z[index_velocity_z(i, j, k, nx, ny)] += dt * (sum / weight);
     }
 
-    __device__ float solid_velocity_value(const float* solid_velocity, const uint8_t* occupancy, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __device__ float solid_velocity_value(const float* solid_velocity, const uint8_t* occupancy, int x, int y, int z, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         if (solid_velocity == nullptr || occupancy == nullptr) return 0.0f;
         if (!resolve_cell_coordinates(x, y, z, nx, ny, nz, boundary)) return 0.0f;
         if (occupancy[index_3d(x, y, z, nx, ny)] == 0) return 0.0f;
         return solid_velocity[index_3d(x, y, z, nx, ny)];
     }
 
-    __global__ void enforce_velocity_x_boundaries_kernel(float* velocity_x, const uint8_t* occupancy, const float* solid_velocity_x, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void enforce_velocity_x_boundaries_kernel(float* velocity_x, const uint8_t* occupancy, const float* solid_velocity_x, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1005,7 +1005,7 @@ namespace xayah::projects::pyro::cuda {
         face = weight > 0.0f ? value / weight : 0.0f;
     }
 
-    __global__ void enforce_velocity_y_boundaries_kernel(float* velocity_y, const uint8_t* occupancy, const float* solid_velocity_y, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void enforce_velocity_y_boundaries_kernel(float* velocity_y, const uint8_t* occupancy, const float* solid_velocity_y, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1057,7 +1057,7 @@ namespace xayah::projects::pyro::cuda {
         face = weight > 0.0f ? value / weight : 0.0f;
     }
 
-    __global__ void enforce_velocity_z_boundaries_kernel(float* velocity_z, const uint8_t* occupancy, const float* solid_velocity_z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void enforce_velocity_z_boundaries_kernel(float* velocity_z, const uint8_t* occupancy, const float* solid_velocity_z, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1130,7 +1130,7 @@ namespace xayah::projects::pyro::cuda {
         velocity_z[index_velocity_z(i, j, nz, nx, ny)] = velocity_z[index_velocity_z(i, j, 0, nx, ny)];
     }
 
-    __global__ void advect_velocity_x_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void advect_velocity_x_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const FlowBoundaryData boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1140,7 +1140,7 @@ namespace xayah::projects::pyro::cuda {
         destination[index_velocity_x(i, j, k, nx, ny)] = advection_mode == SMOKE_SIMULATION_SCALAR_ADVECTION_MONOTONIC_CUBIC ? sample_velocity_x_cubic(source, p_x, p_y, p_z, nx, ny, nz, h, boundary) : sample_velocity_x(source, p_x, p_y, p_z, nx, ny, nz, h, boundary);
     }
 
-    __global__ void advect_velocity_y_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void advect_velocity_y_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const FlowBoundaryData boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1150,7 +1150,7 @@ namespace xayah::projects::pyro::cuda {
         destination[index_velocity_y(i, j, k, nx, ny)] = advection_mode == SMOKE_SIMULATION_SCALAR_ADVECTION_MONOTONIC_CUBIC ? sample_velocity_y_cubic(source, p_x, p_y, p_z, nx, ny, nz, h, boundary) : sample_velocity_y(source, p_x, p_y, p_z, nx, ny, nz, h, boundary);
     }
 
-    __global__ void advect_velocity_z_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void advect_velocity_z_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const FlowBoundaryData boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1160,7 +1160,7 @@ namespace xayah::projects::pyro::cuda {
         destination[index_velocity_z(i, j, k, nx, ny)] = advection_mode == SMOKE_SIMULATION_SCALAR_ADVECTION_MONOTONIC_CUBIC ? sample_velocity_z_cubic(source, p_x, p_y, p_z, nx, ny, nz, h, boundary) : sample_velocity_z(source, p_x, p_y, p_z, nx, ny, nz, h, boundary);
     }
 
-    __global__ void advect_scalar_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const SmokeSimulationScalarBoundaryConfig scalar_boundary, const SmokeSimulationFlowBoundaryConfig flow_boundary) {
+    __global__ void advect_scalar_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const ScalarBoundaryData scalar_boundary, const FlowBoundaryData flow_boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1182,7 +1182,7 @@ namespace xayah::projects::pyro::cuda {
         temperature[index] = solid_temperature != nullptr ? solid_temperature[index] : ambient_temperature;
     }
 
-    __global__ void boundary_fill_density_kernel(float* destination, const float* source, const uint8_t* occupancy, const int nx, const int ny, const int nz, const SmokeSimulationScalarBoundaryConfig boundary) {
+    __global__ void boundary_fill_density_kernel(float* destination, const float* source, const uint8_t* occupancy, const int nx, const int ny, const int nz, const ScalarBoundaryData boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1244,7 +1244,7 @@ namespace xayah::projects::pyro::cuda {
         atomicMin(pressure_anchor, static_cast<int>(index));
     }
 
-    __global__ void compute_pressure_rhs_kernel(float* rhs, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int* pressure_anchor, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void compute_pressure_rhs_kernel(float* rhs, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int* pressure_anchor, const int nx, const int ny, const int nz, const float h, const float dt, const FlowBoundaryData boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1270,7 +1270,7 @@ namespace xayah::projects::pyro::cuda {
         rhs[index] = -(h * h / dt) * divergence + boundary_sum;
     }
 
-    __device__ void accumulate_pressure_neighbor(int* active_neighbors, int& active_neighbor_count, float& diagonal, int next_x, int next_y, int next_z, const SmokeSimulationFlowBoundaryFaceDesc minus_face, const SmokeSimulationFlowBoundaryFaceDesc plus_face, const bool periodic_axis, const uint8_t* occupancy, const int anchor, const int nx, const int ny, const int nz) {
+    __device__ void accumulate_pressure_neighbor(int* active_neighbors, int& active_neighbor_count, float& diagonal, int next_x, int next_y, int next_z, const FlowBoundaryFaceData minus_face, const FlowBoundaryFaceData plus_face, const bool periodic_axis, const uint8_t* occupancy, const int anchor, const int nx, const int ny, const int nz) {
         if (next_x < 0 || next_x >= nx || next_y < 0 || next_y >= ny || next_z < 0 || next_z >= nz) {
             if (periodic_axis) {
                 if (next_x < 0 || next_x >= nx) next_x = wrap_index(next_x, nx);
@@ -1293,7 +1293,7 @@ namespace xayah::projects::pyro::cuda {
         ++active_neighbor_count;
     }
 
-    __global__ void build_pressure_matrix_kernel(float* values, const int* row_offsets, const int* column_indices, const uint8_t* occupancy, const int* pressure_anchor, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void build_pressure_matrix_kernel(float* values, const int* row_offsets, const int* column_indices, const uint8_t* occupancy, const int* pressure_anchor, const int nx, const int ny, const int nz, const FlowBoundaryData boundary) {
         const int row = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         if (row >= nx * ny * nz) return;
 
@@ -1352,7 +1352,7 @@ namespace xayah::projects::pyro::cuda {
         *destination = -*source;
     }
 
-    __global__ void project_velocity_x_kernel(float* velocity_x, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_x, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void project_velocity_x_kernel(float* velocity_x, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_x, const int nx, const int ny, const int nz, const float h, const float dt, const FlowBoundaryData boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1411,7 +1411,7 @@ namespace xayah::projects::pyro::cuda {
         }
     }
 
-    __global__ void project_velocity_y_kernel(float* velocity_y, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_y, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void project_velocity_y_kernel(float* velocity_y, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_y, const int nx, const int ny, const int nz, const float h, const float dt, const FlowBoundaryData boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1470,7 +1470,7 @@ namespace xayah::projects::pyro::cuda {
         }
     }
 
-    __global__ void project_velocity_z_kernel(float* velocity_z, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_z, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void project_velocity_z_kernel(float* velocity_z, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_z, const int nx, const int ny, const int nz, const float h, const float dt, const FlowBoundaryData boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1560,19 +1560,19 @@ namespace xayah::projects::pyro::cuda {
     }
 
     void launch_compute_vorticity(const cudaStream_t stream, const dim3 grid, const dim3 block, float* omega_x, float* omega_y, float* omega_z, float* omega_magnitude, const float* cell_x, const float* cell_y, const float* cell_z, const std::uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
-        const SmokeSimulationFlowBoundaryConfig boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const FlowBoundaryData boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         compute_vorticity_kernel<<<grid, block, 0, stream>>>(omega_x, omega_y, omega_z, omega_magnitude, cell_x, cell_y, cell_z, occupancy, nx, ny, nz, h, boundary);
         check_cuda(cudaGetLastError(), "compute_vorticity_kernel");
     }
 
     void launch_add_buoyancy(const cudaStream_t stream, const dim3 grid, const dim3 block, float* force_y, const float* density, const float* temperature, const std::uint8_t* occupancy, const int nx, const int ny, const int nz, const float ambient_temperature, const float density_factor, const float temperature_factor, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
-        const SmokeSimulationFlowBoundaryConfig boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const FlowBoundaryData boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         add_buoyancy_kernel<<<grid, block, 0, stream>>>(force_y, density, temperature, occupancy, nx, ny, nz, ambient_temperature, density_factor, temperature_factor, boundary);
         check_cuda(cudaGetLastError(), "add_buoyancy_kernel");
     }
 
     void launch_add_vorticity_confinement(const cudaStream_t stream, const dim3 grid, const dim3 block, float* force_x, float* force_y, float* force_z, const float* omega_x, const float* omega_y, const float* omega_z, const float* omega_magnitude, const std::uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float epsilon, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
-        const SmokeSimulationFlowBoundaryConfig boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const FlowBoundaryData boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         add_confinement_kernel<<<grid, block, 0, stream>>>(force_x, force_y, force_z, omega_x, omega_y, omega_z, omega_magnitude, occupancy, nx, ny, nz, h, epsilon, boundary);
         check_cuda(cudaGetLastError(), "add_confinement_kernel");
     }
@@ -1587,7 +1587,7 @@ namespace xayah::projects::pyro::cuda {
 
     void launch_enforce_staggered_boundary(const cudaStream_t stream, const dim3 grid, const dim3 block, const std::uint32_t axis, float* velocity_component, const std::uint8_t* occupancy, const float* solid_velocity_component, const int nx, const int ny, const int nz, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
         validate_axis(axis, "launch_enforce_staggered_boundary");
-        const SmokeSimulationFlowBoundaryConfig boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const FlowBoundaryData boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         if (axis == 0u) enforce_velocity_x_boundaries_kernel<<<grid, block, 0, stream>>>(velocity_component, occupancy, solid_velocity_component, nx, ny, nz, boundary);
         if (axis == 1u) enforce_velocity_y_boundaries_kernel<<<grid, block, 0, stream>>>(velocity_component, occupancy, solid_velocity_component, nx, ny, nz, boundary);
         if (axis == 2u) enforce_velocity_z_boundaries_kernel<<<grid, block, 0, stream>>>(velocity_component, occupancy, solid_velocity_component, nx, ny, nz, boundary);
@@ -1604,7 +1604,7 @@ namespace xayah::projects::pyro::cuda {
 
     void launch_advect_staggered_component(const cudaStream_t stream, const dim3 grid, const dim3 block, const std::uint32_t axis, float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const std::uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const std::uint32_t advection_mode, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
         validate_axis(axis, "launch_advect_staggered_component");
-        const SmokeSimulationFlowBoundaryConfig boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const FlowBoundaryData boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         if (axis == 0u) advect_velocity_x_kernel<<<grid, block, 0, stream>>>(destination, source, velocity_x, velocity_y, velocity_z, occupancy, nx, ny, nz, h, dt, advection_mode, boundary);
         if (axis == 1u) advect_velocity_y_kernel<<<grid, block, 0, stream>>>(destination, source, velocity_x, velocity_y, velocity_z, occupancy, nx, ny, nz, h, dt, advection_mode, boundary);
         if (axis == 2u) advect_velocity_z_kernel<<<grid, block, 0, stream>>>(destination, source, velocity_x, velocity_y, velocity_z, occupancy, nx, ny, nz, h, dt, advection_mode, boundary);
@@ -1612,8 +1612,8 @@ namespace xayah::projects::pyro::cuda {
     }
 
     void launch_advect_centered_scalar(const cudaStream_t stream, const dim3 grid, const dim3 block, float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const std::uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const std::uint32_t advection_mode, const std::uint32_t* scalar_boundary_types, const float* scalar_boundary_values, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
-        const SmokeSimulationScalarBoundaryConfig scalar_boundary = make_scalar_boundary(scalar_boundary_types, scalar_boundary_values);
-        const SmokeSimulationFlowBoundaryConfig flow_boundary     = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const ScalarBoundaryData scalar_boundary = make_scalar_boundary(scalar_boundary_types, scalar_boundary_values);
+        const FlowBoundaryData flow_boundary     = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         advect_scalar_kernel<<<grid, block, 0, stream>>>(destination, source, velocity_x, velocity_y, velocity_z, occupancy, nx, ny, nz, h, dt, advection_mode, scalar_boundary, flow_boundary);
         check_cuda(cudaGetLastError(), "advect_scalar_kernel");
     }
@@ -1624,7 +1624,7 @@ namespace xayah::projects::pyro::cuda {
     }
 
     void launch_boundary_fill_centered_scalar(const cudaStream_t stream, const dim3 grid, const dim3 block, float* destination, const float* source, const std::uint8_t* occupancy, const int nx, const int ny, const int nz, const std::uint32_t* scalar_boundary_types, const float* scalar_boundary_values) {
-        const SmokeSimulationScalarBoundaryConfig boundary = make_scalar_boundary(scalar_boundary_types, scalar_boundary_values);
+        const ScalarBoundaryData boundary = make_scalar_boundary(scalar_boundary_types, scalar_boundary_values);
         boundary_fill_density_kernel<<<grid, block, 0, stream>>>(destination, source, occupancy, nx, ny, nz, boundary);
         check_cuda(cudaGetLastError(), "boundary_fill_density_kernel");
     }
@@ -1635,13 +1635,13 @@ namespace xayah::projects::pyro::cuda {
     }
 
     void launch_compute_projection_rhs(const cudaStream_t stream, const dim3 grid, const dim3 block, float* rhs, const float* velocity_x, const float* velocity_y, const float* velocity_z, const std::uint8_t* occupancy, const int* pressure_anchor, const int nx, const int ny, const int nz, const float h, const float dt, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
-        const SmokeSimulationFlowBoundaryConfig boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const FlowBoundaryData boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         compute_pressure_rhs_kernel<<<grid, block, 0, stream>>>(rhs, velocity_x, velocity_y, velocity_z, occupancy, pressure_anchor, nx, ny, nz, h, dt, boundary);
         check_cuda(cudaGetLastError(), "compute_pressure_rhs_kernel");
     }
 
     void launch_build_projection_matrix(const cudaStream_t stream, const unsigned grid, const unsigned block, float* values, const int* row_offsets, const int* column_indices, const std::uint8_t* occupancy, const int* pressure_anchor, const int nx, const int ny, const int nz, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
-        const SmokeSimulationFlowBoundaryConfig boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const FlowBoundaryData boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         build_pressure_matrix_kernel<<<grid, block, 0, stream>>>(values, row_offsets, column_indices, occupancy, pressure_anchor, nx, ny, nz, boundary);
         check_cuda(cudaGetLastError(), "build_pressure_matrix_kernel");
     }
@@ -1658,7 +1658,7 @@ namespace xayah::projects::pyro::cuda {
 
     void launch_project_staggered_component(const cudaStream_t stream, const dim3 grid, const dim3 block, const std::uint32_t axis, float* velocity_component, const float* pressure, const std::uint8_t* occupancy, const float* solid_velocity_component, const int nx, const int ny, const int nz, const float h, const float dt, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
         validate_axis(axis, "launch_project_staggered_component");
-        const SmokeSimulationFlowBoundaryConfig boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const FlowBoundaryData boundary = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         if (axis == 0u) project_velocity_x_kernel<<<grid, block, 0, stream>>>(velocity_component, pressure, occupancy, solid_velocity_component, nx, ny, nz, h, dt, boundary);
         if (axis == 1u) project_velocity_y_kernel<<<grid, block, 0, stream>>>(velocity_component, pressure, occupancy, solid_velocity_component, nx, ny, nz, h, dt, boundary);
         if (axis == 2u) project_velocity_z_kernel<<<grid, block, 0, stream>>>(velocity_component, pressure, occupancy, solid_velocity_component, nx, ny, nz, h, dt, boundary);

@@ -18,7 +18,7 @@ target_link_libraries(
         PRIVATE
         xayah::cloth
         SpectraPluginSDK::contract
-        spectra_cuda_plugin_interop
+        xayah_cuda_interop
 )
 spectra_add_provider(
         xayah_cloth_plugin

@@ -31,39 +31,39 @@ add_link_options("$<$<LINK_LANGUAGE:CXX>:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_
 # ============================================================================
 # Dynamic Scene Bundles
 # ============================================================================
-function(spectra_add_provider target provider scene_directory)
-    cmake_path(GET scene_directory FILENAME scene_name)
+function(spectra_add_provider provider_target provider_id scene_source_directory)
+    cmake_path(GET scene_source_directory FILENAME scene_name)
     set(bundle_directory "${PROJECT_BINARY_DIR}/bundles/${scene_name}")
     set(bundle_stamp "${PROJECT_BINARY_DIR}/bundles/.stamps/${scene_name}.stamp")
     set_target_properties(
-            ${target}
+            ${provider_target}
             PROPERTIES
             PREFIX ""
-            OUTPUT_NAME "${provider}.spectra-plugin"
+            OUTPUT_NAME "${provider_id}.spectra-plugin"
             RUNTIME_OUTPUT_DIRECTORY "${bundle_directory}"
             LIBRARY_OUTPUT_DIRECTORY "${bundle_directory}"
     )
     string(MAKE_C_IDENTIFIER "spectra_${scene_name}_bundle" bundle_target)
     if (NOT TARGET ${bundle_target})
-        file(GLOB_RECURSE scene_files CONFIGURE_DEPENDS "${scene_directory}/*")
+        file(GLOB_RECURSE scene_source_files CONFIGURE_DEPENDS "${scene_source_directory}/*")
         add_custom_command(
                 OUTPUT "${bundle_stamp}"
                 COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                "${scene_directory}"
+                "${scene_source_directory}"
                 "${bundle_directory}"
                 COMMAND "${CMAKE_COMMAND}" -E make_directory "${PROJECT_BINARY_DIR}/bundles/.stamps"
                 COMMAND "${CMAKE_COMMAND}" -E touch "${bundle_stamp}"
-                DEPENDS ${scene_files}
+                DEPENDS ${scene_source_files}
                 VERBATIM
         )
         add_custom_target(${bundle_target} ALL DEPENDS "${bundle_stamp}")
     endif ()
-    add_dependencies(${bundle_target} ${target})
+    add_dependencies(${bundle_target} ${provider_target})
 endfunction()
 
-add_library(spectra_cuda_plugin_interop STATIC common/cuda_interop.cu)
-target_include_directories(spectra_cuda_plugin_interop PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/common")
-target_link_libraries(spectra_cuda_plugin_interop PUBLIC CUDA::cudart)
+add_library(xayah_cuda_interop STATIC common/cuda_interop.cu)
+target_include_directories(xayah_cuda_interop PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/common")
+target_link_libraries(xayah_cuda_interop PUBLIC CUDA::cudart)
 
 add_subdirectory(bouncing_ball)
 add_subdirectory(cloth)

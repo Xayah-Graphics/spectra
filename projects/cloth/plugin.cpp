@@ -41,9 +41,9 @@ namespace {
         telemetry_descriptors.size(),
     };
 
-    struct Plugin {
-        struct Slot {
-            xayah::projects::cuda_interop::Buffer positions{};
+    struct Provider {
+        struct OutputSlot {
+            xayah::projects::cuda_interop::ImportedBuffer positions{};
         };
 
         struct InputSlot {
@@ -55,45 +55,45 @@ namespace {
             const SpectraPluginFloat3* positions{};
         };
 
-        xayah::projects::cloth::Config config{};
+        xayah::projects::cloth::SolverConfiguration configuration{};
         xayah::projects::cloth::SphereCollider collider{};
-        std::optional<xayah::projects::cloth::Solver> solver{std::in_place, this->config, this->collider};
-        std::array<Slot, 2> slots{};
+        std::optional<xayah::projects::cloth::Solver> solver{std::in_place, this->configuration, this->collider};
+        std::array<OutputSlot, 2> output_slots{};
         InputSlot collider_input{};
         InitialMeshInput initial_mesh_input{};
-        xayah::projects::cuda_interop::Timeline timeline{};
-        std::uint64_t ready_value{};
-        std::uint32_t next_slot{};
-        ~Plugin() {
-            for (Slot& slot : this->slots) {
-                xayah::projects::cuda_interop::destroy(slot.positions);
+        xayah::projects::cuda_interop::ImportedTimelineSemaphore timeline_semaphore{};
+        std::uint64_t ready_timeline_value{};
+        std::uint32_t next_output_slot_index{};
+        ~Provider() {
+            for (OutputSlot& output_slot : this->output_slots) {
+                xayah::projects::cuda_interop::destroy_imported_buffer(output_slot.positions);
             }
-            xayah::projects::cuda_interop::destroy(this->timeline);
+            xayah::projects::cuda_interop::destroy_imported_timeline_semaphore(this->timeline_semaphore);
         }
 
-        void configure(const SpectraPluginPortConfiguration& configuration) {
-            for (Slot& slot : this->slots) {
-                xayah::projects::cuda_interop::destroy(slot.positions);
+        void configure_output(const SpectraPluginPortConfiguration& configuration) {
+            for (OutputSlot& output_slot : this->output_slots) {
+                xayah::projects::cuda_interop::destroy_imported_buffer(output_slot.positions);
             }
-            xayah::projects::cuda_interop::destroy(this->timeline);
-            xayah::projects::cuda_interop::select_device(configuration.vulkan_device_uuid, configuration.vulkan_device_luid, configuration.vulkan_device_node_mask);
+            xayah::projects::cuda_interop::destroy_imported_timeline_semaphore(this->timeline_semaphore);
+            xayah::projects::cuda_interop::select_matching_device(configuration.vulkan_device_uuid, configuration.vulkan_device_luid, configuration.vulkan_device_node_mask);
             for (std::uint64_t slot_index = 0; slot_index < configuration.slot_count; ++slot_index) {
                 const SpectraPluginPortSlot& source = configuration.slots[slot_index];
-                Slot& destination                   = this->slots[source.index];
+                OutputSlot& destination             = this->output_slots[source.slot_index];
                 for (std::uint64_t index = 0; index < source.buffer_count; ++index) {
                     const SpectraPluginBuffer& buffer = source.buffers[index];
-                    if (buffer.attribute == SpectraPluginAttribute::Position) destination.positions = xayah::projects::cuda_interop::import_buffer(buffer.memory_handle, buffer.byte_size);
+                    if (buffer.attribute == SpectraPluginAttribute::Position) destination.positions = xayah::projects::cuda_interop::import_buffer(buffer.external_memory_handle, buffer.byte_size);
                 }
             }
-            this->timeline    = xayah::projects::cuda_interop::import_timeline(configuration.timeline_semaphore_handle);
-            this->ready_value = 0;
-            this->next_slot   = 0;
+            this->timeline_semaphore     = xayah::projects::cuda_interop::import_timeline_semaphore(configuration.timeline_semaphore_handle);
+            this->ready_timeline_value   = 0;
+            this->next_output_slot_index = 0;
         }
 
         void configure_input(const SpectraPluginPortConfiguration& configuration) {
-            for (std::uint64_t slot = 0; slot < configuration.slot_count; ++slot)
-                for (std::uint64_t buffer = 0; buffer < configuration.slots[slot].buffer_count; ++buffer) {
-                    const SpectraPluginBuffer& source = configuration.slots[slot].buffers[buffer];
+            for (std::uint64_t slot_index = 0; slot_index < configuration.slot_count; ++slot_index)
+                for (std::uint64_t buffer_index = 0; buffer_index < configuration.slots[slot_index].buffer_count; ++buffer_index) {
+                    const SpectraPluginBuffer& source = configuration.slots[slot_index].buffers[buffer_index];
                     if (source.attribute == SpectraPluginAttribute::Transform)
                         this->collider_input.transform = static_cast<const SpectraPluginTransform*>(source.host_address);
                     else if (source.attribute == SpectraPluginAttribute::Bounds)
@@ -104,58 +104,58 @@ namespace {
         }
 
         void set_input(const SpectraPluginInputFrame& frame) {
-            if (frame.port == 0) {
+            if (frame.port_index == 0) {
                 this->collider.center = {this->collider_input.transform->matrix[3], this->collider_input.transform->matrix[7], this->collider_input.transform->matrix[11]};
                 this->collider.radius = std::max({(this->collider_input.bounds[1].x - this->collider_input.bounds[0].x) * 0.5f, (this->collider_input.bounds[1].y - this->collider_input.bounds[0].y) * 0.5f, (this->collider_input.bounds[1].z - this->collider_input.bounds[0].z) * 0.5f});
             } else {
                 const SpectraPluginFloat3& origin     = this->initial_mesh_input.positions[0];
-                const SpectraPluginFloat3& column_end = this->initial_mesh_input.positions[this->config.columns - 1];
-                const SpectraPluginFloat3& row_end    = this->initial_mesh_input.positions[(this->config.rows - 1) * this->config.columns];
-                this->config.origin                   = {origin.x, origin.y, origin.z};
-                this->config.width                    = std::hypot(column_end.x - origin.x, column_end.z - origin.z);
-                this->config.depth                    = std::hypot(row_end.x - origin.x, row_end.z - origin.z);
+                const SpectraPluginFloat3& column_end = this->initial_mesh_input.positions[this->configuration.columns - 1];
+                const SpectraPluginFloat3& row_end    = this->initial_mesh_input.positions[(this->configuration.rows - 1) * this->configuration.columns];
+                this->configuration.origin            = {origin.x, origin.y, origin.z};
+                this->configuration.width             = std::hypot(column_end.x - origin.x, column_end.z - origin.z);
+                this->configuration.depth             = std::hypot(row_end.x - origin.x, row_end.z - origin.z);
             }
         }
 
         void apply_parameters(const SpectraPluginParameterValue* values, const std::uint64_t count) {
-            if (count != parameters.size()) throw std::runtime_error("Cloth Plugin parameter count mismatch");
-            this->config.gravity = {
+            if (count != parameters.size()) throw std::runtime_error("Cloth Provider parameter count mismatch");
+            this->configuration.gravity = {
                 static_cast<float>(values[0].floating[0]),
                 static_cast<float>(values[0].floating[1]),
                 static_cast<float>(values[0].floating[2]),
             };
-            this->config.solver_iterations  = static_cast<std::uint32_t>(values[1].integer);
-            this->config.stretch_compliance = static_cast<float>(values[2].floating[0]);
-            this->config.bend_compliance    = static_cast<float>(values[3].floating[0]);
+            this->configuration.solver_iterations  = static_cast<std::uint32_t>(values[1].integer);
+            this->configuration.stretch_compliance = static_cast<float>(values[2].floating[0]);
+            this->configuration.bend_compliance    = static_cast<float>(values[3].floating[0]);
         }
 
         void reset() {
-            this->solver.emplace(this->config, this->collider);
+            this->solver.emplace(this->configuration, this->collider);
         }
 
-        void iterate(const double step_seconds, const std::uint64_t count) {
+        void advance_simulation(const double step_seconds, const std::uint64_t count) {
             for (std::uint64_t step = 0; step < count; ++step) this->solver->step(static_cast<float>(step_seconds));
-            xayah::projects::cuda_interop::synchronize(this->solver->device_frame().stream);
+            xayah::projects::cuda_interop::synchronize_stream(this->solver->cuda_mesh().cuda_stream);
         }
 
         void publish(const SpectraPluginFrameSink& sink) {
-            const xayah::projects::cloth::DeviceFrame frame = this->solver->device_frame();
-            if (this->ready_value != 0) xayah::projects::cuda_interop::wait(frame.stream, this->timeline, this->ready_value + 1);
-            Slot& slot = this->slots[this->next_slot];
-            xayah::projects::cuda_interop::pack_float3(frame.stream, slot.positions.pointer, frame.position_x, frame.position_y, frame.position_z, frame.vertex_count);
-            this->ready_value += this->ready_value == 0 ? 1 : 2;
-            xayah::projects::cuda_interop::signal(frame.stream, this->timeline, this->ready_value);
+            const xayah::projects::cloth::CudaMeshView mesh = this->solver->cuda_mesh();
+            if (this->ready_timeline_value != 0) xayah::projects::cuda_interop::wait_timeline(mesh.cuda_stream, this->timeline_semaphore, this->ready_timeline_value + 1);
+            OutputSlot& output_slot = this->output_slots[this->next_output_slot_index];
+            xayah::projects::cuda_interop::pack_float3_buffer(mesh.cuda_stream, output_slot.positions.device_pointer, mesh.position_x, mesh.position_y, mesh.position_z, mesh.vertex_count);
+            this->ready_timeline_value += this->ready_timeline_value == 0 ? 1 : 2;
+            xayah::projects::cuda_interop::signal_timeline(mesh.cuda_stream, this->timeline_semaphore, this->ready_timeline_value);
             const SpectraPluginOutputCommit commit{
-                this->next_slot,
-                frame.vertex_count,
+                this->next_output_slot_index,
+                mesh.vertex_count,
                 ports[2].secondary_capacity,
-                this->ready_value,
+                this->ready_timeline_value,
                 {},
                 {},
                 0,
             };
-            sink.commit_output(sink.state, 2, &commit);
-            this->next_slot = (this->next_slot + 1) % this->slots.size();
+            sink.commit_output(sink.context, 2, &commit);
+            this->next_output_slot_index = (this->next_output_slot_index + 1) % this->output_slots.size();
 
             const std::array debug{
                 SpectraPluginDebugPrimitive{
@@ -178,7 +178,7 @@ namespace {
                 SpectraPluginDebugPrimitive{
                     SpectraPluginDebugPrimitiveKind::Point,
                     SpectraPluginDebugDepthMode::XRay,
-                    {this->config.origin[0], this->config.origin[1], this->config.origin[2]},
+                    {this->configuration.origin[0], this->configuration.origin[1], this->configuration.origin[2]},
                     {},
                     {0.18f, 0.72f, 0.98f},
                     0.06f,
@@ -187,14 +187,14 @@ namespace {
                 SpectraPluginDebugPrimitive{
                     SpectraPluginDebugPrimitiveKind::Point,
                     SpectraPluginDebugDepthMode::XRay,
-                    {this->config.origin[0] + this->config.width, this->config.origin[1], this->config.origin[2]},
+                    {this->configuration.origin[0] + this->configuration.width, this->configuration.origin[1], this->configuration.origin[2]},
                     {},
                     {0.18f, 0.72f, 0.98f},
                     0.06f,
                     3,
                 },
             };
-            sink.write_debug_draw(sink.state, 3, debug.data(), debug.size());
+            sink.write_debug_draw(sink.context, 3, debug.data(), debug.size());
         }
     };
 
@@ -203,43 +203,43 @@ namespace {
     }
 
     void* create_provider() {
-        return new Plugin{};
+        return new Provider{};
     }
 
     void destroy_provider(void* instance) {
-        delete static_cast<Plugin*>(instance);
+        delete static_cast<Provider*>(instance);
     }
 
     void configure_port(void* instance, const SpectraPluginPortConfiguration* configuration) {
         if (configuration->direction == SpectraPluginPortDirection::Input)
-            static_cast<Plugin*>(instance)->configure_input(*configuration);
+            static_cast<Provider*>(instance)->configure_input(*configuration);
         else
-            static_cast<Plugin*>(instance)->configure(*configuration);
+            static_cast<Provider*>(instance)->configure_output(*configuration);
     }
     void set_input_frame(void* instance, const SpectraPluginInputFrame* frame) {
-        static_cast<Plugin*>(instance)->set_input(*frame);
+        static_cast<Provider*>(instance)->set_input(*frame);
     }
 
     void apply_parameters(void* instance, const SpectraPluginParameterValue* values, const std::uint64_t count) {
-        static_cast<Plugin*>(instance)->apply_parameters(values, count);
+        static_cast<Provider*>(instance)->apply_parameters(values, count);
     }
 
     void reset(void* instance, std::uint64_t) {
-        static_cast<Plugin*>(instance)->reset();
+        static_cast<Provider*>(instance)->reset();
     }
 
     void step(void* instance, const double step_seconds, const std::uint64_t count) {
-        static_cast<Plugin*>(instance)->iterate(step_seconds, count);
+        static_cast<Provider*>(instance)->advance_simulation(step_seconds, count);
     }
 
-    double telemetry_value(const void* instance, const std::uint64_t index) {
-        const Plugin& plugin = *static_cast<const Plugin*>(instance);
-        if (index == 0) return static_cast<double>(plugin.config.columns * plugin.config.rows);
-        return static_cast<double>((plugin.config.columns - 1) * (plugin.config.rows - 1) * 2);
+    double read_telemetry(const void* instance, const std::uint64_t index) {
+        const Provider& provider = *static_cast<const Provider*>(instance);
+        if (index == 0) return static_cast<double>(provider.configuration.columns * provider.configuration.rows);
+        return static_cast<double>((provider.configuration.columns - 1) * (provider.configuration.rows - 1) * 2);
     }
 
     void publish_frame(void* instance, std::uint64_t, const SpectraPluginFrameSink* sink) {
-        static_cast<Plugin*>(instance)->publish(*sink);
+        static_cast<Provider*>(instance)->publish(*sink);
     }
 } // namespace
 
@@ -255,7 +255,7 @@ extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11()
         &apply_parameters,
         &reset,
         &step,
-        &telemetry_value,
+        &read_telemetry,
         &publish_frame,
     };
     return &api;

@@ -1,0 +1,461 @@
+{
+  "format_version": 21,
+  "name": "Bouncing Ball",
+  "resources": {
+    "geometries": [
+      {
+        "id": 1,
+        "name": "Ball Shape",
+        "data": {
+          "type": "sphere",
+          "radius": 0.35,
+          "z_min": -1,
+          "z_max": 1,
+          "phi_max": 360
+        }
+      },
+      {
+        "id": 2,
+        "name": "Floor Shape",
+        "data": {
+          "type": "box",
+          "bounds": {
+            "minimum": [
+              -4,
+              -0.12,
+              -4
+            ],
+            "maximum": [
+              4,
+              0,
+              4
+            ]
+          }
+        }
+      }
+    ],
+    "particle_sets": [],
+    "volumes": [],
+    "textures": [],
+    "materials": [
+      {
+        "id": 1,
+        "name": "Ball Material",
+        "data": {
+          "type": "diffuse",
+          "reflectance": {
+            "value": [
+              0.12,
+              0.42,
+              0.92
+            ],
+            "texture": 0,
+            "encoding": "rgb_albedo",
+            "color_space": "srgb",
+            "scalar": 0,
+            "temperature": 0,
+            "wavelengths": [],
+            "samples": []
+          },
+          "normal_map": 0,
+          "bump_map": 0
+        }
+      },
+      {
+        "id": 2,
+        "name": "Floor Material",
+        "data": {
+          "type": "diffuse",
+          "reflectance": {
+            "value": [
+              0.42,
+              0.44,
+              0.48
+            ],
+            "texture": 0,
+            "encoding": "rgb_albedo",
+            "color_space": "srgb",
+            "scalar": 0,
+            "temperature": 0,
+            "wavelengths": [],
+            "samples": []
+          },
+          "normal_map": 0,
+          "bump_map": 0
+        }
+      }
+    ],
+    "media": [],
+    "lights": [
+      {
+        "id": 1,
+        "name": "Key Light",
+        "data": {
+          "type": "point",
+          "transform": [
+            1,
+            0,
+            0,
+            3.5,
+            0,
+            1,
+            0,
+            6,
+            0,
+            0,
+            1,
+            4,
+            0,
+            0,
+            0,
+            1
+          ],
+          "intensity": {
+            "value": [
+              70,
+              67,
+              62
+            ],
+            "texture": 0,
+            "encoding": "rgb_illuminant",
+            "color_space": "srgb",
+            "scalar": 0,
+            "temperature": 0,
+            "wavelengths": [],
+            "samples": []
+          },
+          "scale": 0.009358316
+        }
+      },
+      {
+        "id": 2,
+        "name": "Environment",
+        "data": {
+          "type": "infinite",
+          "radiance": {
+            "value": [
+              0.035,
+              0.045,
+              0.06
+            ],
+            "texture": 0,
+            "encoding": "rgb_illuminant",
+            "color_space": "srgb",
+            "scalar": 0,
+            "temperature": 0,
+            "wavelengths": [],
+            "samples": []
+          },
+          "transform": [
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": 0.009358316,
+          "emission_texture": 0
+        }
+      }
+    ],
+    "cameras": [
+      {
+        "id": 1,
+        "name": "Main Camera",
+        "transform": [
+          0.7863183,
+          -0.16081972,
+          0.59652364,
+          5.5,
+          0,
+          0.96552736,
+          0.26030123,
+          3.8,
+          -0.6178216,
+          -0.20467962,
+          0.7592119,
+          7,
+          0,
+          0,
+          0,
+          1
+        ],
+        "exposure_time": 1,
+        "medium": 0,
+        "data": {
+          "type": "perspective",
+          "vertical_fov": 42,
+          "screen": {
+            "minimum": [
+              -1,
+              -1
+            ],
+            "maximum": [
+              1,
+              1
+            ]
+          },
+          "lens_radius": 0,
+          "focal_distance": 1,
+          "near_plane": 0.01,
+          "far_plane": 1000
+        }
+      }
+    ],
+    "films": [
+      {
+        "id": 1,
+        "name": "Main Film",
+        "resolution": [
+          1920,
+          1080
+        ],
+        "pixel_minimum": [
+          0,
+          0
+        ],
+        "pixel_maximum": [
+          1920,
+          1080
+        ],
+        "exposure": 0,
+        "iso": 100,
+        "color_space": "srgb",
+        "sensor_response": [],
+        "sensor_to_output_rgb": [
+          3.240479,
+          -1.53715,
+          -0.498535,
+          -0.969256,
+          1.875991,
+          0.041556,
+          0.055648,
+          -0.204043,
+          1.057311
+        ],
+        "filter": {
+          "kind": "gaussian",
+          "radius": [
+            1.5,
+            1.5
+          ],
+          "sigma": 0.5,
+          "b": 0.33333334,
+          "c": 0.33333334,
+          "tau": 3
+        },
+        "gbuffer": true,
+        "gbuffer_camera_space": true
+      }
+    ],
+    "samplers": [
+      {
+        "id": 1,
+        "name": "Main Sampler",
+        "kind": "pmj02bn",
+        "samples_per_pixel": 256,
+        "seed": 20260731,
+        "jitter": true,
+        "x_strata": 1,
+        "y_strata": 1,
+        "randomization": "owen"
+      }
+    ],
+    "prototypes": [
+      {
+        "id": 1,
+        "name": "Ball Prototype",
+        "primitives": [
+          {
+            "geometry": 1,
+            "particles": 0,
+            "volume": 0,
+            "material": 1,
+            "area_light": 0,
+            "media": {
+              "inside": 0,
+              "outside": 0
+            },
+            "alpha": 0,
+            "face_materials": [],
+            "reverse_orientation": false,
+            "transform": [
+              1,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Floor Prototype",
+        "primitives": [
+          {
+            "geometry": 2,
+            "particles": 0,
+            "volume": 0,
+            "material": 2,
+            "area_light": 0,
+            "media": {
+              "inside": 0,
+              "outside": 0
+            },
+            "alpha": 0,
+            "face_materials": [],
+            "reverse_orientation": false,
+            "transform": [
+              1,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              1
+            ]
+          }
+        ]
+      }
+    ],
+    "instances": [
+      {
+        "id": 1,
+        "name": "Ball",
+        "prototype": 1,
+        "visible": true,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Initial Ball State",
+        "prototype": 1,
+        "visible": false,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          3,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Floor",
+        "prototype": 2,
+        "visible": true,
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      }
+    ]
+  },
+  "active_camera": 1,
+  "active_film": 1,
+  "active_sampler": 1,
+  "transport": {
+    "maximum_depth": 8,
+    "light_sampler": "bvh",
+    "regularize": false
+  },
+  "dynamic_setup": {
+    "clock": {
+      "step_seconds": 0.008333333333333333,
+      "start_step": 0,
+      "end_step": null,
+      "loop": false
+    },
+    "seed": 20260802,
+    "systems": [
+      {
+        "id": "ball",
+        "name": "Bouncing Ball",
+        "provider": "xayah.rigid.bouncing-ball",
+        "enabled": true,
+        "visible": true,
+        "parameters": [],
+        "bindings": [
+          {"port": "collider", "resource_kind": "Instance", "resource": 2},
+          {"port": "initial_ball", "resource_kind": "Instance", "resource": 3},
+          {"port": "ball_transform", "resource_kind": "Instance", "resource": 1},
+          {"port": "debug", "resource_kind": "Instance", "resource": 1}
+        ]
+      }
+    ]
+  }
+}

@@ -8,7 +8,7 @@ namespace xayah::projects::sparkles {
         std::array<float, 3> color{1.0f, 0.82f, 0.30f};
     };
 
-    export struct Config {
+    export struct SolverConfiguration {
         std::uint32_t seed{20260514u};
         std::array<float, 3> origin{0.0f, 0.0f, 0.0f};
         float launch_speed{5.8f};
@@ -17,7 +17,7 @@ namespace xayah::projects::sparkles {
         float rocket_lifetime{1.35f};
         float restart_delay{1.05f};
         float gravity{3.65f};
-        float max_step_seconds{1.0f / 120.0f};
+        float maximum_step_seconds{1.0f / 120.0f};
         std::uint32_t explosion_particles{520u};
         std::uint32_t ring_particles{180u};
         std::uint32_t glitter_particles{150u};
@@ -26,7 +26,7 @@ namespace xayah::projects::sparkles {
     };
 
     export struct Solver {
-        explicit Solver(const Config& config = {});
+        explicit Solver(const SolverConfiguration& configuration = {});
 
         void reset();
         void step(float delta_seconds);
@@ -34,16 +34,16 @@ namespace xayah::projects::sparkles {
 
     private:
         enum class Phase : std::uint32_t {
-            launch = 0,
-            fade   = 1,
+            Launch = 0,
+            Fade   = 1,
         };
 
         enum class ParticleKind : std::uint32_t {
-            trail   = 0,
-            burst   = 1,
-            core    = 2,
-            ring    = 3,
-            glitter = 4,
+            Trail   = 0,
+            Burst   = 1,
+            Core    = 2,
+            Ring    = 3,
+            Glitter = 4,
         };
 
         struct ParticleState {
@@ -55,26 +55,26 @@ namespace xayah::projects::sparkles {
             float lifetime{1.0f};
             float drag{0.0f};
             float gravity_scale{1.0f};
-            ParticleKind kind{ParticleKind::burst};
+            ParticleKind kind{ParticleKind::Burst};
         };
 
-        Config config{};
-        std::mt19937 random{};
-        Phase phase{Phase::launch};
+        SolverConfiguration configuration{};
+        std::mt19937 random_engine{};
+        Phase phase{Phase::Launch};
         std::array<float, 3> rocket_position{};
         std::array<float, 3> rocket_velocity{};
         std::array<float, 3> rocket_color{1.0f, 0.88f, 0.36f};
         float rocket_age{0.0f};
-        float cooldown{0.0f};
+        float relaunch_wait_seconds{0.0f};
         float trail_accumulator{0.0f};
-        std::vector<ParticleState> states{};
-        std::vector<Particle> visible_particles{};
+        std::vector<ParticleState> particle_states{};
+        std::vector<Particle> render_particles{};
 
         void start_rocket();
         void emit_trail(float delta_seconds);
         void explode();
         void update_particles(float delta_seconds);
-        void rebuild_visible_particles();
+        void rebuild_render_particles();
         [[nodiscard]] float random_range(float minimum, float maximum);
         [[nodiscard]] std::array<float, 3> random_sphere_direction();
     };

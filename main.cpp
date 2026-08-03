@@ -2,7 +2,7 @@
 
 #include <shellapi.h>
 
-import spectra.application;
+import spectra;
 import std;
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
@@ -15,9 +15,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         };
         if (!arguments) throw std::runtime_error("Windows failed to parse the Spectra command line");
         std::optional<std::filesystem::path> scene_path{};
-        std::vector<std::filesystem::path> scene_roots{};
-        bool start_pathtracer{};
-        bool renderer_selected{};
+        std::vector<std::filesystem::path> session_scene_roots{};
+        std::optional<std::string> initial_renderer{};
         std::optional<std::uint64_t> maximum_frame_count{};
         for (int index = 1; index < argument_count; ++index) {
             const std::wstring_view argument{arguments.get()[index]};
@@ -26,14 +25,15 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 scene_path = arguments.get()[index];
             } else if (argument == L"--scene-root") {
                 if (++index == argument_count) throw std::runtime_error("--scene-root requires a directory path");
-                scene_roots.emplace_back(arguments.get()[index]);
+                session_scene_roots.emplace_back(arguments.get()[index]);
             } else if (argument == L"--renderer") {
                 if (++index == argument_count) throw std::runtime_error("--renderer requires rasterizer or pathtracer");
                 const std::wstring_view renderer{arguments.get()[index]};
-                renderer_selected = true;
                 if (renderer == L"pathtracer")
-                    start_pathtracer = true;
-                else if (renderer != L"rasterizer")
+                    initial_renderer = "pathtracer";
+                else if (renderer == L"rasterizer")
+                    initial_renderer = "rasterizer";
+                else
                     throw std::runtime_error("--renderer requires rasterizer or pathtracer");
             } else if (argument == L"--frames") {
                 if (++index == argument_count) throw std::runtime_error("--frames requires a frame count");
@@ -43,9 +43,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             }
         }
 
-        if (!scene_path && (renderer_selected || maximum_frame_count)) throw std::runtime_error("--renderer and --frames require --scene");
+        if (!scene_path && (initial_renderer || maximum_frame_count)) throw std::runtime_error("--renderer and --frames require --scene");
 
-        spectra::run_application(std::move(scene_path), SPECTRA_SCENE_LIBRARY, std::move(scene_roots), SPECTRA_SHADER_DIRECTORY, maximum_frame_count, start_pathtracer);
+        spectra::Spectra application{std::move(scene_path), SPECTRA_SCENE_LIBRARY, std::move(session_scene_roots), SPECTRA_SHADER_DIRECTORY, std::move(initial_renderer)};
+        application.run(maximum_frame_count);
     } catch (const std::exception& error) {
         MessageBoxA(nullptr, error.what(), "Spectra", MB_OK | MB_ICONERROR);
         return 1;
