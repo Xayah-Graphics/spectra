@@ -1,6 +1,0 @@
-{
-  "roots": [
-    ".",
-    "../cmake-build-projects-release/bundles"
-  ]
-}

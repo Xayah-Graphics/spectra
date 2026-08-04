@@ -17,13 +17,6 @@ if (MSVC)
 endif ()
 
 
-set(SPECTRA_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
-set(SPECTRA_BINARY_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}")
-set(SPECTRA_VENDOR_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor")
-set(SPECTRA_GENERATED_DIR "${SPECTRA_BINARY_ROOT_DIR}/generated")
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-
-
 # ============================================================================
 # Dependencies
 # ============================================================================
@@ -82,7 +75,7 @@ function(spectra_download_if_needed url out_path sha256)
 endfunction()
 
 function(spectra_prepare_archive_dependency out_source_dir owner repository tag archive_sha256)
-    set(archive_dir "${SPECTRA_VENDOR_DIR}/${repository}/${tag}")
+    set(archive_dir "${CMAKE_CURRENT_BINARY_DIR}/vendor/${repository}/${tag}")
     set(archive_path "${archive_dir}/${repository}.zip")
     set(extract_dir "${archive_dir}/source")
     string(REGEX REPLACE "^v" "" source_tag "${tag}")
@@ -104,7 +97,7 @@ function(spectra_prepare_archive_dependency out_source_dir owner repository tag 
 endfunction()
 
 function(spectra_prepare_commit_dependency out_source_dir owner repository commit archive_sha256)
-    set(archive_dir "${SPECTRA_VENDOR_DIR}/${repository}/${commit}")
+    set(archive_dir "${CMAKE_CURRENT_BINARY_DIR}/vendor/${repository}/${commit}")
     set(archive_path "${archive_dir}/${repository}.zip")
     set(extract_dir "${archive_dir}/source")
     set(source_dir "${extract_dir}/${repository}-${commit}")
@@ -132,7 +125,7 @@ spectra_prepare_commit_dependency(
         "${SPECTRA_XCLI_COMMIT}"
         "CD2D94CC347F057E950A1EF51B68A53A63D8E880D83B3EED6162F7C84CD8AA9D"
 )
-add_subdirectory("${SPECTRA_XCLI_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/xcli" EXCLUDE_FROM_ALL)
+add_subdirectory("${SPECTRA_XCLI_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/xcli" EXCLUDE_FROM_ALL)
 
 set(SPECTRA_GLAZE_COMMIT "8b60d82c66311c145c4d03be3b556b555a9cb111")
 spectra_prepare_commit_dependency(
@@ -155,7 +148,7 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-add_subdirectory("${SPECTRA_GLFW_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/glfw" EXCLUDE_FROM_ALL)
+add_subdirectory("${SPECTRA_GLFW_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/glfw" EXCLUDE_FROM_ALL)
 
 set(SPECTRA_IMGUI_COMMIT "b334d19b667958ed970000073644d911fae17e57")
 spectra_prepare_commit_dependency(
@@ -259,7 +252,7 @@ target_include_directories(
 )
 
 set(SPECTRA_OPENVDB_TAG "v13.0.0")
-set(SPECTRA_PNANOVDB_INCLUDE_DIR "${SPECTRA_VENDOR_DIR}/openvdb/${SPECTRA_OPENVDB_TAG}/include")
+set(SPECTRA_PNANOVDB_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/vendor/openvdb/${SPECTRA_OPENVDB_TAG}/include")
 set(SPECTRA_PNANOVDB_HEADER "${SPECTRA_PNANOVDB_INCLUDE_DIR}/nanovdb/PNanoVDB.h")
 spectra_download_if_needed(
         "https://raw.githubusercontent.com/AcademySoftwareFoundation/openvdb/${SPECTRA_OPENVDB_TAG}/nanovdb/nanovdb/PNanoVDB.h"
@@ -298,18 +291,12 @@ target_sources(
 target_compile_definitions(spectra_vulkan PUBLIC VK_USE_PLATFORM_WIN32_KHR NOMINMAX)
 target_link_libraries(spectra_vulkan PUBLIC Vulkan::Vulkan)
 
-
-# ============================================================================
-# Dynamic Provider SDK
-# ============================================================================
-add_subdirectory(sdk)
-
 # ============================================================================
 # Slang
 # ============================================================================
-set(SPECTRA_SHADER_OUTPUT_DIR "${SPECTRA_GENERATED_DIR}/shaders")
-set(SPECTRA_PATH_TRACER_ABI_MODULE "${SPECTRA_GENERATED_DIR}/path_tracer/abi.ixx")
-set(SPECTRA_SHADER_ENTRIES "${SPECTRA_ROOT_DIR}/spectra/render/shaders/entries.txt")
+set(SPECTRA_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
+set(SPECTRA_PATH_TRACER_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/path_tracer/abi.ixx")
+set(SPECTRA_SHADER_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/render/shaders/entries.txt")
 set(SPECTRA_SHADER_STAMP "${SPECTRA_SHADER_OUTPUT_DIR}/build.stamp")
 set_property(
         DIRECTORY
@@ -340,8 +327,8 @@ file(
         GLOB
         SPECTRA_SHADER_SOURCES
         CONFIGURE_DEPENDS
-        "${SPECTRA_ROOT_DIR}/spectra/editor/shaders/*.slang"
-        "${SPECTRA_ROOT_DIR}/spectra/render/shaders/*.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/*.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/render/shaders/*.slang"
 )
 add_custom_command(
         OUTPUT "${SPECTRA_SHADER_STAMP}"
@@ -352,13 +339,13 @@ add_custom_command(
         "${CMAKE_COMMAND}" -E env
         "PATH=$<TARGET_FILE_DIR:spectra_slang>;$ENV{PATH}"
         "$<TARGET_FILE:spectra_shader_compiler>"
-        "${SPECTRA_ROOT_DIR}/spectra/render/shaders/abi.types"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/render/shaders/abi.types"
         "${SPECTRA_PATH_TRACER_ABI_MODULE}"
         "${SPECTRA_SHADER_ENTRIES}"
         "${SPECTRA_SHADER_OUTPUT_DIR}"
         "${SPECTRA_SPIRV_VAL}"
-        "${SPECTRA_ROOT_DIR}/spectra/editor/shaders"
-        "${SPECTRA_ROOT_DIR}/spectra/render/shaders"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/render/shaders"
         "${SPECTRA_PNANOVDB_INCLUDE_DIR}"
         COMMAND
         "${CMAKE_COMMAND}" -E touch
@@ -366,13 +353,19 @@ add_custom_command(
         DEPENDS
         spectra_shader_compiler
         "$<TARGET_FILE:spectra_slang>"
-        "${SPECTRA_ROOT_DIR}/spectra/render/shaders/abi.types"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/render/shaders/abi.types"
         "${SPECTRA_SHADER_ENTRIES}"
         "${SPECTRA_PNANOVDB_HEADER}"
         ${SPECTRA_SHADER_SOURCES}
         VERBATIM
 )
 add_custom_target(spectra_shaders DEPENDS "${SPECTRA_SHADER_STAMP}")
+
+
+# ============================================================================
+# Dynamic Provider SDK
+# ============================================================================
+add_subdirectory(sdk)
 
 
 # ============================================================================
@@ -448,13 +441,13 @@ target_link_libraries(spectra PRIVATE
 target_compile_definitions(spectra PRIVATE
         GLFW_INCLUDE_NONE
         GLFW_EXPOSE_NATIVE_WIN32
-        "SPECTRA_SCENE_LIBRARY=\"${SPECTRA_ROOT_DIR}/scenes/library.json\""
+        "SPECTRA_SCENE_LIBRARY=\"${CMAKE_CURRENT_SOURCE_DIR}/../spectra-showcases/library.json\""
         "SPECTRA_SHADER_DIRECTORY=\"${SPECTRA_SHADER_OUTPUT_DIR}\""
 )
 set_property(
         SOURCE spectra/render/pathtracer.cpp
         APPEND
         PROPERTY COMPILE_DEFINITIONS
-        "SPECTRA_SPECTRAL_ASSET_DIRECTORY=\"${SPECTRA_ROOT_DIR}/spectra/render/assets\""
+        "SPECTRA_SPECTRAL_ASSET_DIRECTORY=\"${CMAKE_CURRENT_SOURCE_DIR}/spectra/render/assets\""
 )
 add_dependencies(spectra spectra_shaders)
