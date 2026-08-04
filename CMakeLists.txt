@@ -15,37 +15,14 @@ if (MSVC)
             "$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>"
     )
 endif ()
+set(CMAKE_CXX_MODULE_STD ON)
+# MSVC interprets CMake's relative @cmake_cxx_std.lib entry as a response file.
+add_link_options("$<$<LINK_LANGUAGE:CXX>:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib>")
 
 
 # ============================================================================
 # Dependencies
 # ============================================================================
-find_package(Vulkan 1.4 REQUIRED)
-list(GET Vulkan_INCLUDE_DIRS 0 SPECTRA_VULKAN_INCLUDE_DIR)
-cmake_path(
-        GET SPECTRA_VULKAN_INCLUDE_DIR
-        PARENT_PATH SPECTRA_VULKAN_SDK_DIR
-)
-if (NOT EXISTS "${SPECTRA_VULKAN_SDK_DIR}/Include/slang/slang.h"
-        OR NOT EXISTS "${SPECTRA_VULKAN_SDK_DIR}/Lib/slang.lib"
-        OR NOT EXISTS "${SPECTRA_VULKAN_SDK_DIR}/Bin/slang.dll")
-    message(FATAL_ERROR "The Vulkan SDK at ${SPECTRA_VULKAN_SDK_DIR} does not contain its bundled Slang toolchain.")
-endif ()
-add_library(spectra_slang SHARED IMPORTED)
-add_library(spectra::slang ALIAS spectra_slang)
-set_target_properties(
-        spectra_slang PROPERTIES
-        IMPORTED_IMPLIB "${SPECTRA_VULKAN_SDK_DIR}/Lib/slang.lib"
-        IMPORTED_LOCATION "${SPECTRA_VULKAN_SDK_DIR}/Bin/slang.dll"
-        INTERFACE_INCLUDE_DIRECTORIES "${SPECTRA_VULKAN_SDK_DIR}/Include/slang"
-)
-find_program(
-        SPECTRA_SPIRV_VAL
-        NAMES spirv-val
-        HINTS "${Vulkan_INCLUDE_DIRS}/../Bin"
-        REQUIRED
-)
-
 function(spectra_download_if_needed url out_path sha256)
     string(TOLOWER "${sha256}" expected_sha256)
     if (EXISTS "${out_path}")
@@ -260,24 +237,35 @@ spectra_download_if_needed(
         "588F213B0DA23F9451DA000CD66566EDA6F42D594E8612093FE4A49519A9AA52"
 )
 
-set(CMAKE_CXX_MODULE_STD ON)
-# MSVC interprets CMake's relative @cmake_cxx_std.lib entry as a response file.
-add_link_options("$<$<LINK_LANGUAGE:CXX>:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib>")
-
-add_executable(
-        spectra_shader_compiler
-        spectra/render/shaders/compiler.cpp
-)
-target_link_libraries(
-        spectra_shader_compiler
-        PRIVATE spectra::slang
-)
-target_compile_definitions(spectra_shader_compiler PRIVATE NOMINMAX)
-
 
 # ============================================================================
 # Vulkan
 # ============================================================================
+find_package(Vulkan 1.4 REQUIRED)
+list(GET Vulkan_INCLUDE_DIRS 0 SPECTRA_VULKAN_INCLUDE_DIR)
+cmake_path(
+        GET SPECTRA_VULKAN_INCLUDE_DIR
+        PARENT_PATH SPECTRA_VULKAN_SDK_DIR
+)
+if (NOT EXISTS "${SPECTRA_VULKAN_SDK_DIR}/Include/slang/slang.h"
+        OR NOT EXISTS "${SPECTRA_VULKAN_SDK_DIR}/Lib/slang.lib"
+        OR NOT EXISTS "${SPECTRA_VULKAN_SDK_DIR}/Bin/slang.dll")
+    message(FATAL_ERROR "The Vulkan SDK at ${SPECTRA_VULKAN_SDK_DIR} does not contain its bundled Slang toolchain.")
+endif ()
+add_library(spectra_slang SHARED IMPORTED)
+add_library(spectra::slang ALIAS spectra_slang)
+set_target_properties(
+        spectra_slang PROPERTIES
+        IMPORTED_IMPLIB "${SPECTRA_VULKAN_SDK_DIR}/Lib/slang.lib"
+        IMPORTED_LOCATION "${SPECTRA_VULKAN_SDK_DIR}/Bin/slang.dll"
+        INTERFACE_INCLUDE_DIRECTORIES "${SPECTRA_VULKAN_SDK_DIR}/Include/slang"
+)
+find_program(
+        SPECTRA_SPIRV_VAL
+        NAMES spirv-val
+        HINTS "${Vulkan_INCLUDE_DIRS}/../Bin"
+        REQUIRED
+)
 add_library(spectra_vulkan)
 add_library(spectra::vulkan ALIAS spectra_vulkan)
 target_sources(
@@ -294,6 +282,16 @@ target_link_libraries(spectra_vulkan PUBLIC Vulkan::Vulkan)
 # ============================================================================
 # Slang
 # ============================================================================
+add_executable(
+        spectra_shader_compiler
+        spectra/render/shaders/compiler.cpp
+)
+target_link_libraries(
+        spectra_shader_compiler
+        PRIVATE spectra::slang
+)
+target_compile_definitions(spectra_shader_compiler PRIVATE NOMINMAX)
+
 set(SPECTRA_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
 set(SPECTRA_PATH_TRACER_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/path_tracer/abi.ixx")
 set(SPECTRA_SHADER_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/render/shaders/entries.txt")
