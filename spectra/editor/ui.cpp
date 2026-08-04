@@ -13,7 +13,7 @@ import std;
 import vulkan;
 
 namespace spectra {
-    EditorUi::EditorUi(VulkanRuntime& runtime, SceneDocument& document, DynamicWorld& dynamics, Renderers& renderers, EditorInteraction& interaction, EditorViewport& viewport, EditorOutput& output, std::filesystem::path shader_directory) noexcept : context{runtime, document, dynamics, renderers, interaction, viewport, output, std::move(shader_directory)} {}
+    EditorUi::EditorUi(WindowPlatform& platform, VulkanRuntime& runtime, SceneDocument& document, DynamicWorld& dynamics, Renderers& renderers, EditorInteraction& interaction, EditorViewport& viewport, EditorOutput& output, std::filesystem::path shader_directory) noexcept : context{platform, runtime, document, dynamics, renderers, interaction, viewport, output, std::move(shader_directory)} {}
 
     EditorUi::~EditorUi() {
         if (!this->lifetime.initialized) return;
@@ -44,7 +44,7 @@ namespace spectra {
         style.FramePadding      = {8.0f, 5.0f};
         style.ItemSpacing       = {8.0f, 6.0f};
         style.Colors[ImGuiCol_WindowBg] = ImVec4{0.025f, 0.035f, 0.045f, 1.0f};
-        if (!ImGui_ImplGlfw_InitForVulkan(this->context.runtime.platform.window, true)) throw std::runtime_error("Failed to initialize ImGui GLFW platform backend");
+        if (!ImGui_ImplGlfw_InitForVulkan(this->context.platform.window, true)) throw std::runtime_error("Failed to initialize ImGui GLFW platform backend");
         io.BackendRendererName                  = "spectra.editor.ui";
         io.BackendFlags                        |= ImGuiBackendFlags_RendererHasTextures | ImGuiBackendFlags_RendererHasVtxOffset;
         this->initialize_renderer();
@@ -1050,7 +1050,8 @@ namespace spectra {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capture");
         if (ImGui::BeginPopup("##CaptureMenu")) {
             if (ImGui::MenuItem("Viewport PNG")) actions.capture_format = CaptureFormat::Png;
-            if (ImGui::MenuItem("Linear EXR")) actions.capture_format = CaptureFormat::Exr;
+            if (ImGui::MenuItem("Linear EXR")) actions.capture_format = CaptureFormat::LinearExr;
+            if (ImGui::MenuItem("GBuffer EXR", nullptr, false, this->context.renderers.gbuffer_available() && this->context.document.content.source.film().gbuffer)) actions.capture_format = CaptureFormat::GBufferExr;
             ImGui::EndPopup();
         }
 

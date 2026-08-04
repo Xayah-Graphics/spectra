@@ -718,6 +718,19 @@ RasterFragmentOutput raster_fragment(
         ddx(input.texture_coordinates),
         ddy(input.texture_coordinates),
     };
+    StructuredBuffer<RasterPrimitive> primitives =
+        bindings.primitives;
+    const RasterPrimitive primitive =
+        primitives[
+            push_data.scene_primitive_index];
+    if (
+        primitive.alpha_texture != 0xffffffff &&
+        evaluate_raster_texture(
+            bindings,
+            primitive.alpha_texture,
+            texture_context)
+                .x < 0.5)
+        discard;
     float3 outgoing =
         normalize(
             push_data.camera_position.xyz -

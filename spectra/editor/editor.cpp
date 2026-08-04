@@ -17,7 +17,7 @@ namespace spectra {
         std::vector<std::string> roots{};
     };
 
-    Editor::Editor(VulkanRuntime& runtime, SceneDocument& document, DynamicWorld& dynamics, GpuScene& gpu_scene, Renderers& renderers, const std::filesystem::path& shader_directory, std::filesystem::path scene_library_path, std::vector<std::filesystem::path> session_scene_roots) noexcept : context{runtime, document, dynamics, gpu_scene, renderers}, interaction(runtime, document, dynamics, gpu_scene, renderers), viewport(runtime, gpu_scene, dynamics, renderers, interaction, shader_directory), output(runtime, gpu_scene, renderers, viewport, shader_directory), ui(runtime, document, dynamics, renderers, interaction, viewport, output, shader_directory), library{.configuration_path = std::move(scene_library_path), .session_roots = std::move(session_scene_roots)} {}
+    Editor::Editor(WindowPlatform& platform, VulkanRuntime& runtime, SceneDocument& document, DynamicWorld& dynamics, GpuScene& gpu_scene, Renderers& renderers, const std::filesystem::path& shader_directory, std::filesystem::path scene_library_path, std::vector<std::filesystem::path> session_scene_roots) noexcept : context{platform, runtime, document, dynamics, gpu_scene, renderers}, interaction(runtime, document, dynamics, gpu_scene, renderers), viewport(runtime, gpu_scene, dynamics, renderers, interaction, shader_directory), output(runtime, gpu_scene, renderers, viewport, shader_directory), ui(platform, runtime, document, dynamics, renderers, interaction, viewport, output, shader_directory), library{.configuration_path = std::move(scene_library_path), .session_roots = std::move(session_scene_roots)} {}
 
     Editor::~Editor() {
         this->output.wait_for_frozen_scene_export();
@@ -96,7 +96,7 @@ namespace spectra {
         constexpr std::array filters{COMDLG_FILTERSPEC{L"Spectra Scene", L"*.spectra"}};
         dialog->SetFileTypes(static_cast<UINT>(filters.size()), filters.data());
         dialog->SetTitle(L"Open Spectra Scene");
-        const HRESULT shown = dialog->Show(this->context.runtime.platform.native_window);
+        const HRESULT shown = dialog->Show(this->context.platform.native_window);
         if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;
         if (FAILED(shown)) throw std::runtime_error("The Windows open dialog failed");
         Microsoft::WRL::ComPtr<IShellItem> item{};
@@ -117,7 +117,7 @@ namespace spectra {
         dialog->SetTitle(frozen_scene ? L"Export Frozen Spectra Scene" : L"Save Spectra Scene");
         const std::filesystem::path filename = frozen_scene ? current_path.parent_path() / std::format("{}-snapshot.spectra", current_path.stem().string()) : current_path.filename();
         dialog->SetFileName(filename.filename().c_str());
-        const HRESULT shown = dialog->Show(this->context.runtime.platform.native_window);
+        const HRESULT shown = dialog->Show(this->context.platform.native_window);
         if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;
         if (FAILED(shown)) throw std::runtime_error("The Windows save dialog failed");
         Microsoft::WRL::ComPtr<IShellItem> item{};
@@ -132,7 +132,7 @@ namespace spectra {
     bool Editor::confirm_scene_replacement() {
         if (!this->context.document.content.loaded || !this->interaction.scene_modified()) return true;
         this->timing.simulation_sample_valid = false;
-        const int result = MessageBoxW(this->context.runtime.platform.native_window, L"The current Spectra scene has unsaved changes.\n\nSave before continuing?", L"Spectra", MB_ICONWARNING | MB_YESNOCANCEL);
+        const int result = MessageBoxW(this->context.platform.native_window, L"The current Spectra scene has unsaved changes.\n\nSave before continuing?", L"Spectra", MB_ICONWARNING | MB_YESNOCANCEL);
         if (result == IDCANCEL) return false;
         if (result == IDYES) this->save();
         return true;
@@ -154,7 +154,7 @@ namespace spectra {
     }
 
     void Editor::handle_dropped_scene_paths() {
-        const std::vector<std::filesystem::path> paths = this->context.runtime.platform.take_dropped_paths();
+        const std::vector<std::filesystem::path> paths = this->context.platform.take_dropped_paths();
         if (paths.empty()) return;
         try {
             if (paths.size() != 1u) throw std::runtime_error("Drop exactly one .spectra scene");
@@ -165,7 +165,7 @@ namespace spectra {
     }
 
     void Editor::handle_actions(const EditorActions& actions) {
-        if (actions.exit_application) this->context.runtime.platform.request_close();
+        if (actions.exit_application) this->context.platform.request_close();
         try {
             if (actions.open_scene_library) {
                 this->timing.simulation_sample_valid = false;

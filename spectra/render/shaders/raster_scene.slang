@@ -7,7 +7,8 @@ public struct RasterPrimitive {
     public uint flags;
     public uint face_material_offset;
     public uint face_material_count;
-    public uint2 reserved;
+    public uint alpha_texture;
+    public uint reserved;
 }
 
 public struct RasterTransform {

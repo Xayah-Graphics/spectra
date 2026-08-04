@@ -53,7 +53,7 @@ namespace spectra {
             std::size_t index_capacity{};
         };
 
-        EditorUi(VulkanRuntime& runtime, SceneDocument& document, DynamicWorld& dynamics, Renderers& renderers, EditorInteraction& interaction, EditorViewport& viewport, EditorOutput& output, std::filesystem::path shader_directory) noexcept;
+        EditorUi(WindowPlatform& platform, VulkanRuntime& runtime, SceneDocument& document, DynamicWorld& dynamics, Renderers& renderers, EditorInteraction& interaction, EditorViewport& viewport, EditorOutput& output, std::filesystem::path shader_directory) noexcept;
         ~EditorUi();
 
         EditorUi(const EditorUi&)            = delete;
@@ -71,6 +71,7 @@ namespace spectra {
         void notify(std::string message, bool error = false);
 
         struct {
+            WindowPlatform& platform;
             VulkanRuntime& runtime;
             SceneDocument& document;
             DynamicWorld& dynamics;

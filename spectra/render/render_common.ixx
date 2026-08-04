@@ -12,7 +12,8 @@ namespace spectra {
 
     export enum class CaptureFormat : std::uint8_t {
         Png,
-        Exr,
+        LinearExr,
+        GBufferExr,
     };
 
     export struct RenderOutput {
@@ -39,6 +40,10 @@ namespace spectra {
         std::vector<std::uint64_t> material_ids{};
         std::vector<std::uint8_t> pixel_validity{};
     };
+
+    export void record_linear_readback(VulkanRuntime& runtime, const vk::raii::CommandBuffer& command_buffer, RenderOutput render_output, GpuBuffer& readback_buffer);
+    export void write_linear_exr(const std::filesystem::path& path, std::span<const float> rgba, vk::Extent2D extent, scene::SpectrumColorSpace color_space);
+    export void write_gbuffer_exr(const std::filesystem::path& path, const RenderGBufferReadback& readback, scene::SpectrumColorSpace color_space, bool camera_space);
 
     export struct RendererDescriptor {
         std::string_view id{};

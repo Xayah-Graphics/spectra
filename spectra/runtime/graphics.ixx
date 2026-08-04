@@ -16,16 +16,13 @@ namespace spectra {
     };
 
     export struct VulkanGraphics {
+        explicit VulkanGraphics(std::string_view application_name);
         VulkanGraphics(WindowPlatform& platform, std::string_view application_name);
 
         VulkanGraphics(const VulkanGraphics&)            = delete;
         VulkanGraphics(VulkanGraphics&&)                 = delete;
         VulkanGraphics& operator=(const VulkanGraphics&) = delete;
         VulkanGraphics& operator=(VulkanGraphics&&)      = delete;
-
-        struct {
-            WindowPlatform& platform;
-        } context;
 
         struct {
             vk::raii::Context loader{};
@@ -43,7 +40,7 @@ namespace spectra {
         GpuDeviceIdentity identity{};
 
     private:
-        void create_instance(std::string_view application_name);
+        void create_instance(std::string_view application_name, WindowPlatform* platform);
         void select_physical_device();
         void create_device();
     };

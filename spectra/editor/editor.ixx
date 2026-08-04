@@ -13,7 +13,7 @@ import std;
 
 namespace spectra {
     export struct Editor {
-        Editor(VulkanRuntime& runtime, SceneDocument& document, DynamicWorld& dynamics, GpuScene& gpu_scene, Renderers& renderers, const std::filesystem::path& shader_directory, std::filesystem::path scene_library_path, std::vector<std::filesystem::path> session_scene_roots) noexcept;
+        Editor(WindowPlatform& platform, VulkanRuntime& runtime, SceneDocument& document, DynamicWorld& dynamics, GpuScene& gpu_scene, Renderers& renderers, const std::filesystem::path& shader_directory, std::filesystem::path scene_library_path, std::vector<std::filesystem::path> session_scene_roots) noexcept;
         ~Editor();
 
         Editor(const Editor&)            = delete;
@@ -32,6 +32,7 @@ namespace spectra {
         void begin_frame(std::uint32_t frame_slot_index);
 
         struct {
+            WindowPlatform& platform;
             VulkanRuntime& runtime;
             SceneDocument& document;
             DynamicWorld& dynamics;

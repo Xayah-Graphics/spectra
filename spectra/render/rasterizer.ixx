@@ -13,7 +13,8 @@ namespace spectra {
         std::uint32_t flags{};
         std::uint32_t face_material_offset{};
         std::uint32_t face_material_count{};
-        std::array<std::uint32_t, 2> reserved{};
+        std::uint32_t alpha_texture{};
+        std::uint32_t reserved{};
     };
 
     struct alignas(16) RasterTransform {

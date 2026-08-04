@@ -513,7 +513,8 @@ namespace spectra {
                 area_light                                            = static_cast<std::uint32_t>(light - scene.resources.lights.begin());
             }
             const std::uint32_t transform_index = static_cast<std::uint32_t>(primitives.size());
-            primitives.push_back(RasterPrimitive{transform_index, static_cast<std::uint32_t>(material - scene.resources.materials.begin()), area_light, primitive.reverse_orientation ? 1u : 0u, face_material_offset, static_cast<std::uint32_t>(particle_draw ? 0 : primitive.face_materials.size()), {}});
+            const std::uint32_t alpha_texture = primitive.alpha.value == 0 ? invalid_raster_index : textures.handles[raster_texture_source_index(scene, primitive.alpha)];
+            primitives.push_back(RasterPrimitive{transform_index, static_cast<std::uint32_t>(material - scene.resources.materials.begin()), area_light, primitive.reverse_orientation ? 1u : 0u, face_material_offset, static_cast<std::uint32_t>(particle_draw ? 0 : primitive.face_materials.size()), alpha_texture, 0});
         }
         if (primitives.empty()) {
             primitives.emplace_back();

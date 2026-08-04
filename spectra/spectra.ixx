@@ -20,7 +20,9 @@ namespace spectra {
 
         void run(std::optional<std::uint64_t> maximum_frame_count = std::nullopt);
 
+        WindowPlatform platform;
         VulkanRuntime runtime;
+        VulkanPresentation presentation;
         SceneDocument document;
         DynamicWorld dynamics;
         GpuScene gpu_scene;
@@ -33,4 +35,17 @@ namespace spectra {
         void record_editor_overlays(const vk::raii::CommandBuffer& command_buffer, bool show_axes);
         [[nodiscard]] RenderOutput current_render_output() const noexcept;
     };
+
+    export struct RenderRequest {
+        std::filesystem::path scene_path{};
+        std::filesystem::path output_path{};
+        std::string renderer{};
+        std::optional<vk::Extent2D> resolution{};
+        std::optional<std::uint32_t> samples_per_pixel{};
+        std::optional<std::uint32_t> seed{};
+        std::optional<std::uint64_t> simulation_step{};
+        std::optional<std::filesystem::path> gbuffer_output_path{};
+    };
+
+    export void render_scene(const RenderRequest& request, const std::filesystem::path& shader_directory);
 } // namespace spectra

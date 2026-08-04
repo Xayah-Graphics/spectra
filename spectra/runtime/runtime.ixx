@@ -10,7 +10,8 @@ import vulkan;
 
 namespace spectra {
     export struct VulkanRuntime {
-        explicit VulkanRuntime(std::string_view application_name = "Spectra", vk::Extent2D initial_extent = {1920, 1080});
+        explicit VulkanRuntime(std::string_view application_name = "Spectra");
+        VulkanRuntime(WindowPlatform& platform, std::string_view application_name);
         ~VulkanRuntime();
 
         VulkanRuntime(const VulkanRuntime&)            = delete;
@@ -18,7 +19,6 @@ namespace spectra {
         VulkanRuntime& operator=(const VulkanRuntime&) = delete;
         VulkanRuntime& operator=(VulkanRuntime&&)      = delete;
 
-        WindowPlatform platform;
         VulkanGraphics graphics;
         GpuResources resources;
         VulkanFrames frames;
