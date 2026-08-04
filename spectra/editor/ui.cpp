@@ -23,6 +23,9 @@ namespace spectra {
             this->context.runtime.frames.retire_resource_descriptor(frame.index_descriptor);
         }
         this->context.runtime.frames.retire_sampler_descriptor(this->renderer.sampler_descriptor);
+        ImGuiIO& io = ImGui::GetIO();
+        io.BackendRendererUserData = nullptr;
+        io.BackendRendererName     = nullptr;
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
     }
