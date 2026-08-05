@@ -1,0 +1,6 @@
+{
+  "roots": [
+    "../spectra-showcases",
+    "./cmake-build-debug/projects/bundles"
+  ]
+}

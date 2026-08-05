@@ -440,7 +440,9 @@ target_link_libraries(spectra PRIVATE
 target_compile_definitions(spectra PRIVATE
         GLFW_INCLUDE_NONE
         GLFW_EXPOSE_NATIVE_WIN32
-        "SPECTRA_SCENE_LIBRARY=\"${CMAKE_CURRENT_SOURCE_DIR}/../spectra-showcases/library.json\""
+        "SPECTRA_SCENE_LIBRARY=\"${CMAKE_CURRENT_SOURCE_DIR}/library.json\""
         "SPECTRA_SHADER_DIRECTORY=\"${SPECTRA_SHADER_OUTPUT_DIR}\""
 )
 add_dependencies(spectra spectra_shaders)
+
+add_subdirectory(projects)

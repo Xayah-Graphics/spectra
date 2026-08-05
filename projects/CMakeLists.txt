@@ -22,10 +22,22 @@ if (MSVC)
 endif ()
 
 find_package(CUDAToolkit 13.3 EXACT REQUIRED)
-find_package(SpectraPluginSDK 11 CONFIG REQUIRED)
+set(_spectra_sdk_package_dir "${CMAKE_CURRENT_BINARY_DIR}/../sdk")
+if (EXISTS "${_spectra_sdk_package_dir}/SpectraPluginSDKConfig.cmake")
+    set(SpectraPluginSDK_DIR "${_spectra_sdk_package_dir}")
+endif()
+find_package(SpectraPluginSDK 11 CONFIG QUIET)
+if (NOT SpectraPluginSDK_FOUND)
+    if (TARGET spectra::plugin_contract)
+        if (NOT TARGET SpectraPluginSDK::contract)
+            add_library(SpectraPluginSDK::contract ALIAS spectra::plugin_contract)
+        endif()
+    else()
+        message(FATAL_ERROR "SpectraPluginSDK was not found. Configure with -DSpectraPluginSDK_DIR=<build>/sdk or provide an installed SDK package.")
+    endif()
+endif()
 
 set(CMAKE_CXX_MODULE_STD ON)
-add_link_options("$<$<LINK_LANGUAGE:CXX>:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib>")
 
 
 # ============================================================================
