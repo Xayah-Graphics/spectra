@@ -279,6 +279,7 @@ target_sources(
 target_compile_definitions(spectra_vulkan PUBLIC VK_USE_PLATFORM_WIN32_KHR NOMINMAX)
 target_link_libraries(spectra_vulkan PUBLIC Vulkan::Vulkan)
 
+
 # ============================================================================
 # Slang
 # ============================================================================
@@ -441,11 +442,5 @@ target_compile_definitions(spectra PRIVATE
         GLFW_EXPOSE_NATIVE_WIN32
         "SPECTRA_SCENE_LIBRARY=\"${CMAKE_CURRENT_SOURCE_DIR}/../spectra-showcases/library.json\""
         "SPECTRA_SHADER_DIRECTORY=\"${SPECTRA_SHADER_OUTPUT_DIR}\""
-)
-set_property(
-        SOURCE spectra/render/pathtracer.cpp
-        APPEND
-        PROPERTY COMPILE_DEFINITIONS
-        "SPECTRA_SPECTRAL_ASSET_DIRECTORY=\"${CMAKE_CURRENT_SOURCE_DIR}/spectra/render/assets\""
 )
 add_dependencies(spectra spectra_shaders)

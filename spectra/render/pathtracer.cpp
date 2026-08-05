@@ -484,7 +484,8 @@ namespace spectra {
     } // namespace
 
     void PathTracer::initialize_scene(const scene::SceneView scene) {
-        this->scene.rgb_to_spectrum_table_data         = load_rgb_to_spectrum_table_data(SPECTRA_SPECTRAL_ASSET_DIRECTORY);
+        const std::filesystem::path spectral_assets = std::filesystem::absolute(std::filesystem::path{std::source_location::current().file_name()}.parent_path() / "assets");
+        this->scene.rgb_to_spectrum_table_data         = load_rgb_to_spectrum_table_data(spectral_assets);
         this->scene.primitives.descriptor              = this->context.runtime.resources.allocate_resource_descriptor();
         this->scene.light_table.descriptor             = this->context.runtime.resources.allocate_resource_descriptor();
         this->scene.light_shapes.descriptor            = this->context.runtime.resources.allocate_resource_descriptor();
@@ -512,7 +513,7 @@ namespace spectra {
         for (GpuBufferBinding& binding : this->scene.textures) binding.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
         const std::vector<std::uint32_t> majorant_code = load_spirv(this->context.shader_directory / "volume_majorant.spv");
         this->scene.volume_majorant_shader             = vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, majorant_code.size() * sizeof(std::uint32_t), majorant_code.data(), "build_majorant"}};
-        const std::vector<std::byte> cie               = load_cie_spectra(std::filesystem::path{SPECTRA_SPECTRAL_ASSET_DIRECTORY} / "cie1931.spectrum");
+        const std::vector<std::byte> cie               = load_cie_spectra(spectral_assets / "cie1931.spectrum");
         this->scene.cie_samples.resize(5u * 471u);
         std::memcpy(this->scene.cie_samples.data(), cie.data() + 16, this->scene.cie_samples.size() * sizeof(float));
         this->scene.cie_spectra.buffer = upload_path_buffer(this->context.runtime, std::span<const std::byte>{cie}, nullptr);
@@ -522,7 +523,7 @@ namespace spectra {
         this->context.runtime.resources.write_buffer_descriptor(this->scene.zero_volume_field.descriptor, vk::DescriptorType::eStorageBuffer, this->scene.zero_volume_field.buffer);
         this->scene.rgb_to_spectrum_tables.buffer = upload_path_buffer(this->context.runtime, std::as_bytes(std::span<const std::uint32_t>{this->scene.rgb_to_spectrum_table_data}), nullptr);
         this->context.runtime.resources.write_buffer_descriptor(this->scene.rgb_to_spectrum_tables.descriptor, vk::DescriptorType::eStorageBuffer, this->scene.rgb_to_spectrum_tables.buffer);
-        const std::vector<std::byte> sampling_tables = load_sampling_tables(std::filesystem::path{SPECTRA_SPECTRAL_ASSET_DIRECTORY} / "sampling.tables");
+        const std::vector<std::byte> sampling_tables = load_sampling_tables(spectral_assets / "sampling.tables");
         this->scene.sampler.table_data.resize(sampling_tables.size() / sizeof(std::uint32_t));
         std::memcpy(this->scene.sampler.table_data.data(), sampling_tables.data(), sampling_tables.size());
         this->scene.sampler.tables.buffer = upload_path_buffer(this->context.runtime, std::span<const std::uint32_t>{this->scene.sampler.table_data}, nullptr);
