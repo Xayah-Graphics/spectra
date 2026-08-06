@@ -402,7 +402,7 @@ namespace spectra {
         tested_vertices.insert(tested_vertices.end(), xray_vertices.begin(), xray_vertices.end());
         if (!tested_vertices.empty()) {
             const std::uint64_t required_capacity = std::bit_ceil(static_cast<std::uint64_t>(tested_vertices.size()));
-            if (required_capacity > this->overlay.debug_capacity) {
+            if (required_capacity > this->overlay.debug_capacity || !*this->overlay.debug_buffer.buffer) {
                 GpuBuffer buffer = this->context.runtime.resources.create_buffer(required_capacity * sizeof(DebugVertex), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
                 this->context.runtime.resources.write_buffer_descriptor(this->overlay.debug_descriptor, vk::DescriptorType::eStorageBuffer, buffer);
                 if (*this->overlay.debug_buffer.buffer) this->context.runtime.frames.defer_destruction([old = std::move(this->overlay.debug_buffer)]() mutable {});
@@ -876,6 +876,7 @@ namespace spectra {
         this->overlay.mask                    = {};
         this->overlay.depth                   = {};
         this->overlay.debug_buffer            = {};
+        this->overlay.debug_capacity          = {};
         this->overlay.initialized             = false;
     }
 
