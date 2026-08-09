@@ -1,0 +1,8 @@
+**
+!CMakeLists.txt
+!LICENSE
+!main.cpp
+!sdk/
+!sdk/**
+!spectra/
+!spectra/**
