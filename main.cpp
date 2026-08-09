@@ -1,5 +1,3 @@
-#include <cstdio>
-
 #if defined(_WIN32)
 #include <Windows.h>
 #endif
@@ -85,7 +83,7 @@ int main(int argument_count, char** raw_arguments) {
         if (gbuffer_output_path) std::println("{}", gbuffer_output_path->string());
         return 0;
     } catch (const std::exception& error) {
-        std::println(stderr, "Spectra failed: {}", error.what());
+        std::println(std::cerr, "Spectra failed: {}", error.what());
         return 1;
     }
 }

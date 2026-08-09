@@ -1,7 +1,3 @@
-module;
-
-#include <cstdio>
-
 module spectra.headless;
 
 import spectra.display;
@@ -74,7 +70,7 @@ namespace spectra {
             const std::optional<RenderProgress> progress = renderers.progress();
             complete                                     = !progress || progress->completed >= progress->target;
             if (progress && (complete || progress->completed >= next_progress_report)) {
-                std::println(stderr, "Samples: {} / {}", progress->completed, progress->target);
+                std::println(std::cerr, "Samples: {} / {}", progress->completed, progress->target);
                 next_progress_report = progress->completed + std::max(progress->target / 100u, 1u);
             }
             if (complete) {

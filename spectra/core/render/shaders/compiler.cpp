@@ -1,13 +1,4 @@
-#include <array>
 #include <cerrno>
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
-#include <filesystem>
-#include <format>
-#include <fstream>
-#include <map>
 #if defined(_WIN32)
 #include <process.h>
 #elif defined(__linux__)
@@ -18,11 +9,8 @@
 #endif
 #include <slang-com-ptr.h>
 #include <slang.h>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <vector>
+
+import std;
 
 #if defined(__linux__)
 extern char** environ;
@@ -202,7 +190,7 @@ namespace {
         require_slang_success(composite->link(linked.writeRef(), diagnostic_blob.writeRef()), std::format("Linking Slang entry point '{}.{}'", entry.module_name, entry.entry_point), diagnostic_blob);
         Slang::ComPtr<slang::IBlob> code{};
         require_slang_success(linked->getEntryPointCode(0, 0, code.writeRef(), diagnostic_blob.writeRef()), std::format("Generating SPIR-V for '{}.{}'", entry.module_name, entry.entry_point), diagnostic_blob);
-        if (diagnostic_blob && diagnostic_blob->getBufferSize() != 0) std::fprintf(stderr, "%s", diagnostic_text(diagnostic_blob).c_str());
+        if (diagnostic_blob && diagnostic_blob->getBufferSize() != 0) std::print(std::cerr, "{}", diagnostic_text(diagnostic_blob));
 
         const std::filesystem::path output_path = output_directory / (entry.output_name + ".spv");
         write_if_different(output_path, code->getBufferPointer(), code->getBufferSize(), "SPIR-V shader");
@@ -298,7 +286,7 @@ int main(const int argument_count, const char* const* arguments) {
         const std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[3]);
         for (const ShaderEntry& entry : shader_entries) compile_shader(entry.output_name == "path_evaluate_surface_textures" ? *default_session : *optimized_session, entry, arguments[4], arguments[5]);
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
+        std::println(std::cerr, "{}", error.what());
         return 1;
     }
     return 0;
