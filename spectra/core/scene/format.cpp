@@ -582,8 +582,8 @@ namespace spectra::scene {
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, SphereGeometry>) {
                             std::string line = std::format("sphere {} {}", geometry.id.value, kdl_string(geometry.name));
                             if (data.radius != 1.0f) kdl_number_property(line, "radius", data.radius);
-                            if (data.z_min != -1.0f) kdl_number_property(line, "z-min", data.z_min);
-                            if (data.z_max != 1.0f) kdl_number_property(line, "z-max", data.z_max);
+                            if (data.z_min != -data.radius) kdl_number_property(line, "z-min", data.z_min);
+                            if (data.z_max != data.radius) kdl_number_property(line, "z-max", data.z_max);
                             if (data.phi_max != 360.0f) kdl_number_property(line, "phi-max", data.phi_max);
                             writer.line(line);
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, BoxGeometry>) {
@@ -1457,14 +1457,15 @@ namespace spectra::scene {
                     .name = kdl_value_text(node.args()[1]),
                 };
                 if (node.name() == u8"triangle-mesh") geometry.data = TriangleMeshGeometry{.asset = {.content_hash = kdl_string_property(node, u8"asset")}};
-                else if (node.name() == u8"sphere")
+                else if (node.name() == u8"sphere") {
+                    const float radius = kdl_number_property<float>(node, u8"radius", 1.0f);
                     geometry.data = SphereGeometry{
-                        .radius  = kdl_number_property<float>(node, u8"radius", 1.0f),
-                        .z_min   = kdl_number_property<float>(node, u8"z-min", -1.0f),
-                        .z_max   = kdl_number_property<float>(node, u8"z-max", 1.0f),
+                        .radius  = radius,
+                        .z_min   = kdl_number_property<float>(node, u8"z-min", -radius),
+                        .z_max   = kdl_number_property<float>(node, u8"z-max", radius),
                         .phi_max = kdl_number_property<float>(node, u8"phi-max", 360.0f),
                     };
-                else if (node.name() == u8"box") geometry.data = BoxGeometry{read_bounds(node, BoxGeometry{}.bounds)};
+                } else if (node.name() == u8"box") geometry.data = BoxGeometry{read_bounds(node, BoxGeometry{}.bounds)};
                 else if (node.name() == u8"rectangle") {
                     RectangleGeometry rectangle{};
                     if (const kdl::Node* minimum = kdl_child(node, u8"minimum")) rectangle.minimum = read_float2(*minimum);

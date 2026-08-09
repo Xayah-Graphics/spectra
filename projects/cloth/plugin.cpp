@@ -152,7 +152,7 @@ namespace {
             const std::array debug{
                 SpectraPluginDebugPrimitive{
                     SpectraPluginDebugPrimitiveKind::AxisAlignedBox,
-                    SpectraPluginDebugDepthMode::Tested,
+                    SpectraPluginDebugDepthMode::XRay,
                     {
                         this->collider.center[0] - this->collider.radius,
                         this->collider.center[1] - this->collider.radius,
