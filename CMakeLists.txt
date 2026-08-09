@@ -8,7 +8,6 @@ else ()
     set(SPECTRA_BUILD_UI_DEFAULT OFF)
 endif ()
 option(SPECTRA_BUILD_UI "Build the Windows visualization UI into the spectra executable" ${SPECTRA_BUILD_UI_DEFAULT})
-option(SPECTRA_BUILD_PROJECTS "Build the research Simulator Provider projects" OFF)
 if (SPECTRA_BUILD_UI AND NOT WIN32)
     message(FATAL_ERROR "SPECTRA_BUILD_UI is currently supported only on Windows.")
 endif ()
@@ -553,6 +552,9 @@ if (SPECTRA_BUILD_UI)
 endif ()
 
 add_executable(spectra)
+if (WIN32)
+    target_sources(spectra PRIVATE spectra.rc)
+endif ()
 target_sources(
         spectra
         PRIVATE
@@ -583,7 +585,3 @@ install(TARGETS spectra RUNTIME DESTINATION "." COMPONENT Spectra)
 install(FILES ${SPECTRA_RUNTIME_SHADER_OUTPUTS} DESTINATION "resources/shaders" COMPONENT Spectra)
 install(FILES ${SPECTRA_PATH_TRACER_SHADER_OUTPUTS} DESTINATION "resources/pathtracer/shaders" COMPONENT Spectra)
 install(FILES ${SPECTRA_SPECTRAL_ASSETS} DESTINATION "resources/pathtracer/spectral" COMPONENT Spectra)
-
-if (SPECTRA_BUILD_PROJECTS)
-    add_subdirectory(projects)
-endif ()
