@@ -13,10 +13,10 @@ namespace {
     constexpr std::uint64_t cloth_vertex_count = 45ull * 37ull;
     constexpr std::uint64_t cloth_index_count  = 44ull * 36ull * 6ull;
     constexpr std::array ports{
-        SpectraPluginPortDescriptor{text("collider"), text("Sphere Collider"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Bounds)), SpectraPluginMeshUpdateMode::Deformable, {}},
-        SpectraPluginPortDescriptor{text("initial_mesh"), text("Initial Cloth Mesh"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::TriangleMesh, SpectraPluginMemoryDomain::Host, cloth_vertex_count, 0, 1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Position), SpectraPluginMeshUpdateMode::Deformable, {}},
-        SpectraPluginPortDescriptor{text("mesh"), text("Cloth Mesh"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::TriangleMesh, SpectraPluginMemoryDomain::CudaExternal, cloth_vertex_count, cloth_index_count, 1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Position), SpectraPluginMeshUpdateMode::Deformable, {}},
-        SpectraPluginPortDescriptor{text("debug"), text("Constraint Debug"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::DebugDraw, SpectraPluginMemoryDomain::Host, 8, 0, 0, SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("collider"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Bounds)), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("initial_mesh"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::TriangleMesh, SpectraPluginMemoryDomain::Host, cloth_vertex_count, 0, 1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Position), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("mesh"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::TriangleMesh, SpectraPluginMemoryDomain::CudaExternal, cloth_vertex_count, cloth_index_count, 1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Position), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("debug"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::DebugDraw, SpectraPluginMemoryDomain::Host, 8, 0, 0, SpectraPluginMeshUpdateMode::Deformable, {}},
     };
     constexpr std::array parameters{
         SpectraPluginParameterDescriptor{text("gravity"), text("Gravity"), text("m/s²"), SpectraPluginParameterKind::Float3, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float3, 0, {0.0, -9.8, 0.0}}, {SpectraPluginParameterKind::Float3, 0, {-100.0, -100.0, -100.0}}, {SpectraPluginParameterKind::Float3, 0, {100.0, 100.0, 100.0}}, nullptr, 0},
@@ -24,21 +24,12 @@ namespace {
         SpectraPluginParameterDescriptor{text("stretch_compliance"), text("Stretch compliance"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {0.000001, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.01, 0.0, 0.0}}, nullptr, 0},
         SpectraPluginParameterDescriptor{text("bend_compliance"), text("Bend compliance"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {0.00045, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.1, 0.0, 0.0}}, nullptr, 0},
     };
-    constexpr std::array telemetry_descriptors{
-        SpectraPluginTelemetryDescriptor{text("vertex_count"), text("Vertices"), {}},
-        SpectraPluginTelemetryDescriptor{text("triangle_count"), text("Triangles"), {}},
-    };
     constexpr SpectraPluginProviderDescriptor provider{
         text("xayah.cloth.xpbd"),
-        text("XPBD Cloth"),
-        text("spectra.dynamic.deformable-surface"),
-        1,
         ports.data(),
         ports.size(),
         parameters.data(),
         parameters.size(),
-        telemetry_descriptors.data(),
-        telemetry_descriptors.size(),
     };
 
     struct Provider {
@@ -127,6 +118,7 @@ namespace {
             this->configuration.solver_iterations  = static_cast<std::uint32_t>(values[1].integer);
             this->configuration.stretch_compliance = static_cast<float>(values[2].floating[0]);
             this->configuration.bend_compliance    = static_cast<float>(values[3].floating[0]);
+            this->solver->set_configuration(this->configuration);
         }
 
         void reset() {
@@ -232,18 +224,13 @@ namespace {
         static_cast<Provider*>(instance)->advance_simulation(step_seconds, count);
     }
 
-    double read_telemetry(const void* instance, const std::uint64_t index) {
-        const Provider& provider = *static_cast<const Provider*>(instance);
-        if (index == 0) return static_cast<double>(provider.configuration.columns * provider.configuration.rows);
-        return static_cast<double>((provider.configuration.columns - 1) * (provider.configuration.rows - 1) * 2);
-    }
-
     void publish_frame(void* instance, std::uint64_t, const SpectraPluginFrameSink* sink) {
         static_cast<Provider*>(instance)->publish(*sink);
     }
+
 } // namespace
 
-extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11() {
+extern "C" SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_14() {
     static constexpr SpectraPluginApi api{
         SPECTRA_PLUGIN_API_VERSION,
         sizeof(SpectraPluginApi),
@@ -255,7 +242,6 @@ extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11()
         &apply_parameters,
         &reset,
         &step,
-        &read_telemetry,
         &publish_frame,
     };
     return &api;

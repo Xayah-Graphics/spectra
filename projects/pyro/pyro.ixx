@@ -99,6 +99,7 @@ namespace xayah::projects::pyro {
         Solver& operator=(const Solver& other) = delete;
         Solver& operator=(Solver&& other) noexcept;
 
+        void set_runtime_configuration(const SolverConfiguration& configuration) noexcept;
         void reset();
         void set_initial_fields(std::span<const float> density, std::span<const float> temperature);
         void set_plume_source(const PlumeSource& source);

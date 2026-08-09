@@ -1,160 +1,182 @@
-module;
-
-#include <Windows.h>
-#include <shlobj.h>
-#include <wrl/client.h>
-
-#include <glaze/glaze.hpp>
-
-#undef interface
-
 module spectra.editor;
 
+import :output.capture;
+import :output.frozen_scene;
+import :platform.dialogs;
+import :platform.presentation;
+import :platform.window;
+import :ui;
+import :ui.imgui;
+import :viewport.interaction;
+import :viewport.overlay;
+import :viewport.picker;
+import spectra.display;
+import spectra.render;
+import spectra.runtime;
+import spectra.scene;
+import spectra.scene.document;
+import spectra.scene.dynamics;
+import spectra.scene.format;
 import std;
+import vulkan;
 
 namespace spectra {
-    struct SceneLibraryConfiguration {
-        std::vector<std::string> roots{};
+    struct EditorApplication {
+        EditorApplication(EditorRequest request, const std::filesystem::path& shader_directory, const std::filesystem::path& pathtracer_directory, const std::filesystem::path& output_directory);
+
+        EditorApplication(const EditorApplication&)            = delete;
+        EditorApplication(EditorApplication&&)                 = delete;
+        EditorApplication& operator=(const EditorApplication&) = delete;
+        EditorApplication& operator=(EditorApplication&&)      = delete;
+
+        void run();
+
+        WindowPlatform platform;
+        EditorDialogs dialogs;
+        VulkanInstance instance;
+        VulkanSurface surface;
+        VulkanRuntime runtime;
+        VulkanPresentation presentation;
+        SceneDocument document;
+        DynamicWorld dynamics;
+        GpuScene gpu_scene;
+        Renderers renderers;
+        ViewportInteraction viewport;
+        DisplayRenderer display;
+        ViewportOverlay overlay;
+        ViewportPicker picker;
+        FrameCapture capture;
+        FrozenSceneExporter frozen_export;
+        ImGuiBackend imgui;
+        EditorUi ui;
+
+        struct {
+            std::uint64_t synchronized_scene_revision{};
+        } rendering;
+
+        struct {
+            std::chrono::steady_clock::time_point previous_simulation_sample{};
+            bool simulation_sample_valid{};
+        } timing;
+
+    private:
+        void open_scene(const std::filesystem::path& path);
+        void handle_dropped_scene_paths();
+        void handle_actions(const EditorActions& actions);
+        void begin_frame(std::uint32_t frame_slot_index);
+        [[nodiscard]] bool confirm_scene_replacement();
+        void replace_scene(const std::filesystem::path& path);
+        void reload_scene();
+        void destroy_rendering() noexcept;
+        void rebuild_rendering(scene::Scene& source_scene);
+        [[nodiscard]] bool prepare_rendering(const vk::raii::CommandBuffer& command_buffer, vk::Extent2D extent);
+        void record_editor_overlays(const vk::raii::CommandBuffer& command_buffer, bool show_axes);
     };
 
-    Editor::Editor(WindowPlatform& platform, VulkanRuntime& runtime, SceneDocument& document, DynamicWorld& dynamics, GpuScene& gpu_scene, Renderers& renderers, const std::filesystem::path& shader_directory, std::filesystem::path scene_library_path, std::vector<std::filesystem::path> session_scene_roots) noexcept : context{platform, runtime, document, dynamics, gpu_scene, renderers}, interaction(runtime, document, dynamics, gpu_scene, renderers), viewport(runtime, gpu_scene, dynamics, renderers, interaction, shader_directory), output(runtime, gpu_scene, renderers, viewport, shader_directory), ui(platform, runtime, document, dynamics, renderers, interaction, viewport, output, shader_directory), library{.configuration_path = std::move(scene_library_path), .session_roots = std::move(session_scene_roots)} {}
-
-    Editor::~Editor() {
-        this->output.wait_for_frozen_scene_export();
-        if (this->lifetime.com_initialized) CoUninitialize();
+    EditorApplication::EditorApplication(EditorRequest request, const std::filesystem::path& shader_directory, const std::filesystem::path& pathtracer_directory, const std::filesystem::path& output_directory) : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, dynamics{runtime, document}, gpu_scene{runtime, document, dynamics, shader_directory}, renderers{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer)}, viewport{document, dynamics}, display{runtime, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, capture{runtime, renderers, display, output_directory}, frozen_export{gpu_scene}, imgui{platform, runtime, display, shader_directory}, ui{document, dynamics, renderers, viewport, picker, frozen_export, imgui} {
+        this->display.initialize();
+        this->imgui.initialize();
+        if (request.scene_path) this->open_scene(*request.scene_path);
     }
 
-    void Editor::initialize(std::optional<std::filesystem::path> scene_path) {
-        const HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-        if (result != S_OK && result != S_FALSE) throw std::runtime_error(std::format("COM initialization failed with HRESULT 0x{:08X}", static_cast<std::uint32_t>(result)));
-        this->lifetime.com_initialized = true;
-        this->ui.initialize();
-        this->output.initialize();
-        if (scene_path)
-            this->open_scene(*scene_path);
-        else {
-            this->library.visible = true;
-            this->refresh_scene_library();
-        }
+    void EditorApplication::destroy_rendering() noexcept {
+        this->picker.destroy_scene();
+        this->overlay.destroy_scene();
+        this->renderers.destroy();
+        this->gpu_scene.destroy();
     }
 
-    void Editor::destroy_rendering() noexcept {
-        this->viewport.destroy_scene();
-        this->interaction.destroy_scene_rendering();
+    void EditorApplication::rebuild_rendering(scene::Scene& source_scene) {
+        std::vector<GpuGeometryBinding> geometry_bindings{};
+        geometry_bindings.reserve(this->dynamics.outputs.mesh_bindings.size());
+        for (const dynamics::MeshOutputBinding& binding : this->dynamics.outputs.mesh_bindings)
+            geometry_bindings.push_back(GpuGeometryBinding{
+                binding.geometry_id,
+                binding.update_mode == dynamics::MeshUpdateMode::Deformable ? GpuMeshUpdateMode::Deformable : GpuMeshUpdateMode::TopologyChanging,
+                binding.vertex_capacity,
+                binding.index_capacity,
+            });
+        this->gpu_scene.initialize(source_scene, geometry_bindings, this->dynamics.outputs.particle_capacities, this->dynamics.outputs.hidden_instances);
+        this->renderers.rebuild(this->document.content.evaluated.view());
+        this->overlay.initialize(this->document.content.evaluated.view());
+        this->picker.initialize(this->document.content.evaluated.view());
     }
 
-    void Editor::rebuild_rendering(scene::Scene& source_scene) {
-        this->interaction.rebuild_scene_rendering(source_scene);
-        this->viewport.initialize(this->context.document.content.evaluated.view());
-    }
-
-    void Editor::open_scene(const std::filesystem::path& path) {
+    void EditorApplication::open_scene(const std::filesystem::path& path) {
         scene::Scene next_scene = scene::load_scene(path);
-        this->context.runtime.graphics.device.waitIdle();
+        this->runtime.graphics.device.waitIdle();
         this->destroy_rendering();
-        this->context.dynamics.destroy();
-        this->context.document.content.source    = std::move(next_scene);
-        this->context.document.content.evaluated = this->context.document.content.source;
-        this->context.document.content.path      = path;
-        if (this->context.document.content.source.dynamic_setup) this->context.dynamics.initialize(path, this->context.document.content.source);
-        this->rebuild_rendering(this->context.document.content.source);
-        this->interaction.initialize_from_scene();
-        this->context.document.content.loaded = true;
+        this->dynamics.destroy();
+        this->document.content.source    = std::move(next_scene);
+        this->document.content.evaluated = this->document.content.source;
+        this->document.content.path      = path;
+        if (this->document.content.source.dynamic_setup) this->dynamics.initialize(path, this->document.content.source);
+        this->rebuild_rendering(this->document.content.source);
+        this->viewport.initialize_from_scene();
+        this->document.content.loaded               = true;
+        this->document.content.modified             = false;
         this->rendering.synchronized_scene_revision = 0;
     }
 
-    void Editor::close_scene() noexcept {
-        this->output.wait_for_frozen_scene_export();
-        this->destroy_rendering();
-        this->context.dynamics.destroy();
-        this->context.document.close();
-    }
-
-    void Editor::save() {
-        this->context.document.save();
-        this->interaction.editing.saved_edit_serial = this->interaction.editing.current_edit_serial;
-    }
-
-    void Editor::save_as(const std::filesystem::path& path) {
-        this->context.document.save_as(path);
-        this->interaction.editing.saved_edit_serial = this->interaction.editing.current_edit_serial;
-    }
-
-    void Editor::begin_frame(const std::uint32_t frame_slot_index) {
-        if (const std::optional<EditorOutputResult> result = this->output.begin_frame(frame_slot_index)) {
-            if (result->error_message.empty())
-                this->ui.notify(std::format("Written  {}", result->output_path.filename().string()));
+    void EditorApplication::begin_frame(const std::uint32_t frame_slot_index) {
+        if (std::optional<std::expected<std::filesystem::path, std::string>> result = this->capture.begin_frame(frame_slot_index)) {
+            if (*result)
+                this->ui.notify(std::format("Written  {}", (*result)->filename().string()));
             else
-                this->ui.notify(result->error_message, true);
+                this->ui.notify(result->error(), true);
         }
-        this->viewport.consume_pick(frame_slot_index, this->interaction);
+        if (std::optional<std::expected<std::filesystem::path, std::string>> result = this->frozen_export.begin_frame(frame_slot_index)) {
+            if (*result)
+                this->ui.notify(std::format("Written  {}", (*result)->filename().string()));
+            else
+                this->ui.notify(result->error(), true);
+        }
+
+        const ViewportPicker::PickResult pick = this->picker.take_pick_result(frame_slot_index);
+        if (!pick.ready) return;
+        std::optional<scene::InstanceId> instance{};
+        if (pick.acceleration_instance_index) instance = this->gpu_scene.resources.acceleration_instance_ids[*pick.acceleration_instance_index];
+        const bool debug_hit = pick.debug_object_id && (pick.debug_xray || !instance);
+        if (!pick.select) {
+            this->viewport.view.selection.hovered_instance = debug_hit ? std::nullopt : instance;
+            return;
+        }
+        if (debug_hit) {
+            if (!pick.additive) this->viewport.clear_selection();
+            return;
+        }
+        if (!instance) {
+            if (!pick.additive) this->viewport.clear_selection();
+            return;
+        }
+        this->viewport.select_instance(*instance, pick.additive);
     }
 
-    std::optional<std::filesystem::path> Editor::choose_scene_file() {
-        Microsoft::WRL::ComPtr<IFileOpenDialog> dialog{};
-        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) throw std::runtime_error("Failed to create the Windows open dialog");
-        constexpr std::array filters{COMDLG_FILTERSPEC{L"Spectra Scene", L"*.spectra"}};
-        dialog->SetFileTypes(static_cast<UINT>(filters.size()), filters.data());
-        dialog->SetTitle(L"Open Spectra Scene");
-        const HRESULT shown = dialog->Show(this->context.platform.native_window);
-        if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;
-        if (FAILED(shown)) throw std::runtime_error("The Windows open dialog failed");
-        Microsoft::WRL::ComPtr<IShellItem> item{};
-        if (FAILED(dialog->GetResult(&item))) throw std::runtime_error("The Windows open dialog returned no item");
-        PWSTR path{};
-        if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) throw std::runtime_error("The Windows open dialog returned no filesystem path");
-        const std::filesystem::path result{path};
-        CoTaskMemFree(path);
-        return result;
-    }
-
-    std::optional<std::filesystem::path> Editor::choose_scene_save_path(const std::filesystem::path& current_path, const bool frozen_scene) {
-        Microsoft::WRL::ComPtr<IFileSaveDialog> dialog{};
-        if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) throw std::runtime_error("Failed to create the Windows save dialog");
-        constexpr std::array filters{COMDLG_FILTERSPEC{L"Spectra Scene", L"*.spectra"}};
-        dialog->SetFileTypes(static_cast<UINT>(filters.size()), filters.data());
-        dialog->SetDefaultExtension(L"spectra");
-        dialog->SetTitle(frozen_scene ? L"Export Frozen Spectra Scene" : L"Save Spectra Scene");
-        const std::filesystem::path filename = frozen_scene ? current_path.parent_path() / std::format("{}-snapshot.spectra", current_path.stem().string()) : current_path.filename();
-        dialog->SetFileName(filename.filename().c_str());
-        const HRESULT shown = dialog->Show(this->context.platform.native_window);
-        if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;
-        if (FAILED(shown)) throw std::runtime_error("The Windows save dialog failed");
-        Microsoft::WRL::ComPtr<IShellItem> item{};
-        if (FAILED(dialog->GetResult(&item))) throw std::runtime_error("The Windows save dialog returned no item");
-        PWSTR path{};
-        if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) throw std::runtime_error("The Windows save dialog returned no filesystem path");
-        const std::filesystem::path result{path};
-        CoTaskMemFree(path);
-        return result;
-    }
-
-    bool Editor::confirm_scene_replacement() {
-        if (!this->context.document.content.loaded || !this->interaction.scene_modified()) return true;
-        this->timing.simulation_sample_valid = false;
-        const int result = MessageBoxW(this->context.platform.native_window, L"The current Spectra scene has unsaved changes.\n\nSave before continuing?", L"Spectra", MB_ICONWARNING | MB_YESNOCANCEL);
-        if (result == IDCANCEL) return false;
-        if (result == IDYES) this->save();
+    bool EditorApplication::confirm_scene_replacement() {
+        if (!this->document.content.loaded || !this->document.content.modified) return true;
+        this->timing.simulation_sample_valid    = false;
+        const SceneReplacementDecision decision = this->dialogs.confirm_scene_replacement();
+        if (decision == SceneReplacementDecision::Cancel) return false;
+        if (decision == SceneReplacementDecision::Save) this->document.save();
         return true;
     }
 
-    void Editor::replace_scene(const std::filesystem::path& path) {
+    void EditorApplication::replace_scene(const std::filesystem::path& path) {
         this->timing.simulation_sample_valid = false;
         if (path.extension() != ".spectra") throw std::runtime_error("Spectra accepts only .spectra scenes");
         if (!this->confirm_scene_replacement()) return;
         this->open_scene(path);
-        this->library.visible = false;
     }
 
-    void Editor::reload_scene() {
+    void EditorApplication::reload_scene() {
         this->timing.simulation_sample_valid = false;
         if (!this->confirm_scene_replacement()) return;
-        this->open_scene(this->context.document.content.path);
+        this->open_scene(this->document.content.path);
         this->ui.notify("Scene reloaded");
     }
 
-    void Editor::handle_dropped_scene_paths() {
-        const std::vector<std::filesystem::path> paths = this->context.platform.take_dropped_paths();
+    void EditorApplication::handle_dropped_scene_paths() {
+        const std::vector<std::filesystem::path> paths = this->platform.take_dropped_paths();
         if (paths.empty()) return;
         try {
             if (paths.size() != 1u) throw std::runtime_error("Drop exactly one .spectra scene");
@@ -164,109 +186,149 @@ namespace spectra {
         }
     }
 
-    void Editor::handle_actions(const EditorActions& actions) {
-        if (actions.exit_application) this->context.platform.request_close();
+    void EditorApplication::handle_actions(const EditorActions& actions) {
+        if (actions.exit_application) this->platform.request_close();
         try {
-            if (actions.open_scene_library) {
-                this->timing.simulation_sample_valid = false;
-                this->refresh_scene_library();
-                this->library.visible = true;
-            }
-            if (actions.close_scene_library) this->library.visible = false;
-            if (actions.refresh_scene_library) {
-                this->timing.simulation_sample_valid = false;
-                this->refresh_scene_library();
-            }
             if (actions.open_scene_file) {
                 this->timing.simulation_sample_valid = false;
-                if (const std::optional<std::filesystem::path> path = this->choose_scene_file()) this->replace_scene(*path);
+                if (const std::optional<std::filesystem::path> path = this->dialogs.choose_scene_file()) this->replace_scene(*path);
             }
-            if (actions.selected_scene_path) this->replace_scene(*actions.selected_scene_path);
             if (actions.reload_scene) this->reload_scene();
             if (actions.save_scene) {
                 this->timing.simulation_sample_valid = false;
-                this->save();
+                this->document.save();
                 this->ui.notify("Scene saved");
             }
             if (actions.save_scene_as) {
                 this->timing.simulation_sample_valid = false;
-                if (const std::optional<std::filesystem::path> path = this->choose_scene_save_path(this->context.document.content.path)) {
-                    this->save_as(*path);
+                if (const std::optional<std::filesystem::path> path = this->dialogs.choose_scene_save_path(this->document.content.path)) {
+                    this->document.save_as(*path);
                     this->ui.notify("Scene saved");
                 }
             }
             if (actions.export_frozen_scene) {
                 this->timing.simulation_sample_valid = false;
-                if (const std::optional<std::filesystem::path> path = this->choose_scene_save_path(this->context.document.content.path, true)) {
-                    this->output.request_frozen_scene_export(*path);
+                if (const std::optional<std::filesystem::path> path = this->dialogs.choose_scene_save_path(this->document.content.path, true)) {
+                    this->frozen_export.request(*path);
                     this->ui.notify("Capturing Frozen Scene");
                 }
             }
-            if (actions.toggle_renderer) {
-                this->context.runtime.graphics.device.waitIdle();
-                const std::string_view renderer = *actions.toggle_renderer;
-                if (this->context.renderers.enabled(renderer)) {
-                    const std::span<const RendererDescriptor> enabled_renderers = this->context.renderers.enabled_renderers();
-                    const RendererDescriptor replacement = *std::ranges::find_if(enabled_renderers, [renderer](const RendererDescriptor descriptor) { return descriptor.id != renderer; });
-                    this->context.renderers.disable(renderer, replacement.id);
-                } else
-                    this->context.renderers.enable(renderer, this->context.document.content.evaluated.view());
+            if (actions.renderer) {
+                this->renderers.activate(*actions.renderer, this->document.content.evaluated.view());
             }
-            if (actions.capture_format) this->output.request_capture(*actions.capture_format, this->context.document.content.source.film());
+            if (actions.capture_format) this->capture.request(*actions.capture_format, this->document.content.source.film(), this->document.content.path);
         } catch (const std::exception& error) {
             this->ui.notify(error.what(), true);
         }
     }
 
-    void Editor::refresh_scene_library() {
-        std::ifstream stream{this->library.configuration_path, std::ios::binary};
-        if (!stream) throw std::runtime_error(std::format("Failed to open Spectra Scene Library configuration: {}", this->library.configuration_path.string()));
-        const std::string json{std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
-        SceneLibraryConfiguration configuration{};
-        constexpr glz::opts options{.error_on_unknown_keys = true, .error_on_missing_keys = true};
-        const glz::error_ctx error = glz::read<options>(configuration, json);
-        if (error) throw std::runtime_error(std::format("Failed to parse Spectra Scene Library configuration {}:\n{}", this->library.configuration_path.string(), glz::format_error(error, json)));
+    bool EditorApplication::prepare_rendering(const vk::raii::CommandBuffer& command_buffer, const vk::Extent2D extent) {
+        scene::SceneChange binding_changes{scene::SceneChange::None};
+        bool gpu_scene_synchronized{};
+        if (this->dynamics.configuration.initialized)
+            if (const dynamics::DynamicFrame* frame = this->dynamics.pending_frame()) {
+                binding_changes        = this->gpu_scene.apply(*frame, command_buffer);
+                gpu_scene_synchronized = true;
+            }
 
-        std::vector<std::filesystem::path> roots{};
-        roots.reserve(configuration.roots.size() + this->library.session_roots.size());
-        for (const std::string& configured : configuration.roots) {
-            const std::filesystem::path relative{configured};
-            if (relative.is_absolute()) throw std::runtime_error("Spectra Scene Library roots must be relative to library.json");
-            roots.emplace_back(this->library.configuration_path.parent_path() / relative);
+        const scene::SceneRevision revision = this->document.content.evaluated.revision();
+        const bool scene_changed            = revision.number != this->rendering.synchronized_scene_revision;
+        if (scene_changed) {
+            if (!gpu_scene_synchronized) binding_changes = this->gpu_scene.synchronize(command_buffer);
+            scene::SceneView synchronized_scene = this->document.content.evaluated.view();
+            synchronized_scene.revision.changes = synchronized_scene.revision.changes | binding_changes;
+            this->overlay.synchronize(synchronized_scene, command_buffer);
+            this->picker.synchronize(synchronized_scene, command_buffer);
+            this->renderers.invalidate(synchronized_scene.revision.changes);
+            this->rendering.synchronized_scene_revision = revision.number;
+            this->viewport.prune_selection();
         }
-        for (const std::filesystem::path& root : this->library.session_roots) roots.emplace_back(std::filesystem::absolute(root));
 
-        this->library.scenes.clear();
-        this->library.problems.clear();
-        std::vector<std::filesystem::path> discovered{};
-        for (const std::filesystem::path& declared_root : roots) {
-            std::error_code root_error{};
-            const std::filesystem::path root = std::filesystem::weakly_canonical(declared_root, root_error);
-            if (root_error || !std::filesystem::is_directory(root)) {
-                this->library.problems.emplace_back(declared_root, "Scene root is unavailable");
+        const float aspect              = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+        const bool aspect_changed       = aspect != this->viewport.view.aspect;
+        const bool scene_camera_changed = scene_changed && (revision.changes & scene::SceneChange::Camera) != scene::SceneChange::None;
+        this->viewport.view.aspect      = aspect;
+        const bool camera_changed       = aspect_changed || this->viewport.view.source != this->viewport.view.synchronized_source || (this->viewport.view.source == CameraSource::Viewport && (scene_camera_changed || this->viewport.view.camera_revision != this->viewport.view.synchronized_camera_revision)) || (this->viewport.view.source == CameraSource::Scene && this->document.content.source.camera().revision != this->viewport.view.synchronized_scene_camera_revision);
+        if (camera_changed) this->viewport.camera_changed();
+
+        this->frozen_export.record_snapshot(command_buffer, this->runtime.frames.frame.current_slot_index, this->viewport.view.render_camera, extent, this->ui.controls.exposure, this->document.content.path);
+
+        if (scene_changed) this->document.content.evaluated.acknowledge_changes();
+        if (this->document.content.source.revision().changes != scene::SceneChange::None) this->document.content.source.acknowledge_changes();
+        const bool renderer_ready = this->renderers.prepare(this->document.content.evaluated.view(), RenderView{this->viewport.view.render_camera, extent, this->viewport.view.render_camera_revision}, command_buffer);
+        if (this->dynamics.configuration.initialized) this->dynamics.consume_frame();
+        return renderer_ready;
+    }
+
+    void EditorApplication::record_editor_overlays(const vk::raii::CommandBuffer& command_buffer, const bool show_axes) {
+        const bool visualizations = this->renderers.active_renders_visualizations();
+        this->overlay.record(command_buffer, this->display, this->viewport.view.render_camera,
+            ViewportOverlayState{
+                .selected_instances     = this->viewport.view.selection.selected_instances,
+                .active_instance        = this->viewport.view.selection.active_instance,
+                .hovered_instance       = this->viewport.view.selection.hovered_instance,
+                .axes_plane             = std::to_underlying(this->viewport.view.source == CameraSource::Scene ? AxesPlane::Xz : this->viewport.view.axes_plane),
+                .axes_visible           = show_axes,
+                .outline_visible        = this->viewport.view.overlays_visible,
+                .raster_visualizations  = visualizations,
+                .debug_primitives       = visualizations && this->dynamics.configuration.initialized ? std::span<const dynamics::DebugPrimitive>{this->dynamics.publication.debug_primitives} : std::span<const dynamics::DebugPrimitive>{},
+                .volume_velocity_fields = visualizations ? std::span<const GpuVolumeVelocityField>{this->gpu_scene.resources.volume_velocity_fields} : std::span<const GpuVolumeVelocityField>{},
+            });
+    }
+
+    void EditorApplication::run() {
+        while (true) {
+            this->platform.poll_events();
+            if (this->platform.take_close_request()) break;
+            this->handle_dropped_scene_paths();
+
+            const std::optional<PresentedFrameContext> frame = this->presentation.begin_frame();
+            if (!frame) {
+                this->platform.wait_events();
+                this->timing.simulation_sample_valid = false;
                 continue;
             }
-            try {
-                for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator{root}) {
-                    if (!entry.is_regular_file() || entry.path().extension() != ".spectra") continue;
-                    const std::filesystem::path path = std::filesystem::weakly_canonical(entry.path());
-                    if (std::ranges::contains(discovered, path)) continue;
-                    discovered.emplace_back(path);
-                    try {
-                        this->library.scenes.emplace_back(scene::inspect_scene(path), root);
-                    } catch (const std::exception& inspection_error) {
-                        this->library.problems.emplace_back(path, inspection_error.what());
-                    }
-                }
-            } catch (const std::exception& scan_error) {
-                this->library.problems.emplace_back(root, scan_error.what());
+
+            const std::chrono::steady_clock::time_point current_clock_sample = std::chrono::steady_clock::now();
+            const bool simulation_clock_active                               = this->document.content.loaded;
+            if (this->document.content.loaded) {
+                this->begin_frame(frame->frame.slot_index);
+                if (simulation_clock_active && this->timing.simulation_sample_valid && this->dynamics.configuration.initialized) this->dynamics.advance(current_clock_sample - this->timing.previous_simulation_sample);
+                this->imgui.resize_viewport(frame->presentation_target.extent);
             }
+            this->timing.previous_simulation_sample = current_clock_sample;
+            this->timing.simulation_sample_valid    = simulation_clock_active;
+
+            this->imgui.begin_frame();
+            const EditorActions actions        = this->ui.draw_editor_ui();
+            this->platform.window_drag_regions = actions.window_drag_regions;
+            this->handle_actions(actions);
+            if (!this->timing.simulation_sample_valid && this->document.content.loaded) {
+                this->timing.previous_simulation_sample = std::chrono::steady_clock::now();
+                this->timing.simulation_sample_valid    = true;
+            }
+            this->imgui.end_frame();
+
+            if (this->document.content.loaded) {
+                this->imgui.resize_viewport(frame->presentation_target.extent);
+                const vk::Extent2D viewport_extent = this->display.image.extent;
+                if (this->prepare_rendering(frame->frame.command_buffer, viewport_extent)) {
+                    this->renderers.record(frame->frame.command_buffer, frame->frame.slot_index);
+                    const RenderOutput output = this->renderers.output();
+                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->viewport.view.render_camera);
+                    this->display.record(frame->frame.command_buffer, output, this->ui.controls.exposure);
+                    this->record_editor_overlays(frame->frame.command_buffer, actions.show_axes);
+                    this->capture.record(frame->frame.command_buffer, frame->frame.slot_index, output);
+                }
+            }
+
+            this->imgui.record(frame->frame.command_buffer, frame->frame.slot_index, frame->presentation_target.image, frame->presentation_target.view, frame->presentation_target.extent, frame->presentation_target.image_layout, vk::ImageLayout::ePresentSrcKHR);
+            this->presentation.present_frame();
         }
-        std::ranges::sort(this->library.scenes, [](const SceneLibraryEntry& left, const SceneLibraryEntry& right) {
-            const std::string left_name  = left.summary.name.empty() ? left.summary.scene_path.string() : left.summary.name;
-            const std::string right_name = right.summary.name.empty() ? right.summary.scene_path.string() : right.summary.name;
-            return std::tie(left_name, left.summary.scene_path) < std::tie(right_name, right.summary.scene_path);
-        });
-        std::ranges::sort(this->library.problems, {}, &SceneLibraryProblem::scene_path);
+    }
+
+    void run_editor(EditorRequest request, const std::filesystem::path& shader_directory, const std::filesystem::path& pathtracer_directory, const std::filesystem::path& output_directory) {
+        EditorApplication application{std::move(request), shader_directory, pathtracer_directory, output_directory};
+        application.run();
     }
 } // namespace spectra

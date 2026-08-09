@@ -1,424 +1,83 @@
-{
-  "format_version": 21,
-  "name": "Pyro",
-  "resources": {
-    "geometries": [
-      {
-        "id": 1,
-        "name": "Pyro Bounds",
-        "data": {
-          "type": "box",
-          "bounds": {
-            "minimum": [
-              -0.6,
-              0,
-              -0.6
-            ],
-            "maximum": [
-              0.6,
-              1.8,
-              0.6
-            ]
-          }
+spectra 22 "Pyro" {
+    active camera=1 film=1 sampler=1
+    transport maximum-depth=8
+    geometries {
+        box 1 "Pyro Bounds" {
+            bounds -0.6 0 -0.6 0.6 1.8 0.6
         }
-      }
-    ],
-    "particle_sets": [],
-    "volumes": [
-      {
-        "id": 1,
-        "name": "Pyro",
-        "bounds": {
-          "minimum": [
-            -0.6,
-            0,
-            -0.6
-          ],
-          "maximum": [
-            0.6,
-            1.8,
-            0.6
-          ]
-        },
-        "transform": [
-          1,
-          0,
-          0,
-          0,
-          0,
-          1,
-          0,
-          0,
-          0,
-          0,
-          1,
-          0,
-          0,
-          0,
-          0,
-          1
-        ],
-        "data": {
-          "type": "density_grid",
-          "resolution": [
-            64,
-            96,
-            64
-          ],
-          "asset": {
-            "content_hash": "e03c850c73e5403937f4b200ab35fb9d5f56afa663b0f2a812d9145a99f34577",
-            "relative_path": "assets/e03c850c73e5403937f4b200ab35fb9d5f56afa663b0f2a812d9145a99f34577.volume",
-            "byte_size": 3145784
-          }
+    }
+    volumes {
+        density-grid 1 "Pyro" asset="e03c850c73e5403937f4b200ab35fb9d5f56afa663b0f2a812d9145a99f34577" {
+            bounds -0.6 0 -0.6 0.6 1.8 0.6
+            resolution 64 96 64
         }
-      }
-    ],
-    "textures": [],
-    "materials": [
-      {
-        "id": 1,
-        "name": "Volume Boundary",
-        "data": {
-          "type": "interface"
+    }
+    materials {
+        interface 1 "Volume Boundary"
+    }
+    media {
+        volume 1 "Pyro Medium" volume=1 {
+            sigma-a rgb-unbounded 0.18 0.2 0.24
+            sigma-s rgb-unbounded 0.75 0.72 0.68
+            emission rgb-illuminant 1 0.56 0.14
+            emission-scale 0.009358316
+            anisotropy 0.15
+            temperature-scale 55
+            temperature-offset 300
+            minimum-emission-temperature 700
+            blackbody-emission #true
         }
-      }
-    ],
-    "media": [
-      {
-        "id": 1,
-        "name": "Pyro Medium",
-        "data": {
-          "type": "volume",
-          "volume": 1,
-          "sigma_a": {
-            "value": [
-              0.18,
-              0.2,
-              0.24
-            ],
-            "texture": 0,
-            "encoding": "rgb_unbounded",
-            "color_space": "srgb",
-            "scalar": 0,
-            "temperature": 0,
-            "wavelengths": [],
-            "samples": []
-          },
-          "sigma_s": {
-            "value": [
-              0.75,
-              0.72,
-              0.68
-            ],
-            "texture": 0,
-            "encoding": "rgb_unbounded",
-            "color_space": "srgb",
-            "scalar": 0,
-            "temperature": 0,
-            "wavelengths": [],
-            "samples": []
-          },
-          "emission": {
-            "value": [
-              1,
-              0.56,
-              0.14
-            ],
-            "texture": 0,
-            "encoding": "rgb_illuminant",
-            "color_space": "srgb",
-            "scalar": 0,
-            "temperature": 0,
-            "wavelengths": [],
-            "samples": []
-          },
-          "density_scale": 1,
-          "emission_scale": 0.009358316,
-          "anisotropy": 0.15,
-          "temperature_scale": 55,
-          "temperature_offset": 300,
-          "minimum_emission_temperature": 700,
-          "blackbody_emission": true
+    }
+    lights {
+        point 1 "Key Light" {
+            intensity rgb-illuminant 70 67 62
+            transform {
+                row 1 0 0 3.5
+                row 0 1 0 6
+                row 0 0 1 4
+                row 0 0 0 1
+            }
+            scale 0.009358316
         }
-      }
-    ],
-    "lights": [
-      {
-        "id": 1,
-        "name": "Key Light",
-        "data": {
-          "type": "point",
-          "transform": [
-            1,
-            0,
-            0,
-            3.5,
-            0,
-            1,
-            0,
-            6,
-            0,
-            0,
-            1,
-            4,
-            0,
-            0,
-            0,
-            1
-          ],
-          "intensity": {
-            "value": [
-              70,
-              67,
-              62
-            ],
-            "texture": 0,
-            "encoding": "rgb_illuminant",
-            "color_space": "srgb",
-            "scalar": 0,
-            "temperature": 0,
-            "wavelengths": [],
-            "samples": []
-          },
-          "scale": 0.009358316
+        infinite 2 "Environment" {
+            radiance rgb-illuminant 0.035 0.045 0.06
+            scale 0.009358316
         }
-      },
-      {
-        "id": 2,
-        "name": "Environment",
-        "data": {
-          "type": "infinite",
-          "radiance": {
-            "value": [
-              0.035,
-              0.045,
-              0.06
-            ],
-            "texture": 0,
-            "encoding": "rgb_illuminant",
-            "color_space": "srgb",
-            "scalar": 0,
-            "temperature": 0,
-            "wavelengths": [],
-            "samples": []
-          },
-          "transform": [
-            1,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            0,
-            0,
-            0,
-            1
-          ],
-          "scale": 0.009358316,
-          "emission_texture": 0
+    }
+    cameras {
+        perspective 1 "Main Camera" {
+            transform {
+                row 0.8073911 -0.1253278 0.57655233 3.8
+                row 0 0.9771798 0.21241401 2.3
+                row -0.5900166 -0.17150119 0.7889663 5.2
+                row 0 0 0 1
+            }
+            vertical-fov 42
         }
-      }
-    ],
-    "cameras": [
-      {
-        "id": 1,
-        "name": "Main Camera",
-        "transform": [
-          0.8073911,
-          -0.1253278,
-          0.57655233,
-          3.8,
-          0,
-          0.9771798,
-          0.21241401,
-          2.3,
-          -0.5900166,
-          -0.17150119,
-          0.7889663,
-          5.2,
-          0,
-          0,
-          0,
-          1
-        ],
-        "exposure_time": 1,
-        "medium": 0,
-        "data": {
-          "type": "perspective",
-          "vertical_fov": 42,
-          "screen": {
-            "minimum": [
-              -1,
-              -1
-            ],
-            "maximum": [
-              1,
-              1
-            ]
-          },
-          "lens_radius": 0,
-          "focal_distance": 1,
-          "near_plane": 0.01,
-          "far_plane": 1000
+    }
+    films {
+        film 1 "Main Film" gbuffer=#true {
+            resolution 1920 1080
+            filter gaussian radius-x=1.5 radius-y=1.5
         }
-      }
-    ],
-    "films": [
-      {
-        "id": 1,
-        "name": "Main Film",
-        "resolution": [
-          1920,
-          1080
-        ],
-        "pixel_minimum": [
-          0,
-          0
-        ],
-        "pixel_maximum": [
-          1920,
-          1080
-        ],
-        "exposure": 0,
-        "iso": 100,
-        "color_space": "srgb",
-        "sensor_response": [],
-        "sensor_to_output_rgb": [
-          3.240479,
-          -1.53715,
-          -0.498535,
-          -0.969256,
-          1.875991,
-          0.041556,
-          0.055648,
-          -0.204043,
-          1.057311
-        ],
-        "filter": {
-          "kind": "gaussian",
-          "radius": [
-            1.5,
-            1.5
-          ],
-          "sigma": 0.5,
-          "b": 0.33333334,
-          "c": 0.33333334,
-          "tau": 3
-        },
-        "gbuffer": true,
-        "gbuffer_camera_space": true
-      }
-    ],
-    "samplers": [
-      {
-        "id": 1,
-        "name": "Main Sampler",
-        "kind": "pmj02bn",
-        "samples_per_pixel": 256,
-        "seed": 20260731,
-        "jitter": true,
-        "x_strata": 1,
-        "y_strata": 1,
-        "randomization": "owen"
-      }
-    ],
-    "prototypes": [
-      {
-        "id": 1,
-        "name": "Pyro Volume Prototype",
-        "primitives": [
-          {
-            "geometry": 1,
-            "particles": 0,
-            "volume": 1,
-            "material": 1,
-            "area_light": 0,
-            "media": {
-              "inside": 1,
-              "outside": 0
-            },
-            "alpha": 0,
-            "face_materials": [],
-            "reverse_orientation": false,
-            "transform": [
-              1,
-              0,
-              0,
-              0,
-              0,
-              1,
-              0,
-              0,
-              0,
-              0,
-              1,
-              0,
-              0,
-              0,
-              0,
-              1
-            ]
-          }
-        ]
-      }
-    ],
-    "instances": [
-      {
-        "id": 1,
-        "name": "Pyro Volume",
-        "prototype": 1,
-        "visible": true,
-        "transform": [
-          1,
-          0,
-          0,
-          0,
-          0,
-          1,
-          0,
-          0,
-          0,
-          0,
-          1,
-          0,
-          0,
-          0,
-          0,
-          1
-        ]
-      }
-    ]
-  },
-  "active_camera": 1,
-  "active_film": 1,
-  "active_sampler": 1,
-  "transport": {
-    "maximum_depth": 8,
-    "light_sampler": "bvh",
-    "regularize": false
-  },
-  "dynamic_setup": {
-    "clock": {"step_seconds": 0.008333333333333333, "start_step": 0, "end_step": null, "loop": false},
-    "seed": 20260802,
-    "systems": [
-      {
-        "id": "pyro",
-        "name": "Pyro Simulation",
-        "provider": "xayah.volume.pyro",
-        "enabled": true,
-        "visible": true,
-        "parameters": [],
-        "bindings": [
-          {"port": "initial_volume", "resource_kind": "Volume", "resource": 1},
-          {"port": "volume", "resource_kind": "Volume", "resource": 1}
-        ]
-      }
-    ]
-  }
+    }
+    samplers {
+        sampler 1 "Main Sampler" kind="pmj02bn" samples=256 seed=20260731
+    }
+    prototypes {
+        prototype 1 "Pyro Volume Prototype" {
+            primitive geometry=1 volume=1 material=1 {
+                media inside=1
+            }
+        }
+    }
+    instances {
+        instance 1 "Pyro Volume" prototype=1
+    }
+    dynamics seed=20260802 {
+        system "pyro" "Pyro Simulation" provider="xayah.volume.pyro" {
+            bind "initial_volume" volume 1
+            bind "volume" volume 1
+        }
+    }
 }

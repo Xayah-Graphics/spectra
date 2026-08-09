@@ -1,5 +1,8 @@
 ![Spectra](https://github.com/Xayah-Graphics/imagebed/blob/14c6599b610e65a7ef42174e6910dac53004cec9/spectra-banner2.png)
 
+[![arch](https://github.com/Xayah-Graphics/spectra/actions/workflows/arch.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/arch.yml)
+[![windows](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml)
+
 # Spectra
 
 Spectra is a Windows graphics workspace for physical simulation and 3D reconstruction. One native `.spectra` scene is shared by an interactive Vulkan rasterizer and a spectral Vulkan ray-tracing path tracer.
@@ -13,7 +16,7 @@ The application owns scene loading, editing, presentation and capture. Simulatio
 - `spectra.renderer`: shared GPU assets, acceleration structures, picking, overlays and render outputs.
 - `spectra.rasterizer`: Vulkan Mesh Shader interactive preview.
 - `spectra.pathtracer`: Slang wavefront spectral path tracing through `VK_KHR_ray_tracing_pipeline`.
-- `spectra.workspace`: the single active scene, renderer switching, selection, camera control, edits and undo/redo.
+- `spectra.editor`: the single active scene, renderer switching, selection, camera control and direct scene editing.
 - `spectra.plugin`: Plugin API 4 host for live deformable meshes, topology-changing meshes, particles and simulation state.
 
 The rasterizer deliberately presents complex materials as a clearly labelled interactive PBR approximation. The path tracer is the physical reference for every feature included in the native scene schema.
@@ -77,7 +80,7 @@ Select the initial renderer or run a fixed number of successfully presented fram
 .\cmake-build-release\spectra.exe --frames 5
 ```
 
-The UI supports Rasterizer/Path Tracer switching, scene hierarchy and inspection, viewport navigation, picking, outlines, transform gizmos, undo/redo, sampler and film controls, and PNG or linear EXR capture. A `.spectra` scene or `.dll` plugin can also be dropped onto the window.
+The UI supports Rasterizer/Path Tracer switching, scene hierarchy and inspection, viewport navigation, picking, outlines, transform gizmos, sampler and film controls, and PNG or linear EXR capture. A `.spectra` scene or `.dll` plugin can also be dropped onto the window.
 
 ## Test
 

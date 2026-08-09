@@ -8,6 +8,7 @@ target_sources(
         PRIVATE
         sparkles.cpp
 )
+target_link_libraries(xayah_sparkles PRIVATE SpectraPluginSDK::contract)
 
 add_library(xayah_sparkles_plugin MODULE plugin.cpp)
 target_link_libraries(

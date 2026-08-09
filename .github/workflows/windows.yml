@@ -1,0 +1,95 @@
+name: Windows
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}, MSVC
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 180
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Headless
+            id: headless
+            ui: "OFF"
+          - name: GUI
+            id: gui
+            ui: "ON"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve Vulkan SDK
+        id: vulkan
+        shell: pwsh
+        run: |
+          $version = (Invoke-RestMethod -Uri "https://vulkan.lunarg.com/sdk/latest/windows.txt").Trim()
+          $root = "C:\VulkanSDK\$version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "root=$root" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Restore Vulkan SDK
+        id: vulkan-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.vulkan.outputs.root }}
+          key: vulkan-sdk-${{ runner.os }}-${{ runner.arch }}-${{ steps.vulkan.outputs.version }}
+
+      - name: Install Vulkan SDK
+        if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.vulkan.outputs.version }}"
+          $root = "${{ steps.vulkan.outputs.root }}"
+          $installer = Join-Path $env:RUNNER_TEMP "vulkan-sdk.exe"
+          $download = "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe"
+          $metadata = Invoke-RestMethod -Uri "https://sdk.lunarg.com/sdk/sha/$version/windows/vulkan_sdk.exe.json"
+
+          Invoke-WebRequest -Uri $download -OutFile $installer
+          $actualHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $metadata.sha.ToLowerInvariant()) { throw "Vulkan SDK checksum mismatch" }
+
+          $process = Start-Process -FilePath $installer -ArgumentList "--root", $root, "--accept-licenses", "--default-answer", "--confirm-command", "install", "copy_only=1" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+
+      - name: Export Vulkan SDK environment
+        shell: pwsh
+        run: |
+          $root = "${{ steps.vulkan.outputs.root }}"
+          "VULKAN_SDK=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          (Join-Path $root "Bin") | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Enter Visual Studio developer environment
+        shell: pwsh
+        run: |
+          $installation = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $developerCommand = Join-Path $installation "Common7\Tools\VsDevCmd.bat"
+          cmd /d /s /c "`"$developerCommand`" -arch=x64 -host_arch=x64 && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+          }
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B "build-${{ matrix.id }}" -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DSPECTRA_BUILD_UI=${{ matrix.ui }}
+
+      - name: Build
+        run: cmake --build "build-${{ matrix.id }}" --parallel 30

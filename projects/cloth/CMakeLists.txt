@@ -10,7 +10,7 @@ target_sources(
         cloth.cu
 )
 target_include_directories(xayah_cloth PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(xayah_cloth PRIVATE CUDA::cudart)
+target_link_libraries(xayah_cloth PRIVATE CUDA::cudart SpectraPluginSDK::contract)
 
 add_library(xayah_cloth_plugin MODULE plugin.cpp)
 target_link_libraries(

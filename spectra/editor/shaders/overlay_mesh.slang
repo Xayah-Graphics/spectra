@@ -10,7 +10,6 @@ struct ViewportPrimitive {
     uint reserved_5;
     uint reserved_6;
 }
-
 struct ViewportTransform {
     float4 transform_row_0;
     float4 transform_row_1;

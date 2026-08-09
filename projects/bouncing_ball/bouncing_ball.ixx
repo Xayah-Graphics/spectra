@@ -14,6 +14,7 @@ namespace xayah::projects::bouncing_ball {
     export struct Solver {
         explicit Solver(const SolverConfiguration& configuration = {});
 
+        void set_configuration(const SolverConfiguration& configuration) noexcept;
         void reset();
         void step(float delta_seconds);
         [[nodiscard]] const std::array<float, 3>& position() const;

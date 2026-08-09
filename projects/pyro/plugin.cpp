@@ -12,8 +12,8 @@ namespace {
 
     constexpr std::uint64_t pyro_voxel_count = 64ull * 96ull * 64ull;
     constexpr std::array ports{
-        SpectraPluginPortDescriptor{text("initial_volume"), text("Initial Volume"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::Volume, SpectraPluginMemoryDomain::Host, pyro_voxel_count, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Density)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Temperature)), SpectraPluginMeshUpdateMode::Deformable, {64, 96, 64}},
-        SpectraPluginPortDescriptor{text("volume"), text("Pyro Volume"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::Volume, SpectraPluginMemoryDomain::CudaExternal, pyro_voxel_count, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Density)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Temperature)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Velocity)), SpectraPluginMeshUpdateMode::Deformable, {64, 96, 64}},
+        SpectraPluginPortDescriptor{text("initial_volume"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::Volume, SpectraPluginMemoryDomain::Host, pyro_voxel_count, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Density)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Temperature)), SpectraPluginMeshUpdateMode::Deformable, {64, 96, 64}},
+        SpectraPluginPortDescriptor{text("volume"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::Volume, SpectraPluginMemoryDomain::CudaExternal, pyro_voxel_count, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Density)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Temperature)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Velocity)), SpectraPluginMeshUpdateMode::Deformable, {64, 96, 64}},
     };
     constexpr std::array parameters{
         SpectraPluginParameterDescriptor{text("pressure_iterations"), text("Pressure iterations"), {}, SpectraPluginParameterKind::Integer, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Integer, 64, {}}, {SpectraPluginParameterKind::Integer, 1, {}}, {SpectraPluginParameterKind::Integer, 256, {}}, nullptr, 0},
@@ -22,21 +22,12 @@ namespace {
         SpectraPluginParameterDescriptor{text("vorticity"), text("Vorticity"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {0.22, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {5.0, 0.0, 0.0}}, nullptr, 0},
         SpectraPluginParameterDescriptor{text("source_density"), text("Source density"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::Live, {SpectraPluginParameterKind::Float, 0, {18.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {100.0, 0.0, 0.0}}, nullptr, 0},
     };
-    constexpr std::array telemetry_descriptors{
-        SpectraPluginTelemetryDescriptor{text("voxel_count"), text("Voxels"), {}},
-        SpectraPluginTelemetryDescriptor{text("resolution"), text("Resolution"), {}},
-    };
     constexpr SpectraPluginProviderDescriptor provider{
         text("xayah.volume.pyro"),
-        text("Pyro"),
-        text("spectra.dynamic.volume"),
-        1,
         ports.data(),
         ports.size(),
         parameters.data(),
         parameters.size(),
-        telemetry_descriptors.data(),
-        telemetry_descriptors.size(),
     };
 
     struct Provider {
@@ -117,6 +108,7 @@ namespace {
             this->configuration.buoyancy_temperature_factor = static_cast<float>(values[2].floating[0]);
             this->configuration.vorticity_confinement       = static_cast<float>(values[3].floating[0]);
             this->source.density                            = static_cast<float>(values[4].floating[0]);
+            this->solver->set_runtime_configuration(this->configuration);
             this->solver->set_plume_source(this->source);
         }
 
@@ -192,18 +184,13 @@ namespace {
         static_cast<Provider*>(instance)->advance_simulation(step_seconds, count);
     }
 
-    double read_telemetry(const void* instance, const std::uint64_t index) {
-        const Provider& provider = *static_cast<const Provider*>(instance);
-        if (index == 0) return static_cast<double>(ports[0].capacity);
-        return static_cast<double>(provider.configuration.resolution[0]);
-    }
-
     void publish_frame(void* instance, std::uint64_t, const SpectraPluginFrameSink* sink) {
         static_cast<Provider*>(instance)->publish(*sink);
     }
+
 } // namespace
 
-extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11() {
+extern "C" SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_14() {
     static constexpr SpectraPluginApi api{
         SPECTRA_PLUGIN_API_VERSION,
         sizeof(SpectraPluginApi),
@@ -215,7 +202,6 @@ extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11()
         &apply_parameters,
         &reset,
         &step,
-        &read_telemetry,
         &publish_frame,
     };
     return &api;

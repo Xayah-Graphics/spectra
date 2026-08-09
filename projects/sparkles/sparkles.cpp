@@ -65,6 +65,10 @@ namespace xayah::projects::sparkles {
         this->reset();
     }
 
+    void Solver::set_configuration(const SolverConfiguration& configuration) noexcept {
+        this->configuration = configuration;
+    }
+
     void Solver::reset() {
         validate_config(this->configuration);
         this->random_engine.seed(this->configuration.seed);

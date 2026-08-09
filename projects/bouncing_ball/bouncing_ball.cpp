@@ -15,6 +15,10 @@ namespace xayah::projects::bouncing_ball {
         this->reset();
     }
 
+    void Solver::set_configuration(const SolverConfiguration& configuration) noexcept {
+        this->configuration = configuration;
+    }
+
     void Solver::reset() {
         this->current_position = this->configuration.start_position;
         this->current_velocity = this->configuration.initial_velocity;

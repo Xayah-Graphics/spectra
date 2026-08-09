@@ -2,8 +2,14 @@
 
 #include <cstdint>
 
-inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 11;
-inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_11";
+inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 14;
+inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_14";
+
+#if defined(_WIN32)
+#define SPECTRA_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define SPECTRA_PLUGIN_EXPORT __attribute__((visibility("default")))
+#endif
 
 struct SpectraPluginString {
     const char* data;
@@ -41,6 +47,17 @@ enum class SpectraPluginResourceKind : std::uint32_t {
 enum class SpectraPluginMemoryDomain : std::uint32_t {
     Host,
     CudaExternal,
+};
+
+enum class SpectraPluginExternalHandleType : std::uint32_t {
+    None,
+    OpaqueWin32,
+    OpaqueFileDescriptor,
+};
+
+struct SpectraPluginExternalHandle {
+    SpectraPluginExternalHandleType type;
+    std::uint64_t value;
 };
 
 enum class SpectraPluginMeshUpdateMode : std::uint32_t {
@@ -97,7 +114,6 @@ enum class SpectraPluginAttribute : std::uint32_t {
 
 struct SpectraPluginPortDescriptor {
     SpectraPluginString id;
-    SpectraPluginString name;
     SpectraPluginPortDirection direction;
     SpectraPluginResourceKind resource_kind;
     SpectraPluginMemoryDomain memory_domain;
@@ -127,28 +143,17 @@ struct SpectraPluginParameterDescriptor {
     std::uint64_t enumerator_count;
 };
 
-struct SpectraPluginTelemetryDescriptor {
-    SpectraPluginString id;
-    SpectraPluginString name;
-    SpectraPluginString unit;
-};
-
 struct SpectraPluginProviderDescriptor {
     SpectraPluginString id;
-    SpectraPluginString name;
-    SpectraPluginString interface_id;
-    std::uint32_t interface_version;
     const SpectraPluginPortDescriptor* ports;
     std::uint64_t port_count;
     const SpectraPluginParameterDescriptor* parameters;
     std::uint64_t parameter_count;
-    const SpectraPluginTelemetryDescriptor* telemetry_descriptors;
-    std::uint64_t telemetry_count;
 };
 
 struct SpectraPluginBuffer {
     SpectraPluginAttribute attribute;
-    void* external_memory_handle;
+    SpectraPluginExternalHandle external_memory_handle;
     void* host_address;
     std::uint64_t byte_size;
 };
@@ -165,7 +170,7 @@ struct SpectraPluginPortConfiguration {
     SpectraPluginMemoryDomain memory_domain;
     const SpectraPluginPortSlot* slots;
     std::uint64_t slot_count;
-    void* timeline_semaphore_handle;
+    SpectraPluginExternalHandle timeline_semaphore_handle;
     std::uint8_t vulkan_device_uuid[16];
     std::uint8_t vulkan_device_luid[8];
     std::uint32_t vulkan_device_node_mask;
@@ -218,10 +223,9 @@ struct SpectraPluginApi {
     void (*apply_parameters)(void* provider, const SpectraPluginParameterValue* values, std::uint64_t value_count);
     void (*reset)(void* provider, std::uint64_t seed);
     void (*step)(void* provider, double step_seconds, std::uint64_t step_count);
-    double (*read_telemetry)(const void* provider, std::uint64_t telemetry_index);
     void (*publish_frame)(void* provider, std::uint64_t simulation_step, const SpectraPluginFrameSink* sink);
 };
 
 extern "C" {
-__declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11();
+SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_14();
 }

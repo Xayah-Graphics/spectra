@@ -11,7 +11,6 @@ struct AxesPushData {
     float4 inverse_view_projection_row_3;
     uint4 metadata;
 }
-
 struct AxesVertex {
     float4 position : SV_Position;
     float2 normalized_device_coordinate : TEXCOORD0;

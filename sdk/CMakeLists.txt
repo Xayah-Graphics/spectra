@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.4.0)
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    project(SpectraPluginSDK VERSION 11.0.0 LANGUAGES NONE)
+    project(SpectraPluginSDK VERSION 14.0.0 LANGUAGES NONE)
 endif ()
 
 add_library(spectra_plugin_contract INTERFACE)
@@ -23,11 +23,12 @@ configure_package_config_file(
 )
 write_basic_package_version_file(
         "${CMAKE_CURRENT_BINARY_DIR}/SpectraPluginSDKConfigVersion.cmake"
-        VERSION 11.0.0
+        VERSION 14.0.0
         COMPATIBILITY SameMajorVersion
 )
 install(
-        FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/spectra/plugin_api.h"
+        FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/spectra/plugin_api.h"
         DESTINATION include/spectra
         COMPONENT PluginSDK
 )

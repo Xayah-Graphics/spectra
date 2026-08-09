@@ -6,7 +6,6 @@ struct OutlinePushData {
     float2 inverse_extent;
     uint2 reserved;
 }
-
 [vk::push_constant]
 uniform OutlinePushData push_data;
 

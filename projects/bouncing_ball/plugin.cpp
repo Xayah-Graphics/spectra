@@ -10,10 +10,10 @@ namespace {
     }
 
     constexpr std::array ports{
-        SpectraPluginPortDescriptor{text("collider"), text("Floor Collider"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Bounds)), SpectraPluginMeshUpdateMode::Deformable, {}},
-        SpectraPluginPortDescriptor{text("initial_ball"), text("Initial Ball"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Bounds)), SpectraPluginMeshUpdateMode::Deformable, {}},
-        SpectraPluginPortDescriptor{text("ball_transform"), text("Ball Transform"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, 1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform), SpectraPluginMeshUpdateMode::Deformable, {}},
-        SpectraPluginPortDescriptor{text("debug"), text("Collision Debug"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::DebugDraw, SpectraPluginMemoryDomain::Host, 4, 0, 0, SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("collider"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Bounds)), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("initial_ball"), SpectraPluginPortDirection::Input, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Bounds)), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("ball_transform"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::InstanceTransform, SpectraPluginMemoryDomain::Host, 1, 0, 1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Transform), SpectraPluginMeshUpdateMode::Deformable, {}},
+        SpectraPluginPortDescriptor{text("debug"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::DebugDraw, SpectraPluginMemoryDomain::Host, 4, 0, 0, SpectraPluginMeshUpdateMode::Deformable, {}},
     };
     constexpr std::array parameters{
         SpectraPluginParameterDescriptor{text("restitution"), text("Restitution"), {}, SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {0.82, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {1.0, 0.0, 0.0}}, nullptr, 0},
@@ -21,15 +21,10 @@ namespace {
     };
     constexpr SpectraPluginProviderDescriptor provider{
         text("xayah.rigid.bouncing-ball"),
-        text("Bouncing Ball"),
-        text("spectra.dynamic.rigid-body"),
-        1,
         ports.data(),
         ports.size(),
         parameters.data(),
         parameters.size(),
-        nullptr,
-        0,
     };
 
     struct Provider {
@@ -145,6 +140,7 @@ namespace {
         if (count != parameters.size()) throw std::runtime_error("Bouncing Ball parameter count mismatch");
         provider.configuration.restitution = static_cast<float>(values[0].floating[0]);
         provider.configuration.gravity     = {static_cast<float>(values[1].floating[0]), static_cast<float>(values[1].floating[1]), static_cast<float>(values[1].floating[2])};
+        provider.solver->set_configuration(provider.configuration);
     }
 
     void reset(void* instance, std::uint64_t) {
@@ -156,9 +152,10 @@ namespace {
     void publish_frame(void* instance, std::uint64_t, const SpectraPluginFrameSink* sink) {
         static_cast<Provider*>(instance)->publish(*sink);
     }
+
 } // namespace
 
-extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11() {
+extern "C" SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_14() {
     static constexpr SpectraPluginApi api{
         SPECTRA_PLUGIN_API_VERSION,
         sizeof(SpectraPluginApi),
@@ -170,7 +167,6 @@ extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11()
         &apply_parameters,
         &reset,
         &step,
-        nullptr,
         &publish_frame,
     };
     return &api;

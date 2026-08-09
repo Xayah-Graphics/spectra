@@ -88,6 +88,10 @@ namespace xayah::projects::cloth {
         this->release_device_data();
     }
 
+    void Solver::set_configuration(const SolverConfiguration& configuration) noexcept {
+        this->configuration = configuration;
+    }
+
     void Solver::allocate_device_data() {
         if (this->device_data.cuda_stream != nullptr) throw std::runtime_error("Cloth CUDA device_data is already initialized");
         try {
@@ -210,9 +214,5 @@ namespace xayah::projects::cloth {
             this->device_data.position_z,
             this->host_data.vertex_count,
         };
-    }
-
-    const std::vector<std::uint32_t>& Solver::mesh_indices() const {
-        return this->host_data.indices;
     }
 } // namespace xayah::projects::cloth

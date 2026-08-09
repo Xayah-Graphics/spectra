@@ -15,7 +15,6 @@ struct VolumeVelocityPushData {
     float4 view_projection_row_3;
     float4 parameters;
 }
-
 struct VolumeVelocityOutput {
     float4 position : SV_Position;
     float4 color : COLOR;

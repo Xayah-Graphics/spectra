@@ -167,6 +167,13 @@ namespace xayah::projects::pyro {
         return *this;
     }
 
+    void Solver::set_runtime_configuration(const SolverConfiguration& configuration) noexcept {
+        this->host_data.pressure_iterations         = configuration.pressure_iterations;
+        this->host_data.buoyancy_density_factor     = configuration.buoyancy_density_factor;
+        this->host_data.buoyancy_temperature_factor = configuration.buoyancy_temperature_factor;
+        this->host_data.vorticity_confinement       = configuration.vorticity_confinement;
+    }
+
     void Solver::reset() {
         this->release_device_data();
         this->allocate_device_data();

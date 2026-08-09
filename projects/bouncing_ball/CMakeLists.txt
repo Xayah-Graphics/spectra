@@ -8,6 +8,7 @@ target_sources(
         PRIVATE
         bouncing_ball.cpp
 )
+target_link_libraries(xayah_bouncing_ball PRIVATE SpectraPluginSDK::contract)
 
 add_library(xayah_bouncing_ball_plugin MODULE plugin.cpp)
 target_link_libraries(

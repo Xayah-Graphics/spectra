@@ -40,9 +40,9 @@ namespace xayah::projects::cloth {
         Solver& operator=(const Solver& other)     = delete;
         Solver& operator=(Solver&& other) noexcept = delete;
 
+        void set_configuration(const SolverConfiguration& configuration) noexcept;
         void reset();
         void step(float delta_seconds);
-        [[nodiscard]] const std::vector<std::uint32_t>& mesh_indices() const;
         [[nodiscard]] CudaMeshView cuda_mesh() const noexcept;
 
     private:

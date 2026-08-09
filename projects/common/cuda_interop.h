@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <spectra/plugin_api.h>
 
 namespace xayah::projects::cuda_interop {
     struct ImportedBuffer {
@@ -15,9 +16,9 @@ namespace xayah::projects::cuda_interop {
     };
 
     void select_matching_device(const std::uint8_t* uuid, const std::uint8_t* luid, std::uint32_t node_mask);
-    [[nodiscard]] ImportedBuffer import_buffer(void* external_memory_handle, std::uint64_t byte_size);
+    [[nodiscard]] ImportedBuffer import_buffer(SpectraPluginExternalHandle external_memory_handle, std::uint64_t byte_size);
     void destroy_imported_buffer(ImportedBuffer& buffer) noexcept;
-    [[nodiscard]] ImportedTimelineSemaphore import_timeline_semaphore(void* timeline_semaphore_handle);
+    [[nodiscard]] ImportedTimelineSemaphore import_timeline_semaphore(SpectraPluginExternalHandle timeline_semaphore_handle);
     void destroy_imported_timeline_semaphore(ImportedTimelineSemaphore& timeline_semaphore) noexcept;
     void wait_timeline(void* cuda_stream, const ImportedTimelineSemaphore& timeline_semaphore, std::uint64_t value);
     void signal_timeline(void* cuda_stream, const ImportedTimelineSemaphore& timeline_semaphore, std::uint64_t value);

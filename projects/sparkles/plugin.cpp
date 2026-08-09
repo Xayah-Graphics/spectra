@@ -10,26 +10,18 @@ namespace {
     }
 
     constexpr std::array ports{
-        SpectraPluginPortDescriptor{text("particles"), text("Particles"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::ParticleSet, SpectraPluginMemoryDomain::Host, 1024, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Position)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Radius)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Color)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Temperature)), SpectraPluginMeshUpdateMode::TopologyChanging, {}},
+        SpectraPluginPortDescriptor{text("particles"), SpectraPluginPortDirection::Output, SpectraPluginResourceKind::ParticleSet, SpectraPluginMemoryDomain::Host, 1024, 0, (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Position)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Radius)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Color)) | (1ull << static_cast<std::uint32_t>(SpectraPluginAttribute::Temperature)), SpectraPluginMeshUpdateMode::TopologyChanging, {}},
     };
     constexpr std::array parameters{
         SpectraPluginParameterDescriptor{text("automatic_relaunch"), text("Automatic relaunch"), {}, SpectraPluginParameterKind::Boolean, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Boolean, 1, {}}, {SpectraPluginParameterKind::Boolean, 0, {}}, {SpectraPluginParameterKind::Boolean, 1, {}}, nullptr, 0},
         SpectraPluginParameterDescriptor{text("gravity"), text("Gravity"), text("m/s²"), SpectraPluginParameterKind::Float, SpectraPluginParameterApplication::ResetRequired, {SpectraPluginParameterKind::Float, 0, {3.65, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {0.0, 0.0, 0.0}}, {SpectraPluginParameterKind::Float, 0, {20.0, 0.0, 0.0}}, nullptr, 0},
     };
-    constexpr std::array telemetry_descriptors{
-        SpectraPluginTelemetryDescriptor{text("particle_count"), text("Particles"), {}},
-    };
     constexpr SpectraPluginProviderDescriptor provider{
         text("xayah.particles.sparkles"),
-        text("Sparkles"),
-        text("spectra.dynamic.particle-set"),
-        1,
         ports.data(),
         ports.size(),
         parameters.data(),
         parameters.size(),
-        telemetry_descriptors.data(),
-        telemetry_descriptors.size(),
     };
 
     struct Provider {
@@ -128,6 +120,7 @@ namespace {
         if (count != parameters.size()) throw std::runtime_error("Sparkles parameter count mismatch");
         provider.configuration.automatic_relaunch = values[0].integer != 0;
         provider.configuration.gravity            = static_cast<float>(values[1].floating[0]);
+        provider.solver->set_configuration(provider.configuration);
     }
 
     void reset(void* instance, const std::uint64_t seed) {
@@ -138,16 +131,13 @@ namespace {
     void step(void* instance, const double step_seconds, const std::uint64_t count) {
         static_cast<Provider*>(instance)->advance_simulation(step_seconds, count);
     }
-    double read_telemetry(const void* instance, std::uint64_t) {
-        const Provider& provider = *static_cast<const Provider*>(instance);
-        return static_cast<double>(provider.positions.size());
-    }
     void publish_frame(void* instance, std::uint64_t, const SpectraPluginFrameSink* sink) {
         static_cast<Provider*>(instance)->publish(*sink);
     }
+
 } // namespace
 
-extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11() {
+extern "C" SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_14() {
     static constexpr SpectraPluginApi api{
         SPECTRA_PLUGIN_API_VERSION,
         sizeof(SpectraPluginApi),
@@ -159,7 +149,6 @@ extern "C" __declspec(dllexport) const SpectraPluginApi* spectra_plugin_api_11()
         &apply_parameters,
         &reset,
         &step,
-        &read_telemetry,
         &publish_frame,
     };
     return &api;

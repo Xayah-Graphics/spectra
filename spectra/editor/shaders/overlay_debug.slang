@@ -4,7 +4,6 @@ struct DebugVertex {
     float4 position;
     float4 color;
 }
-
 struct DebugPushData {
     DescriptorHandle<StructuredBuffer<DebugVertex>> vertices;
     uint2 reserved;

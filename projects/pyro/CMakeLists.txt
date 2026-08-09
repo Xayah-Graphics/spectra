@@ -16,6 +16,7 @@ target_link_libraries(
         CUDA::cudart
         CUDA::cublas
         CUDA::cusparse
+        SpectraPluginSDK::contract
 )
 
 add_library(xayah_pyro_plugin MODULE plugin.cpp)

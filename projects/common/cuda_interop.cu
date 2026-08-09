@@ -6,6 +6,9 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 namespace xayah::projects::cuda_interop {
     namespace {
@@ -27,20 +30,31 @@ namespace xayah::projects::cuda_interop {
             cudaDeviceProp device_properties{};
             check_cuda(cudaGetDeviceProperties(&device_properties, device_index), "cudaGetDeviceProperties");
             if (!std::ranges::equal(std::span{reinterpret_cast<const std::uint8_t*>(device_properties.uuid.bytes), 16}, std::span{uuid, 16})) continue;
+#if defined(_WIN32)
             if (!std::ranges::equal(std::span{reinterpret_cast<const std::uint8_t*>(device_properties.luid), 8}, std::span{luid, 8}) || device_properties.luidDeviceNodeMask != node_mask) throw std::runtime_error("CUDA and Vulkan LUID/device-node identity disagree");
+#endif
             check_cuda(cudaSetDevice(device_index), "cudaSetDevice");
             return;
         }
         throw std::runtime_error("CUDA cannot find the Vulkan physical device UUID");
     }
 
-    ImportedBuffer import_buffer(void* external_memory_handle, const std::uint64_t byte_size) {
+    ImportedBuffer import_buffer(const SpectraPluginExternalHandle external_memory_handle, const std::uint64_t byte_size) {
         cudaExternalMemoryHandleDesc description{};
+#if defined(_WIN32)
         description.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
-        description.handle.win32.handle = external_memory_handle;
+        description.handle.win32.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(external_memory_handle.value));
+#else
+        description.type      = cudaExternalMemoryHandleTypeOpaqueFd;
+        description.handle.fd = dup(static_cast<int>(external_memory_handle.value));
+#endif
         description.size                = byte_size;
         cudaExternalMemory_t external_memory{};
-        check_cuda(cudaImportExternalMemory(&external_memory, &description), "cudaImportExternalMemory");
+        const cudaError_t import_result = cudaImportExternalMemory(&external_memory, &description);
+#if !defined(_WIN32)
+        if (import_result != cudaSuccess) close(description.handle.fd);
+#endif
+        check_cuda(import_result, "cudaImportExternalMemory");
         cudaExternalMemoryBufferDesc buffer_description{};
         buffer_description.size = byte_size;
         void* device_pointer{};
@@ -54,12 +68,21 @@ namespace xayah::projects::cuda_interop {
         buffer = {};
     }
 
-    ImportedTimelineSemaphore import_timeline_semaphore(void* timeline_semaphore_handle) {
+    ImportedTimelineSemaphore import_timeline_semaphore(const SpectraPluginExternalHandle timeline_semaphore_handle) {
         cudaExternalSemaphoreHandleDesc description{};
+#if defined(_WIN32)
         description.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
-        description.handle.win32.handle = timeline_semaphore_handle;
+        description.handle.win32.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(timeline_semaphore_handle.value));
+#else
+        description.type      = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
+        description.handle.fd = dup(static_cast<int>(timeline_semaphore_handle.value));
+#endif
         cudaExternalSemaphore_t external_semaphore{};
-        check_cuda(cudaImportExternalSemaphore(&external_semaphore, &description), "cudaImportExternalSemaphore");
+        const cudaError_t import_result = cudaImportExternalSemaphore(&external_semaphore, &description);
+#if !defined(_WIN32)
+        if (import_result != cudaSuccess) close(description.handle.fd);
+#endif
+        check_cuda(import_result, "cudaImportExternalSemaphore");
         return {external_semaphore};
     }
 
