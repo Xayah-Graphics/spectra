@@ -5,11 +5,11 @@ import vulkan;
 
 namespace spectra {
     namespace {
-        constexpr std::uint32_t table_resolution         = 64;
-        constexpr std::size_t coefficient_count          = 3ull * table_resolution * table_resolution * table_resolution * 3ull;
-        constexpr std::uint64_t rgb_table_size           = 16ull + table_resolution * sizeof(float) + coefficient_count * sizeof(float);
-        constexpr std::uint64_t cie_table_size           = 16ull + 5ull * 471ull * sizeof(float);
-        constexpr std::uint64_t sampling_table_size      = 6'005'504;
+        constexpr std::uint32_t table_resolution    = 64;
+        constexpr std::size_t coefficient_count     = 3ull * table_resolution * table_resolution * table_resolution * 3ull;
+        constexpr std::uint64_t rgb_table_size      = 16ull + table_resolution * sizeof(float) + coefficient_count * sizeof(float);
+        constexpr std::uint64_t cie_table_size      = 16ull + 5ull * 471ull * sizeof(float);
+        constexpr std::uint64_t sampling_table_size = 6'005'504;
 
         struct ShaderEntry {
             const char* file{};
@@ -45,8 +45,8 @@ namespace spectra {
         struct RayTracingPipelineDescription {
             explicit RayTracingPipelineDescription(const std::span<const vk::ShaderModule, ray_shader_entries.size()> modules) {
                 this->acceleration_structure_source.pushAddressOffset = 0;
-                this->acceleration_structure_mapping = vk::DescriptorSetAndBindingMappingEXT{0, 0, 1, vk::SpirvResourceTypeFlagBitsEXT::eAccelerationStructure, vk::DescriptorMappingSourceEXT::ePushAddress, this->acceleration_structure_source};
-                this->mapping                        = vk::ShaderDescriptorSetAndBindingMappingInfoEXT{this->acceleration_structure_mapping};
+                this->acceleration_structure_mapping                  = vk::DescriptorSetAndBindingMappingEXT{0, 0, 1, vk::SpirvResourceTypeFlagBitsEXT::eAccelerationStructure, vk::DescriptorMappingSourceEXT::ePushAddress, this->acceleration_structure_source};
+                this->mapping                                         = vk::ShaderDescriptorSetAndBindingMappingInfoEXT{this->acceleration_structure_mapping};
                 constexpr std::array stages{
                     vk::ShaderStageFlagBits::eRaygenKHR,
                     vk::ShaderStageFlagBits::eRaygenKHR,
@@ -65,7 +65,7 @@ namespace spectra {
                 for (std::size_t index = 0; index != this->stages.size(); ++index) this->stages[index] = vk::PipelineShaderStageCreateInfo{{}, stages[index], modules[index], ray_shader_entries[index].entry};
                 this->stages[0].pNext = &this->mapping;
                 this->stages[1].pNext = &this->mapping;
-                this->groups = {
+                this->groups          = {
                     vk::RayTracingShaderGroupCreateInfoKHR{vk::RayTracingShaderGroupTypeKHR::eGeneral, 0, vk::ShaderUnusedKHR, vk::ShaderUnusedKHR, vk::ShaderUnusedKHR},
                     vk::RayTracingShaderGroupCreateInfoKHR{vk::RayTracingShaderGroupTypeKHR::eGeneral, 1, vk::ShaderUnusedKHR, vk::ShaderUnusedKHR, vk::ShaderUnusedKHR},
                     vk::RayTracingShaderGroupCreateInfoKHR{vk::RayTracingShaderGroupTypeKHR::eGeneral, 2, vk::ShaderUnusedKHR, vk::ShaderUnusedKHR, vk::ShaderUnusedKHR},
@@ -185,12 +185,7 @@ namespace spectra {
             const RayTracingPipelineDescription description{raw_modules};
             const vk::raii::DeferredOperationKHR deferred_operation{runtime.runtime.graphics.device};
             runtime.preparation.report(PathTracerPreparationStage::CompilingRayTracingPipeline);
-            const auto [creation_result, pipeline] = (*runtime.runtime.graphics.device).createRayTracingPipelineKHR(
-                *deferred_operation,
-                {},
-                description.create_info,
-                nullptr,
-                *runtime.runtime.graphics.device.getDispatcher());
+            const auto [creation_result, pipeline] = (*runtime.runtime.graphics.device).createRayTracingPipelineKHR(*deferred_operation, {}, description.create_info, nullptr, *runtime.runtime.graphics.device.getDispatcher());
             if (creation_result == vk::Result::eOperationDeferredKHR) {
                 const std::uint32_t concurrency = std::min(deferred_operation.getMaxConcurrency(), std::max(1u, std::thread::hardware_concurrency()));
                 std::vector<std::jthread> workers{};
@@ -202,10 +197,10 @@ namespace spectra {
             } else if (creation_result != vk::Result::eSuccess && creation_result != vk::Result::eOperationNotDeferredKHR)
                 throw std::runtime_error(std::format("Path Tracer ray tracing pipeline creation failed: {}", vk::to_string(creation_result)));
 
-            runtime.pipeline = vk::raii::Pipeline{runtime.runtime.graphics.device, pipeline};
+            runtime.pipeline                = vk::raii::Pipeline{runtime.runtime.graphics.device, pipeline};
             const std::uint32_t group_count = static_cast<std::uint32_t>(description.groups.size());
-            runtime.shader_group_handles = runtime.pipeline.getRayTracingShaderGroupHandlesKHR<std::byte>(0, group_count, static_cast<std::size_t>(runtime.runtime.graphics.ray_tracing_properties.shaderGroupHandleSize) * group_count);
-            runtime.stack_size           = query_stack_size(runtime.pipeline);
+            runtime.shader_group_handles    = runtime.pipeline.getRayTracingShaderGroupHandlesKHR<std::byte>(0, group_count, static_cast<std::size_t>(runtime.runtime.graphics.ray_tracing_properties.shaderGroupHandleSize) * group_count);
+            runtime.stack_size              = query_stack_size(runtime.pipeline);
         }
 
         void initialize_shaders(PathTracerRuntime& runtime, const std::filesystem::path& shader_directory) {
@@ -242,12 +237,12 @@ namespace spectra {
 
         void initialize_shader_binding_table(PathTracerRuntime& runtime) {
             const vk::PhysicalDeviceRayTracingPipelinePropertiesKHR& properties = runtime.runtime.graphics.ray_tracing_properties;
-            const vk::DeviceSize record_stride = align_up(properties.shaderGroupHandleSize, properties.shaderGroupHandleAlignment);
-            const vk::DeviceSize miss_offset   = align_up(record_stride * 2u, properties.shaderGroupBaseAlignment);
-            const vk::DeviceSize hit_offset    = align_up(miss_offset + record_stride * 2u, properties.shaderGroupBaseAlignment);
-            const vk::DeviceSize table_size    = hit_offset + record_stride * 4u;
-            runtime.shader_binding_table = runtime.runtime.resources.create_buffer(table_size, vk::BufferUsageFlagBits::eShaderBindingTableKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-            std::byte* destination = static_cast<std::byte*>(runtime.shader_binding_table.mapped);
+            const vk::DeviceSize record_stride                                  = align_up(properties.shaderGroupHandleSize, properties.shaderGroupHandleAlignment);
+            const vk::DeviceSize miss_offset                                    = align_up(record_stride * 2u, properties.shaderGroupBaseAlignment);
+            const vk::DeviceSize hit_offset                                     = align_up(miss_offset + record_stride * 2u, properties.shaderGroupBaseAlignment);
+            const vk::DeviceSize table_size                                     = hit_offset + record_stride * 4u;
+            runtime.shader_binding_table                                        = runtime.runtime.resources.create_buffer(table_size, vk::BufferUsageFlagBits::eShaderBindingTableKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+            std::byte* destination                                              = static_cast<std::byte*>(runtime.shader_binding_table.mapped);
             for (std::uint32_t group = 0; group != 2; ++group) std::memcpy(destination + record_stride * group, runtime.shader_group_handles.data() + properties.shaderGroupHandleSize * group, properties.shaderGroupHandleSize);
             for (std::uint32_t group = 0; group != 2; ++group) std::memcpy(destination + miss_offset + record_stride * group, runtime.shader_group_handles.data() + properties.shaderGroupHandleSize * (group + 2), properties.shaderGroupHandleSize);
             for (std::uint32_t group = 0; group != 4; ++group) std::memcpy(destination + hit_offset + record_stride * group, runtime.shader_group_handles.data() + properties.shaderGroupHandleSize * (group + 4), properties.shaderGroupHandleSize);
@@ -255,7 +250,7 @@ namespace spectra {
             runtime.shadow_ray_generation_region  = vk::StridedDeviceAddressRegionKHR{runtime.shader_binding_table.address + record_stride, record_stride, record_stride};
             runtime.miss_region                   = vk::StridedDeviceAddressRegionKHR{runtime.shader_binding_table.address + miss_offset, record_stride, record_stride * 2u};
             runtime.hit_region                    = vk::StridedDeviceAddressRegionKHR{runtime.shader_binding_table.address + hit_offset, record_stride, record_stride * 4u};
-            runtime.shader_group_handles = std::vector<std::byte>{};
+            runtime.shader_group_handles          = std::vector<std::byte>{};
         }
     } // namespace
 
@@ -278,12 +273,12 @@ namespace spectra {
 
     PathTracerRuntime::PathTracerRuntime(VulkanRuntime& runtime, const std::filesystem::path& resource_directory) : runtime(runtime) {
         const std::filesystem::path shader_directory = resource_directory / "shaders";
-        this->shader_preparation = std::async(std::launch::async, [this, shader_directory] { initialize_shaders(*this, shader_directory); });
+        this->shader_preparation                     = std::async(std::launch::async, [this, shader_directory] { initialize_shaders(*this, shader_directory); });
 
         const std::filesystem::path spectral_directory = resource_directory / "spectral";
-        this->rgb_to_spectrum_table_data = load_rgb_tables(spectral_directory);
-        const std::vector<std::byte> cie_table = load_binary_asset(spectral_directory / "cie1931.spectrum", cie_table_size);
-        const std::vector<std::byte> sampling_table = load_binary_asset(spectral_directory / "sampling.tables", sampling_table_size);
+        this->rgb_to_spectrum_table_data               = load_rgb_tables(spectral_directory);
+        const std::vector<std::byte> cie_table         = load_binary_asset(spectral_directory / "cie1931.spectrum", cie_table_size);
+        const std::vector<std::byte> sampling_table    = load_binary_asset(spectral_directory / "sampling.tables", sampling_table_size);
         this->sampling_table_data.resize(sampling_table.size() / sizeof(std::uint32_t));
         std::memcpy(this->sampling_table_data.data(), sampling_table.data(), sampling_table.size());
         this->cie_samples.resize(5u * 471u);
@@ -293,7 +288,7 @@ namespace spectra {
         const vk::DeviceSize sampling_offset = align_up(cie_offset + cie_table.size(), 16);
         const vk::DeviceSize zero_offset     = align_up(sampling_offset + this->sampling_table_data.size() * sizeof(std::uint32_t), 16);
         const vk::DeviceSize total_size      = zero_offset + sizeof(std::uint32_t) * 4u;
-        GpuBuffer staging = runtime.resources.create_buffer(total_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+        GpuBuffer staging                    = runtime.resources.create_buffer(total_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         std::memcpy(static_cast<std::byte*>(staging.mapped) + rgb_offset, this->rgb_to_spectrum_table_data.data(), this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t));
         std::memcpy(static_cast<std::byte*>(staging.mapped) + cie_offset, cie_table.data(), cie_table.size());
         std::memcpy(static_cast<std::byte*>(staging.mapped) + sampling_offset, this->sampling_table_data.data(), this->sampling_table_data.size() * sizeof(std::uint32_t));

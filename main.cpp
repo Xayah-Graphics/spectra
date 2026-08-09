@@ -49,8 +49,8 @@ int main(int argument_count, char** raw_arguments) {
         }
 
         const std::filesystem::path application_directory = executable_directory();
-        const std::filesystem::path resource_directory    = application_directory / "resources";
-        const std::filesystem::path output_directory      = application_directory / "output";
+        const std::filesystem::path resource_directory    = (application_directory / SPECTRA_RESOURCE_DIRECTORY).lexically_normal();
+        const std::filesystem::path output_directory      = std::filesystem::current_path();
         const std::filesystem::path shader_directory      = resource_directory / "shaders";
         const std::filesystem::path pathtracer_directory  = resource_directory / "pathtracer";
 

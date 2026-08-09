@@ -31,8 +31,8 @@ namespace spectra {
         glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
         this->state.glfw_window.reset(glfwCreateWindow(static_cast<int>(initial_extent.width), static_cast<int>(initial_extent.height), std::string{application_name}.c_str(), nullptr, nullptr));
         if (!this->state.glfw_window) throw std::runtime_error("Spectra window creation failed");
-        this->window        = this->state.glfw_window.get();
-        this->native_window = glfwGetWin32Window(this->window);
+        this->window             = this->state.glfw_window.get();
+        this->native_window      = glfwGetWin32Window(this->window);
         const HINSTANCE instance = GetModuleHandleW(nullptr);
         const auto small_icon    = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR | LR_SHARED));
         const auto large_icon    = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR | LR_SHARED));

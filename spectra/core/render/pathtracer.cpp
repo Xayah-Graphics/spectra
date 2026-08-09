@@ -185,7 +185,7 @@ namespace spectra {
         case scene::SpectrumEncoding::RgbIlluminant:
             {
                 math::Float3 rgb = spectrum.value;
-                float scale       = 1.0f;
+                float scale      = 1.0f;
                 if (spectrum.encoding != scene::SpectrumEncoding::RgbAlbedo) {
                     const float maximum = std::max(rgb.x, std::max(rgb.y, rgb.z));
                     scale               = 2.0f * maximum;
@@ -310,7 +310,7 @@ namespace spectra {
                     while (upper + 1u < count && piecewise_spectra[offset + upper].x < wavelength) ++upper;
                     const math::Float2 first  = piecewise_spectra[offset + upper - 1u];
                     const math::Float2 second = piecewise_spectra[offset + upper];
-                    value                      = std::lerp(first.y, second.y, (wavelength - first.x) / (second.x - first.x));
+                    value                     = std::lerp(first.y, second.y, (wavelength - first.x) / (second.x - first.x));
                     break;
                 }
             }
@@ -547,7 +547,7 @@ namespace spectra {
             const scene::Texture& texture = scene.resources.textures[index];
             if (!std::holds_alternative<scene::ImageTexture>(texture.data)) continue;
             const GpuTextureImage& image = this->context.gpu_scene.texture_image(texture, texture.spectrum_type == scene::TextureSpectrumType::Albedo ? vk::Format::eR16G16B16A16Sfloat : vk::Format::eR32G32B32A32Sfloat);
-            snapshot.textures[index] = {image.image_descriptor, image.sampler_descriptor};
+            snapshot.textures[index]     = {image.image_descriptor, image.sampler_descriptor};
         }
         snapshot.volumes.reserve(this->context.gpu_scene.resources.volumes.size());
         for (const GpuVolume& volume : this->context.gpu_scene.resources.volumes) snapshot.volumes.push_back({volume.volume_id, volume.revision, volume.resolution, volume.descriptors, volume.field_present});
@@ -583,17 +583,17 @@ namespace spectra {
         this->scene.initialized = true;
 
         std::unique_ptr<PathTracerScenePreparation> preparation = std::make_unique<PathTracerScenePreparation>();
-        preparation->scene.resources = scene.resources;
-        preparation->scene.camera    = scene.camera;
-        preparation->scene.film      = scene.film;
-        preparation->scene.sampler   = scene.sampler;
-        preparation->scene.transport = scene.transport;
-        preparation->scene.revision  = scene.revision;
-        preparation->gpu             = this->snapshot_gpu_scene(scene);
+        preparation->scene.resources                            = scene.resources;
+        preparation->scene.camera                               = scene.camera;
+        preparation->scene.film                                 = scene.film;
+        preparation->scene.sampler                              = scene.sampler;
+        preparation->scene.transport                            = scene.transport;
+        preparation->scene.revision                             = scene.revision;
+        preparation->gpu                                        = this->snapshot_gpu_scene(scene);
         preparation->progress.report(PathTracerPreparationStage::CompilingSampler);
         PathTracerScenePreparation* task_preparation = preparation.get();
-        this->scene_preparation      = std::move(preparation);
-        this->scene_preparation_task = std::async(std::launch::async, [this, task_preparation] {
+        this->scene_preparation                      = std::move(preparation);
+        this->scene_preparation_task                 = std::async(std::launch::async, [this, task_preparation] {
             task_preparation->sampler = this->prepare_sampler(task_preparation->scene.sampler);
             task_preparation->progress.report(PathTracerPreparationStage::CompilingFilter);
             task_preparation->filter = this->prepare_filter(task_preparation->scene.film);
@@ -631,8 +631,8 @@ namespace spectra {
         this->context.runtime.frames.retire_resource_descriptor(this->scene.filter.sensor_response.descriptor);
         this->context.runtime.frames.retire_resource_descriptor(this->scene.sampler.pixel_samples.descriptor);
         this->scene.volume_resources.clear();
-        this->scene.arena                  = {};
-        this->scene.initialized            = false;
+        this->scene.arena       = {};
+        this->scene.initialized = false;
     }
 
     std::unique_ptr<PreparedPathFilter> PathTracer::prepare_filter(const scene::Film& film) const {
@@ -705,8 +705,8 @@ namespace spectra {
         const std::span<const float> sensor_response = film.sensor_response.empty() ? std::span<const float>{this->context.pathtracer.cie_samples}.first(3u * 471u) : std::span<const float>{film.sensor_response};
         if (sensor_response.size() != 3u * 471u) throw std::runtime_error("Film sensor response must contain three 471-wavelength channels");
         std::unique_ptr<PreparedPathFilter> prepared = std::make_unique<PreparedPathFilter>();
-        prepared->film              = film;
-        prepared->distribution      = std::move(distribution);
+        prepared->film                               = film;
+        prepared->distribution                       = std::move(distribution);
         prepared->sensor_response.assign(sensor_response.begin(), sensor_response.end());
         prepared->resolution        = resolution;
         prepared->absolute_integral = absolute_integral;
@@ -776,9 +776,9 @@ namespace spectra {
         }
 
         std::unique_ptr<PreparedPathSampler> prepared = std::make_unique<PreparedPathSampler>();
-        prepared->sampler         = sampler;
-        prepared->pixel_samples   = std::move(pixel_samples);
-        prepared->pixel_tile_size = pixel_tile_size;
+        prepared->sampler                             = sampler;
+        prepared->pixel_samples                       = std::move(pixel_samples);
+        prepared->pixel_tile_size                     = pixel_tile_size;
         return prepared;
     }
 
@@ -932,8 +932,8 @@ namespace spectra {
                         local_index = static_cast<std::uint32_t>(constant_textures.size());
                         constant_textures.push_back(path_tracer::PathConstantTexture{data.scalar, texture_spectrum(data.spectrum)});
                     } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ImageTexture>) {
-                        kind                                   = PathTextureKind::Image;
-                        local_index                            = static_cast<std::uint32_t>(image_textures.size());
+                        kind        = PathTextureKind::Image;
+                        local_index = static_cast<std::uint32_t>(image_textures.size());
                         image_textures.push_back(path_tracer::PathImageTexture{gpu.textures[source_index].image, gpu.textures[source_index].sampler, {compile_mapping(data.mapping), static_cast<std::uint32_t>(data.channel), static_cast<std::uint32_t>(data.filter), data.invert ? 1u : 0u}, {data.scale, texture.color_space == scene::TextureColorSpace::Rec2020 ? 1.0f : texture.color_space == scene::TextureColorSpace::Aces2065_1 ? 2.0f : 0.0f, data.maximum_anisotropy, static_cast<float>(std::to_underlying(data.wrap))}});
                     } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::CheckerboardTexture>) {
                         kind        = PathTextureKind::Checkerboard;
@@ -1315,7 +1315,7 @@ namespace spectra {
             result.majorant                = this->context.pathtracer.zero_volume_field_descriptor;
             result.bounds_minimum          = {volume.bounds.minimum.x, volume.bounds.minimum.y, volume.bounds.minimum.z, 0.0f};
             result.bounds_maximum          = {volume.bounds.maximum.x, volume.bounds.maximum.y, volume.bounds.maximum.z, 0.0f};
-            const math::Transform inverse = volume.transform.inverse();
+            const math::Transform inverse  = volume.transform.inverse();
             result.inverse_transform_row_0 = {inverse.matrix[0], inverse.matrix[1], inverse.matrix[2], inverse.matrix[3]};
             result.inverse_transform_row_1 = {inverse.matrix[4], inverse.matrix[5], inverse.matrix[6], inverse.matrix[7]};
             result.inverse_transform_row_2 = {inverse.matrix[8], inverse.matrix[9], inverse.matrix[10], inverse.matrix[11]};
@@ -1330,7 +1330,7 @@ namespace spectra {
             std::visit(
                 [&](const auto& data) {
                     if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DensityGridVolume>) {
-                        prepared_volume.resolution       = data.resolution;
+                        prepared_volume.resolution        = data.resolution;
                         result.metadata                   = {std::to_underlying(PathVolumeKind::DensityGrid), data.resolution.x, data.resolution.y, data.resolution.z};
                         result.majorant_metadata          = {16, 16, 16, (data.temperature.empty() ? 0u : 1u) | (data.emission_scale.empty() ? 0u : 2u)};
                         result.density                    = field(GpuVolumeField::Density);
@@ -1339,7 +1339,7 @@ namespace spectra {
                         const std::vector<float> majorant = build_density_majorant(data);
                         result.majorant                   = prepare_majorant(std::span<const float>{majorant});
                     } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::RgbGridVolume>) {
-                        prepared_volume.resolution       = data.resolution;
+                        prepared_volume.resolution        = data.resolution;
                         result.metadata                   = {std::to_underlying(PathVolumeKind::RgbGrid), data.resolution.x, data.resolution.y, data.resolution.z};
                         result.majorant_metadata          = {16, 16, 16, (data.sigma_a.empty() ? 0u : 1u) | (data.sigma_s.empty() ? 0u : 2u) | (data.emission.empty() ? 0u : 4u) | (std::to_underlying(data.color_space) << 8)};
                         result.sigma_a                    = field(GpuVolumeField::SigmaA);
@@ -1370,7 +1370,7 @@ namespace spectra {
 
         const math::Bounds3 bounds      = scene.bounds();
         const math::Float3 scene_center = bounds.center();
-        const float scene_radius         = bounds.radius();
+        const float scene_radius        = bounds.radius();
         std::vector<path_tracer::PathLight> lights{};
         std::vector<path_tracer::PathLightDistribution> light_distributions{};
         std::vector<float> light_distribution_data{};
@@ -1426,7 +1426,7 @@ namespace spectra {
             return LightImageStatistics{luminance_sum / static_cast<float>(pixel_count) * image.scale, spectral_power_sum / static_cast<float>(pixel_count), channel_sum / static_cast<float>(pixel_count) * image.scale};
         };
         const auto initialize_light_transform = [](path_tracer::PathLight& target, const math::Transform& transform) {
-            const math::Transform inverse = transform.inverse();
+            const math::Transform inverse  = transform.inverse();
             target.transform_row_0         = {transform.matrix[0], transform.matrix[1], transform.matrix[2], transform.matrix[3]};
             target.transform_row_1         = {transform.matrix[4], transform.matrix[5], transform.matrix[6], transform.matrix[7]};
             target.transform_row_2         = {transform.matrix[8], transform.matrix[9], transform.matrix[10], transform.matrix[11]};
@@ -1457,28 +1457,28 @@ namespace spectra {
                         compiled.references     = {invalid_path_index, invalid_path_index, invalid_path_index, invalid_path_index};
                         compiled.identifiers[3] = invalid_path_index;
                         if constexpr (std::same_as<std::remove_cvref_t<decltype(light)>, scene::PointLight>) {
-                            compiled.identifiers         = {std::to_underlying(PathLightKind::Point), 1u, compile_light_spectrum(light.intensity), invalid_path_index};
+                            compiled.identifiers        = {std::to_underlying(PathLightKind::Point), 1u, compile_light_spectrum(light.intensity), invalid_path_index};
                             const math::Float3 position = light.transform.transform_point({});
-                            compiled.position_and_scale  = {position.x, position.y, position.z, light.scale};
+                            compiled.position_and_scale = {position.x, position.y, position.z, light.scale};
                             initialize_light_transform(compiled, light.transform);
                             compiled.selection[0] = 4.0f * path_pi * light.scale * spectrum_power_sample(spectra[compiled.identifiers[2]], piecewise_spectra, this->context.pathtracer.cie_samples);
                             compiled.selection[3] = 4.0f * path_pi * light.scale * spectrum_maximum(spectra[compiled.identifiers[2]], piecewise_spectra, this->context.pathtracer.cie_samples);
                             lights.push_back(compiled);
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(light)>, scene::SpotLight>) {
-                            compiled.identifiers         = {std::to_underlying(PathLightKind::Spot), 1u, compile_light_spectrum(light.intensity), invalid_path_index};
+                            compiled.identifiers        = {std::to_underlying(PathLightKind::Spot), 1u, compile_light_spectrum(light.intensity), invalid_path_index};
                             const math::Float3 position = light.transform.transform_point({});
-                            compiled.position_and_scale  = {position.x, position.y, position.z, light.scale};
-                            compiled.parameters[0]       = std::cos((light.cone_angle - light.cone_delta) * path_pi / 180.0f);
-                            compiled.parameters[1]       = std::cos(light.cone_angle * path_pi / 180.0f);
+                            compiled.position_and_scale = {position.x, position.y, position.z, light.scale};
+                            compiled.parameters[0]      = std::cos((light.cone_angle - light.cone_delta) * path_pi / 180.0f);
+                            compiled.parameters[1]      = std::cos(light.cone_angle * path_pi / 180.0f);
                             initialize_light_transform(compiled, light.transform);
                             compiled.selection[0] = 2.0f * path_pi * (1.0f - compiled.parameters[0] + (compiled.parameters[0] - compiled.parameters[1]) / 2.0f) * light.scale * spectrum_power_sample(spectra[compiled.identifiers[2]], piecewise_spectra, this->context.pathtracer.cie_samples);
                             compiled.selection[3] = 4.0f * path_pi * light.scale * spectrum_maximum(spectra[compiled.identifiers[2]], piecewise_spectra, this->context.pathtracer.cie_samples);
                             lights.push_back(compiled);
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(light)>, scene::DistantLight>) {
-                            compiled.identifiers          = {std::to_underlying(PathLightKind::Distant), 2u, compile_light_spectrum(light.radiance), invalid_path_index};
+                            compiled.identifiers         = {std::to_underlying(PathLightKind::Distant), 2u, compile_light_spectrum(light.radiance), invalid_path_index};
                             const math::Float3 direction = light.transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
-                            compiled.position_and_scale   = {direction.x, direction.y, direction.z, light.scale};
-                            compiled.parameters           = {scene_center.x, scene_center.y, scene_center.z, scene_radius};
+                            compiled.position_and_scale  = {direction.x, direction.y, direction.z, light.scale};
+                            compiled.parameters          = {scene_center.x, scene_center.y, scene_center.z, scene_radius};
                             initialize_light_transform(compiled, light.transform);
                             compiled.selection[0] = path_pi * scene_radius * scene_radius * light.scale * spectrum_power_sample(spectra[compiled.identifiers[2]], piecewise_spectra, this->context.pathtracer.cie_samples);
                             lights.push_back(compiled);
@@ -1520,13 +1520,13 @@ namespace spectra {
                                 if (environment.emission_texture.value == 0) throw std::runtime_error("Portal Infinite Light requires an Environment Image Texture");
                                 const scene::Texture& texture                      = image_texture(environment.emission_texture);
                                 const scene::ImageTexture& image                   = std::get<scene::ImageTexture>(texture.data);
-                                const math::Transform light_from_render           = environment.transform.inverse();
+                                const math::Transform light_from_render            = environment.transform.inverse();
                                 const scene::SpectrumColorSpace portal_color_space = texture.color_space == scene::TextureColorSpace::Rec2020 ? scene::SpectrumColorSpace::Rec2020 : texture.color_space == scene::TextureColorSpace::Aces2065_1 ? scene::SpectrumColorSpace::Aces2065_1 : scene::SpectrumColorSpace::Srgb;
                                 const std::uint32_t portal_illuminant_curve        = portal_color_space == scene::SpectrumColorSpace::Aces2065_1 ? 4u : 3u;
                                 for (const std::array<math::Float3, 4>& points : light.portals) {
-                                    const math::Float3 frame_x      = (points[3] - points[0]).normalized();
-                                    const math::Float3 frame_y      = (points[1] - points[0]).normalized();
-                                    const math::Float3 frame_z      = frame_x.cross(frame_y).normalized();
+                                    const math::Float3 frame_x       = (points[3] - points[0]).normalized();
+                                    const math::Float3 frame_y       = (points[1] - points[0]).normalized();
+                                    const math::Float3 frame_z       = frame_x.cross(frame_y).normalized();
                                     const std::uint32_t portal_index = static_cast<std::uint32_t>(portals.size());
                                     portals.push_back(path_tracer::PathPortal{{points[0].x, points[0].y, points[0].z, 0.0f}, {points[2].x, points[2].y, points[2].z, 0.0f}, {frame_x.x, frame_x.y, frame_x.z, 0.0f}, {frame_y.x, frame_y.y, frame_y.z, 0.0f}, {frame_z.x, frame_z.y, frame_z.z, 0.0f}});
                                     std::vector<float> weights(static_cast<std::size_t>(image.width) * image.height);
@@ -1538,10 +1538,10 @@ namespace spectra {
                                             const math::Float2 uv{(static_cast<float>(x) + 0.5f) / static_cast<float>(image.width), (static_cast<float>(y) + 0.5f) / static_cast<float>(image.height)};
                                             const float alpha                      = -path_pi / 2.0f + uv.x * path_pi;
                                             const float beta                       = -path_pi / 2.0f + uv.y * path_pi;
-                                            const math::Float3 local              = math::Float3{std::tan(alpha), std::tan(beta), 1.0f}.normalized();
-                                            const math::Float3 render_direction   = frame_x * local.x + frame_y * local.y + frame_z * local.z;
-                                            const math::Float3 light_direction    = light_from_render.transform_vector(render_direction).normalized();
-                                            const math::Float4 value              = image_bilerp_octahedral(image, equal_area_sphere_to_square(light_direction));
+                                            const math::Float3 local               = math::Float3{std::tan(alpha), std::tan(beta), 1.0f}.normalized();
+                                            const math::Float3 render_direction    = frame_x * local.x + frame_y * local.y + frame_z * local.z;
+                                            const math::Float3 light_direction     = light_from_render.transform_vector(render_direction).normalized();
+                                            const math::Float4 value               = image_bilerp_octahedral(image, equal_area_sphere_to_square(light_direction));
                                             const float jacobian                   = path_pi * path_pi * (1.0f - local.x * local.x) * (1.0f - local.y * local.y) / local.z;
                                             weights[y * image.width + x]           = (value.x + value.y + value.z) / 3.0f * jacobian;
                                             const CompiledSpectrum rectified       = compile_spectrum(scene::SpectrumParameter{{std::max(0.0f, value.x), std::max(0.0f, value.y), std::max(0.0f, value.z)}, {}, scene::SpectrumEncoding::RgbIlluminant, portal_color_space}, spectrum_tables, unused_piecewise_samples);
@@ -1576,7 +1576,7 @@ namespace spectra {
             return static_cast<std::uint32_t>(std::ranges::find(scene.resources.media, id, &scene::Medium::id) - scene.resources.media.begin());
         };
         const std::uint32_t camera_medium_index = medium_index(scene.camera.medium);
-        const auto add_area_light       = [&](path_tracer::PathLightShape shape, const std::uint32_t source_index, const float area, const bool delta_position) {
+        const auto add_area_light               = [&](path_tracer::PathLightShape shape, const std::uint32_t source_index, const float area, const bool delta_position) {
             const std::uint32_t shape_index = static_cast<std::uint32_t>(light_shapes.size());
             const std::uint32_t light_index = static_cast<std::uint32_t>(lights.size());
             shape.identifiers[0]            = light_index;
@@ -1653,12 +1653,12 @@ namespace spectra {
                             positions[vertex] = transform.transform_point(mesh->positions[mesh->indices[index + vertex]]);
                             if (!mesh->normals.empty()) {
                                 const math::Float3 source = mesh->normals[mesh->indices[index + vertex]];
-                                normals[vertex]            = math::Float3{inverse.matrix[0] * source.x + inverse.matrix[4] * source.y + inverse.matrix[8] * source.z, inverse.matrix[1] * source.x + inverse.matrix[5] * source.y + inverse.matrix[9] * source.z, inverse.matrix[2] * source.x + inverse.matrix[6] * source.y + inverse.matrix[10] * source.z}.normalized() * (primitive.reverse_orientation ? -1.0f : 1.0f);
+                                normals[vertex]           = math::Float3{inverse.matrix[0] * source.x + inverse.matrix[4] * source.y + inverse.matrix[8] * source.z, inverse.matrix[1] * source.x + inverse.matrix[5] * source.y + inverse.matrix[9] * source.z, inverse.matrix[2] * source.x + inverse.matrix[6] * source.y + inverse.matrix[10] * source.z}.normalized() * (primitive.reverse_orientation ? -1.0f : 1.0f);
                             }
                         }
                         const math::Float3 edge_0 = positions[1] - positions[0];
                         const math::Float3 edge_1 = positions[2] - positions[0];
-                        const float area           = 0.5f * edge_0.cross(edge_1).length();
+                        const float area          = 0.5f * edge_0.cross(edge_1).length();
                         add_area_light(path_tracer::PathLightShape{{positions[0].x, positions[0].y, positions[0].z, area}, {positions[1].x, positions[1].y, positions[1].z, 0.0f}, {positions[2].x, positions[2].y, positions[2].z, 0.0f}, {0, primitive.reverse_orientation ? 1u : 0u, geometry_kind, zero_alpha_area_light ? invalid_texture : alpha}, {}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}, mesh->texture_coordinates.empty() ? std::array<float, 4>{0.0f, 0.0f, 1.0f, 0.0f} : std::array<float, 4>{mesh->texture_coordinates[mesh->indices[index]].x, mesh->texture_coordinates[mesh->indices[index]].y, mesh->texture_coordinates[mesh->indices[index + 1]].x, mesh->texture_coordinates[mesh->indices[index + 1]].y}, mesh->texture_coordinates.empty() ? std::array<float, 4>{1.0f, 1.0f, 0.0f, 0.0f} : std::array<float, 4>{mesh->texture_coordinates[mesh->indices[index + 2]].x, mesh->texture_coordinates[mesh->indices[index + 2]].y, 0.0f, 0.0f},
                                            mesh->normals.empty() ? std::array<float, 4>{} : std::array<float, 4>{normals[0].x, normals[0].y, normals[0].z, 1.0f}, mesh->normals.empty() ? std::array<float, 4>{} : std::array<float, 4>{normals[1].x, normals[1].y, normals[1].z, 0.0f}, mesh->normals.empty() ? std::array<float, 4>{} : std::array<float, 4>{normals[2].x, normals[2].y, normals[2].z, 0.0f}},
                             area_light, area, zero_alpha_area_light);
@@ -1748,17 +1748,17 @@ namespace spectra {
                         return result;
                     }
                     const math::Float3 axis = first.direction.cross(second.direction);
-                    const float axis_length  = axis.length();
+                    const float axis_length = axis.length();
                     if (axis_length == 0.0f) {
                         result.direction   = {0.0f, 0.0f, 1.0f};
                         result.cos_theta_o = -1.0f;
                         return result;
                     }
                     const math::Float3 normalized_axis = axis / axis_length;
-                    const float rotation                = theta - theta_first;
+                    const float rotation               = theta - theta_first;
                     const math::Float3 rotated         = first.direction * std::cos(rotation) + normalized_axis.cross(first.direction) * std::sin(rotation);
-                    result.direction                    = (rotated + normalized_axis * normalized_axis.dot(first.direction) * (1.0f - std::cos(rotation))).normalized();
-                    result.cos_theta_o                  = std::cos(theta);
+                    result.direction                   = (rotated + normalized_axis * normalized_axis.dot(first.direction) * (1.0f - std::cos(rotation))).normalized();
+                    result.cos_theta_o                 = std::cos(theta);
                     return result;
                 };
                 std::vector<std::pair<std::uint32_t, LightBounds>> bounded_lights{};
@@ -1833,11 +1833,11 @@ namespace spectra {
                     };
                     const auto cost = [&](const LightBounds& light, const LightBounds& bounds, const std::uint32_t dimension) {
                         if (light.phi == 0.0f) return 0.0f;
-                        const float theta_o          = std::acos(std::clamp(light.cos_theta_o, -1.0f, 1.0f));
-                        const float theta_e          = std::acos(std::clamp(light.cos_theta_e, -1.0f, 1.0f));
-                        const float theta_w          = std::min(theta_o + theta_e, path_pi);
-                        const float sin_theta_o      = std::sqrt(std::max(0.0f, 1.0f - light.cos_theta_o * light.cos_theta_o));
-                        const float measure          = 2.0f * path_pi * (1.0f - light.cos_theta_o) + path_pi / 2.0f * (2.0f * theta_w * sin_theta_o - std::cos(theta_o - 2.0f * theta_w) - 2.0f * theta_o * sin_theta_o + light.cos_theta_o);
+                        const float theta_o         = std::acos(std::clamp(light.cos_theta_o, -1.0f, 1.0f));
+                        const float theta_e         = std::acos(std::clamp(light.cos_theta_e, -1.0f, 1.0f));
+                        const float theta_w         = std::min(theta_o + theta_e, path_pi);
+                        const float sin_theta_o     = std::sqrt(std::max(0.0f, 1.0f - light.cos_theta_o * light.cos_theta_o));
+                        const float measure         = 2.0f * path_pi * (1.0f - light.cos_theta_o) + path_pi / 2.0f * (2.0f * theta_w * sin_theta_o - std::cos(theta_o - 2.0f * theta_w) - 2.0f * theta_o * sin_theta_o + light.cos_theta_o);
                         const math::Float3 diagonal = bounds.maximum - bounds.minimum;
                         const float components[3]{diagonal.x, diagonal.y, diagonal.z};
                         const float ratio = std::max({diagonal.x, diagonal.y, diagonal.z}) / components[dimension];
@@ -1860,7 +1860,7 @@ namespace spectra {
                         centroid_bounds.minimum = bounds.minimum;
                         centroid_bounds.maximum = bounds.maximum;
                         for (std::uint32_t index = start; index != end; ++index) {
-                            bounds                       = union_bounds(bounds, bounded_lights[index].second);
+                            bounds                      = union_bounds(bounds, bounded_lights[index].second);
                             const math::Float3 centroid = (bounded_lights[index].second.minimum + bounded_lights[index].second.maximum) * 0.5f;
                             include(centroid_bounds.minimum, centroid_bounds.maximum, centroid);
                         }
@@ -1875,7 +1875,7 @@ namespace spectra {
                             std::array<LightBounds, bucket_count> buckets{};
                             for (std::uint32_t index = start; index != end; ++index) {
                                 const LightBounds& light_bounds = bounded_lights[index].second;
-                                const math::Float3 centroid    = (light_bounds.minimum + light_bounds.maximum) * 0.5f;
+                                const math::Float3 centroid     = (light_bounds.minimum + light_bounds.maximum) * 0.5f;
                                 const float values[3]{centroid.x, centroid.y, centroid.z};
                                 const std::uint32_t bucket = std::min(static_cast<std::uint32_t>(bucket_count * (values[dimension] - minimum[dimension]) / (maximum[dimension] - minimum[dimension])), bucket_count - 1u);
                                 buckets[bucket]            = union_bounds(buckets[bucket], light_bounds);
@@ -1955,47 +1955,47 @@ namespace spectra {
         new_textures[static_cast<std::size_t>(PathTextureTable::Mix)]          = arena.append(std::span<const path_tracer::PathMixTexture>{mix_textures});
         new_textures[static_cast<std::size_t>(PathTextureTable::DirectionMix)] = arena.append(std::span<const path_tracer::PathDirectionMixTexture>{direction_mix_textures});
         new_textures[static_cast<std::size_t>(PathTextureTable::Bilerp)]       = arena.append(std::span<const path_tracer::PathBilerpTexture>{bilerp_textures});
-        PathBufferSlice new_lights                    = arena.append(std::span<const path_tracer::PathLight>{lights});
-        PathBufferSlice new_light_shapes              = arena.append(std::span<const path_tracer::PathLightShape>{light_shapes});
-        PathBufferSlice new_light_distributions       = arena.append(std::span<const path_tracer::PathLightDistribution>{light_distributions});
-        PathBufferSlice new_light_distribution_data   = arena.append(std::span<const float>{light_distribution_data});
-        PathBufferSlice new_portals                   = arena.append(std::span<const path_tracer::PathPortal>{portals});
-        PathBufferSlice new_light_bvh_nodes           = arena.append(std::span<const path_tracer::PathLightBvhNode>{light_bvh_nodes});
-        PathBufferSlice new_light_bvh_bit_trails      = arena.append(std::span<const std::uint32_t>{light_bvh_bit_trails});
-        PathBufferSlice new_face_materials            = arena.append(std::span<const std::uint32_t>{face_materials});
-        PathBufferSlice new_media                     = arena.append(std::span<const path_tracer::PathMedium>{media});
-        PathBufferSlice new_volumes                   = arena.append(std::span<const path_tracer::PathVolume>{volumes});
-        PathBufferSlice new_spectra                   = arena.append(std::span<const CompiledSpectrum>{spectra});
-        PathBufferSlice new_piecewise_spectra         = arena.append(std::span<const math::Float2>{piecewise_spectra});
+        PathBufferSlice new_lights                                             = arena.append(std::span<const path_tracer::PathLight>{lights});
+        PathBufferSlice new_light_shapes                                       = arena.append(std::span<const path_tracer::PathLightShape>{light_shapes});
+        PathBufferSlice new_light_distributions                                = arena.append(std::span<const path_tracer::PathLightDistribution>{light_distributions});
+        PathBufferSlice new_light_distribution_data                            = arena.append(std::span<const float>{light_distribution_data});
+        PathBufferSlice new_portals                                            = arena.append(std::span<const path_tracer::PathPortal>{portals});
+        PathBufferSlice new_light_bvh_nodes                                    = arena.append(std::span<const path_tracer::PathLightBvhNode>{light_bvh_nodes});
+        PathBufferSlice new_light_bvh_bit_trails                               = arena.append(std::span<const std::uint32_t>{light_bvh_bit_trails});
+        PathBufferSlice new_face_materials                                     = arena.append(std::span<const std::uint32_t>{face_materials});
+        PathBufferSlice new_media                                              = arena.append(std::span<const path_tracer::PathMedium>{media});
+        PathBufferSlice new_volumes                                            = arena.append(std::span<const path_tracer::PathVolume>{volumes});
+        PathBufferSlice new_spectra                                            = arena.append(std::span<const CompiledSpectrum>{spectra});
+        PathBufferSlice new_piecewise_spectra                                  = arena.append(std::span<const math::Float2>{piecewise_spectra});
 
         std::unique_ptr<PreparedPathScene> prepared = std::make_unique<PreparedPathScene>();
-        prepared->arena                            = std::move(arena.data);
-        prepared->primitives                       = new_primitives;
-        prepared->materials                        = new_materials;
-        prepared->textures                         = new_textures;
-        prepared->light_table                      = new_lights;
-        prepared->light_shapes                     = new_light_shapes;
-        prepared->light_distribution               = new_light_distributions;
-        prepared->light_distribution_data          = new_light_distribution_data;
-        prepared->portals                          = new_portals;
-        prepared->light_bvh_nodes                  = new_light_bvh_nodes;
-        prepared->light_bvh_bit_trails             = new_light_bvh_bit_trails;
-        prepared->face_materials                   = new_face_materials;
-        prepared->media                            = new_media;
-        prepared->volumes                          = new_volumes;
-        prepared->spectra                          = new_spectra;
-        prepared->piecewise_spectra                = new_piecewise_spectra;
-        prepared->compiled_volumes                 = std::move(volumes);
-        prepared->volume_resources                 = std::move(prepared_volume_resources);
-        prepared->texture_count                    = static_cast<std::uint32_t>(texture_count);
-        prepared->texture_stack_size               = maximum_texture_stack_size;
-        prepared->material_texture_value_count     = maximum_material_texture_requests;
-        prepared->light_count                      = light_count;
-        prepared->light_bvh_node_count             = light_bvh_node_count;
-        prepared->light_bvh_infinite_count         = light_bvh_infinite_count;
-        prepared->camera_medium_index              = camera_medium_index;
-        prepared->light_sampler                    = scene.transport.light_sampler;
-        prepared->bounds                           = {bounds.minimum, bounds.maximum};
+        prepared->arena                             = std::move(arena.data);
+        prepared->primitives                        = new_primitives;
+        prepared->materials                         = new_materials;
+        prepared->textures                          = new_textures;
+        prepared->light_table                       = new_lights;
+        prepared->light_shapes                      = new_light_shapes;
+        prepared->light_distribution                = new_light_distributions;
+        prepared->light_distribution_data           = new_light_distribution_data;
+        prepared->portals                           = new_portals;
+        prepared->light_bvh_nodes                   = new_light_bvh_nodes;
+        prepared->light_bvh_bit_trails              = new_light_bvh_bit_trails;
+        prepared->face_materials                    = new_face_materials;
+        prepared->media                             = new_media;
+        prepared->volumes                           = new_volumes;
+        prepared->spectra                           = new_spectra;
+        prepared->piecewise_spectra                 = new_piecewise_spectra;
+        prepared->compiled_volumes                  = std::move(volumes);
+        prepared->volume_resources                  = std::move(prepared_volume_resources);
+        prepared->texture_count                     = static_cast<std::uint32_t>(texture_count);
+        prepared->texture_stack_size                = maximum_texture_stack_size;
+        prepared->material_texture_value_count      = maximum_material_texture_requests;
+        prepared->light_count                       = light_count;
+        prepared->light_bvh_node_count              = light_bvh_node_count;
+        prepared->light_bvh_infinite_count          = light_bvh_infinite_count;
+        prepared->camera_medium_index               = camera_medium_index;
+        prepared->light_sampler                     = scene.transport.light_sampler;
+        prepared->bounds                            = {bounds.minimum, bounds.maximum};
         prepared->instance_transforms.reserve(scene.resources.instances.size());
         for (const scene::Instance& instance : scene.resources.instances) prepared->instance_transforms.push_back(instance.transform);
         prepared->revision = scene.revision;
@@ -2006,8 +2006,8 @@ namespace spectra {
         std::vector<PathVolumeResources> new_volume_gpu_data{};
         new_volume_gpu_data.reserve(prepared->volume_resources.size());
         for (std::size_t index = 0; index != prepared->volume_resources.size(); ++index) {
-            PreparedPathVolume& source = prepared->volume_resources[index];
-            GpuBuffer majorant          = upload_path_buffer(this->context.runtime, std::span<const float>{source.majorant}, command_buffer);
+            PreparedPathVolume& source        = prepared->volume_resources[index];
+            GpuBuffer majorant                = upload_path_buffer(this->context.runtime, std::span<const float>{source.majorant}, command_buffer);
             const DescriptorHandle descriptor = this->context.runtime.resources.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, majorant);
             prepared->compiled_volumes[index].majorant = descriptor;
@@ -2021,22 +2021,22 @@ namespace spectra {
         }
         if (!prepared->compiled_volumes.empty()) std::memcpy(prepared->arena.data() + prepared->volumes.offset, prepared->compiled_volumes.data(), prepared->compiled_volumes.size() * sizeof(path_tracer::PathVolume));
 
-        GpuBuffer new_arena = upload_path_buffer(this->context.runtime, std::span<const std::byte>{prepared->arena}, command_buffer);
-        PathBufferSlice new_primitives = prepared->primitives;
+        GpuBuffer new_arena                                                                           = upload_path_buffer(this->context.runtime, std::span<const std::byte>{prepared->arena}, command_buffer);
+        PathBufferSlice new_primitives                                                                = prepared->primitives;
         std::array<PathBufferSlice, static_cast<std::size_t>(PathMaterialTable::Count)> new_materials = prepared->materials;
         std::array<PathBufferSlice, static_cast<std::size_t>(PathTextureTable::Count)> new_textures   = prepared->textures;
-        PathBufferSlice new_lights                    = prepared->light_table;
-        PathBufferSlice new_light_shapes              = prepared->light_shapes;
-        PathBufferSlice new_light_distributions       = prepared->light_distribution;
-        PathBufferSlice new_light_distribution_data   = prepared->light_distribution_data;
-        PathBufferSlice new_portals                   = prepared->portals;
-        PathBufferSlice new_light_bvh_nodes           = prepared->light_bvh_nodes;
-        PathBufferSlice new_light_bvh_bit_trails      = prepared->light_bvh_bit_trails;
-        PathBufferSlice new_face_materials            = prepared->face_materials;
-        PathBufferSlice new_media                     = prepared->media;
-        PathBufferSlice new_volumes                   = prepared->volumes;
-        PathBufferSlice new_spectra                   = prepared->spectra;
-        PathBufferSlice new_piecewise_spectra         = prepared->piecewise_spectra;
+        PathBufferSlice new_lights                                                                    = prepared->light_table;
+        PathBufferSlice new_light_shapes                                                              = prepared->light_shapes;
+        PathBufferSlice new_light_distributions                                                       = prepared->light_distribution;
+        PathBufferSlice new_light_distribution_data                                                   = prepared->light_distribution_data;
+        PathBufferSlice new_portals                                                                   = prepared->portals;
+        PathBufferSlice new_light_bvh_nodes                                                           = prepared->light_bvh_nodes;
+        PathBufferSlice new_light_bvh_bit_trails                                                      = prepared->light_bvh_bit_trails;
+        PathBufferSlice new_face_materials                                                            = prepared->face_materials;
+        PathBufferSlice new_media                                                                     = prepared->media;
+        PathBufferSlice new_volumes                                                                   = prepared->volumes;
+        PathBufferSlice new_spectra                                                                   = prepared->spectra;
+        PathBufferSlice new_piecewise_spectra                                                         = prepared->piecewise_spectra;
         if (*this->scene.arena.buffer) {
             new_primitives.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
             for (PathBufferSlice& slice : new_materials) slice.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
@@ -2120,7 +2120,7 @@ namespace spectra {
         this->scene.piecewise_spectra       = new_piecewise_spectra;
         this->scene.arena                   = std::move(new_arena);
         this->scene.volume_resources        = std::move(new_volume_gpu_data);
-        GpuBuffer new_bindings                     = this->context.runtime.resources.create_buffer(sizeof(path_tracer::PathSceneBindings), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+        GpuBuffer new_bindings              = this->context.runtime.resources.create_buffer(sizeof(path_tracer::PathSceneBindings), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         const path_tracer::PathSceneBindings bindings{
             this->scene.primitives.descriptor,
             this->scene.materials[static_cast<std::size_t>(PathMaterialTable::Header)].descriptor,
@@ -2272,7 +2272,7 @@ namespace spectra {
             this->compile_scene(scene, command_buffer);
             compiled = true;
         } else if ((scene.revision.changes & scene::SceneChange::Transform) != scene::SceneChange::None) {
-            const math::Bounds3 bounds         = scene.bounds();
+            const math::Bounds3 bounds          = scene.bounds();
             bool transform_dependencies_changed = scene.resources.instances.size() != this->scene.compiled_instance_transforms.size() || bounds.minimum.x != this->scene.compiled_bounds.minimum.x || bounds.minimum.y != this->scene.compiled_bounds.minimum.y || bounds.minimum.z != this->scene.compiled_bounds.minimum.z || bounds.maximum.x != this->scene.compiled_bounds.maximum.x || bounds.maximum.y != this->scene.compiled_bounds.maximum.y || bounds.maximum.z != this->scene.compiled_bounds.maximum.z;
             if (!transform_dependencies_changed)
                 for (std::size_t index = 0; index != scene.resources.instances.size(); ++index) {
@@ -2578,7 +2578,7 @@ namespace spectra {
         }
         this->session.arena = create_storage_buffer(this->context.runtime, arena_size, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst);
         for (const auto& [slice, size] : allocations) this->context.runtime.resources.write_buffer_descriptor(slice->descriptor, vk::DescriptorType::eStorageBuffer, this->session.arena.address + slice->offset, size);
-        this->session.indirect_commands = this->context.runtime.resources.create_buffer(sizeof(vk::TraceRaysIndirectCommand2KHR) * 2u, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+        this->session.indirect_commands            = this->context.runtime.resources.create_buffer(sizeof(vk::TraceRaysIndirectCommand2KHR) * 2u, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         this->session.output_layout                = vk::ImageLayout::eUndefined;
         this->session.sample_index                 = 0;
         this->session.indirect_commands_configured = false;
@@ -2695,11 +2695,11 @@ namespace spectra {
                 pixel_count,
             };
         };
-        const std::span<const math::Float4> albedo_sums               = float_buffer(0);
-        const std::span<const math::Float4> shading_normal_sums       = float_buffer(1);
-        const std::span<const math::Float4> geometric_normal_sums     = float_buffer(2);
-        const std::span<const math::Float4> position_depth_sums       = float_buffer(3);
-        const std::span<const math::Float4> uv_weight_sums            = float_buffer(4);
+        const std::span<const math::Float4> albedo_sums                = float_buffer(0);
+        const std::span<const math::Float4> shading_normal_sums        = float_buffer(1);
+        const std::span<const math::Float4> geometric_normal_sums      = float_buffer(2);
+        const std::span<const math::Float4> position_depth_sums        = float_buffer(3);
+        const std::span<const math::Float4> uv_weight_sums             = float_buffer(4);
         const std::span<const std::array<std::uint32_t, 4>> identity_0 = integer_buffer(5);
         const std::span<const std::array<std::uint32_t, 4>> identity_1 = integer_buffer(6);
         const auto normalize                                           = [](const math::Float4 value) {
@@ -2727,9 +2727,9 @@ namespace spectra {
                     uv_weight_sums[index].y / weight,
                 };
             }
-            result.object_ids[index]     = static_cast<std::uint64_t>(identity_0[index][0]) | static_cast<std::uint64_t>(identity_0[index][1]) << 32;
-            result.primitive_ids[index]  = identity_0[index][2];
-            result.material_ids[index]   = static_cast<std::uint64_t>(identity_0[index][3]) | static_cast<std::uint64_t>(identity_1[index][0]) << 32;
+            result.object_ids[index]    = static_cast<std::uint64_t>(identity_0[index][0]) | static_cast<std::uint64_t>(identity_0[index][1]) << 32;
+            result.primitive_ids[index] = identity_0[index][2];
+            result.material_ids[index]  = static_cast<std::uint64_t>(identity_0[index][3]) | static_cast<std::uint64_t>(identity_1[index][0]) << 32;
         }
         return result;
     }
@@ -2769,9 +2769,9 @@ namespace spectra {
             {transform[8], transform[9], transform[10], transform[11]},
         };
         const math::Transform camera_inverse = camera.transform.inverse();
-        parameters.camera_inverse_row_0       = {camera_inverse.matrix[0], camera_inverse.matrix[1], camera_inverse.matrix[2], camera_inverse.matrix[3]};
-        parameters.camera_inverse_row_1       = {camera_inverse.matrix[4], camera_inverse.matrix[5], camera_inverse.matrix[6], camera_inverse.matrix[7]};
-        parameters.camera_inverse_row_2       = {camera_inverse.matrix[8], camera_inverse.matrix[9], camera_inverse.matrix[10], camera_inverse.matrix[11]};
+        parameters.camera_inverse_row_0      = {camera_inverse.matrix[0], camera_inverse.matrix[1], camera_inverse.matrix[2], camera_inverse.matrix[3]};
+        parameters.camera_inverse_row_1      = {camera_inverse.matrix[4], camera_inverse.matrix[5], camera_inverse.matrix[6], camera_inverse.matrix[7]};
+        parameters.camera_inverse_row_2      = {camera_inverse.matrix[8], camera_inverse.matrix[9], camera_inverse.matrix[10], camera_inverse.matrix[11]};
         std::visit(
             [&parameters](const auto& data) {
                 parameters.camera_screen = {data.screen_window.minimum.x, data.screen_window.minimum.y, data.screen_window.maximum.x, data.screen_window.maximum.y};

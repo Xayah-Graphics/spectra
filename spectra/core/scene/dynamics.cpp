@@ -53,7 +53,9 @@ namespace spectra {
 
         [[nodiscard]] SpectraPluginExternalHandle plugin_external_handle(const ExternalHandle& handle) noexcept {
             return {
-                handle.type == ExternalHandleType::OpaqueWin32 ? SpectraPluginExternalHandleType::OpaqueWin32 : handle.type == ExternalHandleType::OpaqueFileDescriptor ? SpectraPluginExternalHandleType::OpaqueFileDescriptor : SpectraPluginExternalHandleType::None,
+                handle.type == ExternalHandleType::OpaqueWin32            ? SpectraPluginExternalHandleType::OpaqueWin32
+                : handle.type == ExternalHandleType::OpaqueFileDescriptor ? SpectraPluginExternalHandleType::OpaqueFileDescriptor
+                                                                          : SpectraPluginExternalHandleType::None,
                 handle.value,
             };
         }
@@ -137,8 +139,8 @@ namespace spectra {
         const float radius_scale          = std::max({anchor.transform.transform_vector({1.0f, 0.0f, 0.0f}).length(), anchor.transform.transform_vector({0.0f, 1.0f, 0.0f}).length(), anchor.transform.transform_vector({0.0f, 0.0f, 1.0f}).length()});
         for (std::uint64_t index = 0; index < primitive_count; ++index) {
             const SpectraPluginDebugPrimitive& source = primitives[index];
-            math::Float3 first_position              = anchor.transform.transform_point({source.first_position.x, source.first_position.y, source.first_position.z});
-            math::Float3 second_position             = anchor.transform.transform_point({source.second_position.x, source.second_position.y, source.second_position.z});
+            math::Float3 first_position               = anchor.transform.transform_point({source.first_position.x, source.first_position.y, source.first_position.z});
+            math::Float3 second_position              = anchor.transform.transform_point({source.second_position.x, source.second_position.y, source.second_position.z});
             if (source.kind == SpectraPluginDebugPrimitiveKind::AxisAlignedBox) {
                 math::Bounds3 bounds = math::Bounds3::empty();
                 for (const float x : {source.first_position.x, source.second_position.x})
@@ -391,7 +393,7 @@ namespace spectra {
         }
         ExternalHandle exported_timeline_handle{};
         if (binding.descriptor.memory_domain == dynamics::MemoryDomain::CudaExternal) exported_timeline_handle = this->context.runtime.resources.export_timeline_semaphore_handle(binding.timeline_semaphore);
-        const GpuDeviceIdentity gpu_identity = this->context.runtime.graphics.identity;
+        const GpuDeviceIdentity gpu_identity              = this->context.runtime.graphics.identity;
         const SpectraPluginExternalHandle timeline_handle = binding.descriptor.memory_domain == dynamics::MemoryDomain::CudaExternal ? plugin_external_handle(exported_timeline_handle) : SpectraPluginExternalHandle{};
         SpectraPluginPortConfiguration configuration{binding.port_index, static_cast<SpectraPluginPortDirection>(binding.descriptor.direction), static_cast<SpectraPluginMemoryDomain>(binding.descriptor.memory_domain), plugin_slots.data(), plugin_slots.size(), timeline_handle, {}, {}, gpu_identity.node_mask};
         std::ranges::copy(gpu_identity.uuid, configuration.vulkan_device_uuid);
@@ -417,7 +419,7 @@ namespace spectra {
                     if (destination.attribute == SpectraPluginAttribute::Transform)
                         std::ranges::copy(instance.transform.matrix, reinterpret_cast<SpectraPluginTransform*>(destination.host_storage.data())->matrix);
                     else if (destination.attribute == SpectraPluginAttribute::Bounds) {
-                        const math::Bounds3 bounds = *this->configuration.source_scene->view().local_bounds(*instance_id);
+                        const math::Bounds3 bounds  = *this->configuration.source_scene->view().local_bounds(*instance_id);
                         SpectraPluginFloat3* values = reinterpret_cast<SpectraPluginFloat3*>(destination.host_storage.data());
                         values[0]                   = {bounds.minimum.x, bounds.minimum.y, bounds.minimum.z};
                         values[1]                   = {bounds.maximum.x, bounds.maximum.y, bounds.maximum.z};

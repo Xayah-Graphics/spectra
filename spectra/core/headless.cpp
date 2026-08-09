@@ -44,7 +44,7 @@ namespace spectra {
                 binding.update_mode == dynamics::MeshUpdateMode::Deformable ? GpuMeshUpdateMode::Deformable : GpuMeshUpdateMode::TopologyChanging,
                 binding.vertex_capacity,
                 binding.index_capacity,
-        });
+            });
         gpu_scene.initialize(document.content.source, geometry_bindings, dynamics.outputs.particle_capacities, dynamics.outputs.hidden_instances);
 
         renderers.rebuild(document.content.evaluated.view());

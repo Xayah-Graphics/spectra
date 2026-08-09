@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 4.4.0)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
 project(spectra VERSION 2.0.0 LANGUAGES C CXX)
 
+if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Spectra installation directory" FORCE)
+endif ()
+include(GNUInstallDirs)
+
+set(SPECTRA_BUILD_BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_INSTALL_BINDIR}")
+set(SPECTRA_BUILD_RESOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_INSTALL_DATADIR}/spectra")
+cmake_path(
+        RELATIVE_PATH SPECTRA_BUILD_RESOURCE_DIR
+        BASE_DIRECTORY "${SPECTRA_BUILD_BIN_DIR}"
+        OUTPUT_VARIABLE SPECTRA_RESOURCE_RELATIVE_DIR
+)
+
 
 # ============================================================================
 # Project Configuration
@@ -621,6 +634,10 @@ endif ()
 # Spectra Executable
 # ============================================================================
 add_executable(spectra)
+set_target_properties(
+        spectra
+        PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${SPECTRA_BUILD_BIN_DIR}>"
+)
 target_sources(
         spectra
         PRIVATE
@@ -634,6 +651,11 @@ target_sources(
 if (WIN32)
     target_sources(spectra PRIVATE spectra.rc)
 endif ()
+target_compile_definitions(
+        spectra
+        PRIVATE
+        SPECTRA_RESOURCE_DIRECTORY="${SPECTRA_RESOURCE_RELATIVE_DIR}"
+)
 target_link_libraries(spectra PRIVATE spectra_core xayah::util::xcli)
 if (SPECTRA_BUILD_UI)
     target_compile_definitions(spectra PRIVATE SPECTRA_HAS_EDITOR)
@@ -646,12 +668,12 @@ endif ()
 # ============================================================================
 add_custom_target(
         spectra_runtime_resources ALL
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:spectra>/resources/shaders"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:spectra>/resources/pathtracer/shaders"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:spectra>/resources/pathtracer/spectral"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_RUNTIME_SHADER_OUTPUTS} "$<TARGET_FILE_DIR:spectra>/resources/shaders"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_PATH_TRACER_SHADER_OUTPUTS} "$<TARGET_FILE_DIR:spectra>/resources/pathtracer/shaders"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_SPECTRAL_ASSETS} "$<TARGET_FILE_DIR:spectra>/resources/pathtracer/spectral"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/shaders"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_RUNTIME_SHADER_OUTPUTS} "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_PATH_TRACER_SHADER_OUTPUTS} "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/shaders"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_SPECTRAL_ASSETS} "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
         DEPENDS spectra
         VERBATIM
 )
@@ -660,7 +682,19 @@ add_custom_target(
 # ============================================================================
 # Installation
 # ============================================================================
-install(TARGETS spectra RUNTIME DESTINATION "." COMPONENT Spectra)
-install(FILES ${SPECTRA_RUNTIME_SHADER_OUTPUTS} DESTINATION "resources/shaders" COMPONENT Spectra)
-install(FILES ${SPECTRA_PATH_TRACER_SHADER_OUTPUTS} DESTINATION "resources/pathtracer/shaders" COMPONENT Spectra)
-install(FILES ${SPECTRA_SPECTRAL_ASSETS} DESTINATION "resources/pathtracer/spectral" COMPONENT Spectra)
+install(TARGETS spectra RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Spectra)
+install(
+        FILES ${SPECTRA_RUNTIME_SHADER_OUTPUTS}
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/spectra/shaders"
+        COMPONENT Spectra
+)
+install(
+        FILES ${SPECTRA_PATH_TRACER_SHADER_OUTPUTS}
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/spectra/pathtracer/shaders"
+        COMPONENT Spectra
+)
+install(
+        FILES ${SPECTRA_SPECTRAL_ASSETS}
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/spectra/pathtracer/spectral"
+        COMPONENT Spectra
+)

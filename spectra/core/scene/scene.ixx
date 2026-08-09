@@ -807,21 +807,21 @@ namespace spectra::scene {
     };
 
     export enum class SceneChange : std::uint16_t {
-        None            = 0,
-        Geometry        = 1 << 0,
-        Transform = 1 << 1,
-        Texture         = 1 << 2,
-        Material        = 1 << 3,
-        Light           = 1 << 4,
-        Medium          = 1 << 5,
-        Volume          = 1 << 6,
-        Camera          = 1 << 7,
-        Film            = 1 << 8,
-        Sampler         = 1 << 9,
-        Metadata        = 1 << 10,
-        Transport       = 1 << 11,
-        Visualization   = 1 << 12,
-        All             = 0x1fff,
+        None          = 0,
+        Geometry      = 1 << 0,
+        Transform     = 1 << 1,
+        Texture       = 1 << 2,
+        Material      = 1 << 3,
+        Light         = 1 << 4,
+        Medium        = 1 << 5,
+        Volume        = 1 << 6,
+        Camera        = 1 << 7,
+        Film          = 1 << 8,
+        Sampler       = 1 << 9,
+        Metadata      = 1 << 10,
+        Transport     = 1 << 11,
+        Visualization = 1 << 12,
+        All           = 0x1fff,
     };
 
     export [[nodiscard]] constexpr SceneChange operator|(const SceneChange left, const SceneChange right) noexcept {

@@ -568,7 +568,7 @@ namespace spectra {
         }
 
         const dynamics::SimulationTimeline timeline = dynamic ? this->context.dynamics.timeline() : dynamics::SimulationTimeline{};
-        const std::string status = dynamic ? std::format("step {}  ·  {:.3f} s{}", timeline.simulation_step, timeline.simulation_seconds, pathtracer_preparation ? std::format("  ·  {}", preparation_status(*pathtracer_preparation)) : std::string{}) : std::format("{} / {} spp", render_progress->completed, render_progress->target);
+        const std::string status                    = dynamic ? std::format("step {}  ·  {:.3f} s{}", timeline.simulation_step, timeline.simulation_seconds, pathtracer_preparation ? std::format("  ·  {}", preparation_status(*pathtracer_preparation)) : std::string{}) : std::format("{} / {} spp", render_progress->completed, render_progress->target);
         const bool simulation_playing               = dynamic && this->context.dynamics.running();
         const char* playback_label                  = dynamic ? simulation_playing ? "Pause" : "Play" : render_progress->paused ? "Resume" : "Pause";
         const char* secondary_label                 = dynamic ? "Step" : "Reset";
@@ -616,13 +616,13 @@ namespace spectra {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{4.0f, 4.0f});
         constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNavFocus;
         ImGui::Begin("##ApplicationStrip", nullptr, flags);
-        const bool loaded                                   = this->context.document.content.loaded;
-        const std::optional<RenderProgress> render_progress = loaded ? this->context.renderers.progress() : std::nullopt;
+        const bool loaded                                                         = this->context.document.content.loaded;
+        const std::optional<RenderProgress> render_progress                       = loaded ? this->context.renderers.progress() : std::nullopt;
         const std::optional<PathTracerPreparationProgress> pathtracer_preparation = loaded ? this->context.renderers.pathtracer_preparation() : std::nullopt;
         if ((render_progress && render_progress->completed < render_progress->target) || pathtracer_preparation) {
             const ImVec2 minimum = ImGui::GetWindowPos();
             const ImVec2 maximum{minimum.x + ImGui::GetWindowWidth(), minimum.y + ImGui::GetWindowHeight()};
-            ImDrawList* draw_list  = ImGui::GetWindowDrawList();
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
             draw_list->PushClipRect(minimum, maximum, false);
             if (pathtracer_preparation && pathtracer_preparation->total == 0) {
                 const float width         = maximum.x - minimum.x;
@@ -631,7 +631,7 @@ namespace spectra {
                 const float segment_x     = minimum.x - segment_width + static_cast<float>(std::fmod(ImGui::GetTime() * 180.0, static_cast<double>(travel)));
                 draw_list->AddRectFilled(ImVec2{segment_x, minimum.y}, ImVec2{segment_x + segment_width, maximum.y}, ImGui::GetColorU32(ImVec4{0.16f, 0.72f, 0.84f, 0.10f}));
             } else {
-                const float progress = pathtracer_preparation ? static_cast<float>(pathtracer_preparation->completed) / static_cast<float>(pathtracer_preparation->total) : static_cast<float>(render_progress->completed) / static_cast<float>(render_progress->target);
+                const float progress   = pathtracer_preparation ? static_cast<float>(pathtracer_preparation->completed) / static_cast<float>(pathtracer_preparation->total) : static_cast<float>(render_progress->completed) / static_cast<float>(render_progress->target);
                 const float progress_x = minimum.x + (maximum.x - minimum.x) * std::clamp(progress, 0.0f, 1.0f);
                 draw_list->AddRectFilled(minimum, ImVec2{progress_x, maximum.y}, ImGui::GetColorU32(ImVec4{0.16f, 0.72f, 0.84f, 0.07f}));
                 if (progress_x > minimum.x) draw_list->AddLine(ImVec2{progress_x, minimum.y + 2.0f}, ImVec2{progress_x, maximum.y - 2.0f}, ImGui::GetColorU32(ImVec4{0.16f, 0.72f, 0.84f, 0.72f}), 1.0f);

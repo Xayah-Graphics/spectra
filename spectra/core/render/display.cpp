@@ -11,7 +11,7 @@ namespace spectra {
     }
 
     void DisplayRenderer::initialize() {
-        this->sampler_descriptor = this->context.runtime.resources.allocate_sampler_descriptor();
+        this->sampler_descriptor                       = this->context.runtime.resources.allocate_sampler_descriptor();
         const std::vector<std::uint32_t> vertex_code   = load_spirv(this->context.shader_directory / "display_vertex.spv");
         const std::vector<std::uint32_t> fragment_code = load_spirv(this->context.shader_directory / "display_fragment.spv");
         const std::array create_infos{
@@ -69,8 +69,12 @@ namespace spectra {
                 {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
             },
             vk::ImageMemoryBarrier2{
-                this->layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : this->layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::PipelineStageFlagBits2::eFragmentShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                this->layout == vk::ImageLayout::eUndefined ? vk::AccessFlags2{} : this->layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::AccessFlagBits2::eShaderSampledRead : vk::AccessFlagBits2::eColorAttachmentWrite,
+                this->layout == vk::ImageLayout::eUndefined               ? vk::PipelineStageFlagBits2::eNone
+                : this->layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::PipelineStageFlagBits2::eFragmentShader
+                                                                          : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                this->layout == vk::ImageLayout::eUndefined               ? vk::AccessFlags2{}
+                : this->layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::AccessFlagBits2::eShaderSampledRead
+                                                                          : vk::AccessFlagBits2::eColorAttachmentWrite,
                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                 vk::AccessFlagBits2::eColorAttachmentWrite,
                 this->layout,

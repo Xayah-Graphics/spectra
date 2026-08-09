@@ -50,6 +50,5 @@ namespace spectra {
             std::optional<std::variant<std::reference_wrapper<Rasterizer>, std::reference_wrapper<PathTracer>>> active{};
             std::string selected_id{"rasterizer"};
         } renderers;
-
     };
 } // namespace spectra

@@ -52,10 +52,9 @@ RUN --mount=type=cache,target=/var/cache/pacman/pkg,sharing=locked \
     && useradd --uid 10001 --gid 10001 --home-dir /opt/spectra --shell /usr/bin/nologin spectra
 
 COPY --from=build --chown=10001:10001 --link /opt/spectra/ /opt/spectra/
-COPY --from=build --link /src/LICENSE /usr/share/licenses/spectra/LICENSE
 
 USER 10001:10001
 ENV HOME=/opt/spectra
 WORKDIR /opt/spectra
 
-ENTRYPOINT ["/opt/spectra/spectra"]
+ENTRYPOINT ["/opt/spectra/bin/spectra"]

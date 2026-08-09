@@ -207,7 +207,7 @@ namespace spectra {
     }
 
     void record_linear_readback(VulkanRuntime& runtime, const vk::raii::CommandBuffer& command_buffer, const RenderOutput render_output, GpuBuffer& readback_buffer) {
-        const vk::Extent2D extent           = render_output.image.extent;
+        const vk::Extent2D extent          = render_output.image.extent;
         const vk::DeviceSize required_size = static_cast<vk::DeviceSize>(extent.width) * extent.height * sizeof(float) * 4u;
         if (readback_buffer.size < required_size) readback_buffer = runtime.resources.create_buffer(required_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         const vk::ImageMemoryBarrier2 to_transfer{render_output.source_stage, render_output.source_access, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, render_output.image_layout, vk::ImageLayout::eTransferSrcOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *render_output.image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};

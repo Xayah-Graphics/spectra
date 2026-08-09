@@ -162,7 +162,7 @@ namespace spectra {
                 std::visit(
                     [&](const auto& data) {
                         if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ConstantTexture>) {
-                            local_index               = static_cast<std::uint32_t>(result.constants.size());
+                            local_index              = static_cast<std::uint32_t>(result.constants.size());
                             const math::Float3 value = texture.value_kind == scene::TextureValueKind::Float ? math::Float3{data.scalar, data.scalar, data.scalar} : raster_spectrum_rgb(data.spectrum);
                             result.constants.push_back(RasterConstantTexture{{value.x, value.y, value.z, texture.value_kind == scene::TextureValueKind::Float ? data.scalar : 1.0f}});
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ImageTexture>) {
@@ -193,7 +193,7 @@ namespace spectra {
                             compiled.data[0] = compile_raster_mapping(result.mappings, data.mapping);
                             for (std::uint32_t corner = 0; corner != 4; ++corner) {
                                 const math::Float3 value = texture.value_kind == scene::TextureValueKind::Float ? math::Float3{data.scalars[corner], data.scalars[corner], data.scalars[corner]} : raster_spectrum_rgb(data.spectra[corner]);
-                                compiled.values[corner]   = {value.x, value.y, value.z, texture.value_kind == scene::TextureValueKind::Float ? data.scalars[corner] : 1.0f};
+                                compiled.values[corner]  = {value.x, value.y, value.z, texture.value_kind == scene::TextureValueKind::Float ? data.scalars[corner] : 1.0f};
                             }
                             result.bilerps.push_back(compiled);
                         }
@@ -245,8 +245,8 @@ namespace spectra {
             };
             const auto spectrum = [&texture_handle](std::array<float, 4>& value, std::array<std::uint32_t, 4>& data, const scene::SpectrumParameter& parameter) {
                 const math::Float3 rgb = raster_spectrum_rgb(parameter);
-                value                   = {rgb.x, rgb.y, rgb.z, 0.0f};
-                data[0]                 = texture_handle(parameter.texture);
+                value                  = {rgb.x, rgb.y, rgb.z, 0.0f};
+                data[0]                = texture_handle(parameter.texture);
             };
             const auto material_index = [scene](const scene::MaterialId id) { return static_cast<std::uint32_t>(std::ranges::find(scene.resources.materials, id, &scene::Material::id) - scene.resources.materials.begin()); };
             std::vector<RasterMaterial> result{};
@@ -440,7 +440,7 @@ namespace spectra {
             for (const GpuScenePrimitive& gpu_primitive : renderer.context.gpu_scene.resources.primitives) {
                 const scene::Instance& instance   = scene.resources.instances[gpu_primitive.scene_instance_index];
                 const scene::Prototype& prototype = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
-                const math::Transform transform  = instance.transform * prototype.primitives[gpu_primitive.prototype_primitive_index].transform;
+                const math::Transform transform   = instance.transform * prototype.primitives[gpu_primitive.prototype_primitive_index].transform;
                 transforms.push_back(RasterTransform{{transform.matrix[0], transform.matrix[1], transform.matrix[2], transform.matrix[3]}, {transform.matrix[4], transform.matrix[5], transform.matrix[6], transform.matrix[7]}, {transform.matrix[8], transform.matrix[9], transform.matrix[10], transform.matrix[11]}, {transform.matrix[12], transform.matrix[13], transform.matrix[14], transform.matrix[15]}});
             }
             return transforms;
@@ -513,7 +513,7 @@ namespace spectra {
                 area_light                                            = static_cast<std::uint32_t>(light - scene.resources.lights.begin());
             }
             const std::uint32_t transform_index = static_cast<std::uint32_t>(primitives.size());
-            const std::uint32_t alpha_texture = primitive.alpha.value == 0 ? invalid_raster_index : textures.handles[raster_texture_source_index(scene, primitive.alpha)];
+            const std::uint32_t alpha_texture   = primitive.alpha.value == 0 ? invalid_raster_index : textures.handles[raster_texture_source_index(scene, primitive.alpha)];
             primitives.push_back(RasterPrimitive{transform_index, static_cast<std::uint32_t>(material - scene.resources.materials.begin()), area_light, primitive.reverse_orientation ? 1u : 0u, face_material_offset, static_cast<std::uint32_t>(particle_draw ? 0 : primitive.face_materials.size()), alpha_texture, 0});
         }
         if (primitives.empty()) {
@@ -545,7 +545,7 @@ namespace spectra {
             RasterVolume record{};
             record.bounds_minimum          = {volume.bounds.minimum.x, volume.bounds.minimum.y, volume.bounds.minimum.z, 0.0f};
             record.bounds_maximum          = {volume.bounds.maximum.x, volume.bounds.maximum.y, volume.bounds.maximum.z, 0.0f};
-            const math::Transform inverse = volume.transform.inverse();
+            const math::Transform inverse  = volume.transform.inverse();
             record.inverse_transform_row_0 = {inverse.matrix[0], inverse.matrix[1], inverse.matrix[2], inverse.matrix[3]};
             record.inverse_transform_row_1 = {inverse.matrix[4], inverse.matrix[5], inverse.matrix[6], inverse.matrix[7]};
             record.inverse_transform_row_2 = {inverse.matrix[8], inverse.matrix[9], inverse.matrix[10], inverse.matrix[11]};
@@ -553,11 +553,11 @@ namespace spectra {
                 const math::Float3 sigma_a  = raster_spectrum_rgb(medium->sigma_a);
                 const math::Float3 sigma_s  = raster_spectrum_rgb(medium->sigma_s);
                 const math::Float3 emission = raster_spectrum_rgb(medium->emission);
-                record.sigma_a               = {sigma_a.x, sigma_a.y, sigma_a.z, 0.0f};
-                record.sigma_s               = {sigma_s.x, sigma_s.y, sigma_s.z, 0.0f};
-                record.emission              = {emission.x, emission.y, emission.z, 0.0f};
-                record.scales                = {medium->density_scale, medium->emission_scale, medium->anisotropy, medium->temperature_scale};
-                record.temperature           = {medium->temperature_offset, medium->minimum_emission_temperature, medium->blackbody_emission ? 1.0f : 0.0f, 0.0f};
+                record.sigma_a              = {sigma_a.x, sigma_a.y, sigma_a.z, 0.0f};
+                record.sigma_s              = {sigma_s.x, sigma_s.y, sigma_s.z, 0.0f};
+                record.emission             = {emission.x, emission.y, emission.z, 0.0f};
+                record.scales               = {medium->density_scale, medium->emission_scale, medium->anisotropy, medium->temperature_scale};
+                record.temperature          = {medium->temperature_offset, medium->minimum_emission_temperature, medium->blackbody_emission ? 1.0f : 0.0f, 0.0f};
             }
             VolumeResources gpu_data{};
             gpu_data.volume_id           = volume.id;
@@ -627,7 +627,7 @@ namespace spectra {
                         else
                             return data.radiance;
                     }());
-                    const float scale            = [&]() {
+                    const float scale           = [&]() {
                         if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>)
                             return data.environment.scale;
                         else
@@ -659,9 +659,9 @@ namespace spectra {
             const scene::Light& source                = *std::ranges::find(scene.resources.lights, primitive.area_light, &scene::Light::id);
             const scene::DiffuseAreaLight& area_light = std::get<scene::DiffuseAreaLight>(source.data);
             const scene::Geometry& geometry           = *std::ranges::find(scene.resources.geometries, primitive.geometry, &scene::Geometry::id);
-            const math::Transform transform          = instance.transform * primitive.transform;
-            math::Float3 position                    = transform.transform_point(scene::geometry_bounds(geometry).center());
-            math::Float3 normal                      = transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
+            const math::Transform transform           = instance.transform * primitive.transform;
+            math::Float3 position                     = transform.transform_point(scene::geometry_bounds(geometry).center());
+            math::Float3 normal                       = transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
             float area                                = scene::surface_area(geometry);
             if (const scene::TriangleMeshGeometry* mesh = std::get_if<scene::TriangleMeshGeometry>(&geometry.data)) {
                 math::Float3 weighted_position{};
@@ -672,9 +672,9 @@ namespace spectra {
                     const math::Float3 second = transform.transform_point(mesh->positions[mesh->indices[index + 1]]);
                     const math::Float3 third  = transform.transform_point(mesh->positions[mesh->indices[index + 2]]);
                     const math::Float3 cross  = (second - first).cross(third - first);
-                    const float triangle_area  = cross.length() * 0.5f;
-                    weighted_position          = weighted_position + (first + second + third) * (triangle_area / 3.0f);
-                    weighted_normal            = weighted_normal + cross;
+                    const float triangle_area = cross.length() * 0.5f;
+                    weighted_position         = weighted_position + (first + second + third) * (triangle_area / 3.0f);
+                    weighted_normal           = weighted_normal + cross;
                     area += triangle_area;
                 }
                 if (area > 0.0f) position = weighted_position / area;
@@ -683,7 +683,7 @@ namespace spectra {
                 const math::Float3 x = transform.transform_vector({1.0f, 0.0f, 0.0f});
                 const math::Float3 y = transform.transform_vector({0.0f, 1.0f, 0.0f});
                 const math::Float3 z = transform.transform_vector({0.0f, 0.0f, 1.0f});
-                const float scale     = std::holds_alternative<scene::RectangleGeometry>(geometry.data) || std::holds_alternative<scene::DiskGeometry>(geometry.data) ? x.cross(y).length() : (x.cross(y).length() + x.cross(z).length() + y.cross(z).length()) / 3.0f;
+                const float scale    = std::holds_alternative<scene::RectangleGeometry>(geometry.data) || std::holds_alternative<scene::DiskGeometry>(geometry.data) ? x.cross(y).length() : (x.cross(y).length() + x.cross(z).length() + y.cross(z).length()) / 3.0f;
                 area *= scale;
             }
             if (primitive.reverse_orientation) normal = -normal;

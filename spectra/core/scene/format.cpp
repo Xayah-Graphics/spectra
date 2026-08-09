@@ -443,16 +443,18 @@ namespace spectra::scene {
             std::string result{"\""};
             for (const unsigned char character : value) {
                 switch (character) {
-                    case '\\': result += "\\\\"; break;
-                    case '"': result += "\\\""; break;
-                    case '\b': result += "\\b"; break;
-                    case '\f': result += "\\f"; break;
-                    case '\n': result += "\\n"; break;
-                    case '\r': result += "\\r"; break;
-                    case '\t': result += "\\t"; break;
-                    default:
-                        if (character < 0x20) result += std::format("\\u{{{:x}}}", character);
-                        else result.push_back(static_cast<char>(character));
+                case '\\': result += "\\\\"; break;
+                case '"': result += "\\\""; break;
+                case '\b': result += "\\b"; break;
+                case '\f': result += "\\f"; break;
+                case '\n': result += "\\n"; break;
+                case '\r': result += "\\r"; break;
+                case '\t': result += "\\t"; break;
+                default:
+                    if (character < 0x20)
+                        result += std::format("\\u{{{:x}}}", character);
+                    else
+                        result.push_back(static_cast<char>(character));
                 }
             }
             result.push_back('"');
@@ -484,21 +486,21 @@ namespace spectra::scene {
 
         [[nodiscard]] std::string spectrum_encoding_name(const SpectrumEncoding encoding) {
             switch (encoding) {
-                case SpectrumEncoding::RgbAlbedo: return "rgb-albedo";
-                case SpectrumEncoding::RgbUnbounded: return "rgb-unbounded";
-                case SpectrumEncoding::RgbIlluminant: return "rgb-illuminant";
-                case SpectrumEncoding::Constant: return "constant";
-                case SpectrumEncoding::Blackbody: return "blackbody";
-                case SpectrumEncoding::PiecewiseLinear: return "piecewise-linear";
+            case SpectrumEncoding::RgbAlbedo: return "rgb-albedo";
+            case SpectrumEncoding::RgbUnbounded: return "rgb-unbounded";
+            case SpectrumEncoding::RgbIlluminant: return "rgb-illuminant";
+            case SpectrumEncoding::Constant: return "constant";
+            case SpectrumEncoding::Blackbody: return "blackbody";
+            case SpectrumEncoding::PiecewiseLinear: return "piecewise-linear";
             }
             std::unreachable();
         }
 
         [[nodiscard]] std::string spectrum_color_space_name(const SpectrumColorSpace color_space) {
             switch (color_space) {
-                case SpectrumColorSpace::Srgb: return "srgb";
-                case SpectrumColorSpace::Rec2020: return "rec2020";
-                case SpectrumColorSpace::Aces2065_1: return "aces2065-1";
+            case SpectrumColorSpace::Srgb: return "srgb";
+            case SpectrumColorSpace::Rec2020: return "rec2020";
+            case SpectrumColorSpace::Aces2065_1: return "aces2065-1";
             }
             std::unreachable();
         }
@@ -588,7 +590,8 @@ namespace spectra::scene {
                             writer.line(line);
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, BoxGeometry>) {
                             const std::string line = std::format("box {} {}", geometry.id.value, kdl_string(geometry.name));
-                            if (data.bounds == BoxGeometry{}.bounds) writer.line(line);
+                            if (data.bounds == BoxGeometry{}.bounds)
+                                writer.line(line);
                             else {
                                 writer.begin(line);
                                 write_bounds(writer, data.bounds);
@@ -596,7 +599,8 @@ namespace spectra::scene {
                             }
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RectangleGeometry>) {
                             const std::string line = std::format("rectangle {} {}", geometry.id.value, kdl_string(geometry.name));
-                            if (data.minimum == RectangleGeometry{}.minimum && data.maximum == RectangleGeometry{}.maximum) writer.line(line);
+                            if (data.minimum == RectangleGeometry{}.minimum && data.maximum == RectangleGeometry{}.maximum)
+                                writer.line(line);
                             else {
                                 writer.begin(line);
                                 if (data.minimum != RectangleGeometry{}.minimum) writer.line(std::format("minimum {} {}", data.minimum.x, data.minimum.y));
@@ -642,10 +646,14 @@ namespace spectra::scene {
                 std::visit(
                     [&writer, &volume](const auto& data) {
                         std::string kind{};
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DensityGridVolume>) kind = "density-grid";
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RgbGridVolume>) kind = "rgb-grid";
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, NanoVdbVolume>) kind = "nanovdb";
-                        else kind = "procedural-cloud";
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DensityGridVolume>)
+                            kind = "density-grid";
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RgbGridVolume>)
+                            kind = "rgb-grid";
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, NanoVdbVolume>)
+                            kind = "nanovdb";
+                        else
+                            kind = "procedural-cloud";
                         std::string line = std::format("{} {} {}", kind, volume.id.value, kdl_string(volume.name));
                         if constexpr (!std::same_as<std::remove_cvref_t<decltype(data)>, ProceduralCloudVolume>) kdl_string_property(line, "asset", data.asset.content_hash);
                         writer.begin(line);
@@ -677,50 +685,50 @@ namespace spectra::scene {
 
         [[nodiscard]] std::string texture_spectrum_type_name(const TextureSpectrumType type) {
             switch (type) {
-                case TextureSpectrumType::Albedo: return "albedo";
-                case TextureSpectrumType::Unbounded: return "unbounded";
-                case TextureSpectrumType::Illuminant: return "illuminant";
+            case TextureSpectrumType::Albedo: return "albedo";
+            case TextureSpectrumType::Unbounded: return "unbounded";
+            case TextureSpectrumType::Illuminant: return "illuminant";
             }
             std::unreachable();
         }
 
         [[nodiscard]] std::string texture_color_space_name(const TextureColorSpace color_space) {
             switch (color_space) {
-                case TextureColorSpace::Linear: return "linear";
-                case TextureColorSpace::Srgb: return "srgb";
-                case TextureColorSpace::Aces2065_1: return "aces2065-1";
-                case TextureColorSpace::Rec2020: return "rec2020";
+            case TextureColorSpace::Linear: return "linear";
+            case TextureColorSpace::Srgb: return "srgb";
+            case TextureColorSpace::Aces2065_1: return "aces2065-1";
+            case TextureColorSpace::Rec2020: return "rec2020";
             }
             std::unreachable();
         }
 
         [[nodiscard]] std::string texture_wrap_name(const TextureWrapMode wrap) {
             switch (wrap) {
-                case TextureWrapMode::Repeat: return "repeat";
-                case TextureWrapMode::Clamp: return "clamp";
-                case TextureWrapMode::Black: return "black";
+            case TextureWrapMode::Repeat: return "repeat";
+            case TextureWrapMode::Clamp: return "clamp";
+            case TextureWrapMode::Black: return "black";
             }
             std::unreachable();
         }
 
         [[nodiscard]] std::string texture_channel_name(const TextureChannel channel) {
             switch (channel) {
-                case TextureChannel::Red: return "red";
-                case TextureChannel::Green: return "green";
-                case TextureChannel::Blue: return "blue";
-                case TextureChannel::Alpha: return "alpha";
-                case TextureChannel::Average: return "average";
-                case TextureChannel::Luminance: return "luminance";
+            case TextureChannel::Red: return "red";
+            case TextureChannel::Green: return "green";
+            case TextureChannel::Blue: return "blue";
+            case TextureChannel::Alpha: return "alpha";
+            case TextureChannel::Average: return "average";
+            case TextureChannel::Luminance: return "luminance";
             }
             std::unreachable();
         }
 
         [[nodiscard]] std::string texture_filter_name(const TextureFilter filter) {
             switch (filter) {
-                case TextureFilter::Point: return "point";
-                case TextureFilter::Bilinear: return "bilinear";
-                case TextureFilter::Trilinear: return "trilinear";
-                case TextureFilter::Ewa: return "ewa";
+            case TextureFilter::Point: return "point";
+            case TextureFilter::Bilinear: return "bilinear";
+            case TextureFilter::Trilinear: return "trilinear";
+            case TextureFilter::Ewa: return "ewa";
             }
             std::unreachable();
         }
@@ -741,8 +749,10 @@ namespace spectra::scene {
                             std::string line = std::format("constant {} {}", texture.id.value, kdl_string(texture.name));
                             add_texture_properties(line, texture);
                             writer.begin(line);
-                            if (texture.value_kind == TextureValueKind::Float) writer.line(std::format("scalar {}", data.scalar));
-                            else write_spectrum(writer, "spectrum", data.spectrum);
+                            if (texture.value_kind == TextureValueKind::Float)
+                                writer.line(std::format("scalar {}", data.scalar));
+                            else
+                                write_spectrum(writer, "spectrum", data.spectrum);
                             writer.end();
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, ImageTexture>) {
                             std::string line = std::format("image {} {} asset={}", texture.id.value, kdl_string(texture.name), kdl_string(data.asset.content_hash));
@@ -781,8 +791,10 @@ namespace spectra::scene {
                             add_texture_properties(line, texture);
                             writer.begin(line);
                             for (std::uint32_t corner = 0; corner != 4; ++corner) {
-                                if (texture.value_kind == TextureValueKind::Float) writer.line(std::format("corner {} {}", corner, data.scalars[corner]));
-                                else write_spectrum(writer, std::format("corner-{}", corner), data.spectra[corner]);
+                                if (texture.value_kind == TextureValueKind::Float)
+                                    writer.line(std::format("corner {} {}", corner, data.scalars[corner]));
+                                else
+                                    write_spectrum(writer, std::format("corner-{}", corner), data.spectra[corner]);
                             }
                             write_texture_mapping(writer, data.mapping);
                             writer.end();
@@ -1022,11 +1034,11 @@ namespace spectra::scene {
 
         [[nodiscard]] std::string filter_kind_name(const FilterKind kind) {
             switch (kind) {
-                case FilterKind::Box: return "box";
-                case FilterKind::Gaussian: return "gaussian";
-                case FilterKind::Mitchell: return "mitchell";
-                case FilterKind::Sinc: return "sinc";
-                case FilterKind::Triangle: return "triangle";
+            case FilterKind::Box: return "box";
+            case FilterKind::Gaussian: return "gaussian";
+            case FilterKind::Mitchell: return "mitchell";
+            case FilterKind::Sinc: return "sinc";
+            case FilterKind::Triangle: return "triangle";
             }
             std::unreachable();
         }
@@ -1078,23 +1090,23 @@ namespace spectra::scene {
 
         [[nodiscard]] std::string sampler_kind_name(const SamplerKind kind) {
             switch (kind) {
-                case SamplerKind::Independent: return "independent";
-                case SamplerKind::Stratified: return "stratified";
-                case SamplerKind::Halton: return "halton";
-                case SamplerKind::Sobol: return "sobol";
-                case SamplerKind::PaddedSobol: return "padded-sobol";
-                case SamplerKind::ZSobol: return "zsobol";
-                case SamplerKind::Pmj02bn: return "pmj02bn";
+            case SamplerKind::Independent: return "independent";
+            case SamplerKind::Stratified: return "stratified";
+            case SamplerKind::Halton: return "halton";
+            case SamplerKind::Sobol: return "sobol";
+            case SamplerKind::PaddedSobol: return "padded-sobol";
+            case SamplerKind::ZSobol: return "zsobol";
+            case SamplerKind::Pmj02bn: return "pmj02bn";
             }
             std::unreachable();
         }
 
         [[nodiscard]] std::string sampler_randomization_name(const SamplerRandomization randomization) {
             switch (randomization) {
-                case SamplerRandomization::None: return "none";
-                case SamplerRandomization::PermuteDigits: return "permute-digits";
-                case SamplerRandomization::FastOwen: return "fast-owen";
-                case SamplerRandomization::Owen: return "owen";
+            case SamplerRandomization::None: return "none";
+            case SamplerRandomization::PermuteDigits: return "permute-digits";
+            case SamplerRandomization::FastOwen: return "fast-owen";
+            case SamplerRandomization::Owen: return "owen";
             }
             std::unreachable();
         }
@@ -1161,7 +1173,8 @@ namespace spectra::scene {
             for (const Instance& instance : instances) {
                 std::string line = std::format("instance {} {} prototype={}", instance.id.value, kdl_string(instance.name), instance.prototype.value);
                 if (!instance.visible) kdl_bool_property(line, "visible", false);
-                if (instance.transform == math::Transform{}) writer.line(line);
+                if (instance.transform == math::Transform{})
+                    writer.line(line);
                 else {
                     writer.begin(line);
                     write_transform(writer, "transform", instance.transform);
@@ -1173,30 +1186,30 @@ namespace spectra::scene {
 
         [[nodiscard]] std::string light_sampler_name(const LightSamplerKind kind) {
             switch (kind) {
-                case LightSamplerKind::Uniform: return "uniform";
-                case LightSamplerKind::Power: return "power";
-                case LightSamplerKind::Bvh: return "bvh";
+            case LightSamplerKind::Uniform: return "uniform";
+            case LightSamplerKind::Power: return "power";
+            case LightSamplerKind::Bvh: return "bvh";
             }
             std::unreachable();
         }
 
         [[nodiscard]] std::string dynamic_resource_kind_name(const DynamicResourceKind kind) {
             switch (kind) {
-                case DynamicResourceKind::Instance: return "instance";
-                case DynamicResourceKind::Geometry: return "geometry";
-                case DynamicResourceKind::ParticleSet: return "particle-set";
-                case DynamicResourceKind::Volume: return "volume";
+            case DynamicResourceKind::Instance: return "instance";
+            case DynamicResourceKind::Geometry: return "geometry";
+            case DynamicResourceKind::ParticleSet: return "particle-set";
+            case DynamicResourceKind::Volume: return "volume";
             }
             std::unreachable();
         }
 
         [[nodiscard]] std::string dynamic_parameter_kind_name(const DynamicParameterKind kind) {
             switch (kind) {
-                case DynamicParameterKind::Boolean: return "boolean";
-                case DynamicParameterKind::Integer: return "integer";
-                case DynamicParameterKind::Float: return "float";
-                case DynamicParameterKind::Float3: return "float3";
-                case DynamicParameterKind::Enumeration: return "enumeration";
+            case DynamicParameterKind::Boolean: return "boolean";
+            case DynamicParameterKind::Integer: return "integer";
+            case DynamicParameterKind::Float: return "float";
+            case DynamicParameterKind::Float3: return "float3";
+            case DynamicParameterKind::Enumeration: return "enumeration";
             }
             std::unreachable();
         }
@@ -1218,10 +1231,14 @@ namespace spectra::scene {
                 writer.begin(system_line);
                 for (const DynamicParameterSetting& parameter : system.parameters) {
                     std::string parameter_line = std::format("parameter {} {}", kdl_string(parameter.parameter_id), dynamic_parameter_kind_name(parameter.value.kind));
-                    if (parameter.value.kind == DynamicParameterKind::Boolean) parameter_line += std::format(" #{}", parameter.value.integer != 0 ? "true" : "false");
-                    else if (parameter.value.kind == DynamicParameterKind::Integer || parameter.value.kind == DynamicParameterKind::Enumeration) parameter_line += std::format(" {}", parameter.value.integer);
-                    else if (parameter.value.kind == DynamicParameterKind::Float) parameter_line += std::format(" {}", parameter.value.floating[0]);
-                    else parameter_line += std::format(" {} {} {}", parameter.value.floating[0], parameter.value.floating[1], parameter.value.floating[2]);
+                    if (parameter.value.kind == DynamicParameterKind::Boolean)
+                        parameter_line += std::format(" #{}", parameter.value.integer != 0 ? "true" : "false");
+                    else if (parameter.value.kind == DynamicParameterKind::Integer || parameter.value.kind == DynamicParameterKind::Enumeration)
+                        parameter_line += std::format(" {}", parameter.value.integer);
+                    else if (parameter.value.kind == DynamicParameterKind::Float)
+                        parameter_line += std::format(" {}", parameter.value.floating[0]);
+                    else
+                        parameter_line += std::format(" {} {} {}", parameter.value.floating[0], parameter.value.floating[1], parameter.value.floating[2]);
                     writer.line(parameter_line);
                 }
                 for (const DynamicPortBinding& binding : system.bindings) writer.line(std::format("bind {} {} {}", kdl_string(binding.port_id), dynamic_resource_kind_name(binding.resource_kind), binding.resource_id));
@@ -1456,16 +1473,18 @@ namespace spectra::scene {
                     .id   = {kdl_number<std::uint64_t>(node.args()[0])},
                     .name = kdl_value_text(node.args()[1]),
                 };
-                if (node.name() == u8"triangle-mesh") geometry.data = TriangleMeshGeometry{.asset = {.content_hash = kdl_string_property(node, u8"asset")}};
+                if (node.name() == u8"triangle-mesh")
+                    geometry.data = TriangleMeshGeometry{.asset = {.content_hash = kdl_string_property(node, u8"asset")}};
                 else if (node.name() == u8"sphere") {
                     const float radius = kdl_number_property<float>(node, u8"radius", 1.0f);
-                    geometry.data = SphereGeometry{
-                        .radius  = radius,
-                        .z_min   = kdl_number_property<float>(node, u8"z-min", -radius),
-                        .z_max   = kdl_number_property<float>(node, u8"z-max", radius),
-                        .phi_max = kdl_number_property<float>(node, u8"phi-max", 360.0f),
+                    geometry.data      = SphereGeometry{
+                             .radius  = radius,
+                             .z_min   = kdl_number_property<float>(node, u8"z-min", -radius),
+                             .z_max   = kdl_number_property<float>(node, u8"z-max", radius),
+                             .phi_max = kdl_number_property<float>(node, u8"phi-max", 360.0f),
                     };
-                } else if (node.name() == u8"box") geometry.data = BoxGeometry{read_bounds(node, BoxGeometry{}.bounds)};
+                } else if (node.name() == u8"box")
+                    geometry.data = BoxGeometry{read_bounds(node, BoxGeometry{}.bounds)};
                 else if (node.name() == u8"rectangle") {
                     RectangleGeometry rectangle{};
                     if (const kdl::Node* minimum = kdl_child(node, u8"minimum")) rectangle.minimum = read_float2(*minimum);
@@ -1485,7 +1504,8 @@ namespace spectra::scene {
                         .z_max   = kdl_number_property<float>(node, u8"z-max", 1.0f),
                         .phi_max = kdl_number_property<float>(node, u8"phi-max", 360.0f),
                     };
-                else throw std::runtime_error(std::format("Unknown Geometry {}", kdl_text(node.name())));
+                else
+                    throw std::runtime_error(std::format("Unknown Geometry {}", kdl_text(node.name())));
                 resources.geometries.push_back(std::move(geometry));
             }
         }
@@ -1510,14 +1530,14 @@ namespace spectra::scene {
                 };
                 if (node.name() == u8"density-grid") {
                     const kdl::Node& resolution = *kdl_child(node, u8"resolution");
-                    volume.data = DensityGridVolume{
-                        .resolution = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])},
-                        .asset      = {.content_hash = kdl_string_property(node, u8"asset")},
+                    volume.data                 = DensityGridVolume{
+                                        .resolution = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])},
+                                        .asset      = {.content_hash = kdl_string_property(node, u8"asset")},
                     };
                 } else if (node.name() == u8"rgb-grid") {
                     const kdl::Node& resolution = *kdl_child(node, u8"resolution");
                     RgbGridVolume data{
-                        .resolution = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])},
+                        .resolution  = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])},
                         .color_space = SpectrumColorSpace::Srgb,
                         .asset       = {.content_hash = kdl_string_property(node, u8"asset")},
                     };
@@ -1534,7 +1554,8 @@ namespace spectra::scene {
                     if (const kdl::Node* value = kdl_child(node, u8"wispiness")) data.wispiness = kdl_number<float>(value->args()[0]);
                     if (const kdl::Node* value = kdl_child(node, u8"frequency")) data.frequency = kdl_number<float>(value->args()[0]);
                     volume.data = data;
-                } else throw std::runtime_error(std::format("Unknown Volume {}", kdl_text(node.name())));
+                } else
+                    throw std::runtime_error(std::format("Unknown Volume {}", kdl_text(node.name())));
                 resources.volumes.push_back(std::move(volume));
             }
         }
@@ -1545,8 +1566,10 @@ namespace spectra::scene {
                 read_texture_common(texture, node);
                 if (node.name() == u8"constant") {
                     ConstantTexture data{};
-                    if (texture.value_kind == TextureValueKind::Float) data.scalar = kdl_number<float>(kdl_child(node, u8"scalar")->args()[0]);
-                    else data.spectrum = read_spectrum(*kdl_child(node, u8"spectrum"));
+                    if (texture.value_kind == TextureValueKind::Float)
+                        data.scalar = kdl_number<float>(kdl_child(node, u8"scalar")->args()[0]);
+                    else
+                        data.spectrum = read_spectrum(*kdl_child(node, u8"spectrum"));
                     texture.data = std::move(data);
                 } else if (node.name() == u8"image") {
                     texture.data = ImageTexture{
@@ -1593,7 +1616,8 @@ namespace spectra::scene {
                         for (std::uint32_t corner = 0; corner != 4; ++corner) data.spectra[corner] = read_spectrum(*kdl_child(node, names[corner]));
                     }
                     texture.data = std::move(data);
-                } else throw std::runtime_error(std::format("Unknown Texture {}", kdl_text(node.name())));
+                } else
+                    throw std::runtime_error(std::format("Unknown Texture {}", kdl_text(node.name())));
                 resources.textures.push_back(std::move(texture));
             }
         }
@@ -1630,7 +1654,8 @@ namespace spectra::scene {
                     .id   = {kdl_number<std::uint64_t>(node.args()[0])},
                     .name = kdl_value_text(node.args()[1]),
                 };
-                if (node.name() == u8"interface") material.data = InterfaceMaterialData{};
+                if (node.name() == u8"interface")
+                    material.data = InterfaceMaterialData{};
                 else if (node.name() == u8"diffuse") {
                     DiffuseMaterialData data{};
                     data.reflectance = read_spectrum(*kdl_child(node, u8"reflectance"));
@@ -1645,15 +1670,15 @@ namespace spectra::scene {
                     material.data = std::move(data);
                 } else if (node.name() == u8"conductor") {
                     ConductorMaterialData data{};
-                    data.optics          = read_conductor_optics(node);
-                    data.distribution    = read_roughness(node);
+                    data.optics       = read_conductor_optics(node);
+                    data.distribution = read_roughness(node);
                     if (const kdl::Node* value = kdl_child(node, u8"remap-roughness")) data.remap_roughness = value->args()[0].as<bool>();
                     read_normal_and_bump(node, data.normal_map, data.bump_map);
                     material.data = std::move(data);
                 } else if (node.name() == u8"dielectric") {
                     DielectricMaterialData data{};
-                    data.eta              = read_spectrum(*kdl_child(node, u8"eta"));
-                    data.distribution     = read_roughness(node);
+                    data.eta          = read_spectrum(*kdl_child(node, u8"eta"));
+                    data.distribution = read_roughness(node);
                     if (const kdl::Node* value = kdl_child(node, u8"remap-roughness")) data.remap_roughness = value->args()[0].as<bool>();
                     read_normal_and_bump(node, data.normal_map, data.bump_map);
                     material.data = std::move(data);
@@ -1690,7 +1715,8 @@ namespace spectra::scene {
                     };
                     if (const kdl::Node* value = kdl_child(node, u8"amount")) data.amount = read_float_parameter(*value);
                     material.data = data;
-                } else throw std::runtime_error(std::format("Unknown Material {}", kdl_text(node.name())));
+                } else
+                    throw std::runtime_error(std::format("Unknown Material {}", kdl_text(node.name())));
                 resources.materials.push_back(std::move(material));
             }
         }
@@ -1723,14 +1749,15 @@ namespace spectra::scene {
                     if (const kdl::Node* value = kdl_child(node, u8"minimum-emission-temperature")) data.minimum_emission_temperature = kdl_number<float>(value->args()[0]);
                     if (const kdl::Node* value = kdl_child(node, u8"blackbody-emission")) data.blackbody_emission = value->args()[0].as<bool>();
                     medium.data = std::move(data);
-                } else throw std::runtime_error(std::format("Unknown Medium {}", kdl_text(node.name())));
+                } else
+                    throw std::runtime_error(std::format("Unknown Medium {}", kdl_text(node.name())));
                 resources.media.push_back(std::move(medium));
             }
         }
 
         [[nodiscard]] InfiniteLight read_infinite_light(const kdl::Node& node) {
             InfiniteLight light{};
-            light.radiance = read_spectrum(*kdl_child(node, u8"radiance"));
+            light.radiance  = read_spectrum(*kdl_child(node, u8"radiance"));
             light.transform = read_transform(node);
             if (const kdl::Node* value = kdl_child(node, u8"scale")) light.scale = kdl_number<float>(value->args()[0]);
             if (const kdl::Node* value = kdl_child(node, u8"emission-texture")) light.emission_texture.value = kdl_number<std::uint64_t>(value->args()[0]);
@@ -1771,7 +1798,8 @@ namespace spectra::scene {
                     if (const kdl::Node* value = kdl_child(node, u8"power")) data.power = kdl_number<float>(value->args()[0]);
                     if (const kdl::Node* value = kdl_child(node, u8"emission-texture")) data.emission_texture.value = kdl_number<std::uint64_t>(value->args()[0]);
                     light.data = std::move(data);
-                } else if (node.name() == u8"infinite") light.data = read_infinite_light(node);
+                } else if (node.name() == u8"infinite")
+                    light.data = read_infinite_light(node);
                 else if (node.name() == u8"portal-infinite") {
                     PortalInfiniteLight data{.environment = read_infinite_light(*kdl_child(node, u8"environment"))};
                     for (const kdl::Node& portal : node.children())
@@ -1781,7 +1809,8 @@ namespace spectra::scene {
                             data.portals.push_back(corners);
                         }
                     light.data = std::move(data);
-                } else throw std::runtime_error(std::format("Unknown Light {}", kdl_text(node.name())));
+                } else
+                    throw std::runtime_error(std::format("Unknown Light {}", kdl_text(node.name())));
                 resources.lights.push_back(std::move(light));
             }
         }
@@ -1815,7 +1844,8 @@ namespace spectra::scene {
                     if (const kdl::Node* value = kdl_child(node, u8"near-plane")) data.near_plane = kdl_number<float>(value->args()[0]);
                     if (const kdl::Node* value = kdl_child(node, u8"far-plane")) data.far_plane = kdl_number<float>(value->args()[0]);
                     camera.data = data;
-                } else throw std::runtime_error(std::format("Unknown Camera {}", kdl_text(node.name())));
+                } else
+                    throw std::runtime_error(std::format("Unknown Camera {}", kdl_text(node.name())));
                 resources.cameras.push_back(std::move(camera));
             }
         }
@@ -1832,18 +1862,18 @@ namespace spectra::scene {
         void read_films(SceneResources& resources, const kdl::Node& group) {
             for (const kdl::Node& node : group.children()) {
                 Film film{
-                    .id           = {kdl_number<std::uint64_t>(node.args()[0])},
-                    .name         = kdl_value_text(node.args()[1]),
-                    .exposure     = kdl_number_property<float>(node, u8"exposure", 0.0f),
-                    .iso          = kdl_number_property<float>(node, u8"iso", 100.0f),
-                    .color_space  = read_spectrum_color_space(kdl_string_property(node, u8"color-space", "srgb")),
-                    .gbuffer      = kdl_bool_property(node, u8"gbuffer", false),
+                    .id                   = {kdl_number<std::uint64_t>(node.args()[0])},
+                    .name                 = kdl_value_text(node.args()[1]),
+                    .exposure             = kdl_number_property<float>(node, u8"exposure", 0.0f),
+                    .iso                  = kdl_number_property<float>(node, u8"iso", 100.0f),
+                    .color_space          = read_spectrum_color_space(kdl_string_property(node, u8"color-space", "srgb")),
+                    .gbuffer              = kdl_bool_property(node, u8"gbuffer", false),
                     .gbuffer_camera_space = kdl_bool_property(node, u8"gbuffer-camera-space", true),
                 };
                 if (const kdl::Value* value = kdl_property(node, u8"maximum-component")) film.maximum_component_value = kdl_number<float>(*value);
                 const kdl::Node& resolution = *kdl_child(node, u8"resolution");
-                film.resolution   = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1])};
-                film.pixel_maximum = film.resolution;
+                film.resolution             = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1])};
+                film.pixel_maximum          = film.resolution;
                 if (const kdl::Node* range = kdl_child(node, u8"pixel-range")) {
                     film.pixel_minimum = {kdl_number<std::uint32_t>(range->args()[0]), kdl_number<std::uint32_t>(range->args()[1])};
                     film.pixel_maximum = {kdl_number<std::uint32_t>(range->args()[2]), kdl_number<std::uint32_t>(range->args()[3])};
@@ -1981,9 +2011,12 @@ namespace spectra::scene {
                             .parameter_id = kdl_value_text(child.args()[0]),
                         };
                         parameter.value.kind = read_dynamic_parameter_kind(kdl_value_text(child.args()[1]));
-                        if (parameter.value.kind == DynamicParameterKind::Boolean) parameter.value.integer = child.args()[2].as<bool>() ? 1 : 0;
-                        else if (parameter.value.kind == DynamicParameterKind::Integer || parameter.value.kind == DynamicParameterKind::Enumeration) parameter.value.integer = kdl_number<std::int64_t>(child.args()[2]);
-                        else if (parameter.value.kind == DynamicParameterKind::Float) parameter.value.floating[0] = kdl_number<double>(child.args()[2]);
+                        if (parameter.value.kind == DynamicParameterKind::Boolean)
+                            parameter.value.integer = child.args()[2].as<bool>() ? 1 : 0;
+                        else if (parameter.value.kind == DynamicParameterKind::Integer || parameter.value.kind == DynamicParameterKind::Enumeration)
+                            parameter.value.integer = kdl_number<std::int64_t>(child.args()[2]);
+                        else if (parameter.value.kind == DynamicParameterKind::Float)
+                            parameter.value.floating[0] = kdl_number<double>(child.args()[2]);
                         else
                             for (std::uint32_t component = 0; component != 3; ++component) parameter.value.floating[component] = kdl_number<double>(child.args()[component + 2]);
                         system.parameters.push_back(std::move(parameter));
@@ -2011,7 +2044,7 @@ namespace spectra::scene {
             if (!stream) throw std::runtime_error(std::format("Failed to open Spectra scene: {}", path.string()));
             const std::string text{std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
             const kdl::Document document = kdl::parse({reinterpret_cast<const char8_t*>(text.data()), text.size()}, kdl::KdlVersion::Kdl_2);
-            const kdl::Node& root         = document.nodes()[0];
+            const kdl::Node& root        = document.nodes()[0];
             Scene scene{
                 .format_version = kdl_number<std::uint32_t>(root.args()[0]),
                 .name           = kdl_value_text(root.args()[1]),
@@ -2026,20 +2059,34 @@ namespace spectra::scene {
                     scene.transport.maximum_depth = kdl_number_property<std::uint32_t>(node, u8"maximum-depth", 5);
                     scene.transport.light_sampler = read_light_sampler(kdl_string_property(node, u8"light-sampler", "bvh"));
                     scene.transport.regularize    = kdl_bool_property(node, u8"regularize", false);
-                } else if (node.name() == u8"geometries") read_geometries(scene.resources, node);
-                else if (node.name() == u8"particle-sets") read_particle_sets(scene.resources, node);
-                else if (node.name() == u8"volumes") read_volumes(scene.resources, node);
-                else if (node.name() == u8"textures") read_textures(scene.resources, node);
-                else if (node.name() == u8"materials") read_materials(scene.resources, node);
-                else if (node.name() == u8"media") read_media(scene.resources, node);
-                else if (node.name() == u8"lights") read_lights(scene.resources, node);
-                else if (node.name() == u8"cameras") read_cameras(scene.resources, node);
-                else if (node.name() == u8"films") read_films(scene.resources, node);
-                else if (node.name() == u8"samplers") read_samplers(scene.resources, node);
-                else if (node.name() == u8"prototypes") read_prototypes(scene.resources, node);
-                else if (node.name() == u8"instances") read_instances(scene.resources, node);
-                else if (node.name() == u8"dynamics") scene.dynamic_setup = read_dynamics(node);
-                else throw std::runtime_error(std::format("Unknown Spectra scene section {}", kdl_text(node.name())));
+                } else if (node.name() == u8"geometries")
+                    read_geometries(scene.resources, node);
+                else if (node.name() == u8"particle-sets")
+                    read_particle_sets(scene.resources, node);
+                else if (node.name() == u8"volumes")
+                    read_volumes(scene.resources, node);
+                else if (node.name() == u8"textures")
+                    read_textures(scene.resources, node);
+                else if (node.name() == u8"materials")
+                    read_materials(scene.resources, node);
+                else if (node.name() == u8"media")
+                    read_media(scene.resources, node);
+                else if (node.name() == u8"lights")
+                    read_lights(scene.resources, node);
+                else if (node.name() == u8"cameras")
+                    read_cameras(scene.resources, node);
+                else if (node.name() == u8"films")
+                    read_films(scene.resources, node);
+                else if (node.name() == u8"samplers")
+                    read_samplers(scene.resources, node);
+                else if (node.name() == u8"prototypes")
+                    read_prototypes(scene.resources, node);
+                else if (node.name() == u8"instances")
+                    read_instances(scene.resources, node);
+                else if (node.name() == u8"dynamics")
+                    scene.dynamic_setup = read_dynamics(node);
+                else
+                    throw std::runtime_error(std::format("Unknown Spectra scene section {}", kdl_text(node.name())));
             }
             return scene;
         }
@@ -2093,7 +2140,7 @@ namespace spectra::scene {
                 else
                     copy_asset(image->asset, ".texture", source_root, package_root);
             }
-        const std::string document = serialize_scene_kdl(package);
+        const std::string document           = serialize_scene_kdl(package);
         std::filesystem::path temporary_path = path;
         temporary_path += ".tmp";
         std::ofstream stream{

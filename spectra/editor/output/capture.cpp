@@ -12,11 +12,11 @@ namespace spectra {
     void FrameCapture::request(const CaptureFormat image_format, const scene::Film& film, const std::filesystem::path& scene_path) {
         if (image_format == CaptureFormat::GBufferExr && (!this->context.renderers.gbuffer_available() || !film.gbuffer)) throw std::runtime_error("GBuffer EXR capture requires an active GBuffer Film");
         const std::chrono::sys_time<std::chrono::milliseconds> now = std::chrono::floor<std::chrono::milliseconds>(std::chrono::system_clock::now());
-        const std::chrono::sys_seconds second                       = std::chrono::floor<std::chrono::seconds>(now);
-        const std::string timestamp                                 = std::format("{:%Y-%m-%d_%H-%M-%S}-{:03}Z", second, (now - second).count());
-        const std::string_view renderer_name                        = this->context.renderers.active_descriptor().id;
-        const std::string_view extension                            = image_format == CaptureFormat::Png ? "png" : "exr";
-        const std::filesystem::path directory                       = this->output_directory / "captures" / scene_path.stem();
+        const std::chrono::sys_seconds second                      = std::chrono::floor<std::chrono::seconds>(now);
+        const std::string timestamp                                = std::format("{:%Y-%m-%d_%H-%M-%S}-{:03}Z", second, (now - second).count());
+        const std::string_view renderer_name                       = this->context.renderers.active_descriptor().id;
+        const std::string_view extension                           = image_format == CaptureFormat::Png ? "png" : "exr";
+        const std::filesystem::path directory                      = this->output_directory / "captures" / scene_path.stem();
         std::filesystem::create_directories(directory);
         this->capture.pending = PendingCapture{
             image_format,
