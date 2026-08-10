@@ -27,6 +27,7 @@ int main(int argument_count, char** raw_arguments) {
 
         std::filesystem::path scene_path{};
         std::optional<std::string> renderer{};
+        std::optional<std::string> raster_display_mode{};
         std::filesystem::path output_base{};
         std::optional<std::filesystem::path> gbuffer_output_path{};
 #if defined(SPECTRA_HAS_EDITOR)
@@ -34,7 +35,7 @@ int main(int argument_count, char** raw_arguments) {
 #endif
 
         xayah::util::Command command{"Spectra scene visualization and physically based rendering."};
-        command | xayah::util::positional({.name = "scene", .description = "Scene file to open or render."}, scene_path) | xayah::util::option({.long_name = "renderer", .value_name = "RENDERER", .description = "Select rasterizer or pathtracer.", .show_default = false}, renderer) | xayah::util::option({.long_name = "output", .value_name = "BASE", .description = "Override the default output/renders/<scene>/<renderer> basename.", .show_default = false}, output_base) | xayah::util::option({.long_name = "gbuffer-output", .value_name = "IMAGE", .description = "Optional GBuffer EXR output.", .show_default = false}, gbuffer_output_path);
+        command | xayah::util::positional({.name = "scene", .description = "Scene file to open or render."}, scene_path) | xayah::util::option({.long_name = "renderer", .value_name = "RENDERER", .description = "Select rasterizer or pathtracer.", .show_default = false}, renderer) | xayah::util::option({.long_name = "raster-mode", .value_name = "MODE", .description = "Select material, wireframe, or material-wireframe Raster display.", .show_default = false}, raster_display_mode) | xayah::util::option({.long_name = "output", .value_name = "BASE", .description = "Override the default renders/<scene>/<renderer> basename.", .show_default = false}, output_base) | xayah::util::option({.long_name = "gbuffer-output", .value_name = "IMAGE", .description = "Optional GBuffer EXR output.", .show_default = false}, gbuffer_output_path);
 #if defined(SPECTRA_HAS_EDITOR)
         command | xayah::util::option({.long_name = "gui", .description = "Open the visualization UI."}, gui);
 #endif
@@ -55,14 +56,16 @@ int main(int argument_count, char** raw_arguments) {
 #if defined(SPECTRA_HAS_EDITOR)
         if (gui) {
             const std::optional<std::filesystem::path> initial_scene = scene_path.empty() ? std::nullopt : std::optional{scene_path};
-            spectra::run_editor({.scene_path = initial_scene, .renderer = std::move(renderer)}, shader_directory, pathtracer_directory, output_directory);
+            spectra::run_editor({.scene_path = initial_scene, .renderer = std::move(renderer), .raster_display_mode = raster_display_mode.value_or("material")}, shader_directory, pathtracer_directory, output_directory);
             return 0;
         }
 #endif
 
-        const std::string selected_renderer = renderer.value_or("rasterizer");
+        const std::string selected_renderer            = renderer.value_or("rasterizer");
+        const std::string selected_raster_display_mode = raster_display_mode.value_or("material");
         if (output_base.empty()) {
-            output_base = output_directory / "renders" / scene_path.stem() / selected_renderer;
+            const std::string output_name = selected_renderer == "rasterizer" && selected_raster_display_mode != "material" ? std::format("{}-{}", selected_renderer, selected_raster_display_mode) : selected_renderer;
+            output_base                   = output_directory / "renders" / scene_path.stem() / output_name;
             std::filesystem::create_directories(output_base.parent_path());
         }
         std::filesystem::path png_output_path = output_base;
@@ -75,6 +78,7 @@ int main(int argument_count, char** raw_arguments) {
                 .png_output_path     = png_output_path,
                 .linear_output_path  = linear_output_path,
                 .renderer            = selected_renderer,
+                .raster_display_mode = selected_raster_display_mode,
                 .gbuffer_output_path = gbuffer_output_path,
             },
             shader_directory, pathtracer_directory);

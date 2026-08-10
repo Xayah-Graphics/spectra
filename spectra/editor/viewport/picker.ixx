@@ -1,6 +1,6 @@
 export module spectra.editor:viewport.picker;
 
-import spectra.render;
+import spectra.render.scene;
 import spectra.runtime;
 import spectra.scene;
 import std;
@@ -13,15 +13,12 @@ namespace spectra {
             float normalized_y{};
             bool select{};
             bool additive{};
-            std::optional<std::uint64_t> debug_object_id{};
-            bool debug_xray{};
         };
 
         struct PickResult {
             bool ready{};
             std::optional<std::uint32_t> acceleration_instance_index{};
-            std::optional<std::uint64_t> debug_object_id{};
-            bool debug_xray{};
+            std::optional<std::uint32_t> diagnostic_pick_index{};
             bool select{};
             bool additive{};
         };
@@ -42,10 +39,10 @@ namespace spectra {
 
         void initialize(scene::SceneView scene);
         void destroy_scene() noexcept;
-        void synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        void submit_pick(float normalized_x, float normalized_y, bool select, bool additive, std::optional<std::uint64_t> debug_object_id, bool debug_xray) noexcept;
+        void synchronize(scene::SceneView scene, GpuSceneUpdate gpu_update, const vk::raii::CommandBuffer& command_buffer);
+        void submit_pick(float normalized_x, float normalized_y, bool select, bool additive) noexcept;
         [[nodiscard]] PickResult take_pick_result(std::uint32_t frame_slot_index) noexcept;
-        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Camera& camera);
+        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Camera& camera, const GpuImage* diagnostic_pick_image);
 
         struct {
             VulkanRuntime& runtime;

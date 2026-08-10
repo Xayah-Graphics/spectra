@@ -5,16 +5,16 @@ import std;
 import vulkan;
 
 namespace spectra {
-    FrameCapture::FrameCapture(VulkanRuntime& runtime, Renderers& renderers, DisplayRenderer& display, std::filesystem::path output_directory) noexcept : context{runtime, renderers, display}, output_directory{std::move(output_directory)} {
+    FrameCapture::FrameCapture(VulkanRuntime& runtime, RenderEngine& render_engine, DisplayPass& display, std::filesystem::path output_directory) noexcept : context{runtime, render_engine, display}, output_directory{std::move(output_directory)} {
         this->capture.slots.resize(VulkanFrames::frames_in_flight);
     }
 
     void FrameCapture::request(const CaptureFormat image_format, const scene::Film& film, const std::filesystem::path& scene_path) {
-        if (image_format == CaptureFormat::GBufferExr && (!this->context.renderers.gbuffer_available() || !film.gbuffer)) throw std::runtime_error("GBuffer EXR capture requires an active GBuffer Film");
+        if (image_format == CaptureFormat::GBufferExr && (!this->context.render_engine.gbuffer_available() || !film.gbuffer)) throw std::runtime_error("GBuffer EXR capture requires an active GBuffer Film");
         const std::chrono::sys_time<std::chrono::milliseconds> now = std::chrono::floor<std::chrono::milliseconds>(std::chrono::system_clock::now());
         const std::chrono::sys_seconds second                      = std::chrono::floor<std::chrono::seconds>(now);
         const std::string timestamp                                = std::format("{:%Y-%m-%d_%H-%M-%S}-{:03}Z", second, (now - second).count());
-        const std::string_view renderer_name                       = this->context.renderers.active_descriptor().id;
+        const std::string_view renderer_name                       = this->context.render_engine.active_descriptor().id;
         const std::string_view extension                           = image_format == CaptureFormat::Png ? "png" : "exr";
         const std::filesystem::path directory                      = this->output_directory / "captures" / scene_path.stem();
         std::filesystem::create_directories(directory);
@@ -34,7 +34,7 @@ namespace spectra {
         const std::filesystem::path output_path = slot.pending->output_path;
         try {
             if (slot.pending->include_gbuffer) {
-                write_gbuffer_exr(output_path, this->context.renderers.readback(), slot.pending->color_space, slot.pending->gbuffer_camera_space);
+                write_gbuffer_exr(output_path, this->context.render_engine.readback(), slot.pending->color_space, slot.pending->gbuffer_camera_space);
             } else if (slot.pending->image_format == CaptureFormat::Png) {
                 const std::size_t pixel_count = static_cast<std::size_t>(slot.pending->image_extent.width) * slot.pending->image_extent.height;
                 write_png(output_path, std::span{static_cast<const std::uint8_t*>(slot.readback_buffer.mapped), pixel_count * 4u}, slot.pending->image_extent);

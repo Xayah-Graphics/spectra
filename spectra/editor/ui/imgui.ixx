@@ -5,7 +5,7 @@ module;
 export module spectra.editor:ui.imgui;
 
 import :platform.window;
-import spectra.display;
+import spectra.render.display;
 import spectra.runtime;
 import std;
 import vulkan;
@@ -21,7 +21,7 @@ namespace spectra {
             std::size_t index_capacity{};
         };
 
-        ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, DisplayRenderer& display, std::filesystem::path shader_directory) noexcept;
+        ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, DisplayPass& display, std::filesystem::path shader_directory) noexcept;
         ~ImGuiBackend();
 
         ImGuiBackend(const ImGuiBackend&)            = delete;
@@ -38,7 +38,7 @@ namespace spectra {
         struct {
             WindowPlatform& platform;
             VulkanRuntime& runtime;
-            DisplayRenderer& display;
+            DisplayPass& display;
             std::filesystem::path shader_directory{};
         } context;
 

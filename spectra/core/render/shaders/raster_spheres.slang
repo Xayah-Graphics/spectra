@@ -1,4 +1,4 @@
-module raster_particles;
+module raster_spheres;
 
 import raster_scene;
 
@@ -11,12 +11,13 @@ struct RasterVertex {
     float3 emission : COLOR0;
     float3 color_modifier : COLOR1;
     nointerpolation uint material : MATERIAL;
-    nointerpolation uint particle : PARTICLE;
-    nointerpolation float3 particle_center : POSITION1;
-    nointerpolation float particle_radius : RADIUS;
+    nointerpolation uint sphere : SPHERE;
+    nointerpolation float3 sphere_center : POSITION1;
+    nointerpolation float sphere_radius : RADIUS;
+    noperspective float3 wire_coordinates : TEXCOORD1;
 }
 
-struct RasterParticlePushData {
+struct RasterSpherePushData {
     DescriptorHandle<StructuredBuffer<float3>> positions;
     DescriptorHandle<StructuredBuffer<float>> radii;
     DescriptorHandle<StructuredBuffer<float3>> colors;
@@ -36,7 +37,7 @@ struct RasterParticlePushData {
 }
 
 [vk::push_constant]
-uniform RasterParticlePushData push_data;
+uniform RasterSpherePushData push_data;
 
 float3 transform_position(
     RasterTransform transform,
@@ -80,30 +81,6 @@ float3 transform_normal(
                 normal.y +
             cross(column_0, column_1) *
                 normal.z);
-}
-
-float2 sphere_texture_coordinates(
-    float3 direction) {
-    float phi =
-        atan2(
-            direction.y,
-            direction.x);
-    if (phi < 0.0)
-        phi +=
-            2.0 *
-            3.14159265358979323846;
-    return float2(
-        phi /
-            (
-                2.0 *
-                3.14159265358979323846
-            ),
-        acos(
-            clamp(
-                direction.z,
-                -1.0,
-                1.0)) /
-            3.14159265358979323846);
 }
 
 float3 blackbody(float temperature) {
@@ -161,22 +138,22 @@ float3 blackbody(float temperature) {
 [shader("mesh")]
 [outputtopology("triangle")]
 [numthreads(32, 1, 1)]
-void raster_particles(
+void raster_spheres(
     uint3 group_id : SV_GroupID,
     uint thread_id : SV_GroupThreadID,
     out vertices RasterVertex vertices[128],
     out indices uint3 triangles[64]) {
-    const uint first_particle =
+    const uint first_sphere =
         group_id.x * 32;
-    const uint emitted_particles =
+    const uint emitted_spheres =
         min(
             32,
             push_data.element_count -
-                first_particle);
+                first_sphere);
     SetMeshOutputCounts(
-        emitted_particles * 4,
-        emitted_particles * 2);
-    if (thread_id >= emitted_particles) return;
+        emitted_spheres * 4,
+        emitted_spheres * 2);
+    if (thread_id >= emitted_spheres) return;
 
     StructuredBuffer<float3> positions =
         push_data.positions;
@@ -194,7 +171,7 @@ void raster_particles(
         bindings.primitives;
     StructuredBuffer<RasterTransform> transforms =
         bindings.transforms;
-    StructuredBuffer<uint> particle_materials =
+    StructuredBuffer<uint> sphere_materials =
         push_data.materials;
     StructuredBuffer<RasterAreaLight> area_lights =
         bindings.area_lights;
@@ -204,17 +181,17 @@ void raster_particles(
     const RasterTransform transform =
         transforms[
             primitive.transform_index];
-    const uint particle =
-        first_particle +
+    const uint sphere =
+        first_sphere +
         thread_id;
     const uint material =
         (push_data.attributes.x & 8) == 0
             ? primitive.material_index
-            : particle_materials[particle];
+            : sphere_materials[sphere];
     const float3 center =
-        positions[particle];
+        positions[sphere];
     const float radius =
-        radii[particle];
+        radii[sphere];
     float3 color_modifier =
         float3(1.0);
     if (
@@ -223,7 +200,7 @@ void raster_particles(
             2
         ) != 0)
         color_modifier =
-            colors[particle];
+            colors[sphere];
     const float3 world_center =
         transform_position(
             transform,
@@ -316,7 +293,7 @@ void raster_particles(
                       ) != 0
                           ? blackbody(
                                 temperatures[
-                                    particle]) *
+                                    sphere]) *
                                 color_modifier
                           : float3(0.0)
                   )
@@ -327,11 +304,13 @@ void raster_particles(
             color_modifier;
         output.material =
             material;
-        output.particle = 1;
-        output.particle_center =
+        output.sphere = 1;
+        output.sphere_center =
             world_center;
-        output.particle_radius =
+        output.sphere_radius =
             world_radius;
+        output.wire_coordinates =
+            float3(1.0);
         vertices[
             first_vertex +
             vertex] = output;

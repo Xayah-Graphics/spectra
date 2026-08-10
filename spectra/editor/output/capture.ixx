@@ -1,7 +1,8 @@
 export module spectra.editor:output.capture;
 
-import spectra.display;
+import spectra.render.display;
 import spectra.render;
+import spectra.render.capture;
 import spectra.runtime;
 import spectra.scene;
 import std;
@@ -29,7 +30,7 @@ namespace spectra {
             std::optional<PendingCapture> pending{};
         };
 
-        FrameCapture(VulkanRuntime& runtime, Renderers& renderers, DisplayRenderer& display, std::filesystem::path output_directory) noexcept;
+        FrameCapture(VulkanRuntime& runtime, RenderEngine& render_engine, DisplayPass& display, std::filesystem::path output_directory) noexcept;
 
         void request(CaptureFormat image_format, const scene::Film& film, const std::filesystem::path& scene_path);
         [[nodiscard]] std::optional<std::expected<std::filesystem::path, std::string>> begin_frame(std::uint32_t frame_slot_index);
@@ -37,8 +38,8 @@ namespace spectra {
 
         struct {
             VulkanRuntime& runtime;
-            Renderers& renderers;
-            DisplayRenderer& display;
+            RenderEngine& render_engine;
+            DisplayPass& display;
         } context;
 
         struct {

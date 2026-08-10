@@ -101,7 +101,7 @@ namespace {
         return entries;
     }
 
-    [[nodiscard]] std::string generate_abi_module(slang::ISession& session, const std::vector<std::array<std::string, 2>>& type_entries) {
+    [[nodiscard]] std::string generate_abi_module(slang::ISession& session, const std::vector<std::array<std::string, 2>>& type_entries, const std::string_view module_name, const std::string_view namespace_name) {
         std::map<std::string, slang::IModule*> modules{};
         std::map<std::string, Slang::ComPtr<slang::IComponentType>> linked_modules{};
         std::map<std::string, slang::ProgramLayout*> program_layouts{};
@@ -144,10 +144,10 @@ namespace {
         std::ostringstream output{};
         output << "module;\n"
                << "#include <cstddef>\n\n"
-               << "export module spectra.path_tracer.abi;\n\n"
+               << "export module " << module_name << ";\n\n"
                << "export import spectra.runtime;\n"
                << "import std;\n\n"
-               << "namespace spectra::path_tracer {\n";
+               << "namespace " << namespace_name << " {\n";
         for (const ReflectedType& type : types) {
             output << "    export struct alignas(" << type.alignment << ") " << type.name << " {\n";
             for (const ReflectedField& field : type.fields) output << "        " << field.cpp_type << " " << field.name << "{};\n";
@@ -159,7 +159,7 @@ namespace {
             for (const ReflectedField& field : type.fields) output << "    static_assert(offsetof(" << type.name << ", " << field.name << ") == " << field.offset << ");\n";
             output << "\n";
         }
-        output << "} // namespace spectra::path_tracer\n";
+        output << "} // namespace " << namespace_name << "\n";
         return std::move(output).str();
     }
 
@@ -235,7 +235,7 @@ namespace {
 
 int main(const int argument_count, const char* const* arguments) {
     try {
-        if (argument_count < 7) throw std::runtime_error("Usage: spectra_shader_compiler <abi.types> <abi.ixx> <shader_entries.txt> <output-directory> <spirv-val> <shader-search-path>...");
+        if (argument_count < 9) throw std::runtime_error("Usage: spectra_shader_compiler <path-abi.types> <path-abi.ixx> <plugin-abi.types> <plugin-abi.ixx> <shader_entries.txt> <output-directory> <spirv-val> <shader-search-path>...");
 
         Slang::ComPtr<slang::IGlobalSession> global_session{};
         require_slang_success(slang::createGlobalSession(global_session.writeRef()), "Creating Slang global session");
@@ -252,8 +252,8 @@ int main(const int argument_count, const char* const* arguments) {
             "-spirv-unified-descriptor-heap-stride",
         };
         std::vector<const char*> search_paths{};
-        search_paths.reserve(argument_count - 6);
-        for (int index = 6; index != argument_count; ++index) search_paths.push_back(arguments[index]);
+        search_paths.reserve(argument_count - 8);
+        for (int index = 8; index != argument_count; ++index) search_paths.push_back(arguments[index]);
         slang::TargetDesc target_description{
             .format  = SLANG_SPIRV,
             .profile = global_session->findProfile("sm_6_6"),
@@ -280,11 +280,13 @@ int main(const int argument_count, const char* const* arguments) {
         Slang::ComPtr<slang::ISession> optimized_session{};
         require_slang_success(global_session->createSession(optimized_session_description, optimized_session.writeRef()), "Creating optimized Slang compile session");
 
-        const std::string abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[1]));
-        write_if_different(arguments[2], abi_module.data(), abi_module.size(), "generated shader ABI module");
+        const std::string path_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[1]), "spectra.render.pathtracer.abi", "spectra::pathtracer");
+        write_if_different(arguments[2], path_abi_module.data(), path_abi_module.size(), "generated Path Tracer shader ABI module");
+        const std::string plugin_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[3]), "spectra.plugin.abi", "spectra::plugin_abi");
+        write_if_different(arguments[4], plugin_abi_module.data(), plugin_abi_module.size(), "generated Plugin shader ABI module");
 
-        const std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[3]);
-        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.output_name == "path_evaluate_surface_textures" ? *default_session : *optimized_session, entry, arguments[4], arguments[5]);
+        const std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[5]);
+        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.output_name == "path_evaluate_surface_textures" ? *default_session : *optimized_session, entry, arguments[6], arguments[7]);
     } catch (const std::exception& error) {
         std::println(std::cerr, "{}", error.what());
         return 1;

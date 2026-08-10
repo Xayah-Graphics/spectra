@@ -32,9 +32,9 @@ namespace spectra::scene {
         friend auto operator<=>(const GeometryId&, const GeometryId&) = default;
     };
 
-    export struct ParticleSetId {
+    export struct SphereSetId {
         std::uint64_t value{};
-        friend auto operator<=>(const ParticleSetId&, const ParticleSetId&) = default;
+        friend auto operator<=>(const SphereSetId&, const SphereSetId&) = default;
     };
 
     export struct VolumeId {
@@ -152,22 +152,18 @@ namespace spectra::scene {
 
     export [[nodiscard]] math::Bounds3 geometry_bounds(const Geometry& geometry) noexcept;
     export [[nodiscard]] float surface_area(const Geometry& geometry) noexcept;
+    export [[nodiscard]] float surface_area(const Geometry& geometry, const math::Transform& transform) noexcept;
 
-    export struct ParticleSet {
-        ParticleSetId id{};
+    export struct SphereSet {
+        SphereSetId id{};
         std::string name{};
         ResourceRevision revision{};
         AssetReference asset{};
         std::vector<math::Float3> positions{};
         std::vector<float> radii{};
-        std::vector<math::Float3> velocities{};
-        std::vector<math::Float3> colors{};
-        std::vector<float> temperatures{};
-        MaterialId material{};
-        std::vector<MaterialId> particle_materials{};
     };
 
-    export [[nodiscard]] math::Bounds3 particle_bounds(const ParticleSet& particles) noexcept;
+    export [[nodiscard]] math::Bounds3 sphere_set_bounds(const SphereSet& spheres) noexcept;
 
     export struct DensityGridVolume {
         math::UInt3 resolution{};
@@ -575,7 +571,7 @@ namespace spectra::scene {
 
     export struct Primitive {
         GeometryId geometry{};
-        ParticleSetId particles{};
+        SphereSetId spheres{};
         VolumeId volume{};
         MaterialId material{};
         LightId area_light{};
@@ -723,18 +719,61 @@ namespace spectra::scene {
     };
 
 
-    export inline constexpr std::uint32_t current_scene_format_version = 22;
+    export inline constexpr std::uint32_t current_scene_format_version = 24;
 
     export struct DynamicSystemId {
         std::string value{};
         friend auto operator<=>(const DynamicSystemId&, const DynamicSystemId&) = default;
     };
 
-    export enum class DynamicResourceKind : std::uint8_t {
-        Instance,
+    export enum class DynamicSceneResourceKind : std::uint8_t {
         Geometry,
-        ParticleSet,
+        SphereSet,
         Volume,
+    };
+
+    export enum class VisualizationViewKind : std::uint8_t {
+        Points,
+        Segments,
+        Curves,
+        Vectors,
+        FieldSlice,
+        FieldVectors,
+        Image,
+        CameraObservations,
+        Frames,
+        Surface,
+    };
+
+    export enum class VisualizationDepthMode : std::uint8_t {
+        Tested,
+        XRay,
+        Overlay,
+    };
+
+    export enum class PointGlyph : std::uint8_t {
+        ScreenDisc,
+        WorldDisc,
+        Sphere,
+        Cross,
+    };
+
+    export enum class PointShading : std::uint8_t {
+        Unlit,
+        Lit,
+    };
+
+    export enum class VisualizationColorSource : std::uint8_t {
+        Element,
+        Uniform,
+        Scalar,
+    };
+
+    export enum class VisualizationColorMap : std::uint8_t {
+        Viridis,
+        Turbo,
+        CoolWarm,
+        Grayscale,
     };
 
     export enum class DynamicParameterKind : std::uint8_t {
@@ -758,11 +797,35 @@ namespace spectra::scene {
         friend auto operator<=>(const DynamicParameterSetting&, const DynamicParameterSetting&) = default;
     };
 
-    export struct DynamicPortBinding {
-        std::string port_id{};
-        DynamicResourceKind resource_kind{DynamicResourceKind::Geometry};
+    export struct DynamicSceneBinding {
+        std::string dataset_id{};
+        DynamicSceneResourceKind resource_kind{DynamicSceneResourceKind::Geometry};
         std::uint64_t resource_id{};
-        friend auto operator<=>(const DynamicPortBinding&, const DynamicPortBinding&) = default;
+        friend auto operator<=>(const DynamicSceneBinding&, const DynamicSceneBinding&) = default;
+    };
+
+    export struct DynamicVisualizationView {
+        std::string dataset_id{};
+        std::string name{};
+        VisualizationViewKind kind{VisualizationViewKind::Segments};
+        VisualizationDepthMode depth_mode{VisualizationDepthMode::Tested};
+        InstanceId anchor{};
+        std::string channel_id{};
+        math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
+        math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
+        float width{1.0f};
+        float scale{1.0f};
+        float slice_position{0.5f};
+        float scalar_minimum{};
+        float scalar_maximum{1.0f};
+        std::uint32_t sampling{8};
+        std::uint32_t slice_axis{2};
+        PointGlyph point_glyph{PointGlyph::ScreenDisc};
+        PointShading point_shading{PointShading::Unlit};
+        VisualizationColorSource color_source{VisualizationColorSource::Element};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        bool visible{true};
+        friend auto operator<=>(const DynamicVisualizationView&, const DynamicVisualizationView&) = default;
     };
 
     export struct DynamicSystem {
@@ -772,7 +835,8 @@ namespace spectra::scene {
         bool enabled{true};
         bool visible{true};
         std::vector<DynamicParameterSetting> parameters{};
-        std::vector<DynamicPortBinding> bindings{};
+        std::vector<DynamicSceneBinding> scene_bindings{};
+        std::vector<DynamicVisualizationView> visualizations{};
         friend auto operator<=>(const DynamicSystem&, const DynamicSystem&) = default;
     };
 
@@ -793,7 +857,7 @@ namespace spectra::scene {
 
     export struct SceneResources {
         std::vector<Geometry> geometries{};
-        std::vector<ParticleSet> particle_sets{};
+        std::vector<SphereSet> sphere_sets{};
         std::vector<Volume> volumes{};
         std::vector<Texture> textures{};
         std::vector<Material> materials{};
@@ -820,8 +884,7 @@ namespace spectra::scene {
         Sampler       = 1 << 9,
         Metadata      = 1 << 10,
         Transport     = 1 << 11,
-        Visualization = 1 << 12,
-        All           = 0x1fff,
+        All           = 0x0fff,
     };
 
     export [[nodiscard]] constexpr SceneChange operator|(const SceneChange left, const SceneChange right) noexcept {

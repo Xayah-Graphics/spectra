@@ -1,7 +1,10 @@
-export module spectra.render:pathtracer;
+export module spectra.render.pathtracer;
 
-export import :common;
-export import spectra.pathtracer.runtime;
+import spectra.render.contract;
+import spectra.render.pathtracer.resources;
+import spectra.render.scene;
+import spectra.runtime;
+import spectra.scene;
 
 import std;
 import vulkan;
@@ -131,10 +134,9 @@ namespace spectra {
     };
 
     export struct PathTracer {
-        static constexpr RendererDescriptor descriptor{"pathtracer", "Path"};
-        static constexpr bool renders_visualizations = false;
+        static constexpr RendererDescriptor descriptor = pathtracer_descriptor;
 
-        PathTracer(VulkanRuntime& runtime, GpuScene& gpu_scene, PathTracerRuntime& pathtracer, scene::SceneView scene);
+        PathTracer(VulkanRuntime& runtime, GpuScene& gpu_scene, PathTracerResources& pathtracer, scene::SceneView scene);
         ~PathTracer();
 
         PathTracer(const PathTracer&)            = delete;
@@ -145,7 +147,7 @@ namespace spectra {
         [[nodiscard]] bool complete_preparation(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void wait_for_preparation();
         [[nodiscard]] PathTracerPreparationProgress preparation_progress() const;
-        void invalidate(scene::SceneChange changes) noexcept;
+        void invalidate(scene::SceneChange changes, GpuSceneUpdate gpu_update) noexcept;
         void prepare(scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer);
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         [[nodiscard]] RenderOutput output() const noexcept;
@@ -157,7 +159,7 @@ namespace spectra {
         struct {
             VulkanRuntime& runtime;
             GpuScene& gpu_scene;
-            PathTracerRuntime& pathtracer;
+            PathTracerResources& pathtracer;
         } context;
 
         struct {
@@ -190,6 +192,7 @@ namespace spectra {
             math::Bounds3 compiled_bounds{};
             std::vector<math::Transform> compiled_instance_transforms{};
             scene::SceneRevision compiled_revision{};
+            std::uint64_t compiled_gpu_structure_revision{};
             bool initialized{};
         } scene;
 
@@ -266,6 +269,8 @@ namespace spectra {
 
         struct {
             scene::SceneChange pending_changes{scene::SceneChange::None};
+            GpuSceneChange pending_gpu_changes{GpuSceneChange::None};
+            std::uint64_t pending_gpu_structure_revision{};
             bool paused{};
             std::uint64_t camera_revision{};
         } control;

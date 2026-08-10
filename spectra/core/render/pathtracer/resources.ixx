@@ -1,38 +1,12 @@
-export module spectra.pathtracer.runtime;
+export module spectra.render.pathtracer.resources;
 
-export import spectra.runtime;
+import spectra.runtime;
+import spectra.render.contract;
 
 import std;
 import vulkan;
 
 namespace spectra {
-    export enum class PathTracerPreparationStage : std::uint8_t {
-        LoadingShaders,
-        CreatingRayTracingModules,
-        CompilingRayTracingPipeline,
-        CreatingComputeShaders,
-        CreatingShaderBindingTable,
-        CompilingSampler,
-        CompilingFilter,
-        CompilingTextures,
-        CompilingMaterials,
-        CompilingMedia,
-        CompilingLights,
-        CompilingGeometry,
-        BuildingLightBvh,
-        AssemblingScene,
-        UploadingScene,
-        AllocatingRenderSession,
-        Ready,
-    };
-
-    export struct PathTracerPreparationProgress {
-        PathTracerPreparationStage stage{PathTracerPreparationStage::LoadingShaders};
-        std::uint32_t completed{};
-        std::uint32_t total{};
-        std::chrono::steady_clock::time_point started{std::chrono::steady_clock::now()};
-    };
-
     export struct PathTracerPreparationState {
         void report(PathTracerPreparationStage stage, std::uint32_t completed = 0, std::uint32_t total = 0);
         [[nodiscard]] PathTracerPreparationProgress snapshot() const;
@@ -53,14 +27,14 @@ namespace spectra {
         AccumulateFilm,
     };
 
-    export struct PathTracerRuntime {
-        PathTracerRuntime(VulkanRuntime& runtime, const std::filesystem::path& resource_directory);
-        ~PathTracerRuntime();
+    export struct PathTracerResources {
+        PathTracerResources(VulkanRuntime& runtime, const std::filesystem::path& resource_directory);
+        ~PathTracerResources();
 
-        PathTracerRuntime(const PathTracerRuntime&)            = delete;
-        PathTracerRuntime(PathTracerRuntime&&)                 = delete;
-        PathTracerRuntime& operator=(const PathTracerRuntime&) = delete;
-        PathTracerRuntime& operator=(PathTracerRuntime&&)      = delete;
+        PathTracerResources(const PathTracerResources&)            = delete;
+        PathTracerResources(PathTracerResources&&)                 = delete;
+        PathTracerResources& operator=(const PathTracerResources&) = delete;
+        PathTracerResources& operator=(PathTracerResources&&)      = delete;
 
         [[nodiscard]] const vk::raii::ShaderEXT& shader(PathTracerComputeShader shader) const noexcept;
         [[nodiscard]] bool complete_preparation();

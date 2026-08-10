@@ -62,6 +62,6 @@ spectra /path/to/scene.spectra --renderer rasterizer
 spectra /path/to/scene.spectra --renderer pathtracer
 ```
 
-Headless rendering writes display PNG and linear EXR outputs under `output/renders` by default. Use `--output` to select
+Headless rendering writes display PNG and linear EXR outputs under `renders` in the current working directory by default. Use `--output` to select
 another output basename and `--gbuffer-output` to request a Path Tracer GBuffer EXR. A dynamic `.spectra` scene loads
 its declared Provider libraries from the scene directory. The editor also accepts one dropped `.spectra` scene.

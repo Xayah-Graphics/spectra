@@ -1,5 +1,6 @@
-module spectra.pathtracer.runtime;
+module spectra.render.pathtracer.resources;
 
+import spectra.runtime.shaders;
 import std;
 import vulkan;
 
@@ -172,7 +173,7 @@ namespace spectra {
             }
         }
 
-        void initialize_ray_tracing_pipeline(PathTracerRuntime& runtime, std::array<std::vector<std::uint32_t>, ray_shader_entries.size()> shader_code) {
+        void initialize_ray_tracing_pipeline(PathTracerResources& runtime, std::array<std::vector<std::uint32_t>, ray_shader_entries.size()> shader_code) {
             std::vector<vk::raii::ShaderModule> shader_modules{};
             shader_modules.reserve(ray_shader_entries.size());
             std::array<vk::ShaderModule, ray_shader_entries.size()> raw_modules{};
@@ -203,7 +204,7 @@ namespace spectra {
             runtime.stack_size              = query_stack_size(runtime.pipeline);
         }
 
-        void initialize_shaders(PathTracerRuntime& runtime, const std::filesystem::path& shader_directory) {
+        void initialize_shaders(PathTracerResources& runtime, const std::filesystem::path& shader_directory) {
             std::array<std::vector<std::uint32_t>, compute_shader_entries.size()> compute_shader_code{};
             std::array<std::vector<std::uint32_t>, ray_shader_entries.size()> ray_shader_code{};
             constexpr std::uint32_t shader_count = static_cast<std::uint32_t>(compute_shader_entries.size() + ray_shader_entries.size());
@@ -235,7 +236,7 @@ namespace spectra {
             runtime.preparation.report(PathTracerPreparationStage::CreatingShaderBindingTable);
         }
 
-        void initialize_shader_binding_table(PathTracerRuntime& runtime) {
+        void initialize_shader_binding_table(PathTracerResources& runtime) {
             const vk::PhysicalDeviceRayTracingPipelinePropertiesKHR& properties = runtime.runtime.graphics.ray_tracing_properties;
             const vk::DeviceSize record_stride                                  = align_up(properties.shaderGroupHandleSize, properties.shaderGroupHandleAlignment);
             const vk::DeviceSize miss_offset                                    = align_up(record_stride * 2u, properties.shaderGroupBaseAlignment);
@@ -267,11 +268,11 @@ namespace spectra {
         return this->progress;
     }
 
-    const vk::raii::ShaderEXT& PathTracerRuntime::shader(const PathTracerComputeShader shader) const noexcept {
+    const vk::raii::ShaderEXT& PathTracerResources::shader(const PathTracerComputeShader shader) const noexcept {
         return this->compute_shaders[std::to_underlying(shader)];
     }
 
-    PathTracerRuntime::PathTracerRuntime(VulkanRuntime& runtime, const std::filesystem::path& resource_directory) : runtime(runtime) {
+    PathTracerResources::PathTracerResources(VulkanRuntime& runtime, const std::filesystem::path& resource_directory) : runtime(runtime) {
         const std::filesystem::path shader_directory = resource_directory / "shaders";
         this->shader_preparation                     = std::async(std::launch::async, [this, shader_directory] { initialize_shaders(*this, shader_directory); });
 
@@ -309,7 +310,7 @@ namespace spectra {
         runtime.resources.write_buffer_descriptor(this->sampling_tables_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + sampling_offset, this->sampling_table_data.size() * sizeof(std::uint32_t));
     }
 
-    PathTracerRuntime::~PathTracerRuntime() {
+    PathTracerResources::~PathTracerResources() {
         if (this->shader_preparation.valid()) this->shader_preparation.wait();
         this->runtime.frames.retire_resource_descriptor(this->zero_volume_field_descriptor);
         this->runtime.frames.retire_resource_descriptor(this->cie_spectra_descriptor);
@@ -317,7 +318,7 @@ namespace spectra {
         this->runtime.frames.retire_resource_descriptor(this->sampling_tables_descriptor);
     }
 
-    bool PathTracerRuntime::complete_preparation() {
+    bool PathTracerResources::complete_preparation() {
         if (!this->shader_preparation.valid()) return true;
         if (this->shader_preparation.wait_for(std::chrono::seconds{0}) != std::future_status::ready) return false;
         this->shader_preparation.get();
@@ -327,12 +328,12 @@ namespace spectra {
         return true;
     }
 
-    void PathTracerRuntime::wait_for_preparation() {
+    void PathTracerResources::wait_for_preparation() {
         this->shader_preparation.wait();
         static_cast<void>(this->complete_preparation());
     }
 
-    PathTracerPreparationProgress PathTracerRuntime::preparation_progress() const {
+    PathTracerPreparationProgress PathTracerResources::preparation_progress() const {
         return this->preparation.snapshot();
     }
 } // namespace spectra

@@ -1,6 +1,8 @@
 module picker;
 
 struct ViewportPickPrimitive {
+    DescriptorHandle<StructuredBuffer<float3>> positions;
+    DescriptorHandle<StructuredBuffer<float>> radii;
     uint4 metadata;
     float4 parameters;
 }
@@ -45,11 +47,20 @@ float procedural_hit_distance(
     float3 origin,
     float3 direction,
     float minimum,
-    float maximum) {
+    float maximum,
+    uint primitive_index) {
     uint kind =
         primitive.metadata.x;
     float4 parameters =
         primitive.parameters;
+    if (kind == 4) {
+        StructuredBuffer<float3> positions = primitive.positions;
+        StructuredBuffer<float> radii = primitive.radii;
+        const float radius = radii[primitive_index];
+        origin -= positions[primitive_index];
+        parameters = float4(radius, -radius, radius, 2.0 * 3.14159265358979323846);
+        kind = 1;
+    }
     if (kind == 2) {
         if (direction.z == 0.0)
             return -1.0;
@@ -192,7 +203,8 @@ void pick() {
                     query.CandidateObjectRayOrigin(),
                     query.CandidateObjectRayDirection(),
                     ray.TMin,
-                    query.CommittedRayT());
+                    query.CommittedRayT(),
+                    query.CandidatePrimitiveIndex());
             if (distance > 0.0)
                 query.CommitProceduralPrimitiveHit(
                     distance);

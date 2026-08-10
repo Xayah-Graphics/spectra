@@ -1,16 +1,17 @@
-module spectra.display;
+module spectra.render.display;
 
+import spectra.runtime.shaders;
 import std;
 import vulkan;
 
 namespace spectra {
-    DisplayRenderer::DisplayRenderer(VulkanRuntime& runtime, std::filesystem::path shader_directory) noexcept : context{runtime, std::move(shader_directory)} {}
+    DisplayPass::DisplayPass(VulkanRuntime& runtime, std::filesystem::path shader_directory) noexcept : context{runtime, std::move(shader_directory)} {}
 
-    DisplayRenderer::~DisplayRenderer() {
+    DisplayPass::~DisplayPass() {
         this->context.runtime.frames.retire_sampler_descriptor(this->sampler_descriptor);
     }
 
-    void DisplayRenderer::initialize() {
+    void DisplayPass::initialize() {
         this->sampler_descriptor                       = this->context.runtime.resources.allocate_sampler_descriptor();
         const std::vector<std::uint32_t> vertex_code   = load_spirv(this->context.shader_directory / "display_vertex.spv");
         const std::vector<std::uint32_t> fragment_code = load_spirv(this->context.shader_directory / "display_fragment.spv");
@@ -46,7 +47,7 @@ namespace spectra {
                                                                                            });
     }
 
-    bool DisplayRenderer::resize(const vk::Extent2D extent) {
+    bool DisplayPass::resize(const vk::Extent2D extent) {
         if (*this->image.image && extent == this->image.extent) return false;
         this->context.runtime.graphics.device.waitIdle();
         this->image  = this->context.runtime.resources.create_image_2d(extent, vk::Format::eB8G8R8A8Srgb, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc);
@@ -54,7 +55,7 @@ namespace spectra {
         return true;
     }
 
-    void DisplayRenderer::record(const vk::raii::CommandBuffer& command_buffer, const RenderOutput render_output, const float exposure) {
+    void DisplayPass::record(const vk::raii::CommandBuffer& command_buffer, const RenderOutput render_output, const float exposure) {
         const std::array begin_barriers{
             vk::ImageMemoryBarrier2{
                 render_output.source_stage,

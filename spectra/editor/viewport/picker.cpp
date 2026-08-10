@@ -1,5 +1,7 @@
 module spectra.editor;
 
+import spectra.runtime.shaders;
+
 import :viewport.picker;
 
 import std;
@@ -8,10 +10,12 @@ import vulkan;
 namespace spectra {
     namespace {
         struct alignas(16) ViewportPickPrimitive {
+            DescriptorHandle positions{};
+            DescriptorHandle radii{};
             std::array<std::uint32_t, 4> metadata{};
             std::array<float, 4> parameters{};
         };
-        static_assert(sizeof(ViewportPickPrimitive) == 32);
+        static_assert(sizeof(ViewportPickPrimitive) == 48);
 
         [[nodiscard]] GpuBuffer upload_pick_primitives(VulkanRuntime& runtime, const std::span<const ViewportPickPrimitive> primitives, const vk::raii::CommandBuffer* command_buffer) {
             const vk::DeviceSize size = std::max<vk::DeviceSize>(sizeof(ViewportPickPrimitive), primitives.size_bytes());
@@ -67,7 +71,7 @@ namespace spectra {
         this->picking.frame_slots.reserve(VulkanFrames::frames_in_flight);
         for (std::uint32_t index = 0; index != VulkanFrames::frames_in_flight; ++index) {
             PickFrameSlot slot{};
-            slot.result_buffer     = this->context.runtime.resources.create_buffer(sizeof(std::uint32_t), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+            slot.result_buffer     = this->context.runtime.resources.create_buffer(32, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
             slot.result_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(slot.result_descriptor, vk::DescriptorType::eStorageBuffer, slot.result_buffer);
             this->picking.frame_slots.emplace_back(std::move(slot));
@@ -87,14 +91,22 @@ namespace spectra {
 
     void ViewportPicker::upload(const scene::SceneView source_scene, const vk::raii::CommandBuffer* command_buffer) {
         std::vector<ViewportPickPrimitive> primitives{};
-        primitives.reserve(this->context.gpu_scene.resources.acceleration_primitive_indices.size());
-        for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.resources.primitives) {
-            if (gpu_primitive.kind == GpuScenePrimitiveKind::ParticleSet) continue;
+        primitives.reserve(this->context.gpu_scene.view().acceleration_primitive_indices.size());
+        for (const std::uint32_t scene_primitive_index : this->context.gpu_scene.view().acceleration_primitive_indices) {
+            const GpuScenePrimitive& gpu_primitive = this->context.gpu_scene.view().primitives[scene_primitive_index];
+            ViewportPickPrimitive pick{};
+            if (gpu_primitive.kind == GpuScenePrimitiveKind::SphereSet) {
+                const GpuSphereSet& spheres = this->context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
+                pick.positions             = spheres.positions_descriptor;
+                pick.radii                 = spheres.radii_descriptor;
+                pick.metadata[0]           = 4;
+                primitives.push_back(pick);
+                continue;
+            }
             const scene::Instance& instance   = source_scene.resources.instances[gpu_primitive.scene_instance_index];
             const scene::Prototype& prototype = *std::ranges::find(source_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
             const scene::Primitive& primitive = prototype.primitives[gpu_primitive.prototype_primitive_index];
             const scene::Geometry& geometry   = *std::ranges::find(source_scene.resources.geometries, primitive.geometry, &scene::Geometry::id);
-            ViewportPickPrimitive pick{};
             std::visit(
                 [&pick](const auto& data) {
                     if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SphereGeometry>) {
@@ -125,12 +137,12 @@ namespace spectra {
         this->scene.primitives = std::move(new_primitives);
     }
 
-    void ViewportPicker::synchronize(const scene::SceneView source_scene, const vk::raii::CommandBuffer& command_buffer) {
-        if ((source_scene.revision.changes & (scene::SceneChange::Geometry | scene::SceneChange::Transform)) != scene::SceneChange::None) this->upload(source_scene, &command_buffer);
+    void ViewportPicker::synchronize(const scene::SceneView source_scene, const GpuSceneUpdate gpu_update, const vk::raii::CommandBuffer& command_buffer) {
+        if ((source_scene.revision.changes & (scene::SceneChange::Geometry | scene::SceneChange::Transform)) != scene::SceneChange::None || (gpu_update.gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None) this->upload(source_scene, &command_buffer);
     }
 
-    void ViewportPicker::submit_pick(const float normalized_x, const float normalized_y, const bool select, const bool additive, const std::optional<std::uint64_t> debug_object_id, const bool debug_xray) noexcept {
-        const PickRequest request{normalized_x, normalized_y, select, additive, debug_object_id, debug_xray};
+    void ViewportPicker::submit_pick(const float normalized_x, const float normalized_y, const bool select, const bool additive) noexcept {
+        const PickRequest request{normalized_x, normalized_y, select, additive};
         if (!this->picking.pending_request || request.select || !this->picking.pending_request->select) this->picking.pending_request = request;
     }
 
@@ -142,18 +154,18 @@ namespace spectra {
         return {
             true,
             values[0] == std::numeric_limits<std::uint32_t>::max() ? std::nullopt : std::optional{values[0]},
-            request.debug_object_id,
-            request.debug_xray,
+            values[4] == 0 ? std::nullopt : std::optional{values[4]},
             request.select,
             request.additive,
         };
     }
 
-    void ViewportPicker::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const scene::Camera& camera) {
+    void ViewportPicker::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const scene::Camera& camera, const GpuImage* diagnostic_pick_image) {
         if (!this->picking.pending_request) return;
         PickFrameSlot& slot   = this->picking.frame_slots[frame_slot_index];
         std::uint32_t* result = static_cast<std::uint32_t*>(slot.result_buffer.mapped);
-        std::ranges::fill(std::span{result, 1}, std::numeric_limits<std::uint32_t>::max());
+        std::ranges::fill(std::span{result, 8}, std::numeric_limits<std::uint32_t>::max());
+        result[4] = 0;
         slot.submitted_request = std::exchange(this->picking.pending_request, std::nullopt);
 
         struct alignas(16) PickPushData {
@@ -194,7 +206,7 @@ namespace spectra {
             camera.data);
         const std::array<float, 16>& transform = camera.transform.matrix;
         const PickPushData push_data{
-            this->context.gpu_scene.resources.top_level_acceleration_structure.address,
+            this->context.gpu_scene.view().acceleration_structure,
             slot.result_descriptor,
             this->scene.primitives_descriptor,
             camera_metadata,
@@ -214,7 +226,13 @@ namespace spectra {
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
         this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
         command_buffer.dispatch(1, 1, 1);
-        const vk::MemoryBarrier2 completion{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostRead};
+        if (diagnostic_pick_image) {
+            const std::uint32_t pixel_x = std::min(static_cast<std::uint32_t>(slot.submitted_request->normalized_x * static_cast<float>(diagnostic_pick_image->extent.width)), diagnostic_pick_image->extent.width - 1u);
+            const std::uint32_t pixel_y = std::min(static_cast<std::uint32_t>(slot.submitted_request->normalized_y * static_cast<float>(diagnostic_pick_image->extent.height)), diagnostic_pick_image->extent.height - 1u);
+            const vk::BufferImageCopy pick_copy{16, 0, 0, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {static_cast<std::int32_t>(pixel_x), static_cast<std::int32_t>(pixel_y), 0}, {1, 1, 1}};
+            command_buffer.copyImageToBuffer(*diagnostic_pick_image->image, vk::ImageLayout::eTransferSrcOptimal, *slot.result_buffer.buffer, pick_copy);
+        }
+        const vk::MemoryBarrier2 completion{vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eShaderStorageWrite | vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostRead};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &completion});
     }
 } // namespace spectra

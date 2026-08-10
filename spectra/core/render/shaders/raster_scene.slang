@@ -1,5 +1,9 @@
 module raster_scene;
 
+public static const uint raster_display_material = 0;
+public static const uint raster_display_wireframe = 1;
+public static const uint raster_display_material_wireframe = 2;
+
 public struct RasterPrimitive {
     public uint transform_index;
     public uint material_index;

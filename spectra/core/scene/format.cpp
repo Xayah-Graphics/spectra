@@ -1,4 +1,12 @@
 module;
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#undef interface
+#endif
+#include <kdl/kdl.h>
 #include <kdlpp.h>
 
 module spectra.scene.format;
@@ -19,16 +27,12 @@ namespace spectra::scene {
             std::uint64_t index_count{};
         };
 
-        struct ParticleAssetHeader {
-            std::array<char, 8> magic{'S', 'P', 'P', 'A', 'R', 'T', '0', '1'};
+        struct SphereSetAssetHeader {
+            std::array<char, 8> magic{'S', 'P', 'S', 'P', 'H', '0', '0', '1'};
             std::uint32_t version{1};
             std::uint32_t reserved{};
             std::uint64_t position_count{};
             std::uint64_t radius_count{};
-            std::uint64_t velocity_count{};
-            std::uint64_t color_count{};
-            std::uint64_t temperature_count{};
-            std::uint64_t material_count{};
         };
 
         enum class VolumeAssetKind : std::uint32_t {
@@ -59,9 +63,8 @@ namespace spectra::scene {
 
         static_assert(sizeof(math::Float2) == sizeof(float) * 2);
         static_assert(sizeof(math::Float3) == sizeof(float) * 3);
-        static_assert(sizeof(MaterialId) == sizeof(std::uint64_t));
         static_assert(sizeof(GeometryAssetHeader) == 56);
-        static_assert(sizeof(ParticleAssetHeader) == 64);
+        static_assert(sizeof(SphereSetAssetHeader) == 32);
         static_assert(sizeof(VolumeAssetHeader) == 56);
         static_assert(sizeof(TextureAssetHeader) == 32);
 
@@ -152,71 +155,50 @@ namespace spectra::scene {
             if (!stream) throw std::runtime_error(std::format("Failed to read Spectra geometry asset payload: {}", path.string()));
         }
 
-        [[nodiscard]] AssetReference write_particle_asset(const ParticleSet& particles, const std::filesystem::path& package_root) {
-            const std::size_t particle_count = particles.positions.size();
-            if (particles.radii.size() != particle_count || (!particles.velocities.empty() && particles.velocities.size() != particle_count) || (!particles.colors.empty() && particles.colors.size() != particle_count) || (!particles.temperatures.empty() && particles.temperatures.size() != particle_count) || (!particles.particle_materials.empty() && particles.particle_materials.size() != particle_count)) throw std::runtime_error("Spectra particle attributes do not match the particle count");
-            const ParticleAssetHeader header{
-                .position_count    = particles.positions.size(),
-                .radius_count      = particles.radii.size(),
-                .velocity_count    = particles.velocities.size(),
-                .color_count       = particles.colors.size(),
-                .temperature_count = particles.temperatures.size(),
-                .material_count    = particles.particle_materials.size(),
+        [[nodiscard]] AssetReference write_sphere_set_asset(const SphereSet& spheres, const std::filesystem::path& package_root) {
+            if (spheres.radii.size() != spheres.positions.size()) throw std::runtime_error("Spectra SphereSet radii do not match the sphere count");
+            const SphereSetAssetHeader header{
+                .position_count = spheres.positions.size(),
+                .radius_count   = spheres.radii.size(),
             };
             const std::array blocks{
                 std::as_bytes(std::span{&header, 1}),
-                std::as_bytes(std::span{particles.positions}),
-                std::as_bytes(std::span{particles.radii}),
-                std::as_bytes(std::span{particles.velocities}),
-                std::as_bytes(std::span{particles.colors}),
-                std::as_bytes(std::span{particles.temperatures}),
-                std::as_bytes(std::span{particles.particle_materials}),
+                std::as_bytes(std::span{spheres.positions}),
+                std::as_bytes(std::span{spheres.radii}),
             };
             AssetReference reference{
                 .content_hash = sha256_hex(blocks),
             };
-            const std::filesystem::path path = asset_path(package_root, reference, ".particles");
+            const std::filesystem::path path = asset_path(package_root, reference, ".spheres");
             if (std::filesystem::exists(path)) {
-                verify_asset(package_root, reference, ".particles");
+                verify_asset(package_root, reference, ".spheres");
                 return reference;
             }
             std::filesystem::create_directories(path.parent_path());
             std::ofstream stream{path, std::ios::binary | std::ios::trunc};
-            if (!stream) throw std::runtime_error(std::format("Failed to create Spectra particle asset: {}", path.string()));
+            if (!stream) throw std::runtime_error(std::format("Failed to create Spectra SphereSet asset: {}", path.string()));
             write_values(stream, std::span{&header, 1});
-            write_values(stream, std::span{particles.positions});
-            write_values(stream, std::span{particles.radii});
-            write_values(stream, std::span{particles.velocities});
-            write_values(stream, std::span{particles.colors});
-            write_values(stream, std::span{particles.temperatures});
-            write_values(stream, std::span{particles.particle_materials});
-            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra particle asset: {}", path.string()));
+            write_values(stream, std::span{spheres.positions});
+            write_values(stream, std::span{spheres.radii});
+            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra SphereSet asset: {}", path.string()));
             return reference;
         }
 
-        void load_particle_asset(ParticleSet& particles, const std::filesystem::path& package_root) {
-            verify_asset(package_root, particles.asset, ".particles");
-            const std::filesystem::path path = asset_path(package_root, particles.asset, ".particles");
+        void load_sphere_set_asset(SphereSet& spheres, const std::filesystem::path& package_root) {
+            verify_asset(package_root, spheres.asset, ".spheres");
+            const std::filesystem::path path = asset_path(package_root, spheres.asset, ".spheres");
             std::ifstream stream{path, std::ios::binary};
-            ParticleAssetHeader header{};
+            SphereSetAssetHeader header{};
             stream.read(reinterpret_cast<char*>(&header), sizeof(header));
-            if (!stream || header.magic != ParticleAssetHeader{}.magic || header.version != 1 || header.reserved != 0) throw std::runtime_error(std::format("Invalid Spectra particle asset header: {}", path.string()));
-            if (header.radius_count != header.position_count || (header.velocity_count != 0 && header.velocity_count != header.position_count) || (header.color_count != 0 && header.color_count != header.position_count) || (header.temperature_count != 0 && header.temperature_count != header.position_count) || (header.material_count != 0 && header.material_count != header.position_count)) throw std::runtime_error(std::format("Invalid Spectra particle attribute counts: {}", path.string()));
-            const std::uint64_t expected_size = sizeof(header) + header.position_count * sizeof(math::Float3) + header.radius_count * sizeof(float) + header.velocity_count * sizeof(math::Float3) + header.color_count * sizeof(math::Float3) + header.temperature_count * sizeof(float) + header.material_count * sizeof(MaterialId);
-            if (expected_size != std::filesystem::file_size(path)) throw std::runtime_error(std::format("Invalid Spectra particle asset payload size: {}", path.string()));
-            particles.positions.resize(header.position_count);
-            particles.radii.resize(header.radius_count);
-            particles.velocities.resize(header.velocity_count);
-            particles.colors.resize(header.color_count);
-            particles.temperatures.resize(header.temperature_count);
-            particles.particle_materials.resize(header.material_count);
-            read_values(stream, particles.positions);
-            read_values(stream, particles.radii);
-            read_values(stream, particles.velocities);
-            read_values(stream, particles.colors);
-            read_values(stream, particles.temperatures);
-            read_values(stream, particles.particle_materials);
-            if (!stream) throw std::runtime_error(std::format("Failed to read Spectra particle asset payload: {}", path.string()));
+            if (!stream || header.magic != SphereSetAssetHeader{}.magic || header.version != 1 || header.reserved != 0) throw std::runtime_error(std::format("Invalid Spectra SphereSet asset header: {}", path.string()));
+            if (header.radius_count != header.position_count) throw std::runtime_error(std::format("Invalid Spectra SphereSet attribute counts: {}", path.string()));
+            const std::uint64_t expected_size = sizeof(header) + header.position_count * sizeof(math::Float3) + header.radius_count * sizeof(float);
+            if (expected_size != std::filesystem::file_size(path)) throw std::runtime_error(std::format("Invalid Spectra SphereSet asset payload size: {}", path.string()));
+            spheres.positions.resize(header.position_count);
+            spheres.radii.resize(header.radius_count);
+            read_values(stream, spheres.positions);
+            read_values(stream, spheres.radii);
+            if (!stream) throw std::runtime_error(std::format("Failed to read Spectra SphereSet asset payload: {}", path.string()));
         }
 
         template <typename... Element>
@@ -628,14 +610,10 @@ namespace spectra::scene {
             writer.end();
         }
 
-        void write_particle_sets(KdlWriter& writer, const std::vector<ParticleSet>& particle_sets) {
-            if (particle_sets.empty()) return;
-            writer.begin("particle-sets");
-            for (const ParticleSet& particles : particle_sets) {
-                std::string line = std::format("particle-set {} {} asset={}", particles.id.value, kdl_string(particles.name), kdl_string(particles.asset.content_hash));
-                if (particles.material.value != 0) kdl_number_property(line, "material", particles.material.value);
-                writer.line(line);
-            }
+        void write_sphere_sets(KdlWriter& writer, const std::vector<SphereSet>& sphere_sets) {
+            if (sphere_sets.empty()) return;
+            writer.begin("sphere-sets");
+            for (const SphereSet& spheres : sphere_sets) writer.line(std::format("sphere-set {} {} asset={}", spheres.id.value, kdl_string(spheres.name), kdl_string(spheres.asset.content_hash)));
             writer.end();
         }
 
@@ -1136,7 +1114,7 @@ namespace spectra::scene {
                 for (const Primitive& primitive : prototype.primitives) {
                     std::string line{"primitive"};
                     if (primitive.geometry.value != 0) kdl_number_property(line, "geometry", primitive.geometry.value);
-                    if (primitive.particles.value != 0) kdl_number_property(line, "particles", primitive.particles.value);
+                    if (primitive.spheres.value != 0) kdl_number_property(line, "spheres", primitive.spheres.value);
                     if (primitive.volume.value != 0) kdl_number_property(line, "volume", primitive.volume.value);
                     if (primitive.material.value != 0) kdl_number_property(line, "material", primitive.material.value);
                     if (primitive.area_light.value != 0) kdl_number_property(line, "area-light", primitive.area_light.value);
@@ -1193,12 +1171,69 @@ namespace spectra::scene {
             std::unreachable();
         }
 
-        [[nodiscard]] std::string dynamic_resource_kind_name(const DynamicResourceKind kind) {
+        [[nodiscard]] std::string dynamic_scene_resource_kind_name(const DynamicSceneResourceKind kind) {
             switch (kind) {
-            case DynamicResourceKind::Instance: return "instance";
-            case DynamicResourceKind::Geometry: return "geometry";
-            case DynamicResourceKind::ParticleSet: return "particle-set";
-            case DynamicResourceKind::Volume: return "volume";
+            case DynamicSceneResourceKind::Geometry: return "geometry";
+            case DynamicSceneResourceKind::SphereSet: return "sphere-set";
+            case DynamicSceneResourceKind::Volume: return "volume";
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] std::string visualization_view_kind_name(const VisualizationViewKind kind) {
+            switch (kind) {
+            case VisualizationViewKind::Points: return "points";
+            case VisualizationViewKind::Segments: return "segments";
+            case VisualizationViewKind::Curves: return "curves";
+            case VisualizationViewKind::Vectors: return "vectors";
+            case VisualizationViewKind::FieldSlice: return "field-slice";
+            case VisualizationViewKind::FieldVectors: return "field-vectors";
+            case VisualizationViewKind::Image: return "image";
+            case VisualizationViewKind::CameraObservations: return "camera-observations";
+            case VisualizationViewKind::Frames: return "frames";
+            case VisualizationViewKind::Surface: return "surface";
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] std::string depth_buffer_mode_name(const VisualizationDepthMode mode) {
+            switch (mode) {
+            case VisualizationDepthMode::Tested: return "tested";
+            case VisualizationDepthMode::XRay: return "xray";
+            case VisualizationDepthMode::Overlay: return "overlay";
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] std::string point_glyph_name(const PointGlyph glyph) {
+            switch (glyph) {
+            case PointGlyph::ScreenDisc: return "screen-disc";
+            case PointGlyph::WorldDisc: return "world-disc";
+            case PointGlyph::Sphere: return "sphere";
+            case PointGlyph::Cross: return "cross";
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] std::string point_shading_name(const PointShading shading) {
+            return shading == PointShading::Lit ? "lit" : "unlit";
+        }
+
+        [[nodiscard]] std::string visualization_color_source_name(const VisualizationColorSource source) {
+            switch (source) {
+            case VisualizationColorSource::Element: return "element";
+            case VisualizationColorSource::Uniform: return "uniform";
+            case VisualizationColorSource::Scalar: return "scalar";
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] std::string visualization_color_map_name(const VisualizationColorMap map) {
+            switch (map) {
+            case VisualizationColorMap::Viridis: return "viridis";
+            case VisualizationColorMap::Turbo: return "turbo";
+            case VisualizationColorMap::CoolWarm: return "cool-warm";
+            case VisualizationColorMap::Grayscale: return "grayscale";
             }
             std::unreachable();
         }
@@ -1241,7 +1276,28 @@ namespace spectra::scene {
                         parameter_line += std::format(" {} {} {}", parameter.value.floating[0], parameter.value.floating[1], parameter.value.floating[2]);
                     writer.line(parameter_line);
                 }
-                for (const DynamicPortBinding& binding : system.bindings) writer.line(std::format("bind {} {} {}", kdl_string(binding.port_id), dynamic_resource_kind_name(binding.resource_kind), binding.resource_id));
+                for (const DynamicSceneBinding& binding : system.scene_bindings) writer.line(std::format("scene-bind {} {} {}", kdl_string(binding.dataset_id), dynamic_scene_resource_kind_name(binding.resource_kind), binding.resource_id));
+                for (const DynamicVisualizationView& view : system.visualizations) {
+                    std::string view_line = std::format("visualize {} {} kind={} depth={}", kdl_string(view.dataset_id), kdl_string(view.name), kdl_string(visualization_view_kind_name(view.kind)), kdl_string(depth_buffer_mode_name(view.depth_mode)));
+                    if (view.anchor.value != 0) kdl_number_property(view_line, "anchor", view.anchor.value);
+                    if (!view.channel_id.empty()) kdl_string_property(view_line, "channel", view.channel_id);
+                    if (view.width != 1.0f) kdl_number_property(view_line, "width", view.width);
+                    if (view.scale != 1.0f) kdl_number_property(view_line, "scale", view.scale);
+                    if (view.slice_position != 0.5f) kdl_number_property(view_line, "slice-position", view.slice_position);
+                    if (view.scalar_minimum != 0.0f) kdl_number_property(view_line, "scalar-min", view.scalar_minimum);
+                    if (view.scalar_maximum != 1.0f) kdl_number_property(view_line, "scalar-max", view.scalar_maximum);
+                    if (view.sampling != 8) kdl_number_property(view_line, "sampling", view.sampling);
+                    if (view.slice_axis != 2) kdl_number_property(view_line, "slice-axis", view.slice_axis);
+                    if (view.point_glyph != PointGlyph::ScreenDisc) kdl_string_property(view_line, "glyph", point_glyph_name(view.point_glyph));
+                    if (view.point_shading != PointShading::Unlit) kdl_string_property(view_line, "shading", point_shading_name(view.point_shading));
+                    if (view.color_source != VisualizationColorSource::Element) kdl_string_property(view_line, "color-source", visualization_color_source_name(view.color_source));
+                    if (view.color_map != VisualizationColorMap::Viridis) kdl_string_property(view_line, "color-map", visualization_color_map_name(view.color_map));
+                    if (!view.visible) kdl_bool_property(view_line, "visible", false);
+                    writer.begin(view_line);
+                    if (view.color != math::Float4{1.0f, 1.0f, 1.0f, 1.0f}) writer.line(std::format("color {} {} {} {}", view.color.x, view.color.y, view.color.z, view.color.w));
+                    if (view.screen_rect != math::Float4{0.02f, 0.02f, 0.32f, 0.32f}) writer.line(std::format("screen-rect {} {} {} {}", view.screen_rect.x, view.screen_rect.y, view.screen_rect.z, view.screen_rect.w));
+                    writer.end();
+                }
                 writer.end();
             }
             writer.end();
@@ -1257,7 +1313,7 @@ namespace spectra::scene {
             if (scene.transport.regularize) kdl_bool_property(transport, "regularize", true);
             if (transport != "transport") writer.line(transport);
             write_geometries(writer, scene.resources.geometries);
-            write_particle_sets(writer, scene.resources.particle_sets);
+            write_sphere_sets(writer, scene.resources.sphere_sets);
             write_volumes(writer, scene.resources.volumes);
             write_textures(writer, scene.resources.textures);
             write_materials(writer, scene.resources.materials);
@@ -1283,7 +1339,12 @@ namespace spectra::scene {
 
         template <class Value>
         [[nodiscard]] Value kdl_number(const kdl::Value& value) {
-            return value.as<Value>();
+            const kdl::Number number = value.as<kdl::Number>();
+            if (number.representation() != kdl::NumberRepresentation::String) return number.as<Value>();
+            const ::kdl_number encoded = static_cast<::kdl_number>(number);
+            Value result{};
+            std::from_chars(encoded.string.data, encoded.string.data + encoded.string.len, result);
+            return result;
         }
 
         [[nodiscard]] const kdl::Value* kdl_property(const kdl::Node& node, const std::u8string_view name) {
@@ -1510,13 +1571,12 @@ namespace spectra::scene {
             }
         }
 
-        void read_particle_sets(SceneResources& resources, const kdl::Node& group) {
+        void read_sphere_sets(SceneResources& resources, const kdl::Node& group) {
             for (const kdl::Node& node : group.children())
-                resources.particle_sets.push_back({
-                    .id       = {kdl_number<std::uint64_t>(node.args()[0])},
-                    .name     = kdl_value_text(node.args()[1]),
-                    .asset    = {.content_hash = kdl_string_property(node, u8"asset")},
-                    .material = {kdl_number_property<std::uint64_t>(node, u8"material", 0)},
+                resources.sphere_sets.push_back({
+                    .id    = {kdl_number<std::uint64_t>(node.args()[0])},
+                    .name  = kdl_value_text(node.args()[1]),
+                    .asset = {.content_hash = kdl_string_property(node, u8"asset")},
                 });
         }
 
@@ -1940,7 +2000,7 @@ namespace spectra::scene {
                 for (const kdl::Node& primitive_node : node.children()) {
                     Primitive primitive{
                         .geometry            = {kdl_number_property<std::uint64_t>(primitive_node, u8"geometry", 0)},
-                        .particles           = {kdl_number_property<std::uint64_t>(primitive_node, u8"particles", 0)},
+                        .spheres             = {kdl_number_property<std::uint64_t>(primitive_node, u8"spheres", 0)},
                         .volume              = {kdl_number_property<std::uint64_t>(primitive_node, u8"volume", 0)},
                         .material            = {kdl_number_property<std::uint64_t>(primitive_node, u8"material", 0)},
                         .area_light          = {kdl_number_property<std::uint64_t>(primitive_node, u8"area-light", 0)},
@@ -1980,12 +2040,61 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("Unknown Dynamic parameter kind {}", value));
         }
 
-        [[nodiscard]] DynamicResourceKind read_dynamic_resource_kind(const std::string_view value) {
-            if (value == "instance") return DynamicResourceKind::Instance;
-            if (value == "geometry") return DynamicResourceKind::Geometry;
-            if (value == "particle-set") return DynamicResourceKind::ParticleSet;
-            if (value == "volume") return DynamicResourceKind::Volume;
+        [[nodiscard]] DynamicSceneResourceKind read_dynamic_scene_resource_kind(const std::string_view value) {
+            if (value == "geometry") return DynamicSceneResourceKind::Geometry;
+            if (value == "sphere-set") return DynamicSceneResourceKind::SphereSet;
+            if (value == "volume") return DynamicSceneResourceKind::Volume;
             throw std::runtime_error(std::format("Unknown Dynamic resource kind {}", value));
+        }
+
+        [[nodiscard]] VisualizationViewKind read_visualization_view_kind(const std::string_view value) {
+            if (value == "points") return VisualizationViewKind::Points;
+            if (value == "segments") return VisualizationViewKind::Segments;
+            if (value == "curves") return VisualizationViewKind::Curves;
+            if (value == "vectors") return VisualizationViewKind::Vectors;
+            if (value == "field-slice") return VisualizationViewKind::FieldSlice;
+            if (value == "field-vectors") return VisualizationViewKind::FieldVectors;
+            if (value == "image") return VisualizationViewKind::Image;
+            if (value == "camera-observations") return VisualizationViewKind::CameraObservations;
+            if (value == "frames") return VisualizationViewKind::Frames;
+            if (value == "surface") return VisualizationViewKind::Surface;
+            throw std::runtime_error(std::format("Unknown Visualization view kind {}", value));
+        }
+
+        [[nodiscard]] VisualizationDepthMode read_depth_buffer_mode(const std::string_view value) {
+            if (value == "tested") return VisualizationDepthMode::Tested;
+            if (value == "xray") return VisualizationDepthMode::XRay;
+            if (value == "overlay") return VisualizationDepthMode::Overlay;
+            throw std::runtime_error(std::format("Unknown Visualization depth mode {}", value));
+        }
+
+        [[nodiscard]] PointGlyph read_point_glyph(const std::string_view value) {
+            if (value == "screen-disc") return PointGlyph::ScreenDisc;
+            if (value == "world-disc") return PointGlyph::WorldDisc;
+            if (value == "sphere") return PointGlyph::Sphere;
+            if (value == "cross") return PointGlyph::Cross;
+            throw std::runtime_error(std::format("Unknown Point glyph {}", value));
+        }
+
+        [[nodiscard]] PointShading read_point_shading(const std::string_view value) {
+            if (value == "unlit") return PointShading::Unlit;
+            if (value == "lit") return PointShading::Lit;
+            throw std::runtime_error(std::format("Unknown Point shading {}", value));
+        }
+
+        [[nodiscard]] VisualizationColorSource read_visualization_color_source(const std::string_view value) {
+            if (value == "element") return VisualizationColorSource::Element;
+            if (value == "uniform") return VisualizationColorSource::Uniform;
+            if (value == "scalar") return VisualizationColorSource::Scalar;
+            throw std::runtime_error(std::format("Unknown Visualization color source {}", value));
+        }
+
+        [[nodiscard]] VisualizationColorMap read_visualization_color_map(const std::string_view value) {
+            if (value == "viridis") return VisualizationColorMap::Viridis;
+            if (value == "turbo") return VisualizationColorMap::Turbo;
+            if (value == "cool-warm") return VisualizationColorMap::CoolWarm;
+            if (value == "grayscale") return VisualizationColorMap::Grayscale;
+            throw std::runtime_error(std::format("Unknown Visualization color map {}", value));
         }
 
         [[nodiscard]] DynamicSetup read_dynamics(const kdl::Node& node) {
@@ -2020,12 +2129,37 @@ namespace spectra::scene {
                         else
                             for (std::uint32_t component = 0; component != 3; ++component) parameter.value.floating[component] = kdl_number<double>(child.args()[component + 2]);
                         system.parameters.push_back(std::move(parameter));
-                    } else if (child.name() == u8"bind")
-                        system.bindings.push_back({
-                            .port_id       = kdl_value_text(child.args()[0]),
-                            .resource_kind = read_dynamic_resource_kind(kdl_value_text(child.args()[1])),
+                    } else if (child.name() == u8"scene-bind")
+                        system.scene_bindings.push_back({
+                            .dataset_id    = kdl_value_text(child.args()[0]),
+                            .resource_kind = read_dynamic_scene_resource_kind(kdl_value_text(child.args()[1])),
                             .resource_id   = kdl_number<std::uint64_t>(child.args()[2]),
                         });
+                    else if (child.name() == u8"visualize") {
+                        DynamicVisualizationView view{
+                            .dataset_id     = kdl_value_text(child.args()[0]),
+                            .name           = kdl_value_text(child.args()[1]),
+                            .kind           = read_visualization_view_kind(kdl_string_property(child, u8"kind")),
+                            .depth_mode     = read_depth_buffer_mode(kdl_string_property(child, u8"depth", "tested")),
+                            .anchor         = {kdl_number_property<std::uint64_t>(child, u8"anchor", 0)},
+                            .channel_id     = kdl_string_property(child, u8"channel", ""),
+                            .width          = kdl_number_property<float>(child, u8"width", 1.0f),
+                            .scale          = kdl_number_property<float>(child, u8"scale", 1.0f),
+                            .slice_position = kdl_number_property<float>(child, u8"slice-position", 0.5f),
+                            .scalar_minimum  = kdl_number_property<float>(child, u8"scalar-min", 0.0f),
+                            .scalar_maximum  = kdl_number_property<float>(child, u8"scalar-max", 1.0f),
+                            .sampling       = kdl_number_property<std::uint32_t>(child, u8"sampling", 8),
+                            .slice_axis     = kdl_number_property<std::uint32_t>(child, u8"slice-axis", 2),
+                            .point_glyph     = read_point_glyph(kdl_string_property(child, u8"glyph", "screen-disc")),
+                            .point_shading   = read_point_shading(kdl_string_property(child, u8"shading", "unlit")),
+                            .color_source    = read_visualization_color_source(kdl_string_property(child, u8"color-source", "element")),
+                            .color_map       = read_visualization_color_map(kdl_string_property(child, u8"color-map", "viridis")),
+                            .visible        = kdl_bool_property(child, u8"visible", true),
+                        };
+                        if (const kdl::Node* color = kdl_child(child, u8"color")) view.color = {kdl_number<float>(color->args()[0]), kdl_number<float>(color->args()[1]), kdl_number<float>(color->args()[2]), kdl_number<float>(color->args()[3])};
+                        if (const kdl::Node* screen_rect = kdl_child(child, u8"screen-rect")) view.screen_rect = {kdl_number<float>(screen_rect->args()[0]), kdl_number<float>(screen_rect->args()[1]), kdl_number<float>(screen_rect->args()[2]), kdl_number<float>(screen_rect->args()[3])};
+                        system.visualizations.push_back(std::move(view));
+                    }
                 }
                 setup.systems.push_back(std::move(system));
             }
@@ -2061,8 +2195,8 @@ namespace spectra::scene {
                     scene.transport.regularize    = kdl_bool_property(node, u8"regularize", false);
                 } else if (node.name() == u8"geometries")
                     read_geometries(scene.resources, node);
-                else if (node.name() == u8"particle-sets")
-                    read_particle_sets(scene.resources, node);
+                else if (node.name() == u8"sphere-sets")
+                    read_sphere_sets(scene.resources, node);
                 else if (node.name() == u8"volumes")
                     read_volumes(scene.resources, node);
                 else if (node.name() == u8"textures")
@@ -2097,7 +2231,7 @@ namespace spectra::scene {
         const std::filesystem::path package_root = path.parent_path();
         for (Geometry& geometry : scene.resources.geometries)
             if (TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data)) load_geometry_asset(*mesh, package_root);
-        for (ParticleSet& particles : scene.resources.particle_sets) load_particle_asset(particles, package_root);
+        for (SphereSet& spheres : scene.resources.sphere_sets) load_sphere_set_asset(spheres, package_root);
         for (Volume& volume : scene.resources.volumes) {
             if (DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data))
                 load_volume_asset(*density, package_root);
@@ -2119,7 +2253,7 @@ namespace spectra::scene {
         const std::filesystem::path source_root  = source_scene_path.empty() ? package_root : source_scene_path.parent_path();
         for (Geometry& geometry : package.resources.geometries)
             if (TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data)) mesh->asset = write_geometry_asset(*mesh, package_root);
-        for (ParticleSet& particles : package.resources.particle_sets) particles.asset = write_particle_asset(particles, package_root);
+        for (SphereSet& spheres : package.resources.sphere_sets) spheres.asset = write_sphere_set_asset(spheres, package_root);
         for (Volume& volume : package.resources.volumes) {
             if (DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data))
                 density->asset = write_volume_asset(*density, package_root);
@@ -2151,7 +2285,22 @@ namespace spectra::scene {
         stream.write(document.data(), static_cast<std::streamsize>(document.size()));
         if (!stream) throw std::runtime_error(std::format("Failed to write Spectra scene: {}", temporary_path.string()));
         stream.close();
-        if (std::filesystem::exists(path)) std::filesystem::remove(path);
-        std::filesystem::rename(temporary_path, path);
+        if (!stream) throw std::runtime_error(std::format("Failed to close Spectra scene: {}", temporary_path.string()));
+#if defined(_WIN32)
+        if (!MoveFileExW(temporary_path.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            const DWORD error = GetLastError();
+            std::error_code cleanup_error{};
+            std::filesystem::remove(temporary_path, cleanup_error);
+            throw std::runtime_error(std::format("Failed to replace Spectra scene '{}': Windows error {}", path.string(), error));
+        }
+#else
+        std::error_code replacement_error{};
+        std::filesystem::rename(temporary_path, path, replacement_error);
+        if (replacement_error) {
+            std::error_code cleanup_error{};
+            std::filesystem::remove(temporary_path, cleanup_error);
+            throw std::runtime_error(std::format("Failed to replace Spectra scene '{}': {}", path.string(), replacement_error.message()));
+        }
+#endif
     }
 } // namespace spectra::scene

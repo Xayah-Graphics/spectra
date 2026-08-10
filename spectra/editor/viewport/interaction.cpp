@@ -5,7 +5,7 @@ import :viewport.interaction;
 import std;
 
 namespace spectra {
-    ViewportInteraction::ViewportInteraction(SceneDocument& document, DynamicWorld& dynamics) noexcept : context{document, dynamics} {}
+    ViewportInteraction::ViewportInteraction(SceneDocument& document, DynamicsRuntime& dynamics) noexcept : context{document, dynamics} {}
 
     void ViewportInteraction::initialize_from_scene() {
         this->view.camera          = this->context.document.content.source.camera();
@@ -131,8 +131,15 @@ namespace spectra {
     }
 
     void ViewportInteraction::frame_selection(const float aspect) noexcept {
-        if (const std::optional<math::Bounds3> bounds = this->context.document.content.evaluated.view().bounds(this->view.selection.selected_instances))
-            this->frame_viewport_camera(*bounds, aspect);
+        math::Bounds3 selected = math::Bounds3::empty();
+        bool found{};
+        for (const SceneEntityReference entity : this->view.selection.selected)
+            if (const std::optional<math::Bounds3> bounds = this->entity_bounds(entity)) {
+                selected.include(*bounds);
+                found = true;
+            }
+        if (found)
+            this->frame_viewport_camera(selected, aspect);
         else
             this->frame_viewport_camera(this->context.document.content.evaluated.view().bounds(), aspect);
         this->view.source = CameraSource::Viewport;
@@ -140,8 +147,14 @@ namespace spectra {
     }
 
     void ViewportInteraction::view_axis(const math::Float3 direction, const float aspect) noexcept {
-        const std::optional<math::Bounds3> selected = this->context.document.content.evaluated.view().bounds(this->view.selection.selected_instances);
-        const math::Bounds3 bounds                  = selected.value_or(this->context.document.content.evaluated.view().bounds());
+        math::Bounds3 selected = math::Bounds3::empty();
+        bool found{};
+        for (const SceneEntityReference entity : this->view.selection.selected)
+            if (const std::optional<math::Bounds3> entity_bound = this->entity_bounds(entity)) {
+                selected.include(*entity_bound);
+                found = true;
+            }
+        const math::Bounds3 bounds                  = found ? selected : this->context.document.content.evaluated.view().bounds();
         this->view.focus                            = bounds.center();
         this->view.navigation_up                    = std::abs(direction.y) > 0.9f ? math::Float3{0.0f, 0.0f, -1.0f} : math::Float3{0.0f, 1.0f, 0.0f};
         this->view.camera.transform                 = math::Transform::look_at(this->view.focus + direction.normalized() * bounds.radius() * 3.0f, this->view.focus, this->view.navigation_up);
@@ -156,120 +169,79 @@ namespace spectra {
         this->camera_changed();
     }
 
-    void ViewportInteraction::select_instance(const scene::InstanceId instance_id, const bool additive) {
-        const std::vector<scene::InstanceId>::iterator found = std::ranges::find(this->view.selection.selected_instances, instance_id);
+    void ViewportInteraction::select(const SceneEntityReference entity, const bool additive) {
+        const std::vector<SceneEntityReference>::iterator found = std::ranges::find(this->view.selection.selected, entity);
         if (!additive) {
-            this->view.selection.selected_instances.assign(1, instance_id);
-            this->view.selection.active_instance = instance_id;
+            this->view.selection.selected.assign(1, entity);
+            this->view.selection.active = entity;
             return;
         }
-        if (found == this->view.selection.selected_instances.end()) {
-            this->view.selection.selected_instances.push_back(instance_id);
-            this->view.selection.active_instance = instance_id;
+        if (found == this->view.selection.selected.end()) {
+            this->view.selection.selected.push_back(entity);
+            this->view.selection.active = entity;
             return;
         }
-        this->view.selection.selected_instances.erase(found);
-        if (this->view.selection.selected_instances.empty())
-            this->view.selection.active_instance.reset();
+        this->view.selection.selected.erase(found);
+        if (this->view.selection.selected.empty())
+            this->view.selection.active.reset();
         else
-            this->view.selection.active_instance = this->view.selection.selected_instances.back();
+            this->view.selection.active = this->view.selection.selected.back();
     }
 
     void ViewportInteraction::clear_selection() noexcept {
-        this->view.selection.selected_instances.clear();
-        this->view.selection.active_instance.reset();
-        this->view.selection.hovered_instance.reset();
+        this->view.selection.selected.clear();
+        this->view.selection.active.reset();
+        this->view.selection.hovered.reset();
     }
 
     void ViewportInteraction::clear_hover() noexcept {
-        this->view.selection.hovered_instance.reset();
+        this->view.selection.hovered.reset();
     }
 
-    std::pair<std::optional<std::uint64_t>, bool> ViewportInteraction::debug_object_at(const float normalized_x, const float normalized_y) const noexcept {
-        if (!this->context.dynamics.configuration.initialized) return {};
-        const std::array<float, 16>& matrix = this->view.render_camera.matrices().view_projection;
-        const auto project                  = [&matrix](const math::Float3 point) -> std::optional<math::Float2> {
-            const float clip_x = matrix[0] * point.x + matrix[1] * point.y + matrix[2] * point.z + matrix[3];
-            const float clip_y = matrix[4] * point.x + matrix[5] * point.y + matrix[6] * point.z + matrix[7];
-            const float clip_w = matrix[12] * point.x + matrix[13] * point.y + matrix[14] * point.z + matrix[15];
-            if (clip_w <= 0.0f) return std::nullopt;
-            return math::Float2{
-                clip_x / clip_w * 0.5f + 0.5f,
-                0.5f - clip_y / clip_w * 0.5f,
-            };
-        };
-        const math::Float2 cursor{normalized_x * this->view.aspect, normalized_y};
-        float closest_distance_squared = 0.000144f;
-        std::optional<std::uint64_t> debug_object_id{};
-        bool debug_xray{};
-        const auto test_segment = [&](const math::Float3 first, const math::Float3 second, const dynamics::DebugPrimitive& primitive) {
-            const std::optional<math::Float2> projected_first  = project(first);
-            const std::optional<math::Float2> projected_second = project(second);
-            if (!projected_first || !projected_second) return;
-            const math::Float2 a{projected_first->x * this->view.aspect, projected_first->y};
-            const math::Float2 b{projected_second->x * this->view.aspect, projected_second->y};
-            const math::Float2 edge{b.x - a.x, b.y - a.y};
-            const math::Float2 offset{cursor.x - a.x, cursor.y - a.y};
-            const float length_squared   = edge.x * edge.x + edge.y * edge.y;
-            const float t                = length_squared > 0.0f ? std::clamp((offset.x * edge.x + offset.y * edge.y) / length_squared, 0.0f, 1.0f) : 0.0f;
-            const float dx               = cursor.x - (a.x + edge.x * t);
-            const float dy               = cursor.y - (a.y + edge.y * t);
-            const float distance_squared = dx * dx + dy * dy;
-            if (distance_squared >= closest_distance_squared || primitive.pick_id == 0) return;
-            closest_distance_squared = distance_squared;
-            debug_object_id          = primitive.pick_id;
-            debug_xray               = primitive.depth_mode == dynamics::DebugDepthMode::XRay;
-        };
-        for (const dynamics::DebugPrimitive& primitive : this->context.dynamics.publication.debug_primitives) {
-            if (primitive.kind == dynamics::DebugPrimitiveKind::Point) {
-                test_segment(primitive.first_position, primitive.first_position, primitive);
-                continue;
-            }
-            if (primitive.kind == dynamics::DebugPrimitiveKind::AxisAlignedBox) {
-                const math::Float3 minimum = primitive.first_position;
-                const math::Float3 maximum = primitive.second_position;
-                const std::array corners{
-                    math::Float3{minimum.x, minimum.y, minimum.z},
-                    math::Float3{maximum.x, minimum.y, minimum.z},
-                    math::Float3{minimum.x, maximum.y, minimum.z},
-                    math::Float3{maximum.x, maximum.y, minimum.z},
-                    math::Float3{minimum.x, minimum.y, maximum.z},
-                    math::Float3{maximum.x, minimum.y, maximum.z},
-                    math::Float3{minimum.x, maximum.y, maximum.z},
-                    math::Float3{maximum.x, maximum.y, maximum.z},
-                };
-                constexpr std::array<std::array<std::uint32_t, 2>, 12> edges{{
-                    {0, 1},
-                    {2, 3},
-                    {4, 5},
-                    {6, 7},
-                    {0, 2},
-                    {1, 3},
-                    {4, 6},
-                    {5, 7},
-                    {0, 4},
-                    {1, 5},
-                    {2, 6},
-                    {3, 7},
-                }};
-                for (const std::array<std::uint32_t, 2> edge : edges) test_segment(corners[edge[0]], corners[edge[1]], primitive);
-                continue;
-            }
-            test_segment(primitive.first_position, primitive.second_position, primitive);
+    bool ViewportInteraction::entity_exists(const SceneEntityReference entity) const noexcept {
+        const scene::SceneResources& resources = this->context.document.content.source.resources;
+        if (entity.kind == SceneEntityKind::Instance) return std::ranges::contains(resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id);
+        if (entity.kind == SceneEntityKind::Camera) return std::ranges::contains(resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id);
+        if (entity.kind == SceneEntityKind::Light) return std::ranges::contains(resources.lights, scene::LightId{entity.id}, &scene::Light::id);
+        if (entity.kind != SceneEntityKind::AreaEmitter) return false;
+        const auto instance = std::ranges::find(resources.instances, scene::InstanceId{entity.owner}, &scene::Instance::id);
+        if (instance == resources.instances.end()) return false;
+        const scene::Prototype& prototype = *std::ranges::find(resources.prototypes, instance->prototype, &scene::Prototype::id);
+        return entity.subindex < prototype.primitives.size() && prototype.primitives[entity.subindex].area_light == scene::LightId{entity.id};
+    }
+
+    std::optional<math::Bounds3> ViewportInteraction::entity_bounds(const SceneEntityReference entity) const noexcept {
+        const scene::Scene& source = this->context.document.content.evaluated;
+        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) return source.view().bounds(std::array{scene::InstanceId{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner}});
+        const math::Bounds3 scene_bounds = source.view().bounds();
+        const float extent               = std::max(scene_bounds.radius() * 0.05f, 0.05f);
+        if (entity.kind == SceneEntityKind::Camera) {
+            const scene::Camera& camera = *std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id);
+            const math::Float3 position = camera.frame().position;
+            return math::Bounds3{position - math::Float3{extent, extent, extent}, position + math::Float3{extent, extent, extent}};
         }
-        return {debug_object_id, debug_xray};
-    }
-
-    std::optional<std::uint32_t> ViewportInteraction::instance_index(const scene::InstanceId instance_id) const noexcept {
-        const std::vector<scene::Instance>::const_iterator found = std::ranges::find(this->context.document.content.source.resources.instances, instance_id, &scene::Instance::id);
-        if (found == this->context.document.content.source.resources.instances.end()) return std::nullopt;
-        return static_cast<std::uint32_t>(found - this->context.document.content.source.resources.instances.begin());
+        if (entity.kind != SceneEntityKind::Light) return std::nullopt;
+        const scene::Light& light = *std::ranges::find(source.resources.lights, scene::LightId{entity.id}, &scene::Light::id);
+        return std::visit(
+            [&](const auto& data) -> std::optional<math::Bounds3> {
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight> || std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) {
+                    const math::Float3 position{data.transform.matrix[3], data.transform.matrix[7], data.transform.matrix[11]};
+                    return math::Bounds3{position - math::Float3{extent, extent, extent}, position + math::Float3{extent, extent, extent}};
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>) {
+                    math::Bounds3 portals = math::Bounds3::empty();
+                    for (const std::array<math::Float3, 4>& portal : data.portals)
+                        for (const math::Float3 point : portal) portals.include(point);
+                    return data.portals.empty() ? std::optional{scene_bounds} : std::optional{portals};
+                } else
+                    return scene_bounds;
+            },
+            light.data);
     }
 
     void ViewportInteraction::prune_selection() noexcept {
-        std::erase_if(this->view.selection.selected_instances, [this](const scene::InstanceId id) { return !this->instance_index(id); });
-        if (this->view.selection.hovered_instance && !this->instance_index(*this->view.selection.hovered_instance)) this->view.selection.hovered_instance.reset();
-        if (this->view.selection.active_instance && !this->instance_index(*this->view.selection.active_instance)) this->view.selection.active_instance.reset();
+        std::erase_if(this->view.selection.selected, [this](const SceneEntityReference entity) { return !this->entity_exists(entity); });
+        if (this->view.selection.hovered && !this->entity_exists(*this->view.selection.hovered)) this->view.selection.hovered.reset();
+        if (this->view.selection.active && !this->entity_exists(*this->view.selection.active)) this->view.selection.active.reset();
     }
 
 } // namespace spectra

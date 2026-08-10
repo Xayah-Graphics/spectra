@@ -2,7 +2,7 @@ export module spectra.editor:viewport.interaction;
 
 import spectra.scene;
 import spectra.scene.document;
-import spectra.scene.dynamics;
+import spectra.dynamics.runtime;
 import std;
 
 namespace spectra {
@@ -17,14 +17,31 @@ namespace spectra {
         Yz,
     };
 
+    export enum class SceneEntityKind : std::uint32_t {
+        None,
+        Instance,
+        Camera,
+        Light,
+        AreaEmitter,
+    };
+
+    export struct SceneEntityReference {
+        SceneEntityKind kind{SceneEntityKind::None};
+        std::uint64_t id{};
+        std::uint64_t owner{};
+        std::uint32_t subindex{};
+
+        friend auto operator<=>(const SceneEntityReference&, const SceneEntityReference&) = default;
+    };
+
     export struct SelectionState {
-        std::vector<scene::InstanceId> selected_instances{};
-        std::optional<scene::InstanceId> active_instance{};
-        std::optional<scene::InstanceId> hovered_instance{};
+        std::vector<SceneEntityReference> selected{};
+        std::optional<SceneEntityReference> active{};
+        std::optional<SceneEntityReference> hovered{};
     };
 
     export struct ViewportInteraction {
-        ViewportInteraction(SceneDocument& document, DynamicWorld& dynamics) noexcept;
+        ViewportInteraction(SceneDocument& document, DynamicsRuntime& dynamics) noexcept;
 
         void initialize_from_scene();
         void camera_changed() noexcept;
@@ -34,15 +51,14 @@ namespace spectra {
         void frame_scene(float aspect) noexcept;
         void frame_selection(float aspect) noexcept;
         void view_axis(math::Float3 direction, float aspect) noexcept;
-        void select_instance(scene::InstanceId instance_id, bool additive);
+        void select(SceneEntityReference entity, bool additive);
         void clear_selection() noexcept;
         void clear_hover() noexcept;
-        [[nodiscard]] std::pair<std::optional<std::uint64_t>, bool> debug_object_at(float normalized_x, float normalized_y) const noexcept;
         void prune_selection() noexcept;
 
         struct {
             SceneDocument& document;
-            DynamicWorld& dynamics;
+            DynamicsRuntime& dynamics;
         } context;
 
         struct {
@@ -64,6 +80,7 @@ namespace spectra {
 
     private:
         void frame_viewport_camera(math::Bounds3 bounds, float aspect) noexcept;
-        [[nodiscard]] std::optional<std::uint32_t> instance_index(scene::InstanceId instance_id) const noexcept;
+        [[nodiscard]] bool entity_exists(SceneEntityReference entity) const noexcept;
+        [[nodiscard]] std::optional<math::Bounds3> entity_bounds(SceneEntityReference entity) const noexcept;
     };
 } // namespace spectra

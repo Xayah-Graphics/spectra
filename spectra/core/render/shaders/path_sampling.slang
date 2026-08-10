@@ -67,41 +67,6 @@ public struct RussianRouletteResult {
 }
 
 public RussianRouletteResult
-apply_russian_roulette(
-    float4 throughput,
-    float eta_scale,
-    uint depth,
-    float sample) {
-    RussianRouletteResult result;
-    result.throughput = throughput;
-    result.continue_path = true;
-    if (depth == 0) return result;
-    const float4 roulette_throughput =
-        throughput * eta_scale;
-    const float maximum_component =
-        max(
-            roulette_throughput.x,
-            max(
-                roulette_throughput.y,
-                max(
-                    roulette_throughput.z,
-                    roulette_throughput.w)));
-    if (maximum_component >= 1.0)
-        return result;
-    const float termination_probability =
-        max(
-            0.0,
-            1.0 - maximum_component);
-    if (sample < termination_probability) {
-        result.continue_path = false;
-        return result;
-    }
-    result.throughput /=
-        1.0 - termination_probability;
-    return result;
-}
-
-public RussianRouletteResult
 apply_volpath_russian_roulette(
     float4 throughput,
     float4 r_u,

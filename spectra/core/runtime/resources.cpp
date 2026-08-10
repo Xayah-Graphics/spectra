@@ -590,6 +590,19 @@ namespace spectra {
         this->context.graphics.queue.waitIdle();
     }
 
+    void GpuResources::submit_external_immediate(const GpuExternalTimelineSemaphore& timeline, const std::uint64_t wait_value, const std::uint64_t signal_value, std::move_only_function<void(const vk::raii::CommandBuffer&)> record) {
+        vk::raii::CommandBuffers command_buffers{this->context.graphics.device, vk::CommandBufferAllocateInfo{*this->immediate_command_pool, vk::CommandBufferLevel::ePrimary, 1}};
+        const vk::raii::CommandBuffer& command_buffer = command_buffers.front();
+        command_buffer.begin(vk::CommandBufferBeginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        record(command_buffer);
+        command_buffer.end();
+        const vk::SemaphoreSubmitInfo wait{*timeline.semaphore, wait_value, vk::PipelineStageFlagBits2::eCopy};
+        const vk::SemaphoreSubmitInfo signal{*timeline.semaphore, signal_value, vk::PipelineStageFlagBits2::eAllCommands};
+        const vk::CommandBufferSubmitInfo command{*command_buffer};
+        this->context.graphics.queue.submit2(vk::SubmitInfo2{{}, 1, &wait, 1, &command, 1, &signal});
+        this->context.graphics.queue.waitIdle();
+    }
+
     void GpuResources::bind_descriptor_heaps(const vk::raii::CommandBuffer& command_buffer) const noexcept {
         command_buffer.bindResourceHeapEXT(vk::BindHeapInfoEXT{
             {

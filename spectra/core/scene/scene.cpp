@@ -4,6 +4,56 @@ import std;
 
 namespace spectra::scene {
     namespace {
+        constexpr std::array<double, 16> gauss_legendre_nodes{
+            0.048307665687738316,
+            0.14447196158279649,
+            0.23928736225213707,
+            0.33186860228212765,
+            0.42135127613063535,
+            0.50689990893222939,
+            0.58771575724076233,
+            0.66304426693021520,
+            0.73218211874028968,
+            0.79448379596794241,
+            0.84936761373256997,
+            0.89632115576605212,
+            0.93490607593773969,
+            0.96476225558750643,
+            0.98561151154526834,
+            0.99726386184948156,
+        };
+
+        constexpr std::array<double, 16> gauss_legendre_weights{
+            0.096540088514727801,
+            0.095638720079274859,
+            0.093844399080804566,
+            0.091173878695763885,
+            0.087652093004403811,
+            0.083311924226946755,
+            0.078193895787070306,
+            0.072345794108848506,
+            0.065822222776361847,
+            0.058684093478535547,
+            0.050998059262376176,
+            0.042835898022226681,
+            0.034273862913021433,
+            0.025392065309262059,
+            0.016274394730905671,
+            0.007018610009470097,
+        };
+
+        template<std::invocable<double> Function>
+        [[nodiscard]] double integrate_gauss_legendre_32(Function&& function, const double minimum, const double maximum) noexcept {
+            const double midpoint = std::midpoint(minimum, maximum);
+            const double extent   = (maximum - minimum) * 0.5;
+            double result{};
+            for (std::size_t index = 0; index != gauss_legendre_nodes.size(); ++index) {
+                const double offset = extent * gauss_legendre_nodes[index];
+                result += gauss_legendre_weights[index] * (function(midpoint - offset) + function(midpoint + offset));
+            }
+            return extent * result;
+        }
+
         [[nodiscard]] float triangle_area(const math::Float3 first, const math::Float3 second, const math::Float3 third) noexcept {
             return 0.5f * (second - first).cross(third - first).length();
         }
@@ -53,6 +103,57 @@ namespace spectra::scene {
                     return 0.5f * radians(data.phi_max) * (data.radius * data.radius - data.inner_radius * data.inner_radius);
                 else
                     return radians(data.phi_max) * data.radius * (data.z_max - data.z_min);
+            },
+            geometry.data);
+    }
+
+    float surface_area(const Geometry& geometry, const math::Transform& transform) noexcept {
+        const math::Float3 x        = transform.transform_vector({1.0f, 0.0f, 0.0f});
+        const math::Float3 y        = transform.transform_vector({0.0f, 1.0f, 0.0f});
+        const math::Float3 z        = transform.transform_vector({0.0f, 0.0f, 1.0f});
+        const math::Float3 normal_x = y.cross(z);
+        const math::Float3 normal_y = z.cross(x);
+        const math::Float3 normal_z = x.cross(y);
+        const auto area_scale       = [&](const math::Float3 normal) {
+            return (normal_x * normal.x + normal_y * normal.y + normal_z * normal.z).length();
+        };
+        return std::visit(
+            [&](const auto& data) -> float {
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, TriangleMeshGeometry>) {
+                    float area{};
+                    for (std::size_t index = 0; index < data.indices.size(); index += 3)
+                        area += triangle_area(transform.transform_point(data.positions[data.indices[index]]), transform.transform_point(data.positions[data.indices[index + 1]]), transform.transform_point(data.positions[data.indices[index + 2]]));
+                    return area;
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, SphereGeometry>) {
+                    const double radius  = data.radius;
+                    const double phi_max = radians(data.phi_max);
+                    const double area = radius * integrate_gauss_legendre_32(
+                                                     [&](const double phi) {
+                                                         return integrate_gauss_legendre_32(
+                                                             [&](const double height) {
+                                                                 const double radial = std::sqrt(radius * radius - height * height) / radius;
+                                                                 return area_scale({static_cast<float>(radial * std::cos(phi)), static_cast<float>(radial * std::sin(phi)), static_cast<float>(height / radius)});
+                                                             },
+                                                             data.z_min,
+                                                             data.z_max);
+                                                     },
+                                                     0.0,
+                                                     phi_max);
+                    return static_cast<float>(area);
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, BoxGeometry>) {
+                    const math::Float3 extent = data.bounds.diagonal();
+                    return 2.0f * (extent.x * extent.y * normal_z.length() + extent.x * extent.z * normal_y.length() + extent.y * extent.z * normal_x.length());
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RectangleGeometry>)
+                    return (data.maximum.x - data.minimum.x) * (data.maximum.y - data.minimum.y) * normal_z.length();
+                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DiskGeometry>)
+                    return 0.5f * radians(data.phi_max) * (data.radius * data.radius - data.inner_radius * data.inner_radius) * normal_z.length();
+                else {
+                    const double area = data.radius * (data.z_max - data.z_min) * integrate_gauss_legendre_32(
+                                                                                         [&](const double phi) { return area_scale({static_cast<float>(std::cos(phi)), static_cast<float>(std::sin(phi)), 0.0f}); },
+                                                                                         0.0,
+                                                                                         radians(data.phi_max));
+                    return static_cast<float>(area);
+                }
             },
             geometry.data);
     }
@@ -211,11 +312,11 @@ namespace spectra::scene {
         return std::lerp(this->values[lower_index], this->values[upper_index], value);
     }
 
-    math::Bounds3 particle_bounds(const ParticleSet& particles) noexcept {
+    math::Bounds3 sphere_set_bounds(const SphereSet& spheres) noexcept {
         math::Bounds3 result = math::Bounds3::empty();
-        for (std::size_t index = 0; index != particles.positions.size(); ++index) {
-            const math::Float3 position = particles.positions[index];
-            const float radius          = particles.radii[index];
+        for (std::size_t index = 0; index != spheres.positions.size(); ++index) {
+            const math::Float3 position = spheres.positions[index];
+            const float radius          = spheres.radii[index];
             result.include(math::Float3{position.x - radius, position.y - radius, position.z - radius});
             result.include(math::Float3{position.x + radius, position.y + radius, position.z + radius});
         }
@@ -227,8 +328,8 @@ namespace spectra::scene {
             math::Bounds3 local{};
             if (primitive.geometry.value != 0)
                 local = geometry_bounds(*std::ranges::find(scene.resources.geometries, primitive.geometry, &Geometry::id));
-            else if (primitive.particles.value != 0)
-                local = particle_bounds(*std::ranges::find(scene.resources.particle_sets, primitive.particles, &ParticleSet::id));
+            else if (primitive.spheres.value != 0)
+                local = sphere_set_bounds(*std::ranges::find(scene.resources.sphere_sets, primitive.spheres, &SphereSet::id));
             else
                 return false;
             bounds.include(local.transformed(parent * primitive.transform));

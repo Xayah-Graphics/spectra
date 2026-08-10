@@ -1,19 +1,19 @@
-export module spectra.display;
+export module spectra.render.display;
 
 import spectra.runtime;
-import spectra.render;
+import spectra.render.contract;
 import std;
 import vulkan;
 
 namespace spectra {
-    export struct DisplayRenderer {
-        DisplayRenderer(VulkanRuntime& runtime, std::filesystem::path shader_directory) noexcept;
-        ~DisplayRenderer();
+    export struct DisplayPass {
+        DisplayPass(VulkanRuntime& runtime, std::filesystem::path shader_directory) noexcept;
+        ~DisplayPass();
 
-        DisplayRenderer(const DisplayRenderer&)            = delete;
-        DisplayRenderer(DisplayRenderer&&)                 = delete;
-        DisplayRenderer& operator=(const DisplayRenderer&) = delete;
-        DisplayRenderer& operator=(DisplayRenderer&&)      = delete;
+        DisplayPass(const DisplayPass&)            = delete;
+        DisplayPass(DisplayPass&&)                 = delete;
+        DisplayPass& operator=(const DisplayPass&) = delete;
+        DisplayPass& operator=(DisplayPass&&)      = delete;
 
         void initialize();
         [[nodiscard]] bool resize(vk::Extent2D extent);

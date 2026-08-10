@@ -1,10 +1,9 @@
 export module spectra.editor:viewport.overlay;
 
-import spectra.display;
+import spectra.render.display;
 import spectra.runtime;
 import spectra.scene;
-import spectra.scene.dynamics;
-import spectra.render;
+import spectra.render.scene;
 import std;
 import vulkan;
 
@@ -16,9 +15,6 @@ namespace spectra {
         std::uint32_t axes_plane{};
         bool axes_visible{};
         bool outline_visible{true};
-        bool raster_visualizations{};
-        std::span<const dynamics::DebugPrimitive> debug_primitives{};
-        std::span<const GpuVolumeVelocityField> volume_velocity_fields{};
     };
 
     export struct ViewportOverlay {
@@ -33,7 +29,7 @@ namespace spectra {
         void initialize(scene::SceneView scene);
         void destroy_scene() noexcept;
         void synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        void record(const vk::raii::CommandBuffer& command_buffer, DisplayRenderer& display, const scene::Camera& camera, const ViewportOverlayState& state);
+        void record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const scene::Camera& camera, const ViewportOverlayState& state);
 
         struct {
             VulkanRuntime& runtime;
@@ -53,15 +49,10 @@ namespace spectra {
             vk::raii::ShaderEXTs mask_shaders{nullptr};
             vk::raii::ShaderEXTs axes_shaders{nullptr};
             vk::raii::ShaderEXTs outline_shaders{nullptr};
-            vk::raii::ShaderEXTs debug_shaders{nullptr};
-            vk::raii::ShaderEXTs volume_velocity_shaders{nullptr};
             GpuImage mask{};
             GpuImage depth{};
-            GpuBuffer debug_buffer{};
             DescriptorHandle mask_descriptor{};
             DescriptorHandle sampler_descriptor{};
-            DescriptorHandle debug_descriptor{};
-            std::uint64_t debug_capacity{};
             vk::ImageLayout mask_layout{vk::ImageLayout::eUndefined};
             vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
             bool initialized{};
@@ -73,6 +64,6 @@ namespace spectra {
         void destroy_overlay() noexcept;
         void create_overlay_images(vk::Extent2D extent);
         void configure_mask_render_state(const vk::raii::CommandBuffer& command_buffer, vk::Rect2D render_region, vk::CompareOp depth_compare, bool depth_write);
-        void record_impl(const vk::raii::CommandBuffer& command_buffer, vk::Image target_image, vk::ImageView target_view, vk::Extent2D extent, vk::Rect2D render_region, const scene::Camera& camera, std::span<const std::uint32_t> selected_instances, std::span<const std::uint32_t> active_instances, std::span<const std::uint32_t> hovered_instances, std::uint32_t axes_plane, bool axes_visible, bool outline_visible, bool raster_visualizations, std::span<const dynamics::DebugPrimitive> debug_primitives, std::span<const GpuVolumeVelocityField> volume_velocity_fields);
+        void record_impl(const vk::raii::CommandBuffer& command_buffer, vk::Image target_image, vk::ImageView target_view, vk::ImageLayout target_layout, vk::Extent2D extent, vk::Rect2D render_region, const scene::Camera& camera, std::span<const std::uint32_t> selected_instances, std::span<const std::uint32_t> active_instances, std::span<const std::uint32_t> hovered_instances, std::uint32_t axes_plane, bool axes_visible, bool outline_visible);
     };
 } // namespace spectra

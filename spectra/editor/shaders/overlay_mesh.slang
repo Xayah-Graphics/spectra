@@ -144,17 +144,17 @@ void overlay_mesh(
 
     StructuredBuffer<float> radii =
         push_data.radii;
-    const uint particle =
+    const uint sphere =
         first_element + thread_id;
     const PackedFloat3 packed_center =
-        positions[particle];
+        positions[sphere];
     const float3 center =
         float3(
             packed_center.x,
             packed_center.y,
             packed_center.z);
     const float radius =
-        radii[particle];
+        radii[sphere];
     const float3 directions[6] = {
         float3(1.0, 0.0, 0.0),
         float3(-1.0, 0.0, 0.0),

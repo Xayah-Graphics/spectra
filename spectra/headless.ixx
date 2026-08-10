@@ -8,6 +8,7 @@ namespace spectra {
         std::filesystem::path png_output_path{};
         std::filesystem::path linear_output_path{};
         std::string renderer{"rasterizer"};
+        std::string raster_display_mode{"material"};
         std::optional<std::filesystem::path> gbuffer_output_path{};
     };
 

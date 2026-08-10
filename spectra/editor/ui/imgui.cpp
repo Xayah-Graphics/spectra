@@ -5,12 +5,14 @@ module;
 
 module spectra.editor;
 
+import spectra.runtime.shaders;
+
 import :ui.imgui;
 import std;
 import vulkan;
 
 namespace spectra {
-    ImGuiBackend::ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, DisplayRenderer& display, std::filesystem::path shader_directory) noexcept : context{platform, runtime, display, std::move(shader_directory)} {}
+    ImGuiBackend::ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, DisplayPass& display, std::filesystem::path shader_directory) noexcept : context{platform, runtime, display, std::move(shader_directory)} {}
 
     ImGuiBackend::~ImGuiBackend() {
         if (!this->initialized) return;

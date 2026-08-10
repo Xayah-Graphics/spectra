@@ -29,6 +29,7 @@ public static const uint geometry_disk = 2;
 public static const uint geometry_cylinder = 3;
 public static const uint geometry_box = 4;
 public static const uint geometry_rectangle = 5;
+public static const uint geometry_sphere_set = 6;
 
 public static const uint material_interface = 0;
 public static const uint material_diffuse = 1;

@@ -11,9 +11,10 @@ struct RasterVertex {
     float3 emission : COLOR0;
     float3 color_modifier : COLOR1;
     nointerpolation uint material : MATERIAL;
-    nointerpolation uint particle : PARTICLE;
-    nointerpolation float3 particle_center : POSITION1;
-    nointerpolation float particle_radius : RADIUS;
+    nointerpolation uint sphere : SPHERE;
+    nointerpolation float3 sphere_center : POSITION1;
+    nointerpolation float sphere_radius : RADIUS;
+    noperspective float3 wire_coordinates : TEXCOORD1;
 }
 
 [vk::push_constant]
@@ -136,6 +137,11 @@ void raster_mesh(
                   triangle];
     const uint first_vertex =
         thread_id * 3;
+    const float3 wire_coordinates[3] = {
+        float3(1.0, 0.0, 0.0),
+        float3(0.0, 1.0, 0.0),
+        float3(0.0, 0.0, 1.0),
+    };
     for (uint vertex = 0;
          vertex != 3;
          ++vertex) {
@@ -207,9 +213,11 @@ void raster_mesh(
             float3(1.0);
         output.material =
             material;
-        output.particle = 0;
-        output.particle_center = float3(0.0);
-        output.particle_radius = 0.0;
+        output.sphere = 0;
+        output.sphere_center = float3(0.0);
+        output.sphere_radius = 0.0;
+        output.wire_coordinates =
+            wire_coordinates[vertex];
         vertices[
             first_vertex +
             vertex] = output;

@@ -131,6 +131,7 @@ namespace spectra {
         void signal_external_timeline(const GpuExternalTimelineSemaphore& timeline, std::uint64_t value) const;
 
         void submit_immediate(std::move_only_function<void(const vk::raii::CommandBuffer&)> record);
+        void submit_external_immediate(const GpuExternalTimelineSemaphore& timeline, std::uint64_t wait_value, std::uint64_t signal_value, std::move_only_function<void(const vk::raii::CommandBuffer&)> record);
         void bind_descriptor_heaps(const vk::raii::CommandBuffer& command_buffer) const noexcept;
         void push_data(const vk::raii::CommandBuffer& command_buffer, std::span<const std::byte> data, std::uint32_t offset = 0) const noexcept;
 

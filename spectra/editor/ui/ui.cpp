@@ -11,7 +11,7 @@ import :ui;
 import std;
 
 namespace spectra {
-    EditorUi::EditorUi(SceneDocument& document, DynamicWorld& dynamics, Renderers& renderers, ViewportInteraction& viewport, ViewportPicker& picker, FrozenSceneExporter& frozen_export, ImGuiBackend& imgui) noexcept : context{document, dynamics, renderers, viewport, picker, frozen_export, imgui} {}
+    EditorUi::EditorUi(SceneDocument& document, EditorSettings& settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, FrozenSceneExporter& frozen_export, ImGuiBackend& imgui) noexcept : context{document, settings, dynamics, render_engine, viewport, picker, frozen_export, imgui} {}
 
     void EditorUi::notify(std::string message, const bool error) {
         this->controls.status       = std::move(message);
@@ -77,24 +77,49 @@ namespace spectra {
             return result;
         }
 
-        [[nodiscard]] const scene::Instance* selected_instance(const EditorUi& editor) noexcept {
-            if (!editor.context.viewport.view.selection.active_instance) return nullptr;
-            const std::vector<scene::Instance>::const_iterator found = std::ranges::find(editor.context.document.content.source.resources.instances, *editor.context.viewport.view.selection.active_instance, &scene::Instance::id);
-            return found == editor.context.document.content.source.resources.instances.end() ? nullptr : std::to_address(found);
+        [[nodiscard]] const SceneEntityReference* active_entity(const EditorUi& editor) noexcept {
+            return editor.context.viewport.view.selection.active ? &*editor.context.viewport.view.selection.active : nullptr;
         }
 
-        [[nodiscard]] std::optional<ImVec2> project(const math::Float3 point, const scene::CameraMatrices& matrices, const ImVec2 minimum, const ImVec2 size) noexcept {
-            const std::array<float, 4> clip{
-                matrices.view_projection[0] * point.x + matrices.view_projection[1] * point.y + matrices.view_projection[2] * point.z + matrices.view_projection[3],
-                matrices.view_projection[4] * point.x + matrices.view_projection[5] * point.y + matrices.view_projection[6] * point.z + matrices.view_projection[7],
-                matrices.view_projection[8] * point.x + matrices.view_projection[9] * point.y + matrices.view_projection[10] * point.z + matrices.view_projection[11],
-                matrices.view_projection[12] * point.x + matrices.view_projection[13] * point.y + matrices.view_projection[14] * point.z + matrices.view_projection[15],
-            };
-            if (clip[3] <= 0.0f) return std::nullopt;
-            return ImVec2{
-                minimum.x + (clip[0] / clip[3] * 0.5f + 0.5f) * size.x,
-                minimum.y + (0.5f - clip[1] / clip[3] * 0.5f) * size.y,
-            };
+        [[nodiscard]] bool transform_editable(const EditorUi& editor, const SceneEntityReference entity) noexcept {
+            if (entity.kind != SceneEntityKind::Instance && entity.kind != SceneEntityKind::AreaEmitter) return entity.kind == SceneEntityKind::Camera || entity.kind == SceneEntityKind::Light;
+            const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
+            return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(instance_id);
+        }
+
+        [[nodiscard]] std::optional<math::Transform> entity_transform(const scene::Scene& source, const SceneEntityReference entity) noexcept {
+            if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) {
+                const scene::InstanceId id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
+                return std::ranges::find(source.resources.instances, id, &scene::Instance::id)->transform;
+            }
+            if (entity.kind == SceneEntityKind::Camera) return std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->transform;
+            if (entity.kind != SceneEntityKind::Light) return std::nullopt;
+            const scene::Light& light = *std::ranges::find(source.resources.lights, scene::LightId{entity.id}, &scene::Light::id);
+            return std::visit(
+                [](const auto& data) -> std::optional<math::Transform> {
+                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>)
+                        return data.environment.transform;
+                    else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiffuseAreaLight>)
+                        return std::nullopt;
+                    else
+                        return data.transform;
+                },
+                light.data);
+        }
+
+        [[nodiscard]] const std::string& entity_name(const scene::Scene& source, const SceneEntityReference entity) noexcept {
+            if (entity.kind == SceneEntityKind::Instance) return std::ranges::find(source.resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id)->name;
+            if (entity.kind == SceneEntityKind::Camera) return std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->name;
+            if (entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Light) return std::ranges::find(source.resources.lights, scene::LightId{entity.id}, &scene::Light::id)->name;
+            std::unreachable();
+        }
+
+        [[nodiscard]] const char* entity_kind_name(const SceneEntityReference entity) noexcept {
+            if (entity.kind == SceneEntityKind::Instance) return "INSTANCE";
+            if (entity.kind == SceneEntityKind::Camera) return "CAMERA";
+            if (entity.kind == SceneEntityKind::Light) return "LIGHT";
+            if (entity.kind == SceneEntityKind::AreaEmitter) return "AREA EMITTER";
+            return "ENTITY";
         }
 
         [[nodiscard]] FlatButtonInteraction flat_button(const char* identifier, const ImVec2 size, const ImVec4 semantic_color = {}, const bool dangerous = false, const float default_alpha = 0.68f) {
@@ -145,45 +170,6 @@ namespace spectra {
                 draw_list->AddLine(ImVec2{center - half_width, interaction.maximum.y - 3.0f}, ImVec2{center + half_width, interaction.maximum.y - 3.0f}, ImGui::GetColorU32(ImVec4{0.16f, 0.72f, 0.84f, 1.0f}), 2.0f);
             }
             return interaction.clicked;
-        }
-
-        void draw_scene_camera(const EditorUi& editor, const ImVec2 minimum, const ImVec2 size, ImDrawList& draw_list) {
-            if (!editor.context.viewport.view.overlays_visible || editor.context.viewport.view.source == CameraSource::Scene) return;
-            const scene::Camera& camera     = editor.context.document.content.source.camera();
-            const scene::CameraFrame frame  = camera.frame();
-            constexpr float distance        = 0.5f;
-            const math::Float3 plane_center = frame.position + frame.forward * distance;
-            std::array<math::Float2, 4> screen_corners{};
-            if (const scene::PerspectiveCameraData* perspective = std::get_if<scene::PerspectiveCameraData>(&camera.data)) {
-                const float scale = std::tan(perspective->vertical_fov * std::numbers::pi_v<float> / 360.0f) * distance;
-                screen_corners    = {{
-                    {perspective->screen_window.minimum.x * scale, perspective->screen_window.minimum.y * scale},
-                    {perspective->screen_window.maximum.x * scale, perspective->screen_window.minimum.y * scale},
-                    {perspective->screen_window.maximum.x * scale, perspective->screen_window.maximum.y * scale},
-                    {perspective->screen_window.minimum.x * scale, perspective->screen_window.maximum.y * scale},
-                }};
-            } else {
-                const scene::ScreenWindow& screen_window = std::get<scene::OrthographicCameraData>(camera.data).screen_window;
-                screen_corners                           = {{{screen_window.minimum.x, screen_window.minimum.y}, {screen_window.maximum.x, screen_window.minimum.y}, {screen_window.maximum.x, screen_window.maximum.y}, {screen_window.minimum.x, screen_window.maximum.y}}};
-            }
-            const bool orthographic = std::holds_alternative<scene::OrthographicCameraData>(camera.data);
-            std::array<math::Float3, 4> bases{};
-            std::array<math::Float3, 4> corners{};
-            for (std::size_t index = 0; index < corners.size(); ++index) {
-                bases[index]   = orthographic ? frame.position + frame.right * screen_corners[index].x + frame.up * screen_corners[index].y : frame.position;
-                corners[index] = plane_center + frame.right * screen_corners[index].x + frame.up * screen_corners[index].y;
-            }
-            const scene::CameraMatrices matrices = editor.context.viewport.view.render_camera.matrices();
-            const ImU32 color                    = ImGui::GetColorU32(ImVec4{1.0f, 0.67f, 0.16f, 0.72f});
-            for (std::size_t index = 0; index < corners.size(); ++index) {
-                const std::optional<ImVec2> base      = project(bases[index], matrices, minimum, size);
-                const std::optional<ImVec2> next_base = project(bases[(index + 1) % bases.size()], matrices, minimum, size);
-                const std::optional<ImVec2> corner    = project(corners[index], matrices, minimum, size);
-                const std::optional<ImVec2> next      = project(corners[(index + 1) % corners.size()], matrices, minimum, size);
-                if (base && corner) draw_list.AddLine(*base, *corner, color, 1.4f);
-                if (orthographic && base && next_base) draw_list.AddLine(*base, *next_base, color, 1.4f);
-                if (corner && next) draw_list.AddLine(*corner, *next, color, 1.4f);
-            }
         }
 
         [[nodiscard]] bool icon_button(const char* identifier, const ImVec2 size, const Icon icon, const char* text = nullptr, const ImVec4 semantic_color = {}, const bool selected = false, const bool dangerous = false, const float default_alpha = 0.68f) {
@@ -266,15 +252,15 @@ namespace spectra {
     }
 
     bool EditorUi::inspector_available() noexcept {
-        if (!this->context.dynamics.configuration.initialized) return false;
-        return std::ranges::any_of(this->context.document.content.source.dynamic_setup->systems, [this](const scene::DynamicSystem& system) { return !this->context.dynamics.provider_descriptor(system.provider_id).parameters.empty(); });
+        return this->context.document.content.loaded;
     }
 
     bool EditorUi::pointer_over_interface(const ImVec2 position, const ImVec2 size, const bool show_axes) const noexcept {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         if (mouse.y <= position.y + top_strip_height + 5.0f) return true;
         if (show_axes && mouse.x >= position.x + size.x - 116.0f && mouse.y <= position.y + 126.0f) return true;
-        const bool transform_visible = selected_instance(*this) != nullptr;
+        const SceneEntityReference* entity = active_entity(*this);
+        const bool transform_visible = entity && entity_transform(this->context.document.content.source, *entity).has_value();
         if (transform_visible) {
             const float tools_top = position.y + size.y * 0.5f - transform_tools_height * 0.5f;
             if (mouse.x >= position.x + transform_tools_left && mouse.x <= position.x + transform_tools_left + transform_tools_width && mouse.y >= tools_top && mouse.y <= tools_top + transform_tools_height) return true;
@@ -286,28 +272,40 @@ namespace spectra {
     }
 
     void EditorUi::synchronize_transform() {
-        const scene::Instance* source_instance = selected_instance(*this);
-        if (!source_instance) {
-            this->controls.transform_instance.reset();
+        const SceneEntityReference* entity = active_entity(*this);
+        if (!entity) {
+            this->controls.transform_entity.reset();
             return;
         }
         if (this->controls.transform_drag_active || this->controls.gizmo_active) return;
-        const bool transform_editable       = !this->context.dynamics.configuration.initialized || !this->context.dynamics.controls(source_instance->id);
-        const scene::Scene& transform_scene = transform_editable ? this->context.document.content.source : this->context.document.content.evaluated;
-        const auto found                    = std::ranges::find(transform_scene.resources.instances, source_instance->id, &scene::Instance::id);
-        const scene::Instance& instance     = *found;
+        const bool editable                 = transform_editable(*this, *entity);
+        const scene::Scene& transform_scene = editable ? this->context.document.content.source : this->context.document.content.evaluated;
+        const std::optional<math::Transform> transform = entity_transform(transform_scene, *entity);
+        if (!transform) {
+            this->controls.transform_entity.reset();
+            return;
+        }
         const std::uint64_t revision        = transform_scene.revision().number;
-        if (this->controls.transform_instance == instance.id && this->controls.transform_revision == revision && this->controls.transform_editable == transform_editable) return;
-        std::array<float, 16> matrix = column_major(instance.transform.matrix);
+        if (this->controls.transform_entity == *entity && this->controls.transform_revision == revision && this->controls.transform_editable == editable) return;
+        std::array<float, 16> matrix = column_major(transform->matrix);
         ImGuizmo::DecomposeMatrixToComponents(matrix.data(), this->controls.translation.data(), this->controls.rotation.data(), this->controls.scale.data());
-        this->controls.transform_editable = transform_editable;
-        this->controls.transform_instance = instance.id;
+        this->controls.transform_editable = editable;
+        this->controls.transform_entity   = *entity;
         this->controls.transform_revision = revision;
     }
 
-    void EditorUi::apply_transform(const scene::InstanceId instance_id, math::Transform transform) {
-        this->context.document.update_transform(this->context.document.content.source, instance_id, transform);
-        this->context.document.update_transform(this->context.document.content.evaluated, instance_id, std::move(transform));
+    void EditorUi::apply_transform(const SceneEntityReference entity, math::Transform transform) {
+        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) {
+            const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
+            this->context.document.update_transform(this->context.document.content.source, instance_id, transform);
+            this->context.document.update_transform(this->context.document.content.evaluated, instance_id, std::move(transform));
+        } else if (entity.kind == SceneEntityKind::Camera) {
+            this->context.document.update_camera_transform(this->context.document.content.source, scene::CameraId{entity.id}, transform);
+            this->context.document.update_camera_transform(this->context.document.content.evaluated, scene::CameraId{entity.id}, std::move(transform));
+        } else if (entity.kind == SceneEntityKind::Light) {
+            this->context.document.update_light_transform(this->context.document.content.source, scene::LightId{entity.id}, transform);
+            this->context.document.update_light_transform(this->context.document.content.evaluated, scene::LightId{entity.id}, std::move(transform));
+        }
     }
 
     void EditorUi::transform_row(const char* identifier, const char* title, std::array<float, 3>& value, const float speed, const char* format) {
@@ -340,11 +338,11 @@ namespace spectra {
             ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.11f, 0.14f, 0.17f, 0.98f});
             ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.10f, 0.18f, 0.21f, 1.0f});
             const bool changed = ImGui::DragFloat("##Value", &value[component], speed, 0.0f, 0.0f, format);
-            if (ImGui::IsItemActivated() && this->controls.transform_instance) this->controls.transform_drag_active = true;
+            if (ImGui::IsItemActivated() && this->controls.transform_entity) this->controls.transform_drag_active = true;
             if (changed) {
                 std::array<float, 16> matrix{};
                 ImGuizmo::RecomposeMatrixFromComponents(this->controls.translation.data(), this->controls.rotation.data(), this->controls.scale.data(), matrix.data());
-                this->apply_transform(*this->controls.transform_instance, row_major_transform(matrix));
+                this->apply_transform(*this->controls.transform_entity, row_major_transform(matrix));
             }
             if (ImGui::IsItemDeactivated() && this->controls.transform_drag_active) this->controls.transform_drag_active = false;
             ImGui::PopStyleColor(3);
@@ -372,19 +370,55 @@ namespace spectra {
             actions.export_frozen_scene = true;
         else if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
             actions.save_scene_as = true;
-        if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_1, false)) actions.renderer = std::string{Rasterizer::descriptor.id};
-        if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_2, false)) actions.renderer = std::string{PathTracer::descriptor.id};
-        if (transform_editable && ImGui::IsKeyPressed(ImGuiKey_W, false)) this->controls.gizmo_operation = ImGuizmo::TRANSLATE;
-        if (transform_editable && ImGui::IsKeyPressed(ImGuiKey_E, false)) this->controls.gizmo_operation = ImGuizmo::ROTATE;
-        if (transform_editable && ImGui::IsKeyPressed(ImGuiKey_R, false)) this->controls.gizmo_operation = ImGuizmo::SCALE;
+        const bool no_modifiers = !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper;
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_1, false)) actions.renderer = std::string{rasterizer_descriptor.id};
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_2, false)) actions.renderer = std::string{pathtracer_descriptor.id};
+        if (this->context.render_engine.selected_descriptor() == rasterizer_descriptor && io.KeyAlt && !io.KeyCtrl && !io.KeyShift && !io.KeySuper) {
+            if (ImGui::IsKeyPressed(ImGuiKey_M, false)) actions.raster_display_mode = RasterDisplayMode::Material;
+            if (ImGui::IsKeyPressed(ImGuiKey_W, false)) actions.raster_display_mode = RasterDisplayMode::Wireframe;
+            if (ImGui::IsKeyPressed(ImGuiKey_O, false)) actions.raster_display_mode = RasterDisplayMode::MaterialWireframe;
+        }
+        if (transform_editable && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_W, false)) this->controls.gizmo_operation = ImGuizmo::TRANSLATE;
+        if (transform_editable && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_E, false)) this->controls.gizmo_operation = ImGuizmo::ROTATE;
+        if (transform_editable && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_R, false)) this->controls.gizmo_operation = ImGuizmo::SCALE;
         if (ImGui::IsKeyPressed(ImGuiKey_F, false)) this->context.viewport.frame_selection(aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) this->context.viewport.frame_scene(aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) this->context.viewport.view_axis({0.0f, 0.0f, 1.0f}, aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) this->context.viewport.view_axis({1.0f, 0.0f, 0.0f}, aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) this->context.viewport.view_axis({0.0f, 1.0f, 0.0f}, aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) this->context.viewport.view.source = this->context.viewport.view.source == CameraSource::Scene ? CameraSource::Viewport : CameraSource::Scene;
-        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) this->context.viewport.view.overlays_visible = !this->context.viewport.view.overlays_visible;
-        if (this->context.dynamics.configuration.initialized && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+        bool settings_changed{};
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+            this->context.settings.diagnostics.selected_bounds = !this->context.settings.diagnostics.selected_bounds;
+            settings_changed = true;
+        }
+        if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+            this->context.settings.diagnostics.all_bounds = !this->context.settings.diagnostics.all_bounds;
+            settings_changed = true;
+        }
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+            this->context.settings.diagnostics.cameras = !this->context.settings.diagnostics.cameras;
+            settings_changed = true;
+        }
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_L, false)) {
+            this->context.settings.diagnostics.lights = !this->context.settings.diagnostics.lights;
+            settings_changed = true;
+        }
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+            this->context.settings.diagnostics.normals = !this->context.settings.diagnostics.normals;
+            settings_changed = true;
+        }
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_T, false)) {
+            this->context.settings.diagnostics.tangents = !this->context.settings.diagnostics.tangents;
+            settings_changed = true;
+        }
+        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
+            this->context.viewport.view.overlays_visible = !this->context.viewport.view.overlays_visible;
+            this->context.settings.diagnostics.enabled   = this->context.viewport.view.overlays_visible;
+            settings_changed = true;
+        }
+        if (settings_changed) this->context.settings.save();
+        if (this->context.dynamics.initialized() && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
             if (this->context.dynamics.running())
                 this->context.dynamics.pause();
             else
@@ -431,14 +465,17 @@ namespace spectra {
     }
 
     void EditorUi::draw_gizmo(const ImVec2 minimum, const ImVec2 size, const bool blocked, const bool transform_editable) {
-        const scene::Instance* source_instance = selected_instance(*this);
-        if (!source_instance) return;
-        const scene::Scene& transform_scene             = transform_editable ? this->context.document.content.source : this->context.document.content.evaluated;
-        const auto found                                = std::ranges::find(transform_scene.resources.instances, source_instance->id, &scene::Instance::id);
-        const scene::Instance& instance                 = *found;
-        const std::optional<math::Bounds3> local_bounds = transform_scene.view().local_bounds(instance.id);
-        if (!local_bounds) return;
-        const math::Float3 pivot = local_bounds->center();
+        const SceneEntityReference* entity = active_entity(*this);
+        if (!entity) return;
+        const scene::Scene& transform_scene = transform_editable ? this->context.document.content.source : this->context.document.content.evaluated;
+        const std::optional<math::Transform> transform = entity_transform(transform_scene, *entity);
+        if (!transform) return;
+        math::Float3 pivot{};
+        if (entity->kind == SceneEntityKind::Instance || entity->kind == SceneEntityKind::AreaEmitter) {
+            const scene::InstanceId instance_id{entity->kind == SceneEntityKind::Instance ? entity->id : entity->owner};
+            const std::optional<math::Bounds3> local_bounds = transform_scene.view().local_bounds(instance_id);
+            if (local_bounds) pivot = local_bounds->center();
+        }
         math::Transform to_pivot{};
         to_pivot.matrix[3]  = pivot.x;
         to_pivot.matrix[7]  = pivot.y;
@@ -447,7 +484,7 @@ namespace spectra {
         from_pivot.matrix[3]                 = -pivot.x;
         from_pivot.matrix[7]                 = -pivot.y;
         from_pivot.matrix[11]                = -pivot.z;
-        std::array<float, 16> matrix         = column_major((instance.transform * to_pivot).matrix);
+        std::array<float, 16> matrix         = column_major((*transform * to_pivot).matrix);
         const scene::CameraMatrices matrices = this->context.viewport.view.render_camera.matrices();
         std::array<float, 16> view           = column_major(matrices.view);
         std::array<float, 16> projection     = column_major(matrices.projection);
@@ -456,7 +493,7 @@ namespace spectra {
         ImGuizmo::SetRect(minimum.x, minimum.y, size.x, size.y);
         ImGuizmo::Enable(!blocked && transform_editable);
         const bool changed = ImGuizmo::Manipulate(view.data(), projection.data(), this->controls.gizmo_operation, ImGuizmo::WORLD, matrix.data());
-        if (changed) this->apply_transform(instance.id, row_major_transform(matrix) * from_pivot);
+        if (changed) this->apply_transform(*entity, row_major_transform(matrix) * from_pivot);
         this->controls.gizmo_active = ImGuizmo::IsUsing();
         ImGuizmo::Enable(true);
     }
@@ -485,11 +522,10 @@ namespace spectra {
         }
         const float x                                             = std::clamp((io.MousePos.x - minimum.x) / size.x, 0.0f, 1.0f);
         const float y                                             = std::clamp((io.MousePos.y - minimum.y) / size.y, 0.0f, 1.0f);
-        const std::pair<std::optional<std::uint64_t>, bool> debug = this->context.renderers.active_renders_visualizations() ? this->context.viewport.debug_object_at(x, y) : std::pair<std::optional<std::uint64_t>, bool>{};
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left, false))
-            this->context.picker.submit_pick(x, y, true, io.KeyShift, debug.first, debug.second);
+            this->context.picker.submit_pick(x, y, true, io.KeyShift);
         else
-            this->context.picker.submit_pick(x, y, false, false, debug.first, debug.second);
+            this->context.picker.submit_pick(x, y, false, false);
     }
 
     void EditorUi::draw_viewport(const ImVec2 position, const ImVec2 size, const bool show_axes, const bool transform_editable) {
@@ -503,7 +539,6 @@ namespace spectra {
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         draw_list->AddImage(static_cast<ImTextureID>(this->context.imgui.viewport_texture_id), position, ImVec2{position.x + size.x, position.y + size.y});
         ImGui::PushClipRect(position, ImVec2{position.x + size.x, position.y + size.y}, true);
-        draw_scene_camera(*this, position, size, *draw_list);
         const bool blocked = this->pointer_over_interface(position, size, show_axes);
         this->draw_gizmo(position, size, blocked, transform_editable);
         this->draw_orientation(position, size, show_axes);
@@ -516,7 +551,7 @@ namespace spectra {
     }
 
     float EditorUi::draw_render_status(const float right_edge, const std::optional<RenderProgress>& render_progress, const std::optional<PathTracerPreparationProgress>& pathtracer_preparation) {
-        const bool dynamic = this->context.dynamics.configuration.initialized;
+        const bool dynamic = this->context.dynamics.initialized();
         if (!dynamic && !render_progress && !pathtracer_preparation) return right_edge;
 
         const float spacing    = ImGui::GetStyle().ItemSpacing.x;
@@ -601,9 +636,9 @@ namespace spectra {
         } else {
             draw_status_text(status);
             ImGui::SameLine();
-            if (icon_button("##PathPlayback", playback_size, render_progress->paused ? Icon::Play : Icon::Pause, playback_label, render_progress->paused ? ImVec4{0.91f, 0.72f, 0.29f, 1.0f} : ImVec4{})) this->context.renderers.set_paused(!render_progress->paused);
+            if (icon_button("##PathPlayback", playback_size, render_progress->paused ? Icon::Play : Icon::Pause, playback_label, render_progress->paused ? ImVec4{0.91f, 0.72f, 0.29f, 1.0f} : ImVec4{})) this->context.render_engine.set_paused(!render_progress->paused);
             ImGui::SameLine();
-            if (icon_button("##PathReset", secondary_size, Icon::Reset, secondary_label)) this->context.renderers.reset();
+            if (icon_button("##PathReset", secondary_size, Icon::Reset, secondary_label)) this->context.render_engine.reset();
         }
         return status_start;
     }
@@ -617,8 +652,8 @@ namespace spectra {
         constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNavFocus;
         ImGui::Begin("##ApplicationStrip", nullptr, flags);
         const bool loaded                                                         = this->context.document.content.loaded;
-        const std::optional<RenderProgress> render_progress                       = loaded ? this->context.renderers.progress() : std::nullopt;
-        const std::optional<PathTracerPreparationProgress> pathtracer_preparation = loaded ? this->context.renderers.pathtracer_preparation() : std::nullopt;
+        const std::optional<RenderProgress> render_progress                       = loaded ? this->context.render_engine.progress() : std::nullopt;
+        const std::optional<PathTracerPreparationProgress> pathtracer_preparation = loaded ? this->context.render_engine.pathtracer_preparation() : std::nullopt;
         if ((render_progress && render_progress->completed < render_progress->target) || pathtracer_preparation) {
             const ImVec2 minimum = ImGui::GetWindowPos();
             const ImVec2 maximum{minimum.x + ImGui::GetWindowWidth(), minimum.y + ImGui::GetWindowHeight()};
@@ -680,16 +715,16 @@ namespace spectra {
         const float center                = ImGui::GetWindowWidth() * 0.5f;
         const float right                 = ImGui::GetWindowWidth();
         constexpr float mode_button_width = 80.0f;
-        constexpr std::array renderers{Rasterizer::descriptor, PathTracer::descriptor};
-        const float mode_width = mode_button_width * static_cast<float>(renderers.size()) + ImGui::GetStyle().ItemSpacing.x * static_cast<float>(renderers.size() - 1u);
+        constexpr std::array renderer_descriptors{rasterizer_descriptor, pathtracer_descriptor};
+        const float mode_width = mode_button_width * static_cast<float>(renderer_descriptors.size()) + ImGui::GetStyle().ItemSpacing.x * static_cast<float>(renderer_descriptors.size() - 1u);
         const float mode_start = center - mode_width * 0.5f;
         ImGui::SameLine(mode_start);
-        const RendererDescriptor selected_renderer = this->context.renderers.selected_descriptor();
-        for (std::size_t index = 0; index < renderers.size(); ++index) {
-            const RendererDescriptor renderer = renderers[index];
+        const RendererDescriptor selected_renderer = this->context.render_engine.selected_descriptor();
+        for (std::size_t index = 0; index < renderer_descriptors.size(); ++index) {
+            const RendererDescriptor renderer = renderer_descriptors[index];
             const std::string identifier      = std::format("##Renderer{}", renderer.id);
             if (text_button(identifier.c_str(), renderer.name.data(), ImVec2{mode_button_width, 27.0f}, selected_renderer == renderer)) actions.renderer = std::string{renderer.id};
-            if (index + 1u < renderers.size()) ImGui::SameLine();
+            if (index + 1u < renderer_descriptors.size()) ImGui::SameLine();
         }
 
         constexpr float exposure_width = 84.0f;
@@ -710,13 +745,13 @@ namespace spectra {
         ImGui::GetWindowDrawList()->AddText(ImVec2{exposure_text_position.x + 1.0f, exposure_text_position.y + 1.0f}, exposure.shadow, exposure_text.c_str());
         ImGui::GetWindowDrawList()->AddText(exposure_text_position, exposure.color, exposure_text.c_str());
         ImGui::SameLine();
-        ImGui::BeginDisabled(!this->context.renderers.ready());
+        ImGui::BeginDisabled(!this->context.render_engine.ready());
         if (icon_button("##Capture", ImVec2{capture_width, 27.0f}, Icon::Capture)) ImGui::OpenPopup("##CaptureMenu");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capture");
         if (ImGui::BeginPopup("##CaptureMenu")) {
             if (ImGui::MenuItem("Viewport PNG")) actions.capture_format = CaptureFormat::Png;
             if (ImGui::MenuItem("Linear EXR")) actions.capture_format = CaptureFormat::LinearExr;
-            if (ImGui::MenuItem("GBuffer EXR", nullptr, false, this->context.renderers.gbuffer_available() && this->context.document.content.source.film().gbuffer)) actions.capture_format = CaptureFormat::GBufferExr;
+            if (ImGui::MenuItem("GBuffer EXR", nullptr, false, this->context.render_engine.gbuffer_available() && this->context.document.content.source.film().gbuffer)) actions.capture_format = CaptureFormat::GBufferExr;
             ImGui::EndPopup();
         }
         ImGui::EndDisabled();
@@ -760,8 +795,9 @@ namespace spectra {
     }
 
     void EditorUi::draw_transform_hud(const ImVec2 position, const ImVec2 size, const bool transform_editable) {
-        const scene::Instance* instance = selected_instance(*this);
-        if (!instance) return;
+        const SceneEntityReference* entity = active_entity(*this);
+        if (!entity || !entity_transform(this->context.document.content.source, *entity)) return;
+        const std::string& name = entity_name(this->context.document.content.source, *entity);
         this->synchronize_transform();
         ImGui::SetNextWindowPos(ImVec2{position.x + size.x - floating_panel_right - floating_panel_width, position.y + floating_panel_top});
         ImGui::SetNextWindowSize(ImVec2{floating_panel_width, transform_hud_height});
@@ -779,10 +815,10 @@ namespace spectra {
         constexpr float status_width = 88.0f;
         const float name_right       = header_position.x + header_width - (transform_editable ? 0.0f : status_width + 8.0f);
         draw_list->PushClipRect(header_position, ImVec2{name_right, header_position.y + ImGui::GetTextLineHeight()}, true);
-        draw_list->AddText(header_position, ImGui::GetColorU32(ImVec4{0.92f, 0.95f, 0.98f, 1.0f}), instance->name.c_str());
+        draw_list->AddText(header_position, ImGui::GetColorU32(ImVec4{0.92f, 0.95f, 0.98f, 1.0f}), name.c_str());
         draw_list->PopClipRect();
         ImGui::Dummy(ImVec2{header_width, ImGui::GetTextLineHeight()});
-        ImGui::TextDisabled("INSTANCE");
+        ImGui::TextDisabled("%s", entity_kind_name(*entity));
         if (!transform_editable) {
             const ImVec2 status_minimum{header_position.x + header_width - status_width, header_position.y - 2.0f};
             const ImVec2 status_maximum{status_minimum.x + status_width, status_minimum.y + 20.0f};
@@ -811,13 +847,16 @@ namespace spectra {
             this->controls.reset_pending = false;
         }
 
-        const scene::DynamicSetup& dynamic_setup = *this->context.document.content.source.dynamic_setup;
+        const scene::DynamicSetup* setup = this->context.document.content.source.dynamic_setup ? &*this->context.document.content.source.dynamic_setup : nullptr;
         std::vector<std::size_t> parameter_systems{};
-        for (std::size_t index = 0; index < dynamic_setup.systems.size(); ++index)
-            if (!this->context.dynamics.provider_descriptor(dynamic_setup.systems[index].provider_id).parameters.empty()) parameter_systems.emplace_back(index);
-        if (std::ranges::find(parameter_systems, this->controls.selected_dynamic_system) == parameter_systems.end()) this->controls.selected_dynamic_system = parameter_systems.front();
+        if (setup)
+            for (std::size_t index = 0; index < setup->systems.size(); ++index)
+                if (const dynamics::ProviderDescriptor& provider = this->context.dynamics.provider_descriptor(setup->systems[index].provider_id); setup->systems[index].enabled && (!provider.parameters.empty() || !provider.telemetry.empty())) parameter_systems.emplace_back(index);
+        if (!parameter_systems.empty() && std::ranges::find(parameter_systems, this->controls.selected_dynamic_system) == parameter_systems.end()) this->controls.selected_dynamic_system = parameter_systems.front();
 
-        const float inspector_top = selected_instance(*this) ? floating_panel_top + transform_hud_height + inspector_gap : floating_panel_top;
+        const SceneEntityReference* entity = active_entity(*this);
+        const bool transform_visible = entity && entity_transform(this->context.document.content.source, *entity).has_value();
+        const float inspector_top = transform_visible ? floating_panel_top + transform_hud_height + inspector_gap : floating_panel_top;
         ImGui::SetNextWindowPos(ImVec2{position.x + size.x - floating_panel_right - floating_panel_width, position.y + inspector_top});
         ImGui::SetNextWindowSize(ImVec2{floating_panel_width, size.y - inspector_top - inspector_bottom});
         ImGui::SetNextWindowBgAlpha(0.0f);
@@ -828,6 +867,82 @@ namespace spectra {
         draw_floating_surface(*ImGui::GetWindowDrawList(), inspector_position, ImVec2{inspector_position.x + ImGui::GetWindowWidth(), inspector_position.y + ImGui::GetWindowHeight()}, 10.0f);
         ImGui::TextUnformatted("Inspector");
         ImGui::Separator();
+
+        if (entity) {
+            ImGui::TextDisabled("SCENE ENTITY");
+            ImGui::TextUnformatted(entity_name(this->context.document.content.source, *entity).c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s · %llu", entity_kind_name(*entity), entity->id);
+            if (entity->kind == SceneEntityKind::Camera) {
+                const scene::Camera& camera = *std::ranges::find(this->context.document.content.source.resources.cameras, scene::CameraId{entity->id}, &scene::Camera::id);
+                std::visit(
+                    [](const auto& data) {
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) ImGui::Text("Perspective · %.2f deg", data.vertical_fov);
+                        else ImGui::TextUnformatted("Orthographic");
+                        ImGui::TextDisabled("Near %.5g · Far %.5g", data.near_plane, data.far_plane);
+                        ImGui::TextDisabled("Focus %.5g · Lens %.5g", data.focal_distance, data.lens_radius);
+                    },
+                    camera.data);
+            } else if (entity->kind == SceneEntityKind::Light || entity->kind == SceneEntityKind::AreaEmitter) {
+                const scene::Light& light = *std::ranges::find(this->context.document.content.source.resources.lights, scene::LightId{entity->id}, &scene::Light::id);
+                std::visit(
+                    [entity](const auto& data) {
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight>) ImGui::Text("Point · Scale %.5g", data.scale);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) ImGui::Text("Spot · %.3g / %.3g deg · Scale %.5g", data.cone_angle - data.cone_delta, data.cone_angle, data.scale);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>) ImGui::Text("Distant · Scale %.5g", data.scale);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiffuseAreaLight>) ImGui::Text("Diffuse Area · %s · Instance %llu", data.sidedness == scene::EmissionSidedness::Both ? "two-sided" : "front", entity->owner);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::InfiniteLight>) ImGui::Text("Infinite · Scale %.5g", data.scale);
+                        else ImGui::Text("Portal Infinite · %zu portals · Scale %.5g", data.portals.size(), data.environment.scale);
+                    },
+                    light.data);
+            }
+            ImGui::Spacing();
+        }
+
+        ImGui::TextDisabled("RASTER DIAGNOSTICS");
+        SceneDiagnosticSettings& diagnostics = this->context.settings.diagnostics;
+        bool settings_changed{};
+        settings_changed |= ImGui::Checkbox("Enabled", &diagnostics.enabled);
+        settings_changed |= ImGui::Checkbox("Selected bounds  B", &diagnostics.selected_bounds);
+        settings_changed |= ImGui::Checkbox("All bounds  Shift+B", &diagnostics.all_bounds);
+        settings_changed |= ImGui::Checkbox("Pivots", &diagnostics.pivots);
+        settings_changed |= ImGui::Checkbox("Wireframe", &diagnostics.wireframe);
+        settings_changed |= ImGui::Checkbox("Vertices", &diagnostics.vertices);
+        settings_changed |= ImGui::Checkbox("Normals  N", &diagnostics.normals);
+        settings_changed |= ImGui::Checkbox("Tangents  T", &diagnostics.tangents);
+        settings_changed |= ImGui::Checkbox("Orientation", &diagnostics.orientation);
+        settings_changed |= ImGui::Checkbox("Cameras  C", &diagnostics.cameras);
+        settings_changed |= ImGui::Checkbox("Camera focal planes", &diagnostics.camera_focal_plane);
+        settings_changed |= ImGui::Checkbox("Camera lenses", &diagnostics.camera_lens);
+        settings_changed |= ImGui::Checkbox("Lights  L", &diagnostics.lights);
+        settings_changed |= ImGui::Checkbox("Area emitters", &diagnostics.area_emitters);
+        settings_changed |= ImGui::Checkbox("Volume bounds", &diagnostics.volume_bounds);
+        settings_changed |= ImGui::Checkbox("Volume grid", &diagnostics.volume_grid);
+        settings_changed |= ImGui::Checkbox("Medium boundaries", &diagnostics.medium_boundaries);
+        const char* depth_modes[] = {"Tested", "X-Ray", "Overlay"};
+        int depth_mode = static_cast<int>(std::to_underlying(diagnostics.depth_mode));
+        if (ImGui::Combo("Depth", &depth_mode, depth_modes, 3)) {
+            diagnostics.depth_mode = static_cast<scene::VisualizationDepthMode>(depth_mode);
+            settings_changed = true;
+        }
+        settings_changed |= ImGui::DragFloat("Line width", &diagnostics.line_width, 0.1f, 0.25f, 8.0f, "%.2f px");
+        settings_changed |= ImGui::DragFloat("Point size", &diagnostics.point_size, 0.25f, 1.0f, 32.0f, "%.2f px");
+        settings_changed |= ImGui::DragFloat("Normal scale", &diagnostics.normal_scale, 0.01f, 0.001f, 100.0f, "%.4g");
+        constexpr std::uint32_t minimum_sampling = 1;
+        constexpr std::uint32_t maximum_sampling = 1024;
+        settings_changed |= ImGui::DragScalar("Attribute sampling", ImGuiDataType_U32, &diagnostics.attribute_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
+        settings_changed |= ImGui::DragScalar("Volume grid sampling", ImGuiDataType_U32, &diagnostics.volume_grid_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
+        if (settings_changed) this->context.settings.save();
+
+        if (parameter_systems.empty()) {
+            ImGui::End();
+            ImGui::PopStyleVar();
+            return;
+        }
+        const scene::DynamicSetup& dynamic_setup = *setup;
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled("DYNAMIC SYSTEM");
 
         if (parameter_systems.size() > 1) {
             if (ImGui::BeginCombo("##DynamicSystem", dynamic_setup.systems[this->controls.selected_dynamic_system].name.c_str())) {
@@ -844,6 +959,14 @@ namespace spectra {
 
         const scene::DynamicSystem& scene_system     = dynamic_setup.systems[this->controls.selected_dynamic_system];
         const dynamics::ProviderDescriptor& provider = this->context.dynamics.provider_descriptor(scene_system.provider_id);
+        const dynamics::TelemetrySnapshot& telemetry = this->context.dynamics.telemetry(this->controls.selected_dynamic_system);
+        if (!telemetry.phase.empty()) ImGui::TextColored(ImVec4{0.96f, 0.72f, 0.32f, 1.0f}, "%s", telemetry.phase.c_str());
+        if (!telemetry.headline.empty()) ImGui::TextWrapped("%s", telemetry.headline.c_str());
+        if (!telemetry.message.empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", telemetry.message.c_str());
+            ImGui::Spacing();
+        }
         if (this->controls.parameter_drafts.empty()) {
             this->controls.parameter_drafts.reserve(provider.parameters.size());
             for (const dynamics::ParameterDescriptor& descriptor : provider.parameters) {
@@ -864,16 +987,23 @@ namespace spectra {
             return values;
         };
 
-        ImGui::TextDisabled("PARAMETERS");
+        std::string parameter_section{};
         for (std::size_t parameter_index = 0; parameter_index < provider.parameters.size(); ++parameter_index) {
             const dynamics::ParameterDescriptor& parameter = provider.parameters[parameter_index];
             scene::DynamicParameterValue& value            = this->controls.parameter_drafts[parameter_index].value;
+            if (parameter.section_id != parameter_section) {
+                parameter_section  = parameter.section_id;
+                const auto section = std::ranges::find(provider.sections, parameter_section, &dynamics::SectionDescriptor::id);
+                ImGui::Spacing();
+                ImGui::TextDisabled("PARAMETERS / %s", section == provider.sections.end() ? parameter_section.c_str() : section->name.c_str());
+            }
             ImGui::PushID(static_cast<int>(parameter_index));
             ImGui::Text("%s", parameter.name.c_str());
             if (!parameter.unit.empty()) {
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", parameter.unit.c_str());
             }
+            if (!parameter.description.empty()) ImGui::TextDisabled("%s", parameter.description.c_str());
 
             bool changed{};
             if (parameter.value.kind == scene::DynamicParameterKind::Boolean) {
@@ -881,11 +1011,11 @@ namespace spectra {
                 changed       = ImGui::Checkbox("##Value", &selected);
                 if (changed) value.integer = selected ? 1 : 0;
             } else if (parameter.value.kind == scene::DynamicParameterKind::Integer)
-                changed = ImGui::SliderScalar("##Value", ImGuiDataType_S64, &value.integer, &parameter.minimum.integer, &parameter.maximum.integer, "%lld");
+                changed = ImGui::DragScalar("##Value", ImGuiDataType_S64, &value.integer, static_cast<float>(parameter.step.integer), &parameter.minimum.integer, &parameter.maximum.integer, "%lld");
             else if (parameter.value.kind == scene::DynamicParameterKind::Float)
-                changed = ImGui::SliderScalar("##Value", ImGuiDataType_Double, value.floating.data(), parameter.minimum.floating.data(), parameter.maximum.floating.data(), "%.6g");
+                changed = ImGui::DragScalar("##Value", ImGuiDataType_Double, value.floating.data(), static_cast<float>(parameter.step.floating[0]), parameter.minimum.floating.data(), parameter.maximum.floating.data(), "%.6g");
             else if (parameter.value.kind == scene::DynamicParameterKind::Float3)
-                changed = ImGui::DragScalarN("##Value", ImGuiDataType_Double, value.floating.data(), 3, 0.01f, parameter.minimum.floating.data(), parameter.maximum.floating.data(), "%.5g");
+                changed = ImGui::DragScalarN("##Value", ImGuiDataType_Double, value.floating.data(), 3, static_cast<float>(parameter.step.floating[0]), parameter.minimum.floating.data(), parameter.maximum.floating.data(), "%.5g");
             else {
                 const char* preview = value.integer >= 0 && static_cast<std::size_t>(value.integer) < parameter.enumerators.size() ? parameter.enumerators[value.integer].c_str() : "";
                 if (ImGui::BeginCombo("##Value", preview)) {
@@ -911,6 +1041,45 @@ namespace spectra {
                 return;
             }
             ImGui::PopID();
+        }
+
+        std::string telemetry_section{};
+        for (std::size_t metric_index = 0; metric_index < provider.telemetry.size(); ++metric_index) {
+            if (!telemetry.values[metric_index]) continue;
+            const dynamics::TelemetryDescriptor& metric = provider.telemetry[metric_index];
+            if (metric.section_id != telemetry_section) {
+                telemetry_section  = metric.section_id;
+                const auto section = std::ranges::find(provider.sections, telemetry_section, &dynamics::SectionDescriptor::id);
+                ImGui::Spacing();
+                ImGui::TextDisabled("TELEMETRY / %s", section == provider.sections.end() ? telemetry_section.c_str() : section->name.c_str());
+            }
+            const dynamics::TelemetryValue& value = *telemetry.values[metric_index];
+            std::string formatted{};
+            if (value.kind == dynamics::TelemetryKind::Boolean)
+                formatted = value.integer == 0 ? "false" : "true";
+            else if (value.kind == dynamics::TelemetryKind::Integer)
+                formatted = std::to_string(value.integer);
+            else if (value.kind == dynamics::TelemetryKind::Float)
+                formatted = std::format("{:.6g}", value.floating[0]);
+            else if (value.kind == dynamics::TelemetryKind::Float3)
+                formatted = std::format("[{:+.5g}, {:+.5g}, {:+.5g}]", value.floating[0], value.floating[1], value.floating[2]);
+            ImGui::TextUnformatted(metric.name.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s%s%s", formatted.c_str(), metric.unit.empty() ? "" : " ", metric.unit.c_str());
+            if (metric.plot && !telemetry.history.empty()) {
+                std::vector<float> samples{};
+                samples.reserve(telemetry.history.size());
+                for (const dynamics::TelemetrySample& sample : telemetry.history) {
+                    const dynamics::TelemetryValue& historical = sample.values[metric_index];
+                    if (historical.kind == dynamics::TelemetryKind::Boolean || historical.kind == dynamics::TelemetryKind::Integer)
+                        samples.push_back(static_cast<float>(historical.integer));
+                    else if (historical.kind == dynamics::TelemetryKind::Float)
+                        samples.push_back(static_cast<float>(historical.floating[0]));
+                    else
+                        samples.push_back(static_cast<float>(std::sqrt(historical.floating[0] * historical.floating[0] + historical.floating[1] * historical.floating[1] + historical.floating[2] * historical.floating[2])));
+                }
+                ImGui::PlotLines("##History", samples.data(), static_cast<int>(samples.size()), 0, nullptr, std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), ImVec2{-1.0f, 44.0f});
+            }
         }
 
         if (this->controls.reset_pending)
@@ -984,16 +1153,17 @@ namespace spectra {
             this->controls.parameter_drafts.clear();
             this->controls.reset_pending = false;
         }
-        const scene::Instance* instance = selected_instance(*this);
-        const bool transform_editable   = instance && (!this->context.dynamics.configuration.initialized || !this->context.dynamics.controls(instance->id));
+        const SceneEntityReference* entity = active_entity(*this);
+        const bool transform_visible       = entity && entity_transform(this->context.document.content.source, *entity).has_value();
+        const bool editable                = entity && transform_editable(*this, *entity);
 
         this->synchronize_transform();
-        this->handle_shortcuts(actions, aspect, inspector_available, transform_editable);
-        this->draw_viewport(position, size, actions.show_axes, transform_editable);
+        this->handle_shortcuts(actions, aspect, inspector_available, editable);
+        this->draw_viewport(position, size, actions.show_axes, editable);
         this->draw_top_strip(position, size, actions);
-        if (instance) {
-            this->draw_transform_tools(position, size, transform_editable);
-            this->draw_transform_hud(position, size, transform_editable);
+        if (transform_visible) {
+            this->draw_transform_tools(position, size, editable);
+            this->draw_transform_hud(position, size, editable);
         }
         if (this->controls.inspector_open) this->draw_inspector(position, size);
         this->draw_status_toast(position, size);

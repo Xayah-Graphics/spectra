@@ -333,30 +333,6 @@ public float roughness_to_alpha(float roughness) {
     return sqrt(roughness);
 }
 
-public TrowbridgeReitzDistribution
-regularize_distribution(
-    TrowbridgeReitzDistribution distribution) {
-    if (
-        distribution.alpha_x <
-            0.3 ||
-        distribution.alpha_y <
-            0.3) {
-        distribution.alpha_x =
-            clamp(
-                2.0 *
-                    distribution.alpha_x,
-                0.1,
-                0.3);
-        distribution.alpha_y =
-            clamp(
-                2.0 *
-                    distribution.alpha_y,
-                0.1,
-                0.3);
-    }
-    return distribution;
-}
-
 float microfacet_lambda(
     TrowbridgeReitzDistribution distribution,
     float3 direction) {

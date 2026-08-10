@@ -3,99 +3,106 @@ module spectra.render;
 import std;
 
 namespace spectra {
-    Renderers::Renderers(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory, const std::filesystem::path& pathtracer_directory, std::optional<std::string> initial_renderer) : context{runtime, gpu_scene, std::move(shader_directory)}, pathtracer_runtime{runtime, pathtracer_directory} {
+    RenderEngine::RenderEngine(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory, const std::filesystem::path& pathtracer_directory, std::optional<std::string> initial_renderer, const RasterDisplayMode initial_raster_display_mode) : context{runtime, gpu_scene, std::move(shader_directory)}, pathtracer_resources{runtime, pathtracer_directory} {
+        this->backends.raster_display_mode = initial_raster_display_mode;
         if (initial_renderer) {
-            if (*initial_renderer != Rasterizer::descriptor.id && *initial_renderer != PathTracer::descriptor.id) throw std::runtime_error(std::format("Unknown Scene Renderer: {}", *initial_renderer));
-            this->renderers.selected_id = std::move(*initial_renderer);
+            if (*initial_renderer != rasterizer_descriptor.id && *initial_renderer != pathtracer_descriptor.id) throw std::runtime_error(std::format("Unknown Scene Renderer: {}", *initial_renderer));
+            this->backends.selected_id = std::move(*initial_renderer);
         }
     }
 
-    Renderers::~Renderers() {
+    RenderEngine::~RenderEngine() {
         this->destroy();
     }
 
-    void Renderers::rebuild(const scene::SceneView scene) {
-        const std::string selected_id = this->renderers.selected_id;
+    void RenderEngine::rebuild(const scene::SceneView scene) {
+        const std::string selected_id = this->backends.selected_id;
         this->destroy();
         this->activate(selected_id, scene);
     }
 
-    void Renderers::destroy() noexcept {
-        this->renderers.active.reset();
-        this->renderers.pathtracer.reset();
-        this->renderers.rasterizer.reset();
+    void RenderEngine::destroy() noexcept {
+        this->backends.active.reset();
+        this->backends.pathtracer.reset();
+        this->backends.rasterizer.reset();
     }
 
-    void Renderers::activate(const std::string_view id, const scene::SceneView scene) {
-        if (id == Rasterizer::descriptor.id) {
-            if (!this->renderers.rasterizer) this->renderers.rasterizer.emplace(this->context.runtime, this->context.gpu_scene, scene, this->context.shader_directory);
-            this->renderers.active = std::ref(*this->renderers.rasterizer);
-        } else if (id == PathTracer::descriptor.id) {
-            if (!this->renderers.pathtracer) this->renderers.pathtracer.emplace(this->context.runtime, this->context.gpu_scene, this->pathtracer_runtime, scene);
-            this->renderers.active.reset();
+    void RenderEngine::activate(const std::string_view id, const scene::SceneView scene) {
+        if (id == rasterizer_descriptor.id) {
+            if (!this->backends.rasterizer) this->backends.rasterizer.emplace(this->context.runtime, this->context.gpu_scene, scene, this->context.shader_directory);
+            this->backends.rasterizer->renderer.display_mode = this->backends.raster_display_mode;
+            this->backends.active                            = std::ref(*this->backends.rasterizer);
+        } else if (id == pathtracer_descriptor.id) {
+            if (!this->backends.pathtracer) this->backends.pathtracer.emplace(this->context.runtime, this->context.gpu_scene, this->pathtracer_resources, scene);
+            this->backends.active.reset();
         } else
             throw std::runtime_error(std::format("Unknown Scene Renderer: {}", id));
-        this->renderers.selected_id = id;
+        this->backends.selected_id = id;
     }
 
-    void Renderers::wait_for_pathtracer() {
-        this->pathtracer_runtime.wait_for_preparation();
-        if (this->renderers.pathtracer) this->renderers.pathtracer->wait_for_preparation();
+    void RenderEngine::set_raster_display_mode(const RasterDisplayMode mode) noexcept {
+        this->backends.raster_display_mode = mode;
+        if (this->backends.rasterizer) this->backends.rasterizer->renderer.display_mode = mode;
     }
 
-    RendererDescriptor Renderers::active_descriptor() const {
-        if (!this->renderers.active) throw std::runtime_error("No active Scene Renderer");
-        return std::visit([](const auto active) { return std::remove_cvref_t<decltype(active.get())>::descriptor; }, *this->renderers.active);
+    void RenderEngine::wait_for_pathtracer() {
+        this->pathtracer_resources.wait_for_preparation();
+        if (this->backends.pathtracer) this->backends.pathtracer->wait_for_preparation();
     }
 
-    RendererDescriptor Renderers::selected_descriptor() const noexcept {
-        return this->renderers.selected_id == PathTracer::descriptor.id ? PathTracer::descriptor : Rasterizer::descriptor;
+    RendererDescriptor RenderEngine::active_descriptor() const {
+        if (!this->backends.active) throw std::runtime_error("No active Scene Renderer");
+        return std::visit([](const auto active) { return std::remove_cvref_t<decltype(active.get())>::descriptor; }, *this->backends.active);
     }
 
-    bool Renderers::ready() const noexcept {
-        return this->renderers.active.has_value();
+    RendererDescriptor RenderEngine::selected_descriptor() const noexcept {
+        return this->backends.selected_id == pathtracer_descriptor.id ? pathtracer_descriptor : rasterizer_descriptor;
     }
 
-    std::optional<PathTracerPreparationProgress> Renderers::pathtracer_preparation() const {
-        if (this->renderers.selected_id != PathTracer::descriptor.id || this->renderers.active) return std::nullopt;
-        const PathTracerPreparationProgress runtime_progress = this->pathtracer_runtime.preparation_progress();
+    bool RenderEngine::ready() const noexcept {
+        return this->backends.active.has_value();
+    }
+
+    std::optional<PathTracerPreparationProgress> RenderEngine::pathtracer_preparation() const {
+        if (this->backends.selected_id != pathtracer_descriptor.id || this->backends.active) return std::nullopt;
+        const PathTracerPreparationProgress runtime_progress = this->pathtracer_resources.preparation_progress();
         if (runtime_progress.stage != PathTracerPreparationStage::Ready) return runtime_progress;
-        return this->renderers.pathtracer->preparation_progress();
+        return this->backends.pathtracer->preparation_progress();
     }
 
-    bool Renderers::active_renders_visualizations() const {
-        if (!this->renderers.active) return false;
-        return std::visit([](const auto active) { return std::remove_cvref_t<decltype(active.get())>::renders_visualizations; }, *this->renderers.active);
+    std::optional<DepthBufferView> RenderEngine::depth_buffer() noexcept {
+        if (!this->backends.active || !std::holds_alternative<std::reference_wrapper<Rasterizer>>(*this->backends.active)) return std::nullopt;
+        return DepthBufferView{this->backends.rasterizer->renderer.depth_image, this->backends.rasterizer->renderer.sampled_depth_descriptor, this->backends.rasterizer->renderer.depth_layout};
     }
 
-    void Renderers::invalidate(const scene::SceneChange changes) noexcept {
-        if (this->renderers.rasterizer) this->renderers.rasterizer->invalidate(changes);
-        if (this->renderers.pathtracer) this->renderers.pathtracer->invalidate(changes);
+    void RenderEngine::invalidate(const scene::SceneChange changes, const GpuSceneUpdate gpu_update) noexcept {
+        if (this->backends.rasterizer) this->backends.rasterizer->invalidate(changes, gpu_update);
+        if (this->backends.pathtracer) this->backends.pathtracer->invalidate(changes, gpu_update);
     }
 
-    bool Renderers::prepare(const scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer) {
-        if (this->renderers.selected_id == PathTracer::descriptor.id && !this->renderers.active) {
-            if (!this->pathtracer_runtime.complete_preparation()) return false;
-            if (!this->renderers.pathtracer->complete_preparation(scene, command_buffer)) return false;
-            this->renderers.active = std::ref(*this->renderers.pathtracer);
+    bool RenderEngine::prepare(const scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer) {
+        if (this->backends.selected_id == pathtracer_descriptor.id && !this->backends.active) {
+            if (!this->pathtracer_resources.complete_preparation()) return false;
+            if (!this->backends.pathtracer->complete_preparation(scene, command_buffer)) return false;
+            this->backends.active = std::ref(*this->backends.pathtracer);
         }
-        if (!this->renderers.active) return false;
-        std::visit([&](const auto active) { active.get().prepare(scene, view, command_buffer); }, *this->renderers.active);
+        if (!this->backends.active) return false;
+        std::visit([&](const auto active) { active.get().prepare(scene, view, command_buffer); }, *this->backends.active);
         return true;
     }
 
-    void Renderers::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index) {
-        if (!this->renderers.active) throw std::runtime_error("No active Scene Renderer");
-        std::visit([&](const auto active) { active.get().record(command_buffer, frame_slot_index); }, *this->renderers.active);
+    void RenderEngine::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index) {
+        if (!this->backends.active) throw std::runtime_error("No active Scene Renderer");
+        std::visit([&](const auto active) { active.get().record(command_buffer, frame_slot_index); }, *this->backends.active);
     }
 
-    RenderOutput Renderers::output() const {
-        if (!this->renderers.active) throw std::runtime_error("No active Scene Renderer");
-        return std::visit([](const auto active) { return active.get().output(); }, *this->renderers.active);
+    RenderOutput RenderEngine::output() const {
+        if (!this->backends.active) throw std::runtime_error("No active Scene Renderer");
+        return std::visit([](const auto active) { return active.get().output(); }, *this->backends.active);
     }
 
-    std::optional<RenderProgress> Renderers::progress() const noexcept {
-        if (!this->renderers.active) return std::nullopt;
+    std::optional<RenderProgress> RenderEngine::progress() const noexcept {
+        if (!this->backends.active) return std::nullopt;
         return std::visit(
             [](const auto active_reference) -> std::optional<RenderProgress> {
                 const auto& active = active_reference.get();
@@ -104,11 +111,11 @@ namespace spectra {
                 else
                     return std::nullopt;
             },
-            *this->renderers.active);
+            *this->backends.active);
     }
 
-    void Renderers::set_paused(const bool paused) {
-        if (!this->renderers.active) throw std::runtime_error("No active Scene Renderer");
+    void RenderEngine::set_paused(const bool paused) {
+        if (!this->backends.active) throw std::runtime_error("No active Scene Renderer");
         std::visit(
             [paused](const auto active_reference) {
                 auto& active = active_reference.get();
@@ -117,11 +124,11 @@ namespace spectra {
                 else
                     throw std::runtime_error("The active Scene Renderer is not progressive");
             },
-            *this->renderers.active);
+            *this->backends.active);
     }
 
-    void Renderers::reset() {
-        if (!this->renderers.active) throw std::runtime_error("No active Scene Renderer");
+    void RenderEngine::reset() {
+        if (!this->backends.active) throw std::runtime_error("No active Scene Renderer");
         std::visit(
             [](const auto active_reference) {
                 auto& active = active_reference.get();
@@ -130,16 +137,16 @@ namespace spectra {
                 else
                     throw std::runtime_error("The active Scene Renderer is not progressive");
             },
-            *this->renderers.active);
+            *this->backends.active);
     }
 
-    bool Renderers::gbuffer_available() const noexcept {
-        if (!this->renderers.active) return false;
-        return std::visit([](const auto active) { return GBufferSceneRenderer<std::remove_cvref_t<decltype(active.get())>>; }, *this->renderers.active);
+    bool RenderEngine::gbuffer_available() const noexcept {
+        if (!this->backends.active) return false;
+        return std::visit([](const auto active) { return GBufferSceneRenderer<std::remove_cvref_t<decltype(active.get())>>; }, *this->backends.active);
     }
 
-    RenderGBufferReadback Renderers::readback() {
-        if (!this->renderers.active) throw std::runtime_error("No active Scene Renderer");
+    RenderGBufferReadback RenderEngine::readback() {
+        if (!this->backends.active) throw std::runtime_error("No active Scene Renderer");
         return std::visit(
             [](const auto active_reference) -> RenderGBufferReadback {
                 auto& active = active_reference.get();
@@ -148,6 +155,6 @@ namespace spectra {
                 else
                     throw std::runtime_error("The active Scene Renderer does not expose a GBuffer");
             },
-            *this->renderers.active);
+            *this->backends.active);
     }
 } // namespace spectra

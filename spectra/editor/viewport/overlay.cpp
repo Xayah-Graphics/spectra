@@ -1,5 +1,7 @@
 module spectra.editor;
 
+import spectra.runtime.shaders;
+
 import :viewport.overlay;
 
 import std;
@@ -53,38 +55,6 @@ namespace spectra {
         };
         static_assert(sizeof(AxesPushData) == 144);
 
-        struct alignas(16) DebugVertex {
-            std::array<float, 4> position{};
-            std::array<float, 4> color{};
-        };
-        static_assert(sizeof(DebugVertex) == 32);
-
-        struct alignas(16) DebugPushData {
-            DescriptorHandle vertices{};
-            std::array<std::uint32_t, 2> reserved{};
-            std::array<float, 4> view_projection_row_0{};
-            std::array<float, 4> view_projection_row_1{};
-            std::array<float, 4> view_projection_row_2{};
-            std::array<float, 4> view_projection_row_3{};
-        };
-        static_assert(sizeof(DebugPushData) == 80);
-
-        struct alignas(16) VolumeVelocityPushData {
-            DescriptorHandle velocity{};
-            std::array<std::uint32_t, 2> reserved{};
-            std::array<std::uint32_t, 4> resolution{};
-            std::array<float, 4> bounds_minimum{};
-            std::array<float, 4> bounds_maximum{};
-            std::array<float, 4> transform_row_0{};
-            std::array<float, 4> transform_row_1{};
-            std::array<float, 4> transform_row_2{};
-            std::array<float, 4> view_projection_row_0{};
-            std::array<float, 4> view_projection_row_1{};
-            std::array<float, 4> view_projection_row_2{};
-            std::array<float, 4> view_projection_row_3{};
-            std::array<float, 4> parameters{};
-        };
-        static_assert(sizeof(VolumeVelocityPushData) == 192);
 
     } // namespace
 
@@ -120,7 +90,6 @@ namespace spectra {
     void ViewportOverlay::initialize_overlay() {
         this->overlay.mask_descriptor                       = this->context.runtime.resources.allocate_resource_descriptor();
         this->overlay.sampler_descriptor                    = this->context.runtime.resources.allocate_sampler_descriptor();
-        this->overlay.debug_descriptor                      = this->context.runtime.resources.allocate_resource_descriptor();
         this->overlay.initialized                           = true;
         const std::vector<std::uint32_t> mask_mesh_code     = load_spirv(this->context.shader_directory / "overlay_mesh.spv");
         const std::vector<std::uint32_t> mask_fragment_code = load_spirv(this->context.shader_directory / "overlay_mask.spv");
@@ -193,13 +162,6 @@ namespace spectra {
             },
         };
         this->overlay.outline_shaders                        = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, outline_create_infos};
-        const std::vector<std::uint32_t> debug_vertex_code   = load_spirv(this->context.shader_directory / "overlay_debug_vertex.spv");
-        const std::vector<std::uint32_t> debug_fragment_code = load_spirv(this->context.shader_directory / "overlay_debug_fragment.spv");
-        const std::array debug_create_infos{vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eLinkStage | vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment, vk::ShaderCodeTypeEXT::eSpirv, debug_vertex_code.size() * sizeof(std::uint32_t), debug_vertex_code.data(), "overlay_debug_vertex"}, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eLinkStage | vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eFragment, {}, vk::ShaderCodeTypeEXT::eSpirv, debug_fragment_code.size() * sizeof(std::uint32_t), debug_fragment_code.data(), "overlay_debug_fragment"}};
-        this->overlay.debug_shaders                                  = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, debug_create_infos};
-        const std::vector<std::uint32_t> volume_velocity_vertex_code = load_spirv(this->context.shader_directory / "overlay_volume_velocity_vertex.spv");
-        const std::array volume_velocity_create_infos{vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eLinkStage | vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment, vk::ShaderCodeTypeEXT::eSpirv, volume_velocity_vertex_code.size() * sizeof(std::uint32_t), volume_velocity_vertex_code.data(), "overlay_volume_velocity_vertex"}, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eLinkStage | vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eFragment, {}, vk::ShaderCodeTypeEXT::eSpirv, debug_fragment_code.size() * sizeof(std::uint32_t), debug_fragment_code.data(), "overlay_debug_fragment"}};
-        this->overlay.volume_velocity_shaders = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, volume_velocity_create_infos};
         this->context.runtime.resources.write_sampler_descriptor(this->overlay.sampler_descriptor, vk::SamplerCreateInfo{
                                                                                                        {},
                                                                                                        vk::Filter::eNearest,
@@ -219,66 +181,16 @@ namespace spectra {
         this->overlay.depth_layout = vk::ImageLayout::eUndefined;
     }
 
-    void ViewportOverlay::record_impl(const vk::raii::CommandBuffer& command_buffer, const vk::Image target_image, const vk::ImageView target_view, const vk::Extent2D extent, const vk::Rect2D render_region, const scene::Camera& camera, const std::span<const std::uint32_t> selected_instances, const std::span<const std::uint32_t> active_instances, const std::span<const std::uint32_t> hovered_instances, const std::uint32_t axes_plane, const bool axes_visible, const bool outline_visible, const bool raster_visualizations, const std::span<const dynamics::DebugPrimitive> debug_primitives, const std::span<const GpuVolumeVelocityField> volume_velocity_fields) {
-        std::vector<DebugVertex> tested_vertices{};
-        std::vector<DebugVertex> xray_vertices{};
-        const auto add_line = [](std::vector<DebugVertex>& vertices, const math::Float3 first, const math::Float3 second, const math::Float3 color) {
-            vertices.push_back({{first.x, first.y, first.z, 1.0f}, {color.x, color.y, color.z, 1.0f}});
-            vertices.push_back({{second.x, second.y, second.z, 1.0f}, {color.x, color.y, color.z, 1.0f}});
-        };
-        for (const dynamics::DebugPrimitive& primitive : debug_primitives) {
-            std::vector<DebugVertex>& vertices = primitive.depth_mode == dynamics::DebugDepthMode::Tested ? tested_vertices : xray_vertices;
-            if (primitive.kind == dynamics::DebugPrimitiveKind::Line || primitive.kind == dynamics::DebugPrimitiveKind::Constraint) {
-                add_line(vertices, primitive.first_position, primitive.second_position, primitive.color);
-                continue;
-            }
-            if (primitive.kind == dynamics::DebugPrimitiveKind::Point || primitive.kind == dynamics::DebugPrimitiveKind::Contact) {
-                const float radius = std::max(primitive.radius, 1.0e-4f);
-                add_line(vertices, primitive.first_position - math::Float3{radius, 0.0f, 0.0f}, primitive.first_position + math::Float3{radius, 0.0f, 0.0f}, primitive.color);
-                add_line(vertices, primitive.first_position - math::Float3{0.0f, radius, 0.0f}, primitive.first_position + math::Float3{0.0f, radius, 0.0f}, primitive.color);
-                add_line(vertices, primitive.first_position - math::Float3{0.0f, 0.0f, radius}, primitive.first_position + math::Float3{0.0f, 0.0f, radius}, primitive.color);
-                if (primitive.kind == dynamics::DebugPrimitiveKind::Point) continue;
-            }
-            if (primitive.kind == dynamics::DebugPrimitiveKind::AxisAlignedBox) {
-                const math::Float3 minimum = primitive.first_position;
-                const math::Float3 maximum = primitive.second_position;
-                const std::array points{math::Float3{minimum.x, minimum.y, minimum.z}, math::Float3{maximum.x, minimum.y, minimum.z}, math::Float3{minimum.x, maximum.y, minimum.z}, math::Float3{maximum.x, maximum.y, minimum.z}, math::Float3{minimum.x, minimum.y, maximum.z}, math::Float3{maximum.x, minimum.y, maximum.z}, math::Float3{minimum.x, maximum.y, maximum.z}, math::Float3{maximum.x, maximum.y, maximum.z}};
-                constexpr std::array<std::array<std::uint32_t, 2>, 12> edges{{{0, 1}, {0, 2}, {0, 4}, {1, 3}, {1, 5}, {2, 3}, {2, 6}, {3, 7}, {4, 5}, {4, 6}, {5, 7}, {6, 7}}};
-                for (const auto edge : edges) add_line(vertices, points[edge[0]], points[edge[1]], primitive.color);
-                continue;
-            }
-            const math::Float3 direction = (primitive.second_position - primitive.first_position).normalized();
-            const float length           = (primitive.second_position - primitive.first_position).length();
-            const math::Float3 side      = (std::abs(direction.y) < 0.9f ? direction.cross({0.0f, 1.0f, 0.0f}) : direction.cross({1.0f, 0.0f, 0.0f})).normalized() * length * 0.16f;
-            const math::Float3 back      = primitive.second_position - direction * length * 0.24f;
-            add_line(vertices, primitive.first_position, primitive.second_position, primitive.color);
-            add_line(vertices, primitive.second_position, back + side, primitive.color);
-            add_line(vertices, primitive.second_position, back - side, primitive.color);
-        }
-        const std::uint32_t tested_vertex_count = static_cast<std::uint32_t>(tested_vertices.size());
-        tested_vertices.insert(tested_vertices.end(), xray_vertices.begin(), xray_vertices.end());
-        if (!tested_vertices.empty()) {
-            const std::uint64_t required_capacity = std::bit_ceil(static_cast<std::uint64_t>(tested_vertices.size()));
-            if (required_capacity > this->overlay.debug_capacity || !*this->overlay.debug_buffer.buffer) {
-                GpuBuffer buffer = this->context.runtime.resources.create_buffer(required_capacity * sizeof(DebugVertex), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-                this->context.runtime.resources.write_buffer_descriptor(this->overlay.debug_descriptor, vk::DescriptorType::eStorageBuffer, buffer);
-                if (*this->overlay.debug_buffer.buffer) this->context.runtime.frames.defer_destruction([old = std::move(this->overlay.debug_buffer)]() mutable {});
-                this->overlay.debug_buffer   = std::move(buffer);
-                this->overlay.debug_capacity = required_capacity;
-            }
-            const GpuUploadSlice upload = this->context.runtime.frames.stage_upload(std::as_bytes(std::span{tested_vertices}));
-            command_buffer.copyBuffer(upload.buffer, *this->overlay.debug_buffer.buffer, vk::BufferCopy{upload.offset, 0, upload.size});
-            const vk::BufferMemoryBarrier2 debug_upload_dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eVertexShader, vk::AccessFlagBits2::eShaderStorageRead, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->overlay.debug_buffer.buffer, 0, upload.size};
-            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 1, &debug_upload_dependency});
-        }
+    void ViewportOverlay::record_impl(const vk::raii::CommandBuffer& command_buffer, const vk::Image target_image, const vk::ImageView target_view, const vk::ImageLayout target_layout, const vk::Extent2D extent, const vk::Rect2D render_region, const scene::Camera& camera, const std::span<const std::uint32_t> selected_instances, const std::span<const std::uint32_t> active_instances, const std::span<const std::uint32_t> hovered_instances, const std::uint32_t axes_plane, const bool axes_visible, const bool outline_visible) {
         const bool outline_required = outline_visible && (!selected_instances.empty() || !active_instances.empty() || !hovered_instances.empty());
-        if (!axes_visible && !outline_required && tested_vertices.empty() && volume_velocity_fields.empty()) {
+        if (!axes_visible && !outline_required) {
+            if (target_layout == vk::ImageLayout::eShaderReadOnlyOptimal) return;
             const vk::ImageMemoryBarrier2 to_sample{
                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                 vk::AccessFlagBits2::eColorAttachmentWrite,
                 vk::PipelineStageFlagBits2::eFragmentShader,
                 vk::AccessFlagBits2::eShaderSampledRead,
-                vk::ImageLayout::eColorAttachmentOptimal,
+                target_layout,
                 vk::ImageLayout::eShaderReadOnlyOptimal,
                 vk::QueueFamilyIgnored,
                 vk::QueueFamilyIgnored,
@@ -352,18 +264,17 @@ namespace spectra {
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
         const scene::CameraMatrices matrices = camera.matrices();
         const auto draw_primitive            = [&](const std::uint32_t scene_primitive_index, const std::array<float, 4> color) {
-            const GpuScenePrimitive& gpu_primitive = this->context.gpu_scene.resources.primitives[scene_primitive_index];
-            if (!raster_visualizations && gpu_primitive.kind == GpuScenePrimitiveKind::ParticleSet) return;
-            const GpuGeometry* mesh         = gpu_primitive.kind == GpuScenePrimitiveKind::Geometry ? &this->context.gpu_scene.resources.geometries[gpu_primitive.resource_index] : nullptr;
-            const GpuParticleSet* particles = gpu_primitive.kind == GpuScenePrimitiveKind::ParticleSet ? &this->context.gpu_scene.resources.particle_sets[gpu_primitive.resource_index] : nullptr;
+            const GpuScenePrimitive& gpu_primitive = this->context.gpu_scene.view().primitives[scene_primitive_index];
+            const GpuGeometry* mesh       = gpu_primitive.kind == GpuScenePrimitiveKind::Geometry ? &this->context.gpu_scene.view().geometries[gpu_primitive.resource_index] : nullptr;
+            const GpuSphereSet* spheres   = gpu_primitive.kind == GpuScenePrimitiveKind::SphereSet ? &this->context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index] : nullptr;
             const MaskPushData push_data{
-                mesh ? mesh->positions_descriptor : particles->positions_descriptor,
-                mesh ? mesh->indices_descriptor : particles->positions_descriptor,
-                particles ? particles->radii_descriptor : mesh->positions_descriptor,
+                mesh ? mesh->positions_descriptor : spheres->positions_descriptor,
+                mesh ? mesh->indices_descriptor : spheres->positions_descriptor,
+                spheres ? spheres->radii_descriptor : mesh->positions_descriptor,
                 this->scene.primitives_descriptor,
                 this->scene.transforms_descriptor,
                 scene_primitive_index,
-                mesh ? mesh->index_count / 3u : particles->particle_count,
+                mesh ? mesh->index_count / 3u : spheres->sphere_count,
                 static_cast<std::uint32_t>(gpu_primitive.kind),
                 0,
                 {},
@@ -377,7 +288,7 @@ namespace spectra {
             command_buffer.drawMeshTasksEXT((push_data.element_count + 31u) / 32u, 1, 1);
         };
         this->configure_mask_render_state(command_buffer, render_region, vk::CompareOp::eLess, true);
-        for (std::uint32_t scene_primitive_index = 0; scene_primitive_index < this->context.gpu_scene.resources.primitives.size(); ++scene_primitive_index) draw_primitive(scene_primitive_index, {});
+        for (std::uint32_t scene_primitive_index = 0; scene_primitive_index < this->context.gpu_scene.view().primitives.size(); ++scene_primitive_index) draw_primitive(scene_primitive_index, {});
         if (outline_required) {
             this->configure_mask_render_state(command_buffer, render_region, vk::CompareOp::eEqual, false);
             for (const std::uint32_t scene_primitive_index : selected_instances) draw_primitive(scene_primitive_index, {0.10f, 0.58f, 1.0f, 1.0f});
@@ -399,6 +310,18 @@ namespace spectra {
                 vk::QueueFamilyIgnored,
                 vk::QueueFamilyIgnored,
                 *this->overlay.mask.image,
+                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            },
+            vk::ImageMemoryBarrier2{
+                target_layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::PipelineStageFlagBits2::eFragmentShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                target_layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::AccessFlagBits2::eShaderSampledRead : vk::AccessFlagBits2::eColorAttachmentWrite,
+                vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                vk::AccessFlagBits2::eColorAttachmentWrite,
+                target_layout,
+                vk::ImageLayout::eColorAttachmentOptimal,
+                vk::QueueFamilyIgnored,
+                vk::QueueFamilyIgnored,
+                target_image,
                 {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
             },
         };
@@ -456,44 +379,6 @@ namespace spectra {
                                                    });
         constexpr vk::ColorComponentFlags color_components = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
         command_buffer.setColorWriteMaskEXT(0, color_components);
-        if (!tested_vertices.empty()) {
-            command_buffer.setViewportWithCount(vk::Viewport{static_cast<float>(render_region.offset.x), static_cast<float>(render_region.offset.y) + static_cast<float>(render_region.extent.height), static_cast<float>(render_region.extent.width), -static_cast<float>(render_region.extent.height), 0.0f, 1.0f});
-            command_buffer.setPrimitiveTopology(vk::PrimitiveTopology::eLineList);
-            command_buffer.setDepthWriteEnable(vk::False);
-            command_buffer.setDepthCompareOp(vk::CompareOp::eLessOrEqual);
-            const std::array debug_stages{vk::ShaderStageFlagBits::eTaskEXT, vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
-            const std::array debug_handles{vk::ShaderEXT{}, vk::ShaderEXT{}, *this->overlay.debug_shaders[0], *this->overlay.debug_shaders[1]};
-            command_buffer.bindShadersEXT(debug_stages, debug_handles);
-            this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
-            const DebugPushData debug_push{this->overlay.debug_descriptor, {}, {matrices.view_projection[0], matrices.view_projection[1], matrices.view_projection[2], matrices.view_projection[3]}, {matrices.view_projection[4], matrices.view_projection[5], matrices.view_projection[6], matrices.view_projection[7]}, {matrices.view_projection[8], matrices.view_projection[9], matrices.view_projection[10], matrices.view_projection[11]}, {matrices.view_projection[12], matrices.view_projection[13], matrices.view_projection[14], matrices.view_projection[15]}};
-            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&debug_push, 1}));
-            command_buffer.setDepthTestEnable(vk::True);
-            if (tested_vertex_count != 0) command_buffer.draw(tested_vertex_count, 1, 0, 0);
-            const std::uint32_t xray_vertex_count = static_cast<std::uint32_t>(tested_vertices.size()) - tested_vertex_count;
-            if (xray_vertex_count != 0) {
-                command_buffer.setDepthTestEnable(vk::False);
-                command_buffer.draw(xray_vertex_count, 1, tested_vertex_count, 0);
-            }
-        }
-        if (!volume_velocity_fields.empty()) {
-            command_buffer.setViewportWithCount(vk::Viewport{static_cast<float>(render_region.offset.x), static_cast<float>(render_region.offset.y) + static_cast<float>(render_region.extent.height), static_cast<float>(render_region.extent.width), -static_cast<float>(render_region.extent.height), 0.0f, 1.0f});
-            command_buffer.setPrimitiveTopology(vk::PrimitiveTopology::eLineList);
-            command_buffer.setDepthTestEnable(vk::True);
-            command_buffer.setDepthWriteEnable(vk::False);
-            command_buffer.setDepthCompareOp(vk::CompareOp::eLessOrEqual);
-            const std::array stages{vk::ShaderStageFlagBits::eTaskEXT, vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
-            const std::array handles{vk::ShaderEXT{}, vk::ShaderEXT{}, *this->overlay.volume_velocity_shaders[0], *this->overlay.volume_velocity_shaders[1]};
-            command_buffer.bindShadersEXT(stages, handles);
-            this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
-            for (const GpuVolumeVelocityField& overlay : volume_velocity_fields) {
-                const math::Bounds3& bounds            = overlay.bounds;
-                const std::array<float, 16>& transform = overlay.transform.matrix;
-                const float scale                      = bounds.radius() * 0.08f;
-                const VolumeVelocityPushData push_data{overlay.velocity_descriptor, {}, {overlay.resolution.x, overlay.resolution.y, overlay.resolution.z, 0}, {bounds.minimum.x, bounds.minimum.y, bounds.minimum.z, 0.0f}, {bounds.maximum.x, bounds.maximum.y, bounds.maximum.z, 0.0f}, {transform[0], transform[1], transform[2], transform[3]}, {transform[4], transform[5], transform[6], transform[7]}, {transform[8], transform[9], transform[10], transform[11]}, {matrices.view_projection[0], matrices.view_projection[1], matrices.view_projection[2], matrices.view_projection[3]}, {matrices.view_projection[4], matrices.view_projection[5], matrices.view_projection[6], matrices.view_projection[7]}, {matrices.view_projection[8], matrices.view_projection[9], matrices.view_projection[10], matrices.view_projection[11]}, {matrices.view_projection[12], matrices.view_projection[13], matrices.view_projection[14], matrices.view_projection[15]}, {scale, 8.0f, 0.0f, 0.0f}};
-                this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
-                command_buffer.draw(6u * 8u * 8u * 8u, 1, 0, 0);
-            }
-        }
         if (axes_visible) {
             command_buffer.setViewportWithCount(vk::Viewport{
                 static_cast<float>(render_region.offset.x),
@@ -623,9 +508,9 @@ namespace spectra {
     void ViewportOverlay::upload(const scene::SceneView scene, const vk::raii::CommandBuffer* command_buffer) {
         std::vector<ViewportOverlayPrimitive> primitives{};
         std::vector<ViewportOverlayTransform> transforms{};
-        primitives.reserve(this->context.gpu_scene.resources.primitives.size());
-        transforms.reserve(this->context.gpu_scene.resources.primitives.size());
-        for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.resources.primitives) {
+        primitives.reserve(this->context.gpu_scene.view().primitives.size());
+        transforms.reserve(this->context.gpu_scene.view().primitives.size());
+        for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.view().primitives) {
             const scene::Instance& instance     = scene.resources.instances[gpu_primitive.scene_instance_index];
             const scene::Prototype& prototype   = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
             const scene::Primitive& primitive   = prototype.primitives[gpu_primitive.prototype_primitive_index];
@@ -672,35 +557,29 @@ namespace spectra {
         if (this->overlay.initialized) {
             this->context.runtime.frames.retire_resource_descriptor(this->overlay.mask_descriptor);
             this->context.runtime.frames.retire_sampler_descriptor(this->overlay.sampler_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->overlay.debug_descriptor);
         }
         this->overlay.mask_shaders            = nullptr;
         this->overlay.axes_shaders            = nullptr;
         this->overlay.outline_shaders         = nullptr;
-        this->overlay.debug_shaders           = nullptr;
-        this->overlay.volume_velocity_shaders = nullptr;
         this->overlay.mask                    = {};
         this->overlay.depth                   = {};
-        this->overlay.debug_buffer            = {};
-        this->overlay.debug_capacity          = {};
         this->overlay.initialized             = false;
     }
 
-    void ViewportOverlay::record(const vk::raii::CommandBuffer& command_buffer, DisplayRenderer& display, const scene::Camera& camera, const ViewportOverlayState& state) {
+    void ViewportOverlay::record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const scene::Camera& camera, const ViewportOverlayState& state) {
         std::vector<std::uint32_t> selected_indices{};
         std::vector<std::uint32_t> active_indices{};
         std::vector<std::uint32_t> hovered_indices{};
         const auto collect = [this, &state](const scene::InstanceId instance, std::vector<std::uint32_t>& destination) {
-            for (std::uint32_t gpu_instance = 0; gpu_instance < this->context.gpu_scene.resources.primitive_instance_ids.size(); ++gpu_instance) {
-                if (!state.raster_visualizations && this->context.gpu_scene.resources.primitives[gpu_instance].kind == GpuScenePrimitiveKind::ParticleSet) continue;
-                if (this->context.gpu_scene.resources.primitive_instance_ids[gpu_instance] == instance) destination.push_back(gpu_instance);
+            for (std::uint32_t gpu_instance = 0; gpu_instance < this->context.gpu_scene.view().primitive_instance_ids.size(); ++gpu_instance) {
+                if (this->context.gpu_scene.view().primitive_instance_ids[gpu_instance] == instance) destination.push_back(gpu_instance);
             }
         };
         for (const scene::InstanceId instance : state.selected_instances) collect(instance, selected_indices);
         if (state.active_instance) collect(*state.active_instance, active_indices);
         if (state.hovered_instance) collect(*state.hovered_instance, hovered_indices);
         const vk::Extent2D extent = display.image.extent;
-        this->record_impl(command_buffer, *display.image.image, *display.image.view, extent, vk::Rect2D{{0, 0}, extent}, camera, selected_indices, active_indices, hovered_indices, state.axes_plane, state.axes_visible, state.outline_visible, state.raster_visualizations, state.debug_primitives, state.volume_velocity_fields);
+        this->record_impl(command_buffer, *display.image.image, *display.image.view, display.layout, extent, vk::Rect2D{{0, 0}, extent}, camera, selected_indices, active_indices, hovered_indices, state.axes_plane, state.axes_visible, state.outline_visible);
         display.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 

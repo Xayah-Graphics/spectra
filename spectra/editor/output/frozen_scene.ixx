@@ -1,12 +1,39 @@
 export module spectra.editor:output.frozen_scene;
 
-import spectra.render;
+import spectra.render.scene;
 import spectra.runtime;
 import spectra.scene;
 import std;
 import vulkan;
 
 namespace spectra {
+    export enum class FrozenSceneReadbackKind : std::uint8_t {
+        GeometryPosition,
+        GeometryNormal,
+        GeometryTangent,
+        GeometryTextureCoordinate,
+        GeometryIndex,
+        SpherePosition,
+        SphereRadius,
+        VolumeField,
+    };
+
+    export struct FrozenSceneReadbackRegion {
+        FrozenSceneReadbackKind kind{};
+        std::uint32_t resource_index{};
+        GpuVolumeField volume_field{};
+        vk::DeviceSize offset{};
+        std::uint64_t element_count{};
+    };
+
+    export struct FrozenSceneSnapshot {
+        scene::Scene frozen_scene{};
+        GpuBuffer readback_buffer{};
+        std::vector<FrozenSceneReadbackRegion> readback_regions{};
+
+        void materialize();
+    };
+
     export struct FrozenSceneExporter {
         struct FrameSlot {
             std::optional<FrozenSceneSnapshot> snapshot{};
@@ -14,7 +41,7 @@ namespace spectra {
             std::filesystem::path source_scene_path{};
         };
 
-        FrozenSceneExporter(GpuScene& gpu_scene) noexcept;
+        FrozenSceneExporter(VulkanRuntime& runtime, GpuScene& gpu_scene) noexcept;
         ~FrozenSceneExporter();
 
         FrozenSceneExporter(const FrozenSceneExporter&)            = delete;
@@ -25,10 +52,13 @@ namespace spectra {
         void request(const std::filesystem::path& path);
         [[nodiscard]] bool in_progress() const noexcept;
         [[nodiscard]] std::optional<std::expected<std::filesystem::path, std::string>> begin_frame(std::uint32_t frame_slot_index);
-        void record_snapshot(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Camera& camera, vk::Extent2D extent, float exposure, const std::filesystem::path& source_scene_path);
+        void record_snapshot(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Scene& scene, const scene::Camera& camera, vk::Extent2D extent, float exposure, const std::filesystem::path& source_scene_path);
         void wait();
 
-        GpuScene& gpu_scene;
+        struct {
+            VulkanRuntime& runtime;
+            GpuScene& gpu_scene;
+        } context;
 
         struct {
             std::vector<FrameSlot> slots{};

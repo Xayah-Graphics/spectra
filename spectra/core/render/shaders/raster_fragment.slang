@@ -12,14 +12,37 @@ struct RasterVertex {
     float3 emission : COLOR0;
     float3 color_modifier : COLOR1;
     nointerpolation uint material : MATERIAL;
-    nointerpolation uint particle : PARTICLE;
-    nointerpolation float3 particle_center : POSITION1;
-    nointerpolation float particle_radius : RADIUS;
+    nointerpolation uint sphere : SPHERE;
+    nointerpolation float3 sphere_center : POSITION1;
+    nointerpolation float sphere_radius : RADIUS;
+    noperspective float3 wire_coordinates : TEXCOORD1;
 }
 
 struct RasterFragmentOutput {
     float4 color : SV_Target;
     float depth : SV_Depth;
+}
+
+static const float3 raster_wire_light_color =
+    float3(
+        0.55,
+        0.65,
+        0.72);
+static const float3 raster_wire_dark_color =
+    float3(
+        0.008,
+        0.012,
+        0.018);
+
+RasterFragmentOutput raster_wireframe_output(
+    float fragment_depth,
+    float alpha) {
+    return {
+        float4(
+            raster_wire_light_color,
+            alpha),
+        fragment_depth,
+    };
 }
 
 [vk::push_constant]
@@ -616,7 +639,42 @@ void conductor_parameters(
 RasterFragmentOutput raster_fragment(
     RasterVertex input) {
     float fragment_depth = input.position.z;
-    if (input.particle != 0) {
+    float wire_coverage = 0.0;
+    if (
+        input.sphere == 0 &&
+        push_data.attributes.y !=
+            raster_display_material) {
+        const float3 wire_width =
+            max(
+                fwidth(
+                    input.wire_coordinates),
+                float3(1.0e-6));
+        const float wire_distance =
+            min(
+                input.wire_coordinates.x /
+                    wire_width.x,
+                min(
+                    input.wire_coordinates.y /
+                        wire_width.y,
+                    input.wire_coordinates.z /
+                        wire_width.z));
+        wire_coverage =
+            1.0 -
+            smoothstep(
+                0.65,
+                1.35,
+                wire_distance);
+    }
+    if (
+        push_data.attributes.y ==
+        raster_display_wireframe) {
+        if (wire_coverage <= 0.0) discard;
+        return
+            raster_wireframe_output(
+                fragment_depth,
+                wire_coverage);
+    }
+    if (input.sphere != 0) {
         const float3 ray_origin =
             push_data.camera_position.xyz;
         const float3 ray_direction =
@@ -625,7 +683,7 @@ RasterFragmentOutput raster_fragment(
                 ray_origin);
         const float3 offset =
             ray_origin -
-            input.particle_center;
+            input.sphere_center;
         const float half_b =
             dot(
                 offset,
@@ -637,8 +695,8 @@ RasterFragmentOutput raster_fragment(
                 dot(
                     offset,
                     offset) -
-                input.particle_radius *
-                    input.particle_radius
+                input.sphere_radius *
+                    input.sphere_radius
             );
         if (discriminant < 0.0) discard;
         const float distance =
@@ -652,7 +710,7 @@ RasterFragmentOutput raster_fragment(
         input.world_normal =
             normalize(
                 input.world_position -
-                input.particle_center);
+                input.sphere_center);
         input.world_tangent =
             normalize(
                 abs(input.world_normal.z) < 0.999
@@ -729,8 +787,13 @@ RasterFragmentOutput raster_fragment(
             bindings,
             primitive.alpha_texture,
             texture_context)
-                .x < 0.5)
-        discard;
+                .x < 0.5) {
+        if (wire_coverage <= 0.0) discard;
+        return
+            raster_wireframe_output(
+                fragment_depth,
+                1.0);
+    }
     float3 outgoing =
         normalize(
             push_data.camera_position.xyz -
@@ -744,8 +807,13 @@ RasterFragmentOutput raster_fragment(
             outgoing);
     const RasterMaterial material =
         materials[material_index];
-    if (material.metadata.x == 0)
-        discard;
+    if (material.metadata.x == 0) {
+        if (wire_coverage <= 0.0) discard;
+        return
+            raster_wireframe_output(
+                fragment_depth,
+                1.0);
+    }
     float3 normal =
         texture_context.normal;
     float3 tangent =
@@ -1299,12 +1367,33 @@ RasterFragmentOutput raster_fragment(
                     )
             );
     }
-    const float3 color =
+    float3 color =
         input.emission +
         ambient +
         brdf *
             no_l *
             3.0;
+    if (
+        push_data.attributes.y ==
+            raster_display_material_wireframe &&
+        wire_coverage > 0.0) {
+        const float luminance =
+            dot(
+                color,
+                float3(
+                    0.2126,
+                    0.7152,
+                    0.0722));
+        const float3 wire_color =
+            luminance > 0.35
+                ? raster_wire_dark_color
+                : raster_wire_light_color;
+        color =
+            lerp(
+                color,
+                wire_color,
+                wire_coverage);
+    }
     return {
         float4(
             max(

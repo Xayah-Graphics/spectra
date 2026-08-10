@@ -1,6 +1,9 @@
-export module spectra.render:rasterizer;
+export module spectra.render.rasterizer;
 
-export import :common;
+import spectra.render.contract;
+import spectra.render.scene;
+import spectra.runtime;
+import spectra.scene;
 
 import std;
 import vulkan;
@@ -135,8 +138,7 @@ namespace spectra {
     };
 
     export struct Rasterizer {
-        static constexpr RendererDescriptor descriptor{"rasterizer", "Raster"};
-        static constexpr bool renders_visualizations = true;
+        static constexpr RendererDescriptor descriptor = rasterizer_descriptor;
 
         struct VolumeResources {
             scene::VolumeId volume_id{};
@@ -154,7 +156,7 @@ namespace spectra {
         Rasterizer& operator=(const Rasterizer&) = delete;
         Rasterizer& operator=(Rasterizer&&)      = delete;
 
-        void invalidate(scene::SceneChange changes) noexcept;
+        void invalidate(scene::SceneChange changes, GpuSceneUpdate gpu_update) noexcept;
         void prepare(scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer);
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         [[nodiscard]] RenderOutput output() const noexcept;
@@ -198,8 +200,9 @@ namespace spectra {
         struct {
             scene::Camera camera{};
             float film_exposure{};
+            RasterDisplayMode display_mode{RasterDisplayMode::Material};
             vk::raii::ShaderEXTs shaders{nullptr};
-            vk::raii::ShaderEXT particle_shader{nullptr};
+            vk::raii::ShaderEXT sphere_shader{nullptr};
             vk::raii::ShaderEXT volume_shader{nullptr};
             GpuImage output_image{};
             GpuImage depth_image{};
@@ -209,6 +212,7 @@ namespace spectra {
             vk::ImageLayout output_layout{vk::ImageLayout::eUndefined};
             vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
             scene::SceneChange pending_changes{scene::SceneChange::None};
+            GpuSceneChange pending_gpu_changes{GpuSceneChange::None};
         } renderer;
 
     private:

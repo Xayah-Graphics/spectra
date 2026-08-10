@@ -13,6 +13,17 @@ struct ProceduralIntersectionAttributes {
     float2 texture_coordinates;
 }
 
+bool sphere_geometry(uint kind) {
+    return kind == geometry_sphere || kind == geometry_sphere_set;
+}
+
+float4 sphere_set_data(PathPrimitive primitive) {
+    StructuredBuffer<PathPackedFloat3> positions = primitive.normals;
+    StructuredBuffer<uint> radii = primitive.indices;
+    const PathPackedFloat3 position = positions[PrimitiveIndex()];
+    return float4(position.x, position.y, position.z, asfloat(radii[PrimitiveIndex()]));
+}
+
 float positive_phi(float3 position) {
     if (
         position.x == 0.0 &&
@@ -34,7 +45,7 @@ bool valid_shape_hit(
     out float2 texture_coordinates) {
     const float phi =
         positive_phi(position);
-    if (kind == geometry_sphere) {
+    if (sphere_geometry(kind)) {
         if (
             position.z < parameters.y ||
             position.z > parameters.z ||
@@ -109,7 +120,7 @@ void report_quadric_hit(
     float3 position =
         origin +
         t * direction;
-    if (kind == geometry_sphere)
+    if (sphere_geometry(kind))
         position *=
             parameters.x /
             length(position);
@@ -151,6 +162,11 @@ void procedural_intersection() {
         primitive.geometry_parameters;
     float3 origin =
         ObjectRayOrigin();
+    if (kind == geometry_sphere_set) {
+        const float4 sphere = sphere_set_data(primitive);
+        origin -= sphere.xyz;
+        parameters = float4(sphere.w, -sphere.w, sphere.w, 2.0 * 3.14159265358979323846);
+    }
     const float3 direction =
         ObjectRayDirection();
     if (kind == geometry_disk) {
@@ -207,19 +223,19 @@ void procedural_intersection() {
         return;
     }
     const float a =
-        kind == geometry_sphere
+        sphere_geometry(kind)
             ? dot(direction, direction)
             : dot(
                   direction.xy,
                   direction.xy);
     const float half_b =
-        kind == geometry_sphere
+        sphere_geometry(kind)
             ? dot(origin, direction)
             : dot(
                   origin.xy,
                   direction.xy);
     const float c =
-        kind == geometry_sphere
+        sphere_geometry(kind)
             ? dot(origin, origin) -
                   parameters.x *
                       parameters.x
@@ -301,8 +317,9 @@ bool procedural_alpha_killed(
             ObjectRayDirection();
     float3 local_position =
         object_position;
+    if (kind == geometry_sphere_set) local_position -= sphere_set_data(primitive).xyz;
     float3 object_normal =
-        kind == geometry_sphere
+        sphere_geometry(kind)
             ? normalize(local_position)
         : kind == geometry_disk
             ? float3(0.0, 0.0, 1.0)
@@ -446,12 +463,17 @@ void procedural_closest_hit(
         ObjectRayOrigin() +
         RayTCurrent() *
             ObjectRayDirection();
+    if (kind == geometry_sphere_set) {
+        const float4 sphere = sphere_set_data(primitive);
+        position -= sphere.xyz;
+        parameters = float4(sphere.w, -sphere.w, sphere.w, 2.0 * 3.14159265358979323846);
+    }
     float3 object_normal;
     float3 object_dpdu;
     float3 object_dpdv;
     float3 object_dndu;
     float3 object_dndv;
-    if (kind == geometry_sphere) {
+    if (sphere_geometry(kind)) {
         position *=
             parameters.x /
             length(position);
@@ -660,8 +682,9 @@ void procedural_shadow_closest_hit(
         ObjectRayOrigin() +
         RayTCurrent() *
             ObjectRayDirection();
+    if (kind == geometry_sphere_set) position -= sphere_set_data(primitive).xyz;
     float3 object_normal;
-    if (kind == geometry_sphere)
+    if (sphere_geometry(kind))
         object_normal =
             normalize(position);
     else if (kind == geometry_disk)
