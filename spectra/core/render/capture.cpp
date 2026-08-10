@@ -1,6 +1,7 @@
 module;
 
 #include <exr.h>
+#include <lodepng.h>
 
 #undef interface
 
@@ -11,30 +12,6 @@ import vulkan;
 
 namespace spectra {
     namespace {
-        void append_u32_be(std::vector<std::byte>& destination, const std::uint32_t value) {
-            destination.emplace_back(static_cast<std::byte>(value >> 24u));
-            destination.emplace_back(static_cast<std::byte>(value >> 16u));
-            destination.emplace_back(static_cast<std::byte>(value >> 8u));
-            destination.emplace_back(static_cast<std::byte>(value));
-        }
-
-        [[nodiscard]] std::uint32_t png_crc(const std::span<const std::byte> bytes) noexcept {
-            std::uint32_t crc = 0xffffffffu;
-            for (const std::byte value : bytes) {
-                crc ^= std::to_integer<std::uint8_t>(value);
-                for (std::uint32_t bit = 0; bit < 8; ++bit) crc = (crc >> 1u) ^ (0xedb88320u & (0u - (crc & 1u)));
-            }
-            return ~crc;
-        }
-
-        void append_png_chunk(std::vector<std::byte>& png, const std::array<char, 4>& type, const std::span<const std::byte> data) {
-            append_u32_be(png, static_cast<std::uint32_t>(data.size()));
-            const std::size_t crc_begin = png.size();
-            for (const char value : type) png.emplace_back(static_cast<std::byte>(value));
-            png.insert(png.end(), data.begin(), data.end());
-            append_u32_be(png, png_crc(std::span{png}.subspan(crc_begin)));
-        }
-
         struct ExrChannelSource {
             std::string_view name;
             exr_pixel_type type;
@@ -56,6 +33,24 @@ namespace spectra {
 
             ~ExrWriter() {
                 exr_writer_destroy(this->value);
+            }
+        };
+
+        struct ExrStream {
+            std::fstream stream{};
+
+            explicit ExrStream(const std::filesystem::path& path) : stream{path, std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc} {}
+
+            static exr_result write(void* user, const void* data, const std::size_t size) noexcept {
+                ExrStream& destination = *static_cast<ExrStream*>(user);
+                destination.stream.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+                return destination.stream ? EXR_SUCCESS : EXR_ERROR_IO;
+            }
+
+            static exr_result seek(void* user, const std::uint64_t offset) noexcept {
+                ExrStream& destination = *static_cast<ExrStream*>(user);
+                destination.stream.seekp(static_cast<std::streamoff>(offset));
+                return destination.stream ? EXR_SUCCESS : EXR_ERROR_IO;
             }
         };
 
@@ -85,6 +80,7 @@ namespace spectra {
         }
 
         void write_exr(const std::filesystem::path& path, const std::uint32_t width, const std::uint32_t height, const scene::SpectrumColorSpace color_space, const std::span<const ExrChannelSource> channels, const std::optional<std::string_view> gbuffer_coordinates = std::nullopt, const std::optional<std::int32_t> accumulated_samples = std::nullopt) {
+            if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
             std::vector<ExrChannelSource> sorted_channels{channels.begin(), channels.end()};
             std::ranges::sort(sorted_channels, {}, &ExrChannelSource::name);
 
@@ -115,8 +111,10 @@ namespace spectra {
             ExrWriter writer{};
             check_exr(exr_writer_create(nullptr, &writer.value), "create the writer");
             check_exr(exr_writer_add_part(writer.value, &header, nullptr), "add the image part");
-            const std::string filename = path.string();
-            check_exr(exr_writer_begin_stream_file(writer.value, filename.c_str(), EXR_COMPRESSION_ZIP), "open the output file");
+            ExrStream stream{path};
+            if (!stream.stream) throw std::runtime_error(std::format("Failed to open EXR file: {}", path.string()));
+            const exr_data_sink sink{&stream, ExrStream::write, ExrStream::seek, nullptr};
+            check_exr(exr_writer_begin_stream(writer.value, &sink, EXR_COMPRESSION_ZIP), "open the output file");
 
             constexpr std::uint32_t lines_per_block = 16;
             const std::size_t block_capacity        = static_cast<std::size_t>(width) * lines_per_block;
@@ -138,57 +136,19 @@ namespace spectra {
     } // namespace
 
     void write_png(const std::filesystem::path& path, const std::span<const std::uint8_t> bgra, const vk::Extent2D extent) {
-        std::vector<std::byte> scanlines((static_cast<std::size_t>(extent.width) * 4u + 1u) * extent.height);
-        for (std::uint32_t y = 0; y < extent.height; ++y) {
-            const std::size_t row = static_cast<std::size_t>(y) * (static_cast<std::size_t>(extent.width) * 4u + 1u);
-            scanlines[row]        = std::byte{};
-            for (std::uint32_t x = 0; x < extent.width; ++x) {
-                const std::size_t source      = (static_cast<std::size_t>(y) * extent.width + x) * 4u;
-                const std::size_t destination = row + 1u + static_cast<std::size_t>(x) * 4u;
-                scanlines[destination + 0u]   = static_cast<std::byte>(bgra[source + 2u]);
-                scanlines[destination + 1u]   = static_cast<std::byte>(bgra[source + 1u]);
-                scanlines[destination + 2u]   = static_cast<std::byte>(bgra[source + 0u]);
-                scanlines[destination + 3u]   = static_cast<std::byte>(bgra[source + 3u]);
-            }
+        if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+        std::vector<std::uint8_t> rgba(bgra.size());
+        for (std::size_t pixel = 0; pixel != bgra.size() / 4u; ++pixel) {
+            rgba[pixel * 4u + 0u] = bgra[pixel * 4u + 2u];
+            rgba[pixel * 4u + 1u] = bgra[pixel * 4u + 1u];
+            rgba[pixel * 4u + 2u] = bgra[pixel * 4u + 0u];
+            rgba[pixel * 4u + 3u] = bgra[pixel * 4u + 3u];
         }
-
-        std::vector<std::byte> compressed{std::byte{0x78}, std::byte{0x01}};
-        std::size_t offset{};
-        while (offset < scanlines.size()) {
-            const std::uint16_t size = static_cast<std::uint16_t>(std::min<std::size_t>(scanlines.size() - offset, 65535u));
-            compressed.emplace_back(offset + size == scanlines.size() ? std::byte{0x01} : std::byte{});
-            compressed.emplace_back(static_cast<std::byte>(size));
-            compressed.emplace_back(static_cast<std::byte>(size >> 8u));
-            compressed.emplace_back(static_cast<std::byte>(~size));
-            compressed.emplace_back(static_cast<std::byte>(static_cast<std::uint16_t>(~size) >> 8u));
-            compressed.insert(compressed.end(), scanlines.begin() + offset, scanlines.begin() + offset + size);
-            offset += size;
-        }
-        std::uint32_t first = 1;
-        std::uint32_t second{};
-        for (const std::byte value : scanlines) {
-            first  = (first + std::to_integer<std::uint8_t>(value)) % 65521u;
-            second = (second + first) % 65521u;
-        }
-        append_u32_be(compressed, second << 16u | first);
-
-        std::vector<std::byte> png{std::byte{0x89}, std::byte{0x50}, std::byte{0x4e}, std::byte{0x47}, std::byte{0x0d}, std::byte{0x0a}, std::byte{0x1a}, std::byte{0x0a}};
-        std::array<std::byte, 13> header{};
-        header[0] = static_cast<std::byte>(extent.width >> 24u);
-        header[1] = static_cast<std::byte>(extent.width >> 16u);
-        header[2] = static_cast<std::byte>(extent.width >> 8u);
-        header[3] = static_cast<std::byte>(extent.width);
-        header[4] = static_cast<std::byte>(extent.height >> 24u);
-        header[5] = static_cast<std::byte>(extent.height >> 16u);
-        header[6] = static_cast<std::byte>(extent.height >> 8u);
-        header[7] = static_cast<std::byte>(extent.height);
-        header[8] = std::byte{8};
-        header[9] = std::byte{6};
-        append_png_chunk(png, {'I', 'H', 'D', 'R'}, header);
-        append_png_chunk(png, {'I', 'D', 'A', 'T'}, compressed);
-        append_png_chunk(png, {'I', 'E', 'N', 'D'}, std::span<const std::byte>{});
+        std::vector<std::uint8_t> encoded{};
+        const unsigned error = lodepng::encode(encoded, rgba, extent.width, extent.height);
+        if (error != 0) throw std::runtime_error(std::format("Failed to encode PNG: {}", lodepng_error_text(error)));
         std::ofstream stream{path, std::ios::binary};
-        stream.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+        stream.write(reinterpret_cast<const char*>(encoded.data()), static_cast<std::streamsize>(encoded.size()));
         if (!stream) throw std::runtime_error(std::format("Failed to write PNG file: {}", path.string()));
     }
 
@@ -215,6 +175,60 @@ namespace spectra {
         const vk::ImageMemoryBarrier2 restore{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, source_stage, source_access, vk::ImageLayout::eTransferSrcOptimal, image_layout, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
         const vk::MemoryBarrier2 host_barrier{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostRead};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_barrier, {}, {}, 1, &restore});
+    }
+
+    RenderGBufferReadback materialize_gbuffer_readback(const RenderGBufferSnapshot& snapshot) {
+        RenderGBufferReadback result{
+            .extent              = snapshot.extent,
+            .accumulated_samples = snapshot.accumulated_samples,
+        };
+        const std::size_t pixel_count = static_cast<std::size_t>(snapshot.extent.width) * snapshot.extent.height;
+        result.radiance.resize(pixel_count);
+        result.albedo.resize(pixel_count);
+        result.shading_normals.resize(pixel_count);
+        result.geometric_normals.resize(pixel_count);
+        result.positions.resize(pixel_count);
+        result.depths.resize(pixel_count);
+        result.texture_coordinates.resize(pixel_count);
+        result.object_ids.resize(pixel_count);
+        result.primitive_ids.resize(pixel_count);
+        result.material_ids.resize(pixel_count);
+        if (snapshot.accumulated_samples == 0) return result;
+
+        const vk::DeviceSize buffer_size = static_cast<vk::DeviceSize>(pixel_count) * sizeof(math::Float4);
+        const auto float_buffer = [&](const std::size_t index) {
+            return std::span<const math::Float4>{reinterpret_cast<const math::Float4*>(static_cast<const std::byte*>(snapshot.buffer.mapped) + buffer_size * index), pixel_count};
+        };
+        const auto integer_buffer = [&](const std::size_t index) {
+            return std::span<const std::array<std::uint32_t, 4>>{reinterpret_cast<const std::array<std::uint32_t, 4>*>(static_cast<const std::byte*>(snapshot.buffer.mapped) + buffer_size * index), pixel_count};
+        };
+        std::ranges::copy(float_buffer(0), result.radiance.begin());
+        const std::span<const math::Float4> albedo_sums                = float_buffer(1);
+        const std::span<const math::Float4> shading_normal_sums        = float_buffer(2);
+        const std::span<const math::Float4> geometric_normal_sums      = float_buffer(3);
+        const std::span<const math::Float4> position_depth_sums        = float_buffer(4);
+        const std::span<const math::Float4> uv_weight_sums             = float_buffer(5);
+        const std::span<const std::array<std::uint32_t, 4>> identity_0 = integer_buffer(6);
+        const std::span<const std::array<std::uint32_t, 4>> identity_1 = integer_buffer(7);
+        const auto normalize                                           = [](const math::Float4 value) {
+            const float length = std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+            return length == 0.0f ? math::Float3{} : math::Float3{value.x / length, value.y / length, value.z / length};
+        };
+        for (std::size_t index = 0; index != pixel_count; ++index) {
+            const float weight = uv_weight_sums[index].z;
+            if (weight != 0.0f) {
+                result.albedo[index] = {albedo_sums[index].x / weight, albedo_sums[index].y / weight, albedo_sums[index].z / weight};
+                result.shading_normals[index]   = normalize(shading_normal_sums[index]);
+                result.geometric_normals[index] = normalize(geometric_normal_sums[index]);
+                result.positions[index]         = {position_depth_sums[index].x / weight, position_depth_sums[index].y / weight, position_depth_sums[index].z / weight};
+                result.depths[index]             = position_depth_sums[index].w / weight;
+                result.texture_coordinates[index] = {uv_weight_sums[index].x / weight, uv_weight_sums[index].y / weight};
+            }
+            result.object_ids[index]    = static_cast<std::uint64_t>(identity_0[index][0]) | static_cast<std::uint64_t>(identity_0[index][1]) << 32;
+            result.primitive_ids[index] = identity_0[index][2];
+            result.material_ids[index]  = static_cast<std::uint64_t>(identity_0[index][3]) | static_cast<std::uint64_t>(identity_1[index][0]) << 32;
+        }
+        return result;
     }
 
     void write_linear_exr(const std::filesystem::path& path, const std::span<const float> rgba, const vk::Extent2D extent, const scene::SpectrumColorSpace color_space) {

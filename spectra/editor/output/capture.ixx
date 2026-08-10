@@ -27,10 +27,12 @@ namespace spectra {
 
         struct FrameSlot {
             GpuBuffer readback_buffer{};
+            RenderGBufferSnapshot gbuffer_snapshot{};
             std::optional<PendingCapture> pending{};
         };
 
         FrameCapture(VulkanRuntime& runtime, RenderEngine& render_engine, DisplayPass& display, std::filesystem::path output_directory) noexcept;
+        ~FrameCapture();
 
         void request(CaptureFormat image_format, const scene::Film& film, const std::filesystem::path& scene_path);
         [[nodiscard]] std::optional<std::expected<std::filesystem::path, std::string>> begin_frame(std::uint32_t frame_slot_index);

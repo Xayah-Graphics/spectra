@@ -1,13 +1,15 @@
-module spectra.editor;
+module spectra.visualization;
 
 import spectra.runtime.shaders;
-
-import :visualization.renderer;
 
 import std;
 import vulkan;
 
 namespace spectra {
+    VisualizationRenderer::~VisualizationRenderer() {
+        this->context.runtime.frames.defer_destruction([shaders = std::move(this->shaders)]() mutable {});
+    }
+
     namespace {
         struct alignas(16) VisualizationPushData {
             DescriptorHandle primary{};
@@ -33,9 +35,80 @@ namespace spectra {
 
         static_assert(sizeof(VisualizationPushData) == 256);
 
-        [[nodiscard]] const dynamics::GpuDatasetBufferView* visualization_buffer(const dynamics::GpuVisualizationDatasetView& view, const dynamics::DatasetBufferKind kind, const std::uint32_t channel_index = 0) noexcept {
-            const auto found = std::ranges::find_if(view.buffers, [kind, channel_index](const dynamics::GpuDatasetBufferView& buffer) { return buffer.kind == kind && buffer.channel_index == channel_index; });
-            return found == view.buffers.end() ? nullptr : std::to_address(found);
+        struct ResolvedVisualization {
+            const dynamics::VisualizationStyle* style{};
+            DescriptorHandle primary{};
+            DescriptorHandle secondary{};
+            DescriptorHandle scalar{};
+            std::uint64_t active_count{};
+            std::uint64_t secondary_count{};
+            math::UInt3 resolution{};
+            std::array<std::uint32_t, 2> image_extent{};
+            dynamics::ImageFormat image_format{dynamics::ImageFormat::Rgba8Unorm};
+            scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
+            dynamics::TransferFunction transfer_function{dynamics::TransferFunction::Linear};
+            dynamics::FieldChannelKind field_kind{dynamics::FieldChannelKind::Float};
+            math::Transform transform{};
+            bool point{};
+            bool image{};
+        };
+
+        [[nodiscard]] ResolvedVisualization resolve_visualization(const dynamics::GpuVisualization& source) noexcept {
+            ResolvedVisualization result{};
+            std::visit(
+                [&result](const auto& value) {
+                    result.style = &value.style;
+                    result.transform = value.style.transform;
+                    if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuPointVisualization>) {
+                        result.primary      = value.points.descriptor;
+                        result.active_count = value.count;
+                        result.point        = true;
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuSegmentVisualization>) {
+                        result.primary      = value.segments.descriptor;
+                        result.active_count = value.count;
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuCurveVisualization>) {
+                        result.primary      = value.curves.descriptor;
+                        result.active_count = value.count;
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuVectorVisualization>) {
+                        result.primary      = value.vectors.descriptor;
+                        result.active_count = value.count;
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuFieldVisualization>) {
+                        result.primary      = value.channel.values.descriptor;
+                        result.active_count = static_cast<std::uint64_t>(value.resolution.x) * value.resolution.y * value.resolution.z;
+                        result.resolution   = value.resolution;
+                        result.field_kind   = value.channel.channel.kind;
+                        result.transform    = value.style.transform * value.local_from_grid;
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuImageVisualization>) {
+                        result.primary      = value.pixels.descriptor;
+                        result.active_count = 1;
+                        result.image_extent = value.image.extent;
+                        result.image_format = value.image.format;
+                        result.color_space  = value.image.color_space;
+                        result.transfer_function = value.image.transfer_function;
+                        result.image        = true;
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuCameraObservationVisualization>) {
+                        result.primary      = value.observations.descriptor;
+                        result.secondary    = value.images.descriptor;
+                        result.active_count = value.count;
+                        result.image_extent = value.dataset.images.extent;
+                        result.image_format = value.dataset.images.format;
+                        result.color_space  = value.dataset.images.color_space;
+                        result.transfer_function = value.dataset.images.transfer_function;
+                        result.image        = true;
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuTransformVisualization>) {
+                        result.primary      = value.transforms.descriptor;
+                        result.active_count = value.count;
+                    } else {
+                        result.primary         = value.positions.descriptor;
+                        result.secondary       = value.indices.descriptor;
+                        result.scalar          = value.scalars.descriptor;
+                        result.active_count    = value.vertex_count;
+                        result.secondary_count = value.index_count;
+                    }
+                    if (!result.secondary) result.secondary = result.primary;
+                },
+                source.data);
+            return result;
         }
 
     } // namespace
@@ -50,18 +123,26 @@ namespace spectra {
         this->shaders = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, create_infos};
     }
 
-    void VisualizationRenderer::record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, DepthBufferView depth, const scene::Camera& camera, const std::span<const dynamics::GpuVisualizationDatasetView> views) {
+    bool VisualizationRenderer::has_visible(const std::span<const dynamics::GpuVisualization> views, const scene::VisualizationCompositionDomain domain) const noexcept {
+        return std::ranges::any_of(views, [domain](const dynamics::GpuVisualization& source) {
+            return std::visit([domain](const auto& value) { return value.style.view.visible && value.style.view.composition_domain == domain; }, source.data);
+        });
+    }
+
+    void VisualizationRenderer::record(const vk::raii::CommandBuffer& command_buffer, const ColorCompositionTarget target, DepthBufferView depth, const scene::Camera& camera, const std::span<const dynamics::GpuVisualization> views, const scene::VisualizationCompositionDomain domain) {
         if (views.empty()) return;
         std::vector<vk::ImageMemoryBarrier2> barriers{};
-        barriers.emplace_back(display.layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::PipelineStageFlagBits2::eFragmentShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput, display.layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::AccessFlagBits2::eShaderSampledRead : vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, display.layout, vk::ImageLayout::eColorAttachmentOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *display.image.image, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+        const vk::PipelineStageFlags2 target_stage = target.layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::PipelineStageFlagBits2::eFragmentShader : target.layout == vk::ImageLayout::eTransferDstOptimal ? vk::PipelineStageFlagBits2::eCopy : vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        const vk::AccessFlags2 target_access = target.layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::AccessFlagBits2::eShaderSampledRead : target.layout == vk::ImageLayout::eTransferDstOptimal ? vk::AccessFlagBits2::eTransferWrite : vk::AccessFlagBits2::eColorAttachmentWrite;
+        barriers.emplace_back(target_stage, target_access, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, target.layout, vk::ImageLayout::eColorAttachmentOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *target.image.image, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
         if (depth.layout != vk::ImageLayout::eShaderReadOnlyOptimal) barriers.emplace_back(vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eShaderStorageRead, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead, depth.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *depth.image.image, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1});
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, static_cast<std::uint32_t>(barriers.size()), barriers.data()});
         depth.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
-        const vk::RenderingAttachmentInfo target{*display.image.view, vk::ImageLayout::eColorAttachmentOptimal, vk::ResolveModeFlagBits::eNone, {}, vk::ImageLayout::eUndefined, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore};
-        command_buffer.beginRendering(vk::RenderingInfo{{}, {{0, 0}, display.image.extent}, 1, 0, 1, &target});
-        command_buffer.setViewportWithCount(vk::Viewport{0.0f, static_cast<float>(display.image.extent.height), static_cast<float>(display.image.extent.width), -static_cast<float>(display.image.extent.height), 0.0f, 1.0f});
-        command_buffer.setScissorWithCount(vk::Rect2D{{0, 0}, display.image.extent});
+        const vk::RenderingAttachmentInfo attachment{*target.image.view, vk::ImageLayout::eColorAttachmentOptimal, vk::ResolveModeFlagBits::eNone, {}, vk::ImageLayout::eUndefined, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore};
+        command_buffer.beginRendering(vk::RenderingInfo{{}, {{0, 0}, target.image.extent}, 1, 0, 1, &attachment});
+        command_buffer.setViewportWithCount(vk::Viewport{0.0f, static_cast<float>(target.image.extent.height), static_cast<float>(target.image.extent.width), -static_cast<float>(target.image.extent.height), 0.0f, 1.0f});
+        command_buffer.setScissorWithCount(vk::Rect2D{{0, 0}, target.image.extent});
         command_buffer.setCullMode(vk::CullModeFlagBits::eNone);
         command_buffer.setFrontFace(vk::FrontFace::eCounterClockwise);
         command_buffer.setDepthTestEnable(vk::False);
@@ -88,56 +169,39 @@ namespace spectra {
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
 
         const std::array<float, 16>& view_projection = camera.matrices().view_projection;
-        for (const dynamics::GpuVisualizationDatasetView& dataset : views) {
-            if (!dataset.view.visible || dataset.active_count == 0) continue;
-            const dynamics::GpuDatasetBufferView* primary{};
-            const dynamics::GpuDatasetBufferView* secondary{};
-            if (dataset.kind == dynamics::DatasetKind::Mesh) {
-                primary   = visualization_buffer(dataset, dynamics::DatasetBufferKind::MeshPosition);
-                secondary = visualization_buffer(dataset, dynamics::DatasetBufferKind::MeshIndex);
-            } else if (dataset.kind == dynamics::DatasetKind::PointSet)
-                primary = visualization_buffer(dataset, dynamics::DatasetBufferKind::Point);
-            else if (dataset.kind == dynamics::DatasetKind::SegmentSet)
-                primary = visualization_buffer(dataset, dynamics::DatasetBufferKind::Segment);
-            else if (dataset.kind == dynamics::DatasetKind::CurveSet)
-                primary = visualization_buffer(dataset, dynamics::DatasetBufferKind::Curve);
-            else if (dataset.kind == dynamics::DatasetKind::VectorSet)
-                primary = visualization_buffer(dataset, dynamics::DatasetBufferKind::Vector);
-            else if (dataset.kind == dynamics::DatasetKind::TransformSet)
-                primary = visualization_buffer(dataset, dynamics::DatasetBufferKind::Transform);
-            else if (dataset.kind == dynamics::DatasetKind::Image)
-                primary = visualization_buffer(dataset, dynamics::DatasetBufferKind::ImagePixel);
-            else if (dataset.kind == dynamics::DatasetKind::CameraObservationSet) {
-                primary   = visualization_buffer(dataset, dynamics::DatasetBufferKind::CameraObservation);
-                secondary = visualization_buffer(dataset, dynamics::DatasetBufferKind::ImagePixel);
-            } else {
-                const auto channel = std::ranges::find(dataset.field_channels, dataset.view.channel_id, &dynamics::FieldChannelDescriptor::id);
-                const std::uint32_t channel_index = static_cast<std::uint32_t>(channel - dataset.field_channels.begin());
-                primary = visualization_buffer(dataset, dynamics::DatasetBufferKind::FieldChannel, channel_index);
-            }
+        std::array<float, 3> camera_depth{};
+        std::visit([&camera_depth](const auto& data) { camera_depth = {data.near_plane, data.far_plane, std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData> ? 1.0f : 0.0f}; }, camera.data);
+        for (const dynamics::GpuVisualization& source : views) {
+            const ResolvedVisualization dataset = resolve_visualization(source);
+            const scene::DynamicVisualizationView& view = dataset.style->view;
+            if (!view.visible || view.composition_domain != domain || dataset.active_count == 0) continue;
             const std::array<float, 16>& transform = dataset.transform.matrix;
-            const bool image_dataset = dataset.kind == dynamics::DatasetKind::Image || dataset.kind == dynamics::DatasetKind::CameraObservationSet;
+            std::array<std::uint32_t, 4> detail{0, 0, static_cast<std::uint32_t>(view.color_source), static_cast<std::uint32_t>(view.color_map)};
+            if (dataset.point) {
+                detail[0] = static_cast<std::uint32_t>(view.point_glyph);
+                detail[1] = static_cast<std::uint32_t>(view.point_shading);
+            }
+            if (dataset.image) detail[0] = static_cast<std::uint32_t>(target.color_space);
+            if (view.kind == scene::VisualizationViewKind::FieldSlice || view.kind == scene::VisualizationViewKind::FieldVectors) {
+                detail[0] = dataset.resolution.z;
+                detail[1] = view.sampling;
+            }
+            std::array<float, 4> screen_rect{view.screen_rect.x, view.screen_rect.y, view.screen_rect.z, view.screen_rect.w};
+            if (dataset.point) screen_rect = {camera_depth[0], camera_depth[1], camera_depth[2], 0.0f};
+            if (view.kind == scene::VisualizationViewKind::FieldSlice || view.kind == scene::VisualizationViewKind::FieldVectors) screen_rect = {static_cast<float>(view.slice_axis), view.slice_position, static_cast<float>(dataset.field_kind), 0.0f};
+            if (view.kind == scene::VisualizationViewKind::CameraObservations) screen_rect = {view.distortion_tolerance, static_cast<float>(view.distortion_iterations), 0.0f, 0.0f};
             VisualizationPushData push{
-                primary->descriptor,
-                secondary ? secondary->descriptor : primary->descriptor,
+                dataset.primary,
+                dataset.secondary,
                 depth.descriptor,
-                static_cast<std::uint32_t>(dataset.color_space),
-                0,
-                {static_cast<std::uint32_t>(dataset.view.kind), static_cast<std::uint32_t>(dataset.active_count), static_cast<std::uint32_t>(dataset.secondary_count), static_cast<std::uint32_t>(dataset.view.depth_mode)},
-                {display.image.extent.width, display.image.extent.height, image_dataset ? dataset.image_extent[0] : dataset.resolution.x, image_dataset ? dataset.image_extent[1] : dataset.resolution.y},
-                dataset.kind == dynamics::DatasetKind::PointSet
-                    ? std::array{
-                          static_cast<std::uint32_t>(dataset.view.point_glyph),
-                          static_cast<std::uint32_t>(dataset.view.point_shading),
-                          static_cast<std::uint32_t>(dataset.view.color_source),
-                          static_cast<std::uint32_t>(dataset.view.color_map),
-                      }
-                    : std::array{dataset.resolution.z, dataset.view.sampling, dataset.view.slice_axis, static_cast<std::uint32_t>(dataset.image_format)},
-                dataset.kind == dynamics::DatasetKind::PointSet
-                    ? std::array{dataset.view.width, dataset.view.scale, dataset.view.scalar_minimum, dataset.view.scalar_maximum}
-                    : std::array{dataset.view.width, dataset.view.scale, dataset.view.slice_position, dataset.kind == dynamics::DatasetKind::Field ? static_cast<float>(dataset.field_channels[primary->channel_index].kind) : 0.0f},
-                {dataset.view.color.x, dataset.view.color.y, dataset.view.color.z, dataset.view.color.w},
-                {dataset.view.screen_rect.x, dataset.view.screen_rect.y, dataset.view.screen_rect.z, dataset.view.screen_rect.w},
+                dataset.image ? static_cast<std::uint32_t>(dataset.color_space) : dataset.scalar.slot_index,
+                dataset.image ? static_cast<std::uint32_t>(dataset.image_format) | (static_cast<std::uint32_t>(dataset.transfer_function) << 16) : dataset.scalar.reserved,
+                {static_cast<std::uint32_t>(view.kind), static_cast<std::uint32_t>(dataset.active_count), static_cast<std::uint32_t>(dataset.secondary_count), static_cast<std::uint32_t>(view.depth_mode)},
+                {target.image.extent.width, target.image.extent.height, dataset.image ? dataset.image_extent[0] : dataset.resolution.x, dataset.image ? dataset.image_extent[1] : dataset.resolution.y},
+                detail,
+                {view.width, view.scale, view.scalar_minimum, view.scalar_maximum},
+                {view.color.x, view.color.y, view.color.z, view.color.w},
+                screen_rect,
                 {transform[0], transform[1], transform[2], transform[3]},
                 {transform[4], transform[5], transform[6], transform[7]},
                 {transform[8], transform[9], transform[10], transform[11]},
@@ -148,28 +212,28 @@ namespace spectra {
                 {view_projection[12], view_projection[13], view_projection[14], view_projection[15]},
             };
             this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
-            if (dataset.view.kind == scene::VisualizationViewKind::Points)
-                command_buffer.draw(dataset.view.point_glyph == scene::PointGlyph::Cross ? 12u : 6u, static_cast<std::uint32_t>(dataset.active_count), 0, 0);
-            else if (dataset.view.kind == scene::VisualizationViewKind::Segments)
+            if (view.kind == scene::VisualizationViewKind::Points)
+                command_buffer.draw(view.point_glyph == scene::PointGlyph::Cross ? 12u : 6u, static_cast<std::uint32_t>(dataset.active_count), 0, 0);
+            else if (view.kind == scene::VisualizationViewKind::Segments)
                 command_buffer.draw(6, static_cast<std::uint32_t>(dataset.active_count), 0, 0);
-            else if (dataset.view.kind == scene::VisualizationViewKind::Curves)
+            else if (view.kind == scene::VisualizationViewKind::Curves)
                 command_buffer.draw(96, static_cast<std::uint32_t>(dataset.active_count), 0, 0);
-            else if (dataset.view.kind == scene::VisualizationViewKind::Vectors)
+            else if (view.kind == scene::VisualizationViewKind::Vectors)
                 command_buffer.draw(18, static_cast<std::uint32_t>(dataset.active_count), 0, 0);
-            else if (dataset.view.kind == scene::VisualizationViewKind::FieldSlice || dataset.view.kind == scene::VisualizationViewKind::Image)
+            else if (view.kind == scene::VisualizationViewKind::FieldSlice || view.kind == scene::VisualizationViewKind::Image)
                 command_buffer.draw(6, 1, 0, 0);
-            else if (dataset.view.kind == scene::VisualizationViewKind::FieldVectors)
-                command_buffer.draw(18, dataset.view.sampling * dataset.view.sampling * dataset.view.sampling, 0, 0);
-            else if (dataset.view.kind == scene::VisualizationViewKind::CameraObservations)
+            else if (view.kind == scene::VisualizationViewKind::FieldVectors)
+                command_buffer.draw(18, view.sampling * view.sampling * view.sampling, 0, 0);
+            else if (view.kind == scene::VisualizationViewKind::CameraObservations)
                 command_buffer.draw(54, static_cast<std::uint32_t>(dataset.active_count), 0, 0);
-            else if (dataset.view.kind == scene::VisualizationViewKind::Frames)
+            else if (view.kind == scene::VisualizationViewKind::Frames)
                 command_buffer.draw(18, static_cast<std::uint32_t>(dataset.active_count), 0, 0);
             else
                 command_buffer.draw(static_cast<std::uint32_t>(dataset.secondary_count), 1, 0, 0);
         }
         command_buffer.endRendering();
-        const vk::ImageMemoryBarrier2 target_to_sample{vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *display.image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        const vk::ImageMemoryBarrier2 target_to_sample{vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *target.image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &target_to_sample});
-        display.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        target.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 } // namespace spectra

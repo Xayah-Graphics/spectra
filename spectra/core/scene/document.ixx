@@ -21,5 +21,6 @@ namespace spectra {
         void update_transform(scene::Scene& target_scene, scene::InstanceId instance_id, math::Transform transform);
         void update_camera_transform(scene::Scene& target_scene, scene::CameraId camera_id, math::Transform transform);
         void update_light_transform(scene::Scene& target_scene, scene::LightId light_id, math::Transform transform);
+        void update_volume_transform(scene::Scene& target_scene, scene::VolumeId volume_id, math::Transform transform);
     };
 } // namespace spectra

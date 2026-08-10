@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
-inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 17;
-inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_17";
+inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 19;
+inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_19";
 
 #if defined(_WIN32)
 #define SPECTRA_PLUGIN_EXPORT __declspec(dllexport)
@@ -15,6 +15,14 @@ inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_
 struct SpectraPluginString {
     const char* data;
     std::uint64_t size;
+};
+
+// Every string and pointer returned by describe_provider remains valid until the
+// Provider Library is unloaded. Strings returned by all other callbacks remain
+// valid until the next call on that Provider. A zero-sized error is success.
+// No exception may cross any function pointer below.
+struct SpectraPluginResult {
+    SpectraPluginString error;
 };
 
 struct SpectraPluginFloat2 {
@@ -40,7 +48,10 @@ struct SpectraPluginTransform {
 };
 
 enum class SpectraPluginDatasetKind : std::uint32_t {
-    Mesh,
+    TriangleMesh,
+    SphereSet,
+    InstanceTransformSet,
+    SceneBoundsSet,
     PointSet,
     SegmentSet,
     CurveSet,
@@ -51,12 +62,16 @@ enum class SpectraPluginDatasetKind : std::uint32_t {
     TransformSet,
 };
 
-enum class SpectraPluginDatasetBufferKind : std::uint32_t {
-    MeshPosition,
-    MeshNormal,
-    MeshTangent,
-    MeshTextureCoordinate,
-    MeshIndex,
+enum class SpectraPluginBufferSemantic : std::uint32_t {
+    TrianglePosition,
+    TriangleNormal,
+    TriangleTangent,
+    TriangleTextureCoordinate,
+    TriangleScalar,
+    TriangleIndex,
+    Sphere,
+    InstanceTransform,
+    SceneBounds,
     Point,
     Segment,
     Curve,
@@ -85,9 +100,34 @@ enum class SpectraPluginColorSpace : std::uint32_t {
     Aces2065_1,
 };
 
+enum class SpectraPluginTransferFunction : std::uint32_t {
+    Linear,
+    Srgb,
+};
+
 enum class SpectraPluginMeshUpdateMode : std::uint32_t {
     Deformable,
     TopologyChanging,
+};
+
+enum class SpectraPluginMeshAttribute : std::uint32_t {
+    Normal            = 1u << 0u,
+    Tangent           = 1u << 1u,
+    TextureCoordinate = 1u << 2u,
+    Scalar            = 1u << 3u,
+};
+
+enum class SpectraPluginBoundsDomain : std::uint32_t {
+    Local,
+    World,
+};
+
+enum class SpectraPluginBoundResourceKind : std::uint32_t {
+    System,
+    Geometry,
+    SphereSet,
+    Instance,
+    Volume,
 };
 
 enum class SpectraPluginParameterKind : std::uint32_t {
@@ -121,6 +161,26 @@ struct SpectraPluginExternalHandle {
     std::uint64_t value;
 };
 
+struct SpectraPluginSphere {
+    SpectraPluginFloat3 position;
+    float radius;
+};
+
+struct SpectraPluginInstanceTransform {
+    std::uint64_t instance_id;
+    SpectraPluginTransform transform;
+};
+
+struct SpectraPluginSceneBounds {
+    SpectraPluginFloat3 minimum;
+    SpectraPluginBoundResourceKind resource_kind;
+    SpectraPluginFloat3 maximum;
+    SpectraPluginBoundsDomain domain;
+    std::uint64_t resource_id;
+    std::uint64_t reserved;
+    SpectraPluginTransform world_from_local;
+};
+
 struct SpectraPluginPoint {
     SpectraPluginFloat3 position;
     float radius;
@@ -133,6 +193,7 @@ struct SpectraPluginSegment {
     float width;
     SpectraPluginFloat3 second_position;
     SpectraPluginFloat4 color;
+    float scalar;
 };
 
 struct SpectraPluginCurve {
@@ -142,6 +203,7 @@ struct SpectraPluginCurve {
     SpectraPluginFloat3 control_2;
     SpectraPluginFloat3 control_3;
     SpectraPluginFloat4 color;
+    float scalar;
 };
 
 struct SpectraPluginVector {
@@ -149,6 +211,7 @@ struct SpectraPluginVector {
     float width;
     SpectraPluginFloat3 vector;
     SpectraPluginFloat4 color;
+    float scalar;
 };
 
 struct SpectraPluginCameraDistortion {
@@ -171,90 +234,116 @@ struct SpectraPluginTelemetryGpuValue {
 };
 
 static_assert(sizeof(SpectraPluginFloat2) == 8);
-static_assert(alignof(SpectraPluginFloat2) == 4);
-static_assert(offsetof(SpectraPluginFloat2, x) == 0);
-static_assert(offsetof(SpectraPluginFloat2, y) == 4);
 static_assert(sizeof(SpectraPluginFloat3) == 12);
-static_assert(alignof(SpectraPluginFloat3) == 4);
-static_assert(offsetof(SpectraPluginFloat3, x) == 0);
-static_assert(offsetof(SpectraPluginFloat3, y) == 4);
-static_assert(offsetof(SpectraPluginFloat3, z) == 8);
 static_assert(sizeof(SpectraPluginFloat4) == 16);
-static_assert(alignof(SpectraPluginFloat4) == 4);
-static_assert(offsetof(SpectraPluginFloat4, x) == 0);
-static_assert(offsetof(SpectraPluginFloat4, y) == 4);
-static_assert(offsetof(SpectraPluginFloat4, z) == 8);
-static_assert(offsetof(SpectraPluginFloat4, w) == 12);
 static_assert(sizeof(SpectraPluginTransform) == 64);
-static_assert(alignof(SpectraPluginTransform) == 4);
-static_assert(offsetof(SpectraPluginTransform, matrix) == 0);
+static_assert(sizeof(SpectraPluginSphere) == 16);
+static_assert(sizeof(SpectraPluginInstanceTransform) == 72);
+static_assert(offsetof(SpectraPluginInstanceTransform, transform) == 8);
+static_assert(sizeof(SpectraPluginSceneBounds) == 112);
+static_assert(offsetof(SpectraPluginSceneBounds, maximum) == 16);
+static_assert(offsetof(SpectraPluginSceneBounds, resource_id) == 32);
+static_assert(offsetof(SpectraPluginSceneBounds, world_from_local) == 48);
 static_assert(sizeof(SpectraPluginPoint) == 36);
-static_assert(alignof(SpectraPluginPoint) == 4);
-static_assert(offsetof(SpectraPluginPoint, position) == 0);
-static_assert(offsetof(SpectraPluginPoint, radius) == 12);
-static_assert(offsetof(SpectraPluginPoint, color) == 16);
 static_assert(offsetof(SpectraPluginPoint, scalar) == 32);
-static_assert(sizeof(SpectraPluginSegment) == 44);
-static_assert(alignof(SpectraPluginSegment) == 4);
-static_assert(offsetof(SpectraPluginSegment, first_position) == 0);
-static_assert(offsetof(SpectraPluginSegment, width) == 12);
-static_assert(offsetof(SpectraPluginSegment, second_position) == 16);
-static_assert(offsetof(SpectraPluginSegment, color) == 28);
-static_assert(sizeof(SpectraPluginCurve) == 68);
-static_assert(alignof(SpectraPluginCurve) == 4);
-static_assert(offsetof(SpectraPluginCurve, control_0) == 0);
-static_assert(offsetof(SpectraPluginCurve, width) == 12);
-static_assert(offsetof(SpectraPluginCurve, control_1) == 16);
-static_assert(offsetof(SpectraPluginCurve, control_2) == 28);
-static_assert(offsetof(SpectraPluginCurve, control_3) == 40);
-static_assert(offsetof(SpectraPluginCurve, color) == 52);
-static_assert(sizeof(SpectraPluginVector) == 44);
-static_assert(alignof(SpectraPluginVector) == 4);
-static_assert(offsetof(SpectraPluginVector, origin) == 0);
-static_assert(offsetof(SpectraPluginVector, width) == 12);
-static_assert(offsetof(SpectraPluginVector, vector) == 16);
-static_assert(offsetof(SpectraPluginVector, color) == 28);
+static_assert(sizeof(SpectraPluginSegment) == 48);
+static_assert(offsetof(SpectraPluginSegment, scalar) == 44);
+static_assert(sizeof(SpectraPluginCurve) == 72);
+static_assert(offsetof(SpectraPluginCurve, scalar) == 68);
+static_assert(sizeof(SpectraPluginVector) == 48);
+static_assert(offsetof(SpectraPluginVector, scalar) == 44);
 static_assert(sizeof(SpectraPluginCameraDistortion) == 16);
-static_assert(alignof(SpectraPluginCameraDistortion) == 4);
-static_assert(offsetof(SpectraPluginCameraDistortion, radial_1) == 0);
-static_assert(offsetof(SpectraPluginCameraDistortion, radial_2) == 4);
-static_assert(offsetof(SpectraPluginCameraDistortion, tangential_1) == 8);
-static_assert(offsetof(SpectraPluginCameraDistortion, tangential_2) == 12);
 static_assert(sizeof(SpectraPluginCameraObservation) == 100);
-static_assert(alignof(SpectraPluginCameraObservation) == 4);
-static_assert(offsetof(SpectraPluginCameraObservation, world_from_camera) == 0);
-static_assert(offsetof(SpectraPluginCameraObservation, intrinsics) == 64);
-static_assert(offsetof(SpectraPluginCameraObservation, distortion) == 80);
 static_assert(offsetof(SpectraPluginCameraObservation, image_layer) == 96);
 static_assert(sizeof(SpectraPluginTelemetryGpuValue) == 32);
 static_assert(alignof(SpectraPluginTelemetryGpuValue) == 8);
-static_assert(offsetof(SpectraPluginTelemetryGpuValue, floating) == 0);
-static_assert(offsetof(SpectraPluginTelemetryGpuValue, integer) == 24);
 
 struct SpectraPluginFieldChannelDescriptor {
     SpectraPluginString id;
     SpectraPluginFieldChannelKind kind;
 };
 
-struct SpectraPluginDatasetBufferDescriptor {
-    SpectraPluginDatasetBufferKind kind;
-    std::uint32_t channel_index;
+struct SpectraPluginTriangleMeshDatasetDescriptor {
+    std::uint64_t vertex_capacity;
+    std::uint64_t index_capacity;
+    SpectraPluginMeshUpdateMode update_mode;
+    std::uint32_t attributes;
+};
+
+struct SpectraPluginSphereSetDatasetDescriptor {
+    std::uint64_t capacity;
+};
+
+struct SpectraPluginInstanceTransformDatasetDescriptor {
+    std::uint64_t capacity;
+};
+
+struct SpectraPluginSceneBoundsDatasetDescriptor {
+    std::uint64_t capacity;
+    SpectraPluginBoundsDomain domain;
+};
+
+struct SpectraPluginPointDatasetDescriptor {
+    std::uint64_t capacity;
+};
+
+struct SpectraPluginSegmentDatasetDescriptor {
+    std::uint64_t capacity;
+};
+
+struct SpectraPluginCurveDatasetDescriptor {
+    std::uint64_t capacity;
+};
+
+struct SpectraPluginVectorDatasetDescriptor {
+    std::uint64_t capacity;
+};
+
+struct SpectraPluginFieldDatasetDescriptor {
+    std::uint32_t resolution[3];
+    const SpectraPluginFieldChannelDescriptor* channels;
+    std::uint64_t channel_count;
+    SpectraPluginTransform local_from_grid;
+};
+
+struct SpectraPluginImageDatasetDescriptor {
+    std::uint32_t extent[2];
+    SpectraPluginImageFormat format;
+    SpectraPluginColorSpace color_space;
+    SpectraPluginTransferFunction transfer_function;
+};
+
+struct SpectraPluginCameraObservationDatasetDescriptor {
+    std::uint64_t capacity;
+    std::uint32_t image_extent[2];
+    SpectraPluginImageFormat image_format;
+    SpectraPluginColorSpace color_space;
+    SpectraPluginTransferFunction transfer_function;
+};
+
+struct SpectraPluginTransformDatasetDescriptor {
+    std::uint64_t capacity;
+};
+
+union SpectraPluginDatasetDetails {
+    SpectraPluginTriangleMeshDatasetDescriptor triangle_mesh;
+    SpectraPluginSphereSetDatasetDescriptor sphere_set;
+    SpectraPluginInstanceTransformDatasetDescriptor instance_transforms;
+    SpectraPluginSceneBoundsDatasetDescriptor scene_bounds;
+    SpectraPluginPointDatasetDescriptor points;
+    SpectraPluginSegmentDatasetDescriptor segments;
+    SpectraPluginCurveDatasetDescriptor curves;
+    SpectraPluginVectorDatasetDescriptor vectors;
+    SpectraPluginFieldDatasetDescriptor field;
+    SpectraPluginImageDatasetDescriptor image;
+    SpectraPluginCameraObservationDatasetDescriptor camera_observations;
+    SpectraPluginTransformDatasetDescriptor transforms;
 };
 
 struct SpectraPluginDatasetDescriptor {
     SpectraPluginString id;
     SpectraPluginDatasetKind kind;
-    std::uint64_t capacity;
-    std::uint64_t secondary_capacity;
-    SpectraPluginMeshUpdateMode mesh_update_mode;
-    const SpectraPluginDatasetBufferDescriptor* buffers;
-    std::uint64_t buffer_count;
-    std::uint32_t resolution[3];
-    const SpectraPluginFieldChannelDescriptor* field_channels;
-    std::uint64_t field_channel_count;
-    std::uint32_t image_extent[2];
-    SpectraPluginImageFormat image_format;
-    SpectraPluginColorSpace color_space;
+    SpectraPluginDatasetDetails details;
 };
 
 struct SpectraPluginParameterValue {
@@ -305,8 +394,23 @@ struct SpectraPluginProviderDescriptor {
     std::uint64_t telemetry_count;
 };
 
+struct SpectraPluginProviderDescriptionResult {
+    SpectraPluginResult result;
+    SpectraPluginProviderDescriptor descriptor;
+};
+
+struct SpectraPluginProviderCreateResult {
+    SpectraPluginResult result;
+    void* provider;
+};
+
+struct SpectraPluginPresentationTickResult {
+    SpectraPluginResult result;
+    bool dirty;
+};
+
 struct SpectraPluginGpuBuffer {
-    SpectraPluginDatasetBufferKind kind;
+    SpectraPluginBufferSemantic semantic;
     std::uint32_t channel_index;
     SpectraPluginExternalHandle external_memory_handle;
     std::uint64_t byte_size;
@@ -318,6 +422,14 @@ struct SpectraPluginGpuSlot {
     std::uint64_t buffer_count;
 };
 
+// Configuration objects, slot arrays, buffer arrays, and their handles are valid
+// only for the configure_dataset/configure_telemetry call. The Provider must import
+// every resource before returning and retain only the imported GPU objects.
+// OpaqueWin32 handles are borrowed and must not be closed by the Provider; Host
+// closes them after the callback. OpaqueFileDescriptor ownership transfers to the
+// Provider when the callback begins. Provider must pass each descriptor directly
+// to one external-resource import or close it before returning; an imported
+// descriptor is consumed by the import and must not be duplicated or closed.
 struct SpectraPluginDatasetConfiguration {
     std::uint64_t dataset_index;
     const SpectraPluginGpuSlot* slots;
@@ -355,27 +467,33 @@ struct SpectraPluginTelemetryCommit {
 };
 
 struct SpectraPluginFrameSink {
+    // The sink and every commit pointer are valid only during publish_frame. Host
+    // copies commit values and strings before each sink callback returns.
     void* context;
-    void (*commit_dataset)(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit);
-    void (*request_dataset_capacity)(void* context, std::uint64_t dataset_index, std::uint64_t capacity, std::uint64_t secondary_capacity);
-    void (*commit_telemetry)(void* context, const SpectraPluginTelemetryCommit* commit);
+    SpectraPluginResult (*commit_dataset)(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept;
+    SpectraPluginResult (*request_dataset_capacity)(void* context, std::uint64_t dataset_index, std::uint64_t capacity, std::uint64_t secondary_capacity) noexcept;
+    SpectraPluginResult (*commit_telemetry)(void* context, const SpectraPluginTelemetryCommit* commit) noexcept;
 };
 
 struct SpectraPluginApi {
     std::uint32_t api_version;
     std::uint32_t struct_size;
-    SpectraPluginProviderDescriptor (*describe_provider)();
-    void* (*create_provider)();
-    void (*destroy_provider)(void* provider);
-    void (*configure_dataset)(void* provider, const SpectraPluginDatasetConfiguration* configuration);
-    void (*configure_telemetry)(void* provider, const SpectraPluginTelemetryConfiguration* configuration);
-    void (*apply_parameters)(void* provider, const SpectraPluginParameterValue* values, std::uint64_t value_count);
-    void (*reset)(void* provider, std::uint64_t seed);
-    void (*step)(void* provider, double step_seconds, std::uint64_t step_count);
-    void (*publish_frame)(void* provider, std::uint64_t simulation_step, const SpectraPluginFrameSink* sink);
-    bool (*tick_presentation)(void* provider, double elapsed_seconds);
+    SpectraPluginProviderDescriptionResult (*describe_provider)() noexcept;
+    // A failed create_provider returns a null provider. A successful Provider is
+    // owned by Host until the matching destroy_provider call.
+    SpectraPluginProviderCreateResult (*create_provider)() noexcept;
+    // destroy_provider must complete all GPU work that can access Host resources
+    // and destroy every imported external GPU object before returning.
+    SpectraPluginResult (*destroy_provider)(void* provider) noexcept;
+    SpectraPluginResult (*configure_dataset)(void* provider, const SpectraPluginDatasetConfiguration* configuration) noexcept;
+    SpectraPluginResult (*configure_telemetry)(void* provider, const SpectraPluginTelemetryConfiguration* configuration) noexcept;
+    SpectraPluginResult (*apply_parameters)(void* provider, const SpectraPluginParameterValue* values, std::uint64_t value_count) noexcept;
+    SpectraPluginResult (*reset)(void* provider, std::uint64_t seed) noexcept;
+    SpectraPluginResult (*step)(void* provider, double step_seconds, std::uint64_t step_count) noexcept;
+    SpectraPluginResult (*publish_frame)(void* provider, std::uint64_t simulation_step, const SpectraPluginFrameSink* sink) noexcept;
+    SpectraPluginPresentationTickResult (*tick_presentation)(void* provider, double elapsed_seconds) noexcept;
 };
 
 extern "C" {
-SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_17();
+SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_19() noexcept;
 }

@@ -266,7 +266,7 @@ float raster_checkerboard_weight(
                 radius.y);
 }
 
-float3 raster_to_linear_srgb(
+public float3 raster_to_linear_srgb(
     float3 value,
     uint color_space) {
     if (color_space == 1)

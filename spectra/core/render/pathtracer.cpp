@@ -1,6 +1,7 @@
 module spectra.render.pathtracer;
 
 import spectra.render.pathtracer.abi;
+import spectra.render.capture;
 import spectra.runtime.shaders;
 import std;
 import vulkan;
@@ -33,16 +34,23 @@ namespace spectra {
         };
 
         struct Geometry {
+            DescriptorHandle positions{};
             DescriptorHandle indices{};
             DescriptorHandle normals{};
             DescriptorHandle tangents{};
             DescriptorHandle texture_coordinates{};
+            std::uint32_t vertex_count{};
+            std::uint32_t index_count{};
+            std::uint32_t vertex_capacity{};
+            std::uint32_t index_capacity{};
             std::uint32_t attribute_mask{};
         };
 
         struct SphereSet {
             DescriptorHandle positions{};
             DescriptorHandle radii{};
+            std::uint32_t count{};
+            std::uint32_t capacity{};
         };
 
         std::vector<Texture> textures{};
@@ -106,6 +114,7 @@ namespace spectra {
         std::vector<math::Transform> instance_transforms{};
         scene::SceneRevision revision{};
         std::uint64_t gpu_structure_revision{};
+        std::vector<PathDynamicAreaLightRange> dynamic_area_lights{};
     };
 
     struct PathTracerScenePreparation {
@@ -558,11 +567,15 @@ namespace spectra {
             snapshot.textures[index]     = {image.image_descriptor, image.sampler_descriptor};
         }
         snapshot.volumes.reserve(gpu_scene.volumes.size());
-        for (const GpuVolume& volume : gpu_scene.volumes) snapshot.volumes.push_back({volume.volume_id, volume.revision, volume.resolution, volume.descriptors, volume.field_present});
+        for (const GpuVolume& volume : gpu_scene.volumes) {
+            std::array<DescriptorHandle, static_cast<std::size_t>(GpuVolumeField::Count)> descriptors{};
+            for (std::size_t index = 0; index != descriptors.size(); ++index) descriptors[index] = volume.descriptors[index];
+            snapshot.volumes.push_back({volume.volume_id, volume.revision, volume.resolution, descriptors, volume.field_present});
+        }
         snapshot.geometries.reserve(gpu_scene.geometries.size());
-        for (const GpuGeometry& geometry : gpu_scene.geometries) snapshot.geometries.push_back({geometry.indices_descriptor, geometry.normals_descriptor, geometry.tangents_descriptor, geometry.texture_coordinates_descriptor, geometry.attribute_mask});
+        for (const GpuGeometry& geometry : gpu_scene.geometries) snapshot.geometries.push_back({geometry.positions_descriptor, geometry.indices_descriptor, geometry.normals_descriptor, geometry.tangents_descriptor, geometry.texture_coordinates_descriptor, geometry.vertex_count, geometry.index_count, geometry.vertex_capacity, geometry.index_capacity, geometry.attribute_mask});
         snapshot.sphere_sets.reserve(gpu_scene.sphere_sets.size());
-        for (const GpuSphereSet& spheres : gpu_scene.sphere_sets) snapshot.sphere_sets.push_back({spheres.positions_descriptor, spheres.radii_descriptor});
+        for (const GpuSphereSet& spheres : gpu_scene.sphere_sets) snapshot.sphere_sets.push_back({spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, spheres.sphere_capacity});
         snapshot.primitives.assign(gpu_scene.primitives.begin(), gpu_scene.primitives.end());
         snapshot.acceleration_primitive_indices.assign(gpu_scene.acceleration_primitive_indices.begin(), gpu_scene.acceleration_primitive_indices.end());
         snapshot.structure_revision = gpu_scene.structure_revision;
@@ -578,6 +591,7 @@ namespace spectra {
         this->scene.portals.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
         this->scene.light_bvh_nodes.descriptor         = this->context.runtime.resources.allocate_resource_descriptor();
         this->scene.light_bvh_bit_trails.descriptor    = this->context.runtime.resources.allocate_resource_descriptor();
+        this->scene.light_bvh_counters_descriptor      = this->context.runtime.resources.allocate_resource_descriptor();
         this->scene.face_materials.descriptor          = this->context.runtime.resources.allocate_resource_descriptor();
         this->scene.media.descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
         this->scene.volumes.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
@@ -621,28 +635,15 @@ namespace spectra {
 
     void PathTracer::destroy_scene() noexcept {
         if (!this->scene.initialized) return;
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.primitives.descriptor);
-        for (const PathBufferSlice& slice : this->scene.materials) this->context.runtime.frames.retire_resource_descriptor(slice.descriptor);
-        for (const PathBufferSlice& slice : this->scene.textures) this->context.runtime.frames.retire_resource_descriptor(slice.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.light_table.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.light_shapes.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.light_distribution.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.light_distribution_data.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.portals.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.light_bvh_nodes.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.light_bvh_bit_trails.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.face_materials.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.media.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.volumes.descriptor);
-        for (const PathVolumeResources& volume : this->scene.volume_resources) this->context.runtime.frames.retire_resource_descriptor(volume.majorant.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.spectra.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.piecewise_spectra.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.bindings.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.filter.distribution.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.filter.sensor_response.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.sampler.pixel_samples.descriptor);
-        this->scene.volume_resources.clear();
-        this->scene.arena       = {};
+        this->context.runtime.frames.defer_destruction([
+            arena = std::move(this->scene.arena),
+            bindings = std::move(this->scene.bindings),
+            volume_resources = std::move(this->scene.volume_resources),
+            bvh_counters = std::move(this->scene.light_bvh_counters),
+            filter_distribution = std::move(this->scene.filter.distribution),
+            filter_sensor_response = std::move(this->scene.filter.sensor_response),
+            sampler_samples = std::move(this->scene.sampler.pixel_samples)
+        ]() mutable {});
         this->scene.initialized = false;
     }
 
@@ -728,15 +729,13 @@ namespace spectra {
         GpuBuffer new_distribution    = upload_path_buffer(this->context.runtime, std::span<const float>{prepared->distribution}, command_buffer);
         GpuBuffer new_sensor_response = upload_path_buffer(this->context.runtime, std::span<const float>{prepared->sensor_response}, command_buffer);
         if (*this->scene.filter.distribution.buffer.buffer) {
-            const DescriptorHandle distribution_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            const DescriptorHandle sensor_descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease distribution_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease sensor_descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(distribution_descriptor, vk::DescriptorType::eStorageBuffer, new_distribution);
             this->context.runtime.resources.write_buffer_descriptor(sensor_descriptor, vk::DescriptorType::eStorageBuffer, new_sensor_response);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.filter.distribution.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.filter.sensor_response.descriptor);
             this->context.runtime.frames.defer_destruction([distribution_buffer = std::move(this->scene.filter.distribution.buffer), sensor_buffer = std::move(this->scene.filter.sensor_response.buffer)]() mutable {});
-            this->scene.filter.distribution.descriptor    = distribution_descriptor;
-            this->scene.filter.sensor_response.descriptor = sensor_descriptor;
+            this->scene.filter.distribution.descriptor    = std::move(distribution_descriptor);
+            this->scene.filter.sensor_response.descriptor = std::move(sensor_descriptor);
         } else {
             this->context.runtime.resources.write_buffer_descriptor(this->scene.filter.distribution.descriptor, vk::DescriptorType::eStorageBuffer, new_distribution);
             this->context.runtime.resources.write_buffer_descriptor(this->scene.filter.sensor_response.descriptor, vk::DescriptorType::eStorageBuffer, new_sensor_response);
@@ -771,10 +770,10 @@ namespace spectra {
             pixel_tile_size = 1u << (8u - log_4_samples);
             pixel_samples.assign(static_cast<std::size_t>(pixel_tile_size) * pixel_tile_size * sampler.samples_per_pixel, {});
             std::vector<std::uint32_t> stored(static_cast<std::size_t>(pixel_tile_size) * pixel_tile_size);
-            const std::uint32_t pmj_offset = this->context.pathtracer.sampling_table_data[12];
+            const std::uint32_t pmj_offset = this->context.pathtracer.sampling.table_data[12];
             for (std::uint32_t index = 0; index != 65'536; ++index) {
-                const double x                 = static_cast<double>(this->context.pathtracer.sampling_table_data[pmj_offset + index * 2]) * 0x1p-32 * pixel_tile_size;
-                const double y                 = static_cast<double>(this->context.pathtracer.sampling_table_data[pmj_offset + index * 2 + 1]) * 0x1p-32 * pixel_tile_size;
+                const double x                 = static_cast<double>(this->context.pathtracer.sampling.table_data[pmj_offset + index * 2]) * 0x1p-32 * pixel_tile_size;
+                const double y                 = static_cast<double>(this->context.pathtracer.sampling.table_data[pmj_offset + index * 2 + 1]) * 0x1p-32 * pixel_tile_size;
                 const std::uint32_t pixel_x    = static_cast<std::uint32_t>(x);
                 const std::uint32_t pixel_y    = static_cast<std::uint32_t>(y);
                 const std::size_t pixel_offset = pixel_x + static_cast<std::size_t>(pixel_y) * pixel_tile_size;
@@ -796,11 +795,10 @@ namespace spectra {
     void PathTracer::commit_sampler(std::unique_ptr<PreparedPathSampler> prepared, const vk::raii::CommandBuffer& command_buffer) {
         GpuBuffer new_pixel_samples = upload_path_buffer(this->context.runtime, std::span<const math::Float2>{prepared->pixel_samples}, command_buffer);
         if (*this->scene.sampler.pixel_samples.buffer.buffer) {
-            const DescriptorHandle descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_pixel_samples);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.sampler.pixel_samples.descriptor);
             this->context.runtime.frames.defer_destruction([buffer = std::move(this->scene.sampler.pixel_samples.buffer)]() mutable {});
-            this->scene.sampler.pixel_samples.descriptor = descriptor;
+            this->scene.sampler.pixel_samples.descriptor = std::move(descriptor);
         } else
             this->context.runtime.resources.write_buffer_descriptor(this->scene.sampler.pixel_samples.descriptor, vk::DescriptorType::eStorageBuffer, new_pixel_samples);
         this->scene.sampler.sampler              = std::move(prepared->sampler);
@@ -1330,11 +1328,11 @@ namespace spectra {
             result.inverse_transform_row_0 = {inverse.matrix[0], inverse.matrix[1], inverse.matrix[2], inverse.matrix[3]};
             result.inverse_transform_row_1 = {inverse.matrix[4], inverse.matrix[5], inverse.matrix[6], inverse.matrix[7]};
             result.inverse_transform_row_2 = {inverse.matrix[8], inverse.matrix[9], inverse.matrix[10], inverse.matrix[11]};
-            const auto field               = [this, &shared](const GpuVolumeField field) {
+            const auto field               = [this, &shared](const GpuVolumeField field) -> DescriptorHandle {
                 const std::size_t index = std::to_underlying(field);
                 return shared.field_present[index] ? shared.descriptors[index] : this->context.pathtracer.zero_volume_field_descriptor;
             };
-            const auto prepare_majorant = [&](const auto values) {
+            const auto prepare_majorant = [&](const auto values) -> DescriptorHandle {
                 prepared_volume.majorant.assign(values.begin(), values.end());
                 return this->context.pathtracer.zero_volume_field_descriptor;
             };
@@ -1581,6 +1579,7 @@ namespace spectra {
 
         std::vector<pathtracer::PathPrimitive> primitives{};
         std::vector<pathtracer::PathLightShape> light_shapes{};
+        std::vector<PathDynamicAreaLightRange> dynamic_area_lights{};
         std::vector<std::uint32_t> face_materials{};
         const auto medium_index = [&scene](const scene::MediumId id) {
             if (id.value == 0) return invalid_path_index;
@@ -1595,7 +1594,7 @@ namespace spectra {
             float scale = area_scales[source_index];
             if (area_powers[source_index] > 0.0f) scale *= area_powers[source_index] / ((area_two_sided[source_index] ? 2.0f : 1.0f) * area * path_pi * area_texture_luminance[source_index]);
             pathtracer::PathLight light{};
-            light.identifiers = {std::to_underlying(PathLightKind::DiffuseArea), (area_two_sided[source_index] ? 8u : 0u) | (delta_position ? 1u : 0u), area_spectra[source_index], area_textures[source_index]};
+            light.identifiers = {std::to_underlying(PathLightKind::DiffuseArea), (area_two_sided[source_index] ? 8u : 0u) | (delta_position ? 1u : 0u) | 32u | 64u, area_spectra[source_index], area_textures[source_index]};
             if (area_textures[source_index] != invalid_path_index) light.identifiers[1] |= 16u;
             light.references            = {shape_index, invalid_path_index, invalid_path_index, invalid_path_index};
             light.position_and_scale[3] = scale;
@@ -1659,27 +1658,18 @@ namespace spectra {
                     },
                     geometry->data);
             if (area_light != std::numeric_limits<std::uint32_t>::max()) {
-                if (sphere_set) throw std::runtime_error("Path Tracer does not bind a Diffuse Area Light to a SphereSet");
                 const math::Transform transform = instance.transform * primitive.transform;
                 if (mesh) {
-                    const math::Transform inverse = transform.inverse();
-                    for (std::size_t index = 0; index != mesh->indices.size(); index += 3) {
-                        std::array<math::Float3, 3> positions{};
-                        std::array<math::Float3, 3> normals{};
-                        for (std::uint32_t vertex = 0; vertex != 3; ++vertex) {
-                            positions[vertex] = transform.transform_point(mesh->positions[mesh->indices[index + vertex]]);
-                            if (!mesh->normals.empty()) {
-                                const math::Float3 source = mesh->normals[mesh->indices[index + vertex]];
-                                normals[vertex]           = math::Float3{inverse.matrix[0] * source.x + inverse.matrix[4] * source.y + inverse.matrix[8] * source.z, inverse.matrix[1] * source.x + inverse.matrix[5] * source.y + inverse.matrix[9] * source.z, inverse.matrix[2] * source.x + inverse.matrix[6] * source.y + inverse.matrix[10] * source.z}.normalized() * (primitive.reverse_orientation ? -1.0f : 1.0f);
-                            }
-                        }
-                        const math::Float3 edge_0 = positions[1] - positions[0];
-                        const math::Float3 edge_1 = positions[2] - positions[0];
-                        const float area          = 0.5f * edge_0.cross(edge_1).length();
-                        add_area_light(pathtracer::PathLightShape{{positions[0].x, positions[0].y, positions[0].z, area}, {positions[1].x, positions[1].y, positions[1].z, 0.0f}, {positions[2].x, positions[2].y, positions[2].z, 0.0f}, {0, primitive.reverse_orientation ? 1u : 0u, geometry_kind, zero_alpha_area_light ? invalid_texture : alpha}, {}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}, mesh->texture_coordinates.empty() ? std::array<float, 4>{0.0f, 0.0f, 1.0f, 0.0f} : std::array<float, 4>{mesh->texture_coordinates[mesh->indices[index]].x, mesh->texture_coordinates[mesh->indices[index]].y, mesh->texture_coordinates[mesh->indices[index + 1]].x, mesh->texture_coordinates[mesh->indices[index + 1]].y}, mesh->texture_coordinates.empty() ? std::array<float, 4>{1.0f, 1.0f, 0.0f, 0.0f} : std::array<float, 4>{mesh->texture_coordinates[mesh->indices[index + 2]].x, mesh->texture_coordinates[mesh->indices[index + 2]].y, 0.0f, 0.0f},
-                                           mesh->normals.empty() ? std::array<float, 4>{} : std::array<float, 4>{normals[0].x, normals[0].y, normals[0].z, 1.0f}, mesh->normals.empty() ? std::array<float, 4>{} : std::array<float, 4>{normals[1].x, normals[1].y, normals[1].z, 0.0f}, mesh->normals.empty() ? std::array<float, 4>{} : std::array<float, 4>{normals[2].x, normals[2].y, normals[2].z, 0.0f}},
-                            area_light, area, zero_alpha_area_light);
-                    }
+                    const PathSceneGpuSnapshot::Geometry& gpu_geometry = gpu.geometries[gpu_primitive.resource_index];
+                    const std::uint32_t capacity = gpu_geometry.index_capacity / 3u;
+                    for (std::uint32_t triangle = 0; triangle != capacity; ++triangle)
+                        add_area_light(pathtracer::PathLightShape{{0.0f, 0.0f, 0.0f, 1.0f}, {}, {}, {0, primitive.reverse_orientation ? 1u : 0u, geometry_kind, zero_alpha_area_light ? invalid_texture : alpha}, {}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}}, area_light, 1.0f, zero_alpha_area_light);
+                    dynamic_area_lights.push_back({gpu_primitive.scene_primitive_index, gpu_primitive.resource_index, first_light_shape, capacity, 0, geometry_kind, primitive.reverse_orientation ? 1u : 0u, zero_alpha_area_light ? invalid_texture : alpha, gpu_geometry.attribute_mask, geometry_parameters, {area_scales[area_light], area_powers[area_light], area_two_sided[area_light] ? 2.0f : 1.0f, area_texture_luminance[area_light]}, {area_textures[area_light] == invalid_path_index ? spectrum_power_sample(spectra[area_spectra[area_light]], piecewise_spectra, this->context.pathtracer.cie_samples) : area_texture_power[area_light], area_textures[area_light] == invalid_path_index ? spectrum_maximum(spectra[area_spectra[area_light]], piecewise_spectra, this->context.pathtracer.cie_samples) : area_texture_channel_average[area_light], 0.0f, 0.0f}});
+                } else if (sphere_set) {
+                    const PathSceneGpuSnapshot::SphereSet& gpu_spheres = gpu.sphere_sets[gpu_primitive.resource_index];
+                    for (std::uint32_t sphere = 0; sphere != gpu_spheres.capacity; ++sphere)
+                        add_area_light(pathtracer::PathLightShape{{0.0f, 0.0f, 0.0f, 1.0f}, {}, {}, {0, primitive.reverse_orientation ? 1u : 0u, 1u, zero_alpha_area_light ? invalid_texture : alpha}, {1.0f, -1.0f, 1.0f, 2.0f * path_pi}, {transform.matrix[0], transform.matrix[1], transform.matrix[2], transform.matrix[3]}, {transform.matrix[4], transform.matrix[5], transform.matrix[6], transform.matrix[7]}, {transform.matrix[8], transform.matrix[9], transform.matrix[10], transform.matrix[11]}}, area_light, 1.0f, zero_alpha_area_light);
+                    dynamic_area_lights.push_back({gpu_primitive.scene_primitive_index, gpu_primitive.resource_index, first_light_shape, gpu_spheres.capacity, 1, 1, primitive.reverse_orientation ? 1u : 0u, zero_alpha_area_light ? invalid_texture : alpha, 0, {}, {area_scales[area_light], area_powers[area_light], area_two_sided[area_light] ? 2.0f : 1.0f, area_texture_luminance[area_light]}, {area_textures[area_light] == invalid_path_index ? spectrum_power_sample(spectra[area_spectra[area_light]], piecewise_spectra, this->context.pathtracer.cie_samples) : area_texture_power[area_light], area_textures[area_light] == invalid_path_index ? spectrum_maximum(spectra[area_spectra[area_light]], piecewise_spectra, this->context.pathtracer.cie_samples) : area_texture_channel_average[area_light], 0.0f, 0.0f}});
                 } else {
                     const float object_area = scene::surface_area(*geometry);
                     const float world_area  = scene::surface_area(*geometry, transform);
@@ -1696,6 +1686,7 @@ namespace spectra {
                         position_1    = {rectangle->maximum.x, rectangle->maximum.y, 0.0f, 0.0f};
                     }
                     add_area_light(pathtracer::PathLightShape{position_0, position_1, {}, {0, primitive.reverse_orientation ? 1u : 0u, geometry_kind, zero_alpha_area_light ? invalid_texture : alpha}, geometry_parameters, {transform.matrix[0], transform.matrix[1], transform.matrix[2], transform.matrix[3]}, {transform.matrix[4], transform.matrix[5], transform.matrix[6], transform.matrix[7]}, {transform.matrix[8], transform.matrix[9], transform.matrix[10], transform.matrix[11]}}, area_light, world_area, zero_alpha_area_light);
+                    dynamic_area_lights.push_back({gpu_primitive.scene_primitive_index, gpu_primitive.resource_index, first_light_shape, 1, 2, geometry_kind, primitive.reverse_orientation ? 1u : 0u, zero_alpha_area_light ? invalid_texture : alpha, 0, geometry_parameters, {area_scales[area_light], area_powers[area_light], area_two_sided[area_light] ? 2.0f : 1.0f, area_texture_luminance[area_light]}, {area_textures[area_light] == invalid_path_index ? spectrum_power_sample(spectra[area_spectra[area_light]], piecewise_spectra, this->context.pathtracer.cie_samples) : area_texture_power[area_light], area_textures[area_light] == invalid_path_index ? spectrum_maximum(spectra[area_spectra[area_light]], piecewise_spectra, this->context.pathtracer.cie_samples) : area_texture_channel_average[area_light], 0.0f, 0.0f}});
                 }
             }
             if (sphere_set) {
@@ -1939,6 +1930,13 @@ namespace spectra {
                         return {node_index, combined};
                     };
                     build(0, static_cast<std::uint32_t>(bounded_lights.size()), 0, 0);
+                    for (pathtracer::PathLightBvhNode& node : light_bvh_nodes) node.metadata[3] = invalid_path_index;
+                    for (std::uint32_t node_index = 0; node_index != light_bvh_nodes.size(); ++node_index) {
+                        const pathtracer::PathLightBvhNode& node = light_bvh_nodes[node_index];
+                        if (node.metadata[1] != 0) continue;
+                        light_bvh_nodes[node_index + 1u].metadata[3] = node_index;
+                        light_bvh_nodes[node.metadata[0]].metadata[3] = node_index;
+                    }
                 }
                 if (light_bvh_nodes.empty()) light_bvh_nodes.emplace_back();
                 light_bvh_node_count = bounded_lights.empty() ? 0u : static_cast<std::uint32_t>(light_bvh_nodes.size());
@@ -1994,21 +1992,21 @@ namespace spectra {
 
         std::unique_ptr<PreparedPathScene> prepared = std::make_unique<PreparedPathScene>();
         prepared->arena                             = std::move(arena.data);
-        prepared->primitives                        = new_primitives;
-        prepared->materials                         = new_materials;
-        prepared->textures                          = new_textures;
-        prepared->light_table                       = new_lights;
-        prepared->light_shapes                      = new_light_shapes;
-        prepared->light_distribution                = new_light_distributions;
-        prepared->light_distribution_data           = new_light_distribution_data;
-        prepared->portals                           = new_portals;
-        prepared->light_bvh_nodes                   = new_light_bvh_nodes;
-        prepared->light_bvh_bit_trails              = new_light_bvh_bit_trails;
-        prepared->face_materials                    = new_face_materials;
-        prepared->media                             = new_media;
-        prepared->volumes                           = new_volumes;
-        prepared->spectra                           = new_spectra;
-        prepared->piecewise_spectra                 = new_piecewise_spectra;
+        prepared->primitives                        = std::move(new_primitives);
+        prepared->materials                         = std::move(new_materials);
+        prepared->textures                          = std::move(new_textures);
+        prepared->light_table                       = std::move(new_lights);
+        prepared->light_shapes                      = std::move(new_light_shapes);
+        prepared->light_distribution                = std::move(new_light_distributions);
+        prepared->light_distribution_data           = std::move(new_light_distribution_data);
+        prepared->portals                           = std::move(new_portals);
+        prepared->light_bvh_nodes                   = std::move(new_light_bvh_nodes);
+        prepared->light_bvh_bit_trails              = std::move(new_light_bvh_bit_trails);
+        prepared->face_materials                    = std::move(new_face_materials);
+        prepared->media                             = std::move(new_media);
+        prepared->volumes                           = std::move(new_volumes);
+        prepared->spectra                           = std::move(new_spectra);
+        prepared->piecewise_spectra                 = std::move(new_piecewise_spectra);
         prepared->compiled_volumes                  = std::move(volumes);
         prepared->volume_resources                  = std::move(prepared_volume_resources);
         prepared->texture_count                     = static_cast<std::uint32_t>(texture_count);
@@ -2024,6 +2022,7 @@ namespace spectra {
         for (const scene::Instance& instance : scene.resources.instances) prepared->instance_transforms.push_back(instance.transform);
         prepared->revision = scene.revision;
         prepared->gpu_structure_revision = gpu.structure_revision;
+        prepared->dynamic_area_lights = std::move(dynamic_area_lights);
         return prepared;
     }
 
@@ -2033,11 +2032,11 @@ namespace spectra {
         for (std::size_t index = 0; index != prepared->volume_resources.size(); ++index) {
             PreparedPathVolume& source        = prepared->volume_resources[index];
             GpuBuffer majorant                = upload_path_buffer(this->context.runtime, std::span<const float>{source.majorant}, command_buffer);
-            const DescriptorHandle descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, majorant);
             prepared->compiled_volumes[index].majorant = descriptor;
             PathVolumeResources destination{};
-            destination.majorant        = GpuBufferBinding{descriptor};
+            destination.majorant        = GpuBufferBinding{std::move(descriptor)};
             destination.majorant.buffer = std::move(majorant);
             destination.volume_id       = source.id;
             destination.revision        = source.revision;
@@ -2047,21 +2046,29 @@ namespace spectra {
         if (!prepared->compiled_volumes.empty()) std::memcpy(prepared->arena.data() + prepared->volumes.offset, prepared->compiled_volumes.data(), prepared->compiled_volumes.size() * sizeof(pathtracer::PathVolume));
 
         GpuBuffer new_arena                                                                           = upload_path_buffer(this->context.runtime, std::span<const std::byte>{prepared->arena}, command_buffer);
-        PathBufferSlice new_primitives                                                                = prepared->primitives;
-        std::array<PathBufferSlice, static_cast<std::size_t>(PathMaterialTable::Count)> new_materials = prepared->materials;
-        std::array<PathBufferSlice, static_cast<std::size_t>(PathTextureTable::Count)> new_textures   = prepared->textures;
-        PathBufferSlice new_lights                                                                    = prepared->light_table;
-        PathBufferSlice new_light_shapes                                                              = prepared->light_shapes;
-        PathBufferSlice new_light_distributions                                                       = prepared->light_distribution;
-        PathBufferSlice new_light_distribution_data                                                   = prepared->light_distribution_data;
-        PathBufferSlice new_portals                                                                   = prepared->portals;
-        PathBufferSlice new_light_bvh_nodes                                                           = prepared->light_bvh_nodes;
-        PathBufferSlice new_light_bvh_bit_trails                                                      = prepared->light_bvh_bit_trails;
-        PathBufferSlice new_face_materials                                                            = prepared->face_materials;
-        PathBufferSlice new_media                                                                     = prepared->media;
-        PathBufferSlice new_volumes                                                                   = prepared->volumes;
-        PathBufferSlice new_spectra                                                                   = prepared->spectra;
-        PathBufferSlice new_piecewise_spectra                                                         = prepared->piecewise_spectra;
+        GpuBuffer new_light_bvh_counters = create_storage_buffer(this->context.runtime, std::max<vk::DeviceSize>(prepared->light_bvh_node_count * sizeof(std::uint32_t), sizeof(std::uint32_t)), vk::BufferUsageFlagBits::eTransferDst);
+        DescriptorLease new_light_bvh_counters_descriptor{};
+        if (*this->scene.light_bvh_counters.buffer) {
+            new_light_bvh_counters_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            this->context.runtime.frames.defer_destruction([buffer = std::move(this->scene.light_bvh_counters)]() mutable {});
+        } else
+            new_light_bvh_counters_descriptor = std::move(this->scene.light_bvh_counters_descriptor);
+        this->context.runtime.resources.write_buffer_descriptor(new_light_bvh_counters_descriptor, vk::DescriptorType::eStorageBuffer, new_light_bvh_counters);
+        PathBufferSlice new_primitives                                                                = std::move(prepared->primitives);
+        std::array<PathBufferSlice, static_cast<std::size_t>(PathMaterialTable::Count)> new_materials = std::move(prepared->materials);
+        std::array<PathBufferSlice, static_cast<std::size_t>(PathTextureTable::Count)> new_textures   = std::move(prepared->textures);
+        PathBufferSlice new_lights                                                                    = std::move(prepared->light_table);
+        PathBufferSlice new_light_shapes                                                              = std::move(prepared->light_shapes);
+        PathBufferSlice new_light_distributions                                                       = std::move(prepared->light_distribution);
+        PathBufferSlice new_light_distribution_data                                                   = std::move(prepared->light_distribution_data);
+        PathBufferSlice new_portals                                                                   = std::move(prepared->portals);
+        PathBufferSlice new_light_bvh_nodes                                                           = std::move(prepared->light_bvh_nodes);
+        PathBufferSlice new_light_bvh_bit_trails                                                      = std::move(prepared->light_bvh_bit_trails);
+        PathBufferSlice new_face_materials                                                            = std::move(prepared->face_materials);
+        PathBufferSlice new_media                                                                     = std::move(prepared->media);
+        PathBufferSlice new_volumes                                                                   = std::move(prepared->volumes);
+        PathBufferSlice new_spectra                                                                   = std::move(prepared->spectra);
+        PathBufferSlice new_piecewise_spectra                                                         = std::move(prepared->piecewise_spectra);
         if (*this->scene.arena.buffer) {
             new_primitives.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
             for (PathBufferSlice& slice : new_materials) slice.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
@@ -2078,39 +2085,23 @@ namespace spectra {
             new_volumes.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
             new_spectra.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
             new_piecewise_spectra.descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.primitives.descriptor);
-            for (const PathBufferSlice& slice : this->scene.materials) this->context.runtime.frames.retire_resource_descriptor(slice.descriptor);
-            for (const PathBufferSlice& slice : this->scene.textures) this->context.runtime.frames.retire_resource_descriptor(slice.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.light_table.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.light_shapes.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.light_distribution.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.light_distribution_data.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.portals.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.light_bvh_nodes.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.light_bvh_bit_trails.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.face_materials.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.media.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.volumes.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.spectra.descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.piecewise_spectra.descriptor);
-            for (const PathVolumeResources& volume : this->scene.volume_resources) this->context.runtime.frames.retire_resource_descriptor(volume.majorant.descriptor);
             this->context.runtime.frames.defer_destruction([arena = std::move(this->scene.arena), volumes = std::move(this->scene.volume_resources)]() mutable {});
         } else {
-            new_primitives.descriptor = this->scene.primitives.descriptor;
-            for (std::size_t index = 0; index != new_materials.size(); ++index) new_materials[index].descriptor = this->scene.materials[index].descriptor;
-            for (std::size_t index = 0; index != new_textures.size(); ++index) new_textures[index].descriptor = this->scene.textures[index].descriptor;
-            new_lights.descriptor                  = this->scene.light_table.descriptor;
-            new_light_shapes.descriptor            = this->scene.light_shapes.descriptor;
-            new_light_distributions.descriptor     = this->scene.light_distribution.descriptor;
-            new_light_distribution_data.descriptor = this->scene.light_distribution_data.descriptor;
-            new_portals.descriptor                 = this->scene.portals.descriptor;
-            new_light_bvh_nodes.descriptor         = this->scene.light_bvh_nodes.descriptor;
-            new_light_bvh_bit_trails.descriptor    = this->scene.light_bvh_bit_trails.descriptor;
-            new_face_materials.descriptor          = this->scene.face_materials.descriptor;
-            new_media.descriptor                   = this->scene.media.descriptor;
-            new_volumes.descriptor                 = this->scene.volumes.descriptor;
-            new_spectra.descriptor                 = this->scene.spectra.descriptor;
-            new_piecewise_spectra.descriptor       = this->scene.piecewise_spectra.descriptor;
+            new_primitives.descriptor = std::move(this->scene.primitives.descriptor);
+            for (std::size_t index = 0; index != new_materials.size(); ++index) new_materials[index].descriptor = std::move(this->scene.materials[index].descriptor);
+            for (std::size_t index = 0; index != new_textures.size(); ++index) new_textures[index].descriptor = std::move(this->scene.textures[index].descriptor);
+            new_lights.descriptor                  = std::move(this->scene.light_table.descriptor);
+            new_light_shapes.descriptor            = std::move(this->scene.light_shapes.descriptor);
+            new_light_distributions.descriptor     = std::move(this->scene.light_distribution.descriptor);
+            new_light_distribution_data.descriptor = std::move(this->scene.light_distribution_data.descriptor);
+            new_portals.descriptor                 = std::move(this->scene.portals.descriptor);
+            new_light_bvh_nodes.descriptor         = std::move(this->scene.light_bvh_nodes.descriptor);
+            new_light_bvh_bit_trails.descriptor    = std::move(this->scene.light_bvh_bit_trails.descriptor);
+            new_face_materials.descriptor          = std::move(this->scene.face_materials.descriptor);
+            new_media.descriptor                   = std::move(this->scene.media.descriptor);
+            new_volumes.descriptor                 = std::move(this->scene.volumes.descriptor);
+            new_spectra.descriptor                 = std::move(this->scene.spectra.descriptor);
+            new_piecewise_spectra.descriptor       = std::move(this->scene.piecewise_spectra.descriptor);
         }
         const auto write_slice = [this, &new_arena](const PathBufferSlice& slice) { this->context.runtime.resources.write_buffer_descriptor(slice.descriptor, vk::DescriptorType::eStorageBuffer, new_arena.address + slice.offset, slice.size); };
         write_slice(new_primitives);
@@ -2128,22 +2119,24 @@ namespace spectra {
         write_slice(new_volumes);
         write_slice(new_spectra);
         write_slice(new_piecewise_spectra);
-        this->scene.primitives              = new_primitives;
-        this->scene.materials               = new_materials;
-        this->scene.textures                = new_textures;
-        this->scene.light_table             = new_lights;
-        this->scene.light_shapes            = new_light_shapes;
-        this->scene.light_distribution      = new_light_distributions;
-        this->scene.light_distribution_data = new_light_distribution_data;
-        this->scene.portals                 = new_portals;
-        this->scene.light_bvh_nodes         = new_light_bvh_nodes;
-        this->scene.light_bvh_bit_trails    = new_light_bvh_bit_trails;
-        this->scene.face_materials          = new_face_materials;
-        this->scene.media                   = new_media;
-        this->scene.volumes                 = new_volumes;
-        this->scene.spectra                 = new_spectra;
-        this->scene.piecewise_spectra       = new_piecewise_spectra;
+        this->scene.primitives              = std::move(new_primitives);
+        this->scene.materials               = std::move(new_materials);
+        this->scene.textures                = std::move(new_textures);
+        this->scene.light_table             = std::move(new_lights);
+        this->scene.light_shapes            = std::move(new_light_shapes);
+        this->scene.light_distribution      = std::move(new_light_distributions);
+        this->scene.light_distribution_data = std::move(new_light_distribution_data);
+        this->scene.portals                 = std::move(new_portals);
+        this->scene.light_bvh_nodes         = std::move(new_light_bvh_nodes);
+        this->scene.light_bvh_bit_trails    = std::move(new_light_bvh_bit_trails);
+        this->scene.face_materials          = std::move(new_face_materials);
+        this->scene.media                   = std::move(new_media);
+        this->scene.volumes                 = std::move(new_volumes);
+        this->scene.spectra                 = std::move(new_spectra);
+        this->scene.piecewise_spectra       = std::move(new_piecewise_spectra);
         this->scene.arena                   = std::move(new_arena);
+        this->scene.light_bvh_counters = std::move(new_light_bvh_counters);
+        this->scene.light_bvh_counters_descriptor = std::move(new_light_bvh_counters_descriptor);
         this->scene.volume_resources        = std::move(new_volume_gpu_data);
         GpuBuffer new_bindings              = this->context.runtime.resources.create_buffer(sizeof(pathtracer::PathSceneBindings), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         const pathtracer::PathSceneBindings bindings{
@@ -2186,22 +2179,24 @@ namespace spectra {
         };
         std::memcpy(new_bindings.mapped, &bindings, sizeof(bindings));
         if (*this->scene.bindings.buffer.buffer) {
-            const DescriptorHandle descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.bindings.descriptor);
             this->context.runtime.frames.defer_destruction([buffer = std::move(this->scene.bindings.buffer)]() mutable {});
-            this->scene.bindings.descriptor = descriptor;
+            this->scene.bindings.descriptor = std::move(descriptor);
         } else
             this->context.runtime.resources.write_buffer_descriptor(this->scene.bindings.descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
         this->scene.bindings.buffer              = std::move(new_bindings);
         this->scene.texture_stack_size           = prepared->texture_stack_size;
         this->scene.material_texture_value_count = prepared->material_texture_value_count;
         this->scene.light_count                  = prepared->light_count;
+        this->scene.light_bvh_node_count         = prepared->light_bvh_node_count;
         this->scene.camera_medium_index          = prepared->camera_medium_index;
         this->scene.compiled_bounds              = prepared->bounds;
         this->scene.compiled_instance_transforms = std::move(prepared->instance_transforms);
         this->scene.compiled_revision            = prepared->revision;
         this->scene.compiled_gpu_structure_revision = prepared->gpu_structure_revision;
+        this->scene.dynamic_area_lights = std::move(prepared->dynamic_area_lights);
+        this->update_dynamic_lights(command_buffer);
     }
 
     void PathTracer::compile_scene(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
@@ -2227,7 +2222,7 @@ namespace spectra {
                 this->compile_scene(scene, command_buffer);
                 return;
             }
-            const auto descriptor = [this, &shared](const GpuVolumeField field) {
+            const auto descriptor = [this, &shared](const GpuVolumeField field) -> DescriptorHandle {
                 const std::size_t field_index = std::to_underlying(field);
                 return shared.field_present[field_index] ? shared.descriptors[field_index] : this->context.pathtracer.zero_volume_field_descriptor;
             };
@@ -2291,6 +2286,100 @@ namespace spectra {
         }
     }
 
+    void PathTracer::update_dynamic_lights(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->scene.dynamic_area_lights.empty()) return;
+        struct alignas(16) DynamicAreaLightPushData {
+            DescriptorHandle positions{};
+            DescriptorHandle indices{};
+            DescriptorHandle radii{};
+            DescriptorHandle normals{};
+            DescriptorHandle texture_coordinates{};
+            DescriptorHandle transforms{};
+            DescriptorHandle lights{};
+            DescriptorHandle shapes{};
+            std::array<std::uint32_t, 4> range{};
+            std::array<std::uint32_t, 4> metadata{};
+            std::array<float, 4> geometry_parameters{};
+            std::array<float, 4> emission_parameters{};
+            std::array<float, 4> selection_parameters{};
+        };
+        static_assert(sizeof(DynamicAreaLightPushData) == 144);
+        const GpuSceneView gpu_scene = this->context.gpu_scene.view();
+        const auto push_for_range = [&](const PathDynamicAreaLightRange& range) {
+            DynamicAreaLightPushData push{};
+            push.transforms           = gpu_scene.primitive_transforms;
+            push.lights               = this->scene.light_table.descriptor;
+            push.shapes               = this->scene.light_shapes.descriptor;
+            push.geometry_parameters  = range.geometry_parameters;
+            push.emission_parameters  = range.emission_parameters;
+            push.selection_parameters = range.selection_parameters;
+            std::uint32_t active_count{1};
+            if (range.kind == 0) {
+                const GpuGeometry& geometry = gpu_scene.geometries[range.resource_index];
+                push.positions             = geometry.positions_descriptor;
+                push.indices               = geometry.indices_descriptor;
+                push.normals               = geometry.normals_descriptor;
+                push.texture_coordinates   = geometry.texture_coordinates_descriptor;
+                active_count               = geometry.index_count / 3u;
+            } else if (range.kind == 1) {
+                const GpuSphereSet& spheres = gpu_scene.sphere_sets[range.resource_index];
+                push.positions             = spheres.positions_descriptor;
+                push.radii                 = spheres.radii_descriptor;
+                active_count               = spheres.sphere_count;
+            }
+            push.range    = {range.scene_primitive_index, range.first_light, active_count, range.capacity};
+            push.metadata = {range.kind, range.reverse_orientation, range.kind == 0 ? range.attribute_mask : range.geometry_kind, range.alpha_texture};
+            return push;
+        };
+        this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::DynamicAreaLightShapes));
+        for (const PathDynamicAreaLightRange& range : this->scene.dynamic_area_lights) {
+            const DynamicAreaLightPushData push = push_for_range(range);
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+            command_buffer.dispatch((range.capacity + 63u) / 64u, 1, 1);
+        }
+        const vk::MemoryBarrier2 shape_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &shape_dependency});
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::DynamicAreaLightFinalize));
+        for (const PathDynamicAreaLightRange& range : this->scene.dynamic_area_lights) {
+            const DynamicAreaLightPushData push = push_for_range(range);
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+            command_buffer.dispatch(1, 1, 1);
+        }
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &shape_dependency});
+        struct alignas(16) DynamicLightSelectionPushData {
+            DescriptorHandle lights{};
+            std::uint32_t light_count{};
+            std::uint32_t sampler_kind{};
+        };
+        static_assert(sizeof(DynamicLightSelectionPushData) == 16);
+        const DynamicLightSelectionPushData selection_push{this->scene.light_table.descriptor, this->scene.light_count, static_cast<std::uint32_t>(this->scene.transport_settings.light_sampler)};
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::DynamicLightSelection));
+        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&selection_push, 1}));
+        command_buffer.dispatch(1, 1, 1);
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &shape_dependency});
+        if (this->scene.transport_settings.light_sampler == scene::LightSamplerKind::Bvh && this->scene.light_bvh_node_count != 0) {
+            command_buffer.fillBuffer(*this->scene.light_bvh_counters.buffer, 0, this->scene.light_bvh_counters.size, 0);
+            const vk::MemoryBarrier2 counter_dependency{vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite};
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &counter_dependency});
+            struct alignas(16) DynamicLightBvhPushData {
+                DescriptorHandle lights{};
+                DescriptorHandle shapes{};
+                DescriptorHandle nodes{};
+                DescriptorHandle counters{};
+                std::uint32_t node_count{};
+                std::array<std::uint32_t, 3> reserved{};
+            };
+            static_assert(sizeof(DynamicLightBvhPushData) == 48);
+            const DynamicLightBvhPushData bvh_push{this->scene.light_table.descriptor, this->scene.light_shapes.descriptor, this->scene.light_bvh_nodes.descriptor, this->scene.light_bvh_counters_descriptor, this->scene.light_bvh_node_count};
+            command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::DynamicLightBvh));
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&bvh_push, 1}));
+            command_buffer.dispatch((this->scene.light_bvh_node_count + 63u) / 64u, 1, 1);
+        }
+        const vk::MemoryBarrier2 render_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eRayTracingShaderKHR, vk::AccessFlagBits2::eShaderStorageRead};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &render_dependency});
+    }
+
     void PathTracer::synchronize_scene(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         if (scene.revision.number == this->scene.compiled_revision.number) return;
         bool compiled{};
@@ -2337,6 +2426,8 @@ namespace spectra {
     void PathTracer::initialize_session() {
         this->session.output_descriptor                          = this->context.runtime.resources.allocate_resource_descriptor();
         this->session.sampled_output_descriptor                  = this->context.runtime.resources.allocate_resource_descriptor();
+        this->session.storage_depth_descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
+        this->session.sampled_depth_descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
         this->session.queue_counts.descriptor                    = this->context.runtime.resources.allocate_resource_descriptor();
         this->session.ray_queue_0.descriptor                     = this->context.runtime.resources.allocate_resource_descriptor();
         this->session.ray_queue_1.descriptor                     = this->context.runtime.resources.allocate_resource_descriptor();
@@ -2401,6 +2492,7 @@ namespace spectra {
         this->context.runtime.resources.write_buffer_descriptor(this->session.bindings.descriptor, vk::DescriptorType::eStorageBuffer, this->session.bindings.buffer);
         const pathtracer::WavefrontBindings binding_data{
             this->session.output_descriptor,
+            this->session.storage_depth_descriptor,
             this->session.queue_counts.descriptor,
             this->session.ray_queue_0.descriptor,
             this->session.ray_queue_1.descriptor,
@@ -2461,65 +2553,17 @@ namespace spectra {
 
     void PathTracer::destroy_session() noexcept {
         if (!this->session.initialized) return;
-        this->context.runtime.frames.retire_resource_descriptor(this->session.output_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.sampled_output_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.queue_counts.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.ray_queue_0.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.ray_queue_1.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.ray_origins.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.ray_directions.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.ray_origin_dx.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.ray_origin_dy.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.ray_direction_dx.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.ray_direction_dy.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.throughputs.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.radiances.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.wavelengths.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.wavelength_pdfs.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.r_u.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.r_l.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.current_media.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.light_context_normals.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.flags.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.eta_scales.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.hit_normal_distances.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.hit_geometric_normal_u.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.hit_tangent_v.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.hit_dpdu.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.hit_dpdv.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.hit_dndu.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.hit_dndv.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.hit_identifiers.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.shadow_path_ids.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.shadow_origins.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.shadow_directions.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.shadow_contributions.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.shadow_r_p.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.shadow_pdfs.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.shadow_media.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.texture_evaluation_stack.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.evaluated_texture_values.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.filter_weights.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.film_rgb_sums.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.film_weight_sums.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_sample_albedo.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_sample_shading_normal.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_sample_geometric_normal.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_sample_position_depth.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_sample_uv.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_sample_identity_0.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_sample_identity_1.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_albedo_sums.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_shading_normal_sums.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_geometric_normal_sums.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_position_depth_sums.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_uv_weight_sums.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_identity_0.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.gbuffer_identity_1.descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->session.bindings.descriptor);
-        for (const GpuBufferBinding& binding : this->session.parameters) this->context.runtime.frames.retire_resource_descriptor(binding.descriptor);
-        this->session.parameters.clear();
+        this->context.runtime.frames.defer_destruction([
+            output = std::move(this->session.output_image),
+            depth = std::move(this->session.depth_image),
+            arena = std::move(this->session.arena),
+            indirect_commands = std::move(this->session.indirect_commands),
+            bindings = std::move(this->session.bindings),
+            parameters = std::move(this->session.parameters)
+        ]() mutable {});
         this->session.render_extent                = vk::Extent2D{};
+        this->session.output_layout                = vk::ImageLayout::eUndefined;
+        this->session.depth_layout                 = vk::ImageLayout::eUndefined;
         this->session.pixel_capacity               = 0;
         this->session.texture_stack_size           = 0;
         this->session.texture_value_count          = 0;
@@ -2532,14 +2576,20 @@ namespace spectra {
         const std::uint32_t texture_stack_size  = std::max(texture_evaluation_stack_size, 1u);
         const std::uint32_t texture_value_count = std::max(material_texture_value_count, 1u);
         if (this->session.render_extent == extent && this->session.texture_stack_size == texture_stack_size && this->session.texture_value_count == texture_value_count) return;
-        if (this->session.pixel_capacity != 0) this->context.runtime.graphics.device.waitIdle();
+        if (this->session.pixel_capacity != 0) {
+            this->destroy_session();
+            this->initialize_session();
+        }
         this->session.render_extent       = extent;
         this->session.texture_stack_size  = texture_stack_size;
         this->session.texture_value_count = texture_value_count;
-        this->session.pixel_capacity      = extent.width * extent.height;
+        this->session.pixel_capacity      = static_cast<std::uint64_t>(extent.width) * extent.height;
         this->session.output_image        = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled);
+        this->session.depth_image         = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled);
         this->context.runtime.resources.write_storage_image_descriptor(this->session.output_descriptor, this->session.output_image, vk::ImageLayout::eGeneral);
         this->context.runtime.resources.write_sampled_image_descriptor(this->session.sampled_output_descriptor, this->session.output_image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->context.runtime.resources.write_storage_image_descriptor(this->session.storage_depth_descriptor, this->session.depth_image, vk::ImageLayout::eGeneral);
+        this->context.runtime.resources.write_sampled_image_descriptor(this->session.sampled_depth_descriptor, this->session.depth_image, vk::ImageLayout::eShaderReadOnlyOptimal);
         const std::array allocations{
             std::pair{&this->session.queue_counts, static_cast<vk::DeviceSize>(sizeof(std::uint32_t) * 3u)},
             std::pair{&this->session.ray_queue_0, static_cast<vk::DeviceSize>(sizeof(std::uint32_t) * this->session.pixel_capacity)},
@@ -2614,77 +2664,15 @@ namespace spectra {
         this->session.sample_index = 0;
     }
 
-    std::vector<float> PathTracer::read_radiance() {
-        const vk::DeviceSize readback_size = static_cast<vk::DeviceSize>(this->session.render_extent.width) * this->session.render_extent.height * sizeof(float) * 4u;
-        GpuBuffer readback                 = this->context.runtime.resources.create_buffer(readback_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-        this->context.runtime.resources.submit_immediate([this, &readback](const vk::raii::CommandBuffer& command_buffer) {
-            const vk::ImageMemoryBarrier2 to_transfer{
-                vk::PipelineStageFlagBits2::eComputeShader,
-                vk::AccessFlagBits2::eShaderStorageWrite,
-                vk::PipelineStageFlagBits2::eCopy,
-                vk::AccessFlagBits2::eTransferRead,
-                vk::ImageLayout::eGeneral,
-                vk::ImageLayout::eTransferSrcOptimal,
-                vk::QueueFamilyIgnored,
-                vk::QueueFamilyIgnored,
-                *this->session.output_image.image,
-                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-            };
-            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_transfer});
-            const vk::BufferImageCopy copy{
-                0,
-                0,
-                0,
-                {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                {0, 0, 0},
-                {this->session.render_extent.width, this->session.render_extent.height, 1},
-            };
-            command_buffer.copyImageToBuffer(*this->session.output_image.image, vk::ImageLayout::eTransferSrcOptimal, *readback.buffer, copy);
-            const vk::ImageMemoryBarrier2 to_general{
-                vk::PipelineStageFlagBits2::eCopy,
-                vk::AccessFlagBits2::eTransferRead,
-                vk::PipelineStageFlagBits2::eComputeShader,
-                vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite,
-                vk::ImageLayout::eTransferSrcOptimal,
-                vk::ImageLayout::eGeneral,
-                vk::QueueFamilyIgnored,
-                vk::QueueFamilyIgnored,
-                *this->session.output_image.image,
-                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-            };
-            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_general});
-        });
-        std::vector<float> pixels(static_cast<std::size_t>(this->session.render_extent.width) * this->session.render_extent.height * 4u);
-        std::memcpy(pixels.data(), readback.mapped, readback_size);
-        return pixels;
-    }
-
-    RenderGBufferReadback PathTracer::readback() {
-        RenderGBufferReadback result{
-            .extent              = this->session.render_extent,
-            .accumulated_samples = this->session.sample_index,
-        };
-        const std::size_t pixel_count = this->session.pixel_capacity;
-        result.radiance.resize(pixel_count);
-        result.albedo.resize(pixel_count);
-        result.shading_normals.resize(pixel_count);
-        result.geometric_normals.resize(pixel_count);
-        result.positions.resize(pixel_count);
-        result.depths.resize(pixel_count);
-        result.texture_coordinates.resize(pixel_count);
-        result.object_ids.resize(pixel_count);
-        result.primitive_ids.resize(pixel_count);
-        result.material_ids.resize(pixel_count);
-        if (this->session.sample_index == 0) return result;
-
-        const std::vector<float> radiance = this->read_radiance();
-        static_assert(sizeof(math::Float4) == sizeof(float) * 4);
-        std::memcpy(result.radiance.data(), radiance.data(), radiance.size() * sizeof(float));
-
-        constexpr std::size_t buffer_count = 7;
-        const vk::DeviceSize buffer_size   = static_cast<vk::DeviceSize>(pixel_count) * sizeof(math::Float4);
-        GpuBuffer readback                 = this->context.runtime.resources.create_buffer(buffer_size * buffer_count, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-        const std::array<vk::DeviceSize, buffer_count> source_offsets{
+    void PathTracer::record_readback(const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot) {
+        constexpr std::size_t arena_buffer_count = 7;
+        constexpr std::size_t buffer_count       = arena_buffer_count + 1;
+        const vk::DeviceSize buffer_size         = static_cast<vk::DeviceSize>(this->session.pixel_capacity) * sizeof(math::Float4);
+        const vk::DeviceSize required_size       = buffer_size * buffer_count;
+        if (snapshot.buffer.size < required_size) snapshot.buffer = this->context.runtime.resources.create_buffer(required_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+        snapshot.extent              = this->session.render_extent;
+        snapshot.accumulated_samples = this->session.sample_index;
+        const std::array<vk::DeviceSize, arena_buffer_count> source_offsets{
             this->session.gbuffer_albedo_sums.offset,
             this->session.gbuffer_shading_normal_sums.offset,
             this->session.gbuffer_geometric_normal_sums.offset,
@@ -2693,71 +2681,20 @@ namespace spectra {
             this->session.gbuffer_identity_0.offset,
             this->session.gbuffer_identity_1.offset,
         };
-        this->context.runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
-            const vk::MemoryBarrier2 to_transfer{
-                vk::PipelineStageFlagBits2::eComputeShader,
-                vk::AccessFlagBits2::eShaderStorageWrite,
-                vk::PipelineStageFlagBits2::eCopy,
-                vk::AccessFlagBits2::eTransferRead,
-            };
-            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &to_transfer});
-            for (std::size_t index = 0; index != source_offsets.size(); ++index)
-                command_buffer.copyBuffer(*this->session.arena.buffer, *readback.buffer,
-                    vk::BufferCopy{
-                        source_offsets[index],
-                        buffer_size * index,
-                        buffer_size,
-                    });
-        });
-        const auto float_buffer = [&](const std::size_t index) {
-            return std::span<const math::Float4>{
-                reinterpret_cast<const math::Float4*>(static_cast<const std::byte*>(readback.mapped) + buffer_size * index),
-                pixel_count,
-            };
-        };
-        const auto integer_buffer = [&](const std::size_t index) {
-            return std::span<const std::array<std::uint32_t, 4>>{
-                reinterpret_cast<const std::array<std::uint32_t, 4>*>(static_cast<const std::byte*>(readback.mapped) + buffer_size * index),
-                pixel_count,
-            };
-        };
-        const std::span<const math::Float4> albedo_sums                = float_buffer(0);
-        const std::span<const math::Float4> shading_normal_sums        = float_buffer(1);
-        const std::span<const math::Float4> geometric_normal_sums      = float_buffer(2);
-        const std::span<const math::Float4> position_depth_sums        = float_buffer(3);
-        const std::span<const math::Float4> uv_weight_sums             = float_buffer(4);
-        const std::span<const std::array<std::uint32_t, 4>> identity_0 = integer_buffer(5);
-        const std::span<const std::array<std::uint32_t, 4>> identity_1 = integer_buffer(6);
-        const auto normalize                                           = [](const math::Float4 value) {
-            const float length = std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
-            return length == 0.0f ? math::Float3{} : math::Float3{value.x / length, value.y / length, value.z / length};
-        };
-        for (std::size_t index = 0; index != pixel_count; ++index) {
-            const float weight = uv_weight_sums[index].z;
-            if (weight != 0.0f) {
-                result.albedo[index] = {
-                    albedo_sums[index].x / weight,
-                    albedo_sums[index].y / weight,
-                    albedo_sums[index].z / weight,
-                };
-                result.shading_normals[index]   = normalize(shading_normal_sums[index]);
-                result.geometric_normals[index] = normalize(geometric_normal_sums[index]);
-                result.positions[index]         = {
-                    position_depth_sums[index].x / weight,
-                    position_depth_sums[index].y / weight,
-                    position_depth_sums[index].z / weight,
-                };
-                result.depths[index]              = position_depth_sums[index].w / weight;
-                result.texture_coordinates[index] = {
-                    uv_weight_sums[index].x / weight,
-                    uv_weight_sums[index].y / weight,
-                };
-            }
-            result.object_ids[index]    = static_cast<std::uint64_t>(identity_0[index][0]) | static_cast<std::uint64_t>(identity_0[index][1]) << 32;
-            result.primitive_ids[index] = identity_0[index][2];
-            result.material_ids[index]  = static_cast<std::uint64_t>(identity_0[index][3]) | static_cast<std::uint64_t>(identity_1[index][0]) << 32;
-        }
-        return result;
+        const vk::ImageMemoryBarrier2 image_to_transfer{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferSrcOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        const vk::MemoryBarrier2 buffers_to_transfer{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &buffers_to_transfer, {}, {}, 1, &image_to_transfer});
+        command_buffer.copyImageToBuffer(*this->session.output_image.image, vk::ImageLayout::eTransferSrcOptimal, *snapshot.buffer.buffer, vk::BufferImageCopy{0, 0, 0, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {0, 0, 0}, {this->session.render_extent.width, this->session.render_extent.height, 1}});
+        for (std::size_t index = 0; index != source_offsets.size(); ++index) command_buffer.copyBuffer(*this->session.arena.buffer, *snapshot.buffer.buffer, vk::BufferCopy{source_offsets[index], buffer_size * (index + 1u), buffer_size});
+        const vk::ImageMemoryBarrier2 image_to_general{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        const vk::MemoryBarrier2 host_barrier{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostRead};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_barrier, {}, {}, 1, &image_to_general});
+    }
+
+    RenderGBufferReadback PathTracer::readback() {
+        RenderGBufferSnapshot snapshot{};
+        this->context.runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) { this->record_readback(command_buffer, snapshot); });
+        return materialize_gbuffer_readback(snapshot);
     }
 
     RenderOutput PathTracer::output() const noexcept {
@@ -2767,6 +2704,8 @@ namespace spectra {
             vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader,
             vk::AccessFlagBits2::eShaderStorageWrite,
+            this->scene.filter.film.color_space,
+            this->scene.filter.film.exposure,
         };
     }
 
@@ -2811,16 +2750,21 @@ namespace spectra {
             camera.data);
         parameters.camera_metadata[3]          = this->scene.camera_medium_index;
         const scene::Film& film                = this->scene.filter.film;
-        parameters.filter_parameters_0         = {film.filter.radius.x, film.filter.radius.y, film.filter.sigma, film.exposure};
+        parameters.filter_parameters_0         = {film.filter.radius.x, film.filter.radius.y, film.filter.sigma, 0.0f};
         parameters.filter_parameters_1         = {film.filter.b, film.filter.c, film.filter.tau, this->scene.filter.absolute_integral};
         parameters.filter_metadata             = {std::to_underlying(film.filter.kind), this->scene.filter.resolution[0], this->scene.filter.resolution[1], 0};
         parameters.filter_distribution         = this->scene.filter.distribution.descriptor;
         const scene::Sampler& sampler          = this->scene.sampler.sampler;
-        parameters.sampling_tables             = this->context.pathtracer.sampling_tables_descriptor;
+        parameters.sampling_tables             = this->context.pathtracer.sampling.tables_descriptor;
         parameters.pmj_pixel_samples           = this->scene.sampler.pixel_samples.descriptor;
         parameters.sampler_metadata            = {std::to_underlying(sampler.kind), std::to_underlying(sampler.randomization), sampler.samples_per_pixel, sampler.seed};
         parameters.sampler_parameters          = {sampler.x_strata, sampler.y_strata, sampler.jitter ? 1u : 0u, this->scene.sampler.pixel_tile_size};
-        parameters.film_bounds                 = {0, 0, this->session.render_extent.width, this->session.render_extent.height};
+        parameters.film_bounds                 = {
+            static_cast<std::uint32_t>(static_cast<std::uint64_t>(film.pixel_minimum[0]) * this->session.render_extent.width / film.resolution[0]),
+            static_cast<std::uint32_t>(static_cast<std::uint64_t>(film.pixel_minimum[1]) * this->session.render_extent.height / film.resolution[1]),
+            static_cast<std::uint32_t>((static_cast<std::uint64_t>(film.pixel_maximum[0]) * this->session.render_extent.width + film.resolution[0] - 1u) / film.resolution[0]),
+            static_cast<std::uint32_t>((static_cast<std::uint64_t>(film.pixel_maximum[1]) * this->session.render_extent.height + film.resolution[1] - 1u) / film.resolution[1]),
+        };
         parameters.film_sensor_response        = this->scene.filter.sensor_response.descriptor;
         parameters.film_sensor_to_output_row_0 = {film.sensor_to_output_rgb[0], film.sensor_to_output_rgb[1], film.sensor_to_output_rgb[2], 0.0f};
         parameters.film_sensor_to_output_row_1 = {film.sensor_to_output_rgb[3], film.sensor_to_output_rgb[4], film.sensor_to_output_rgb[5], 0.0f};
@@ -2832,7 +2776,7 @@ namespace spectra {
             0.0f,
         };
         parameters.film_metadata = {
-            film.gbuffer ? 1u : 0u,
+            1u,
             film.gbuffer_camera_space ? 1u : 0u,
             std::to_underlying(film.color_space),
             0,
@@ -2875,7 +2819,7 @@ namespace spectra {
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
         this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
         command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::GenerateCameraRays));
-        const std::uint32_t group_count = (this->session.pixel_capacity + 255u) / 256u;
+        const std::uint32_t group_count = static_cast<std::uint32_t>((this->session.pixel_capacity + 255u) / 256u);
         command_buffer.dispatch(group_count, 1, 1);
 
         std::uint32_t read_queue{};
@@ -2927,11 +2871,9 @@ namespace spectra {
                 vk::AccessFlagBits2::eShaderStorageRead,
             };
             command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &texture_values_ready});
-            if (film.gbuffer) {
-                command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::RecordSurfaceGBuffer));
-                this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
-                command_buffer.dispatch(group_count, 1, 1);
-            }
+            command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::RecordSurfaceGBuffer));
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
+            command_buffer.dispatch(group_count, 1, 1);
             if (this->scene.light_count != 0) {
                 command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::SampleDirectLighting));
                 this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
@@ -2994,7 +2936,37 @@ namespace spectra {
         command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::AccumulateFilm));
         this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
         command_buffer.dispatch(group_count, 1, 1);
+        const vk::ImageMemoryBarrier2 depth_to_general{
+            this->session.depth_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eComputeShader,
+            this->session.depth_layout == vk::ImageLayout::eUndefined ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderSampledRead,
+            vk::PipelineStageFlagBits2::eComputeShader,
+            vk::AccessFlagBits2::eShaderStorageWrite,
+            this->session.depth_layout,
+            vk::ImageLayout::eGeneral,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            *this->session.depth_image.image,
+            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &depth_to_general});
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::ResolveGBufferDepth));
+        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
+        command_buffer.dispatch(group_count, 1, 1);
+        const vk::ImageMemoryBarrier2 depth_to_sample{
+            vk::PipelineStageFlagBits2::eComputeShader,
+            vk::AccessFlagBits2::eShaderStorageWrite,
+            vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader,
+            vk::AccessFlagBits2::eShaderSampledRead,
+            vk::ImageLayout::eGeneral,
+            vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            *this->session.depth_image.image,
+            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &depth_to_sample});
         this->session.output_layout = vk::ImageLayout::eGeneral;
+        this->session.depth_layout  = vk::ImageLayout::eShaderReadOnlyOptimal;
         ++this->session.sample_index;
     }
 
@@ -3064,6 +3036,7 @@ namespace spectra {
                 this->compile_scene(scene_view, command_buffer);
             else if ((this->control.pending_gpu_changes & GpuSceneChange::Volume) != GpuSceneChange::None)
                 this->update_volumes(scene_view, command_buffer);
+            if ((this->control.pending_gpu_changes & (GpuSceneChange::Geometry | GpuSceneChange::Transform)) != GpuSceneChange::None) this->update_dynamic_lights(command_buffer);
             this->control.pending_gpu_changes = GpuSceneChange::None;
             reset_required                     = true;
         }

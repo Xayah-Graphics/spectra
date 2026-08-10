@@ -1,6 +1,10 @@
 module raster_volume;
 
 import raster_scene;
+import raster_light;
+import raster_texture;
+import path_sampler;
+import path_queue;
 
 static const float cie_y_integral = 106.856895;
 
@@ -9,17 +13,19 @@ struct RasterVolumePushData {
     DescriptorHandle<RWTexture2D<float4>> output;
     DescriptorHandle<Texture2D<float>> depth;
     DescriptorHandle<StructuredBuffer<RasterVolume>> volumes;
-    DescriptorHandle<StructuredBuffer<RasterVolumeLight>> lights;
-    uint2 reserved;
+    DescriptorHandle<StructuredBuffer<RasterSceneBindings>> bindings;
+    DescriptorHandle<StructuredBuffer<uint>> sampling_tables;
     uint4 metadata;
+    uint4 sampler_metadata;
+    uint4 sampler_parameters;
+    uint4 film_bounds;
+    uint sample_index;
+    uint3 reserved;
     float4 inverse_view_projection_row_0;
     float4 inverse_view_projection_row_1;
     float4 inverse_view_projection_row_2;
     float4 inverse_view_projection_row_3;
 }
-
-[[vk::binding(0, 0)]]
-RaytracingAccelerationStructure acceleration_structure;
 
 [vk::push_constant]
 uniform RasterVolumePushData push_data;
@@ -264,7 +270,7 @@ float3 sample_vector(
         amount.z);
 }
 
-float noise(float3 point) {
+float noise_hash(float3 point) {
     point =
         frac(
             point *
@@ -280,6 +286,113 @@ float noise(float3 point) {
             point.y
         ) *
         point.z);
+}
+
+float noise(float3 point) {
+    const float3 cell =
+        floor(point);
+    const float3 fraction =
+        frac(point);
+    const float3 weight =
+        fraction *
+        fraction *
+        fraction *
+        (
+            fraction *
+            (
+                fraction *
+                    6.0 -
+                15.0
+            ) +
+            10.0
+        );
+    return lerp(
+        lerp(
+            lerp(noise_hash(cell), noise_hash(cell + float3(1.0, 0.0, 0.0)), weight.x),
+            lerp(noise_hash(cell + float3(0.0, 1.0, 0.0)), noise_hash(cell + float3(1.0, 1.0, 0.0)), weight.x),
+            weight.y),
+        lerp(
+            lerp(noise_hash(cell + float3(0.0, 0.0, 1.0)), noise_hash(cell + float3(1.0, 0.0, 1.0)), weight.x),
+            lerp(noise_hash(cell + float3(0.0, 1.0, 1.0)), noise_hash(cell + float3(1.0, 1.0, 1.0)), weight.x),
+            weight.y),
+        weight.z);
+}
+
+float3 noise_derivative(float3 point) {
+    static const float delta = 0.01;
+    const float value =
+        noise(point);
+    return
+        (
+            float3(
+                noise(point + float3(delta, 0.0, 0.0)),
+                noise(point + float3(0.0, delta, 0.0)),
+                noise(point + float3(0.0, 0.0, delta))) -
+            value
+        ) /
+        delta;
+}
+
+float procedural_cloud_density(
+    float3 point,
+    float4 parameters) {
+    float3 cloud_point =
+        parameters.z *
+        point;
+    if (parameters.y > 0.0) {
+        float omega =
+            0.05 *
+            parameters.y;
+        float frequency = 10.0;
+        [ForceUnroll]
+        for (uint index = 0;
+             index != 2;
+             ++index) {
+            cloud_point +=
+                omega *
+                noise_derivative(
+                    frequency *
+                    cloud_point);
+            omega *= 0.5;
+            frequency *= 1.99;
+        }
+    }
+    float density = 0.0;
+    float omega = 0.5;
+    float frequency = 1.0;
+    [ForceUnroll]
+    for (uint index = 0;
+         index != 5;
+         ++index) {
+        density +=
+            omega *
+            noise(
+                frequency *
+                cloud_point);
+        omega *= 0.5;
+        frequency *= 1.99;
+    }
+    density =
+        clamp(
+            (
+                1.0 -
+                point.y
+            ) *
+                4.5 *
+                parameters.x *
+                density,
+            0.0,
+            1.0);
+    density +=
+        2.0 *
+        max(
+            0.0,
+            0.5 -
+                point.y);
+    return clamp(
+        density,
+        0.0,
+        1.0);
 }
 
 float3 blackbody(float temperature) {
@@ -371,34 +484,6 @@ float phase_henyey_greenstein(
             denominator *
             sqrt(denominator)
         );
-}
-
-bool surface_visible(
-    float3 origin,
-    float3 direction,
-    float maximum) {
-    RayQuery<
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH |
-        RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES>
-        query;
-    RayDesc ray;
-    ray.Origin = origin;
-    ray.TMin = 1.0e-3;
-    ray.Direction = direction;
-    ray.TMax = maximum;
-    query.TraceRayInline(
-        acceleration_structure,
-        RAY_FLAG_NONE,
-        0x7f,
-        ray);
-    while (query.Proceed())
-        if (
-            query.CandidateType() ==
-            CANDIDATE_NON_OPAQUE_TRIANGLE)
-            query.CommitNonOpaqueTriangleHit();
-    return
-        query.CommittedStatus() ==
-        COMMITTED_NOTHING;
 }
 
 float volume_density(
@@ -496,24 +581,21 @@ float volume_density(
             volume.sigma_s_field;
         StructuredBuffer<float3> emission_field =
             volume.emission_field;
-        sigma_a =
-            sample_vector(
-                sigma_a_field,
-                volume.metadata.yzw,
-                coordinate) *
-            volume.scales.x;
-        sigma_s =
-            sample_vector(
-                sigma_s_field,
-                volume.metadata.yzw,
-                coordinate) *
-            volume.scales.x;
-        emission =
-            sample_vector(
-                emission_field,
-                volume.metadata.yzw,
-                coordinate) *
-            volume.scales.y;
+        const uint flags = volume.majorant_metadata.w;
+        const uint color_space = flags >> 8;
+        sigma_a = raster_to_linear_srgb(
+            (flags & 1) != 0
+                ? sample_vector(sigma_a_field, volume.metadata.yzw, coordinate)
+                : float3(1.0),
+            color_space) * volume.scales.x;
+        sigma_s = raster_to_linear_srgb(
+            (flags & 2) != 0
+                ? sample_vector(sigma_s_field, volume.metadata.yzw, coordinate)
+                : float3(1.0),
+            color_space) * volume.scales.x;
+        emission = (flags & 4) != 0
+            ? raster_to_linear_srgb(sample_vector(emission_field, volume.metadata.yzw, coordinate), color_space) * volume.scales.y
+            : float3(0.0);
         temperature = 0.0;
         return
             max(
@@ -526,12 +608,9 @@ float volume_density(
                         sigma_s.z));
     }
     const float density =
-        smoothstep(
-            0.52,
-            0.68,
-            noise(
-                coordinate *
-                volume.temperature.w)) *
+        procedural_cloud_density(
+            coordinate,
+            volume.procedural_parameters) *
         volume.scales.x;
     temperature = 0.0;
     sigma_a =
@@ -679,178 +758,58 @@ float empty_space_skip(
     return result;
 }
 
-float3 volume_shadow_transmittance(
-    float3 origin,
-    float3 direction,
-    float maximum_distance) {
-    StructuredBuffer<RasterVolume> volumes =
-        push_data.volumes;
-    float minimum = maximum_distance;
-    float maximum = 0.0;
-    bool intersects = false;
-    for (
-        uint volume_index = 0;
-        volume_index != push_data.metadata.z;
-        ++volume_index) {
-        float volume_minimum;
-        float volume_maximum;
-        if (
-            !intersect_bounds(
-                volumes[volume_index],
-                origin,
-                direction,
-                volume_minimum,
-                volume_maximum))
-            continue;
-        minimum =
+float volume_step_size(
+    RasterVolume volume) {
+    const float3 local_size =
+        volume.bounds_maximum.xyz -
+        volume.bounds_minimum.xyz;
+    const uint3 resolution =
+        volume.metadata.x < 2
+            ? volume.metadata.yzw
+            : uint3(128);
+    const float local_step =
+        min(
+            local_size.x /
+                float(resolution.x),
             min(
-                minimum,
-                max(volume_minimum, 0.0));
-        maximum =
+                local_size.y /
+                    float(resolution.y),
+                local_size.z /
+                    float(resolution.z)));
+    const float inverse_scale =
+        max(
+            length(volume.inverse_transform_row_0.xyz),
             max(
-                maximum,
-                min(
-                    volume_maximum,
-                    maximum_distance));
-        intersects = true;
-    }
-    if (!intersects || maximum <= minimum)
-        return float3(1.0);
-    const float step =
-        (maximum - minimum) / 32.0;
-    float3 optical_depth = float3(0.0);
-    for (uint sample_index = 0;
-         sample_index != 32;
-         ++sample_index) {
-        const float3 position =
-            origin +
-            direction *
-                (
-                    minimum +
-                    (float(sample_index) + 0.5) *
-                        step
-                );
-        for (
-            uint volume_index = 0;
-            volume_index != push_data.metadata.z;
-            ++volume_index) {
-            float temperature;
-            float3 sigma_a;
-            float3 sigma_s;
-            float3 emission;
-            volume_density(
-                volumes[volume_index],
-                position,
-                temperature,
-                sigma_a,
-                sigma_s,
-                emission);
-            optical_depth +=
-                (sigma_a + sigma_s) *
-                step;
-        }
-    }
-    return exp(-optical_depth);
+                length(volume.inverse_transform_row_1.xyz),
+                length(volume.inverse_transform_row_2.xyz)));
+    return
+        0.5 *
+        local_step /
+        inverse_scale;
 }
 
 float3 light_scattering(
-    RasterVolumeLight light,
+    RasterLight light,
+    RasterSceneBindings bindings,
     float3 position,
     float3 view_direction,
-    float anisotropy) {
-    float3 direction;
-    float distance;
-    float3 radiance =
-        light.radiance.xyz;
-    if (light.metadata.x <= 1) {
-        const float3 offset =
-            light.position.xyz -
-            position;
-        distance =
-            length(offset);
-        direction =
-            offset /
-            distance;
-        radiance /=
-            max(
-                distance *
-                    distance,
-                1.0e-6);
-        if (light.metadata.x == 1) {
-            const float cosine =
-                dot(
-                    -direction,
-                    normalize(
-                        light.direction.xyz));
-            radiance *=
-                smoothstep(
-                    light.parameters.x,
-                    light.parameters.y,
-                    cosine);
-        }
-    }
-    else if (light.metadata.x == 2) {
-        direction =
-            normalize(
-                -light.direction.xyz);
-        distance = 1.0e20;
-    }
-    else if (light.metadata.x == 3) {
-        const float3 offset =
-            light.position.xyz -
-            position;
-        distance = length(offset);
-        direction =
-            offset /
-            distance;
-        const float cosine =
-            dot(
-                normalize(
-                    light.direction.xyz),
-                -direction);
-        const float sided_cosine =
-            light.metadata.y != 0
-                ? abs(cosine)
-                : max(cosine, 0.0);
-        radiance *=
-            light.parameters.x *
-            sided_cosine /
-            max(
-                distance *
-                    distance,
-                1.0e-6);
-    }
-    else
-        return radiance;
-    if (
-        !surface_visible(
+    float anisotropy,
+    float2 random_sample) {
+    const RasterLightSample sample =
+        sample_raster_light(
+            light,
+            bindings,
             position,
-            direction,
-            distance))
-        return float3(0.0);
+            random_sample);
+    if (sample.valid == 0) return float3(0.0);
+    if (!raster_surface_visible(bindings, position, sample.direction, sample.distance - 2.0e-3)) return float3(0.0);
     return
-        radiance *
-        volume_shadow_transmittance(
-            position +
-                direction * 1.0e-3,
-            direction,
-            distance) *
+        sample.weight *
         phase_henyey_greenstein(
             dot(
                 view_direction,
-                direction),
+                sample.direction),
             anisotropy);
-}
-
-float blue_noise(uint2 pixel) {
-    return frac(
-        52.9829189 *
-        frac(
-            dot(
-                float2(pixel),
-                float2(
-                    0.06711056,
-                    0.00583715))));
 }
 
 [shader("compute")]
@@ -863,14 +822,38 @@ void raster_volume(
         pixel.x >= push_data.metadata.x ||
         pixel.y >= push_data.metadata.y)
         return;
+    if (pixel.x < push_data.film_bounds.x || pixel.y < push_data.film_bounds.y || pixel.x >= push_data.film_bounds.z || pixel.y >= push_data.film_bounds.w) return;
     RWTexture2D<float4> output =
         push_data.output;
     Texture2D<float> depth_texture =
         push_data.depth;
     StructuredBuffer<RasterVolume> volumes =
         push_data.volumes;
-    StructuredBuffer<RasterVolumeLight> lights =
-        push_data.lights;
+    StructuredBuffer<RasterSceneBindings> binding_table =
+        push_data.bindings;
+    const RasterSceneBindings bindings =
+        binding_table[0];
+    StructuredBuffer<RasterLight> lights =
+        bindings.lights;
+    const WavefrontParameters sampling_parameters = {
+        float4(0.0), float4(0.0), float4(0.0),
+        float4(0.0), float4(0.0), float4(0.0),
+        float4(0.0), float4(0.0), uint4(0), float4(0.0),
+        float4(0.0), float4(0.0), uint4(0),
+        DescriptorHandle<StructuredBuffer<float>>(uint64_t(0)),
+        push_data.sampling_tables,
+        push_data.sampler_metadata,
+        push_data.sampler_parameters,
+        uint4(0),
+        DescriptorHandle<StructuredBuffer<float2>>(uint64_t(0)),
+        DescriptorHandle<StructuredBuffer<float>>(uint64_t(0)),
+        float4(0.0), float4(0.0), float4(0.0), float4(0.0), uint4(0),
+        push_data.metadata.xy,
+        push_data.sample_index,
+        0,
+        0,
+        0,
+    };
     const float2 coordinate =
         (
             float2(pixel) +
@@ -967,6 +950,7 @@ void raster_volume(
     float minimum = surface_distance;
     float maximum = 0.0;
     bool intersects = false;
+    float step = 1.0e20;
     for (uint volume_index = 0;
          volume_index != push_data.metadata.z;
          ++volume_index) {
@@ -992,17 +976,19 @@ void raster_volume(
                 min(
                     volume_maximum,
                     surface_distance));
+        step =
+            min(
+                step,
+                volume_step_size(
+                    volumes[volume_index]));
         intersects = true;
     }
     if (!intersects || maximum <= minimum) return;
-    const float step =
-        (
-            maximum -
-            minimum
-        ) /
-        128.0;
     const float jitter =
-        blue_noise(pixel);
+        path_sample_1d(
+            sampling_parameters,
+            pixel,
+            5);
     float distance =
         minimum +
         jitter *
@@ -1010,7 +996,6 @@ void raster_volume(
     float3 radiance = float3(0.0);
     float3 transmittance = float3(1.0);
     for (uint sample_index = 0;
-         sample_index != 512 &&
          distance < maximum;
          ++sample_index) {
         const float3 position =
@@ -1070,15 +1055,36 @@ void raster_volume(
         }
         anisotropy /= weight;
         float3 direct = float3(0.0);
-        for (uint light_index = 0;
-             light_index != push_data.metadata.w;
-             ++light_index)
+        for (uint selected_light = 0;
+             selected_light != min(push_data.metadata.w, 1);
+             ++selected_light) {
+            float light_probability;
+            const uint light_index =
+                sample_raster_light_index(
+                    lights,
+                    push_data.metadata.w,
+                    path_sample_1d(
+                        sampling_parameters,
+                        pixel,
+                        6 +
+                            sample_index *
+                                3),
+                    light_probability);
             direct +=
+                (1.0 / light_probability) *
                 light_scattering(
                     lights[light_index],
+                    bindings,
                     position,
                     -ray_direction,
-                    anisotropy);
+                    anisotropy,
+                    path_sample_2d(
+                        sampling_parameters,
+                        pixel,
+                        7 +
+                            sample_index *
+                                3));
+        }
         const float3 source =
             emission +
             sigma_s *

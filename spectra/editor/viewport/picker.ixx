@@ -1,6 +1,7 @@
 export module spectra.editor:viewport.picker;
 
 import spectra.render.scene;
+import spectra.render.contract;
 import spectra.runtime;
 import spectra.scene;
 import std;
@@ -25,7 +26,7 @@ namespace spectra {
 
         struct PickFrameSlot {
             GpuBuffer result_buffer{};
-            DescriptorHandle result_descriptor{};
+            DescriptorLease result_descriptor{};
             std::optional<PickRequest> submitted_request{};
         };
 
@@ -42,7 +43,7 @@ namespace spectra {
         void synchronize(scene::SceneView scene, GpuSceneUpdate gpu_update, const vk::raii::CommandBuffer& command_buffer);
         void submit_pick(float normalized_x, float normalized_y, bool select, bool additive) noexcept;
         [[nodiscard]] PickResult take_pick_result(std::uint32_t frame_slot_index) noexcept;
-        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Camera& camera, const GpuImage* diagnostic_pick_image);
+        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Camera& camera, DepthBufferView depth, const GpuImage* diagnostic_pick_image);
 
         struct {
             VulkanRuntime& runtime;
@@ -52,7 +53,7 @@ namespace spectra {
 
         struct {
             GpuBuffer primitives{};
-            DescriptorHandle primitives_descriptor{};
+            DescriptorLease primitives_descriptor{};
             bool initialized{};
         } scene;
 

@@ -19,6 +19,15 @@ namespace spectra {
         this->recreate_swapchain();
     }
 
+    VulkanPresentation::~VulkanPresentation() {
+        this->context.frames.defer_destruction([
+            swapchain = std::move(this->presentation.swapchain),
+            views = std::move(this->presentation.views),
+            image_available = std::move(this->presentation.image_available),
+            render_finished = std::move(this->presentation.render_finished)
+        ]() mutable { views.clear(); });
+    }
+
     void VulkanPresentation::recreate_swapchain() {
         this->context.graphics.device.waitIdle();
         int width{};

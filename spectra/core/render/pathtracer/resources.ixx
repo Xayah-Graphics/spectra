@@ -2,6 +2,7 @@ export module spectra.render.pathtracer.resources;
 
 import spectra.runtime;
 import spectra.render.contract;
+import spectra.render.sampling;
 
 import std;
 import vulkan;
@@ -18,6 +19,10 @@ namespace spectra {
 
     export enum class PathTracerComputeShader : std::size_t {
         VolumeMajorant,
+        DynamicAreaLightShapes,
+        DynamicAreaLightFinalize,
+        DynamicLightSelection,
+        DynamicLightBvh,
         GenerateCameraRays,
         EvaluateSurfaceTextures,
         RecordSurfaceGBuffer,
@@ -25,10 +30,11 @@ namespace spectra {
         ShadeSurfaces,
         ResolveVisibility,
         AccumulateFilm,
+        ResolveGBufferDepth,
     };
 
     export struct PathTracerResources {
-        PathTracerResources(VulkanRuntime& runtime, const std::filesystem::path& resource_directory);
+        PathTracerResources(VulkanRuntime& runtime, SamplingResources& sampling, const std::filesystem::path& resource_directory);
         ~PathTracerResources();
 
         PathTracerResources(const PathTracerResources&)            = delete;
@@ -42,14 +48,13 @@ namespace spectra {
         [[nodiscard]] PathTracerPreparationProgress preparation_progress() const;
 
         VulkanRuntime& runtime;
+        SamplingResources& sampling;
         std::vector<std::uint32_t> rgb_to_spectrum_table_data{};
-        std::vector<std::uint32_t> sampling_table_data{};
         std::vector<float> cie_samples{};
         GpuBuffer static_data{};
-        DescriptorHandle zero_volume_field_descriptor{};
-        DescriptorHandle cie_spectra_descriptor{};
-        DescriptorHandle rgb_to_spectrum_tables_descriptor{};
-        DescriptorHandle sampling_tables_descriptor{};
+        DescriptorLease zero_volume_field_descriptor{};
+        DescriptorLease cie_spectra_descriptor{};
+        DescriptorLease rgb_to_spectrum_tables_descriptor{};
         std::vector<vk::raii::ShaderEXT> compute_shaders{};
         vk::raii::Pipeline pipeline{nullptr};
         std::vector<std::byte> shader_group_handles{};
@@ -59,7 +64,8 @@ namespace spectra {
         vk::StridedDeviceAddressRegionKHR miss_region{};
         vk::StridedDeviceAddressRegionKHR hit_region{};
         std::uint32_t stack_size{};
-        std::future<void> shader_preparation{};
         PathTracerPreparationState preparation{};
+        std::shared_future<void> shader_preparation{};
+        bool prepared{};
     };
 } // namespace spectra

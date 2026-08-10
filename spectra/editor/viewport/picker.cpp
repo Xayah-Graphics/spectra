@@ -36,7 +36,6 @@ namespace spectra {
     ViewportPicker::ViewportPicker(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory) noexcept : context{runtime, gpu_scene, std::move(shader_directory)} {}
 
     ViewportPicker::~ViewportPicker() {
-        this->context.runtime.graphics.device.waitIdle();
         this->destroy_scene();
     }
 
@@ -79,13 +78,9 @@ namespace spectra {
     }
 
     void ViewportPicker::destroy_scene() noexcept {
-        for (const PickFrameSlot& slot : this->picking.frame_slots) this->context.runtime.frames.retire_resource_descriptor(slot.result_descriptor);
-        this->picking.frame_slots.clear();
+        this->context.runtime.frames.defer_destruction([slots = std::move(this->picking.frame_slots), shader = std::move(this->picking.shader), primitives = std::move(this->scene.primitives)]() mutable {});
         this->picking.pending_request.reset();
-        this->picking.shader = nullptr;
         if (!this->scene.initialized) return;
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.primitives_descriptor);
-        this->scene.primitives  = {};
         this->scene.initialized = false;
     }
 
@@ -126,11 +121,10 @@ namespace spectra {
         if (primitives.empty()) primitives.emplace_back();
         GpuBuffer new_primitives = upload_pick_primitives(this->context.runtime, primitives, command_buffer);
         if (command_buffer) {
-            const DescriptorHandle descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.primitives_descriptor);
             this->context.runtime.frames.defer_destruction([primitives = std::move(this->scene.primitives)]() mutable {});
-            this->scene.primitives_descriptor = descriptor;
+            this->scene.primitives_descriptor = std::move(descriptor);
         } else {
             this->context.runtime.resources.write_buffer_descriptor(this->scene.primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
         }
@@ -160,7 +154,7 @@ namespace spectra {
         };
     }
 
-    void ViewportPicker::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const scene::Camera& camera, const GpuImage* diagnostic_pick_image) {
+    void ViewportPicker::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const scene::Camera& camera, const DepthBufferView depth, const GpuImage* diagnostic_pick_image) {
         if (!this->picking.pending_request) return;
         PickFrameSlot& slot   = this->picking.frame_slots[frame_slot_index];
         std::uint32_t* result = static_cast<std::uint32_t*>(slot.result_buffer.mapped);
@@ -172,7 +166,9 @@ namespace spectra {
             vk::DeviceAddress acceleration_structure_address;
             DescriptorHandle result_descriptor;
             DescriptorHandle primitive_descriptor;
+            DescriptorHandle depth_descriptor;
             std::array<std::uint32_t, 2> camera_metadata;
+            std::array<std::uint32_t, 2> pixel;
             std::array<float, 4> camera_transform_row_0;
             std::array<float, 4> camera_transform_row_1;
             std::array<float, 4> camera_transform_row_2;
@@ -180,7 +176,7 @@ namespace spectra {
             float near_plane;
             float far_plane;
         };
-        static_assert(sizeof(PickPushData) == 96);
+        static_assert(sizeof(PickPushData) == 112);
         std::array<std::uint32_t, 2> camera_metadata{};
         std::array<float, 2> screen{};
         float near_plane{};
@@ -209,7 +205,12 @@ namespace spectra {
             this->context.gpu_scene.view().acceleration_structure,
             slot.result_descriptor,
             this->scene.primitives_descriptor,
+            depth.descriptor,
             camera_metadata,
+            {
+                std::min(static_cast<std::uint32_t>(slot.submitted_request->normalized_x * static_cast<float>(depth.image.extent.width)), depth.image.extent.width - 1u),
+                std::min(static_cast<std::uint32_t>(slot.submitted_request->normalized_y * static_cast<float>(depth.image.extent.height)), depth.image.extent.height - 1u),
+            },
             {transform[0], transform[1], transform[2], transform[3]},
             {transform[4], transform[5], transform[6], transform[7]},
             {transform[8], transform[9], transform[10], transform[11]},

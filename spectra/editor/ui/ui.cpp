@@ -82,6 +82,7 @@ namespace spectra {
         }
 
         [[nodiscard]] bool transform_editable(const EditorUi& editor, const SceneEntityReference entity) noexcept {
+            if (entity.kind == SceneEntityKind::Volume) return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(scene::VolumeId{entity.id});
             if (entity.kind != SceneEntityKind::Instance && entity.kind != SceneEntityKind::AreaEmitter) return entity.kind == SceneEntityKind::Camera || entity.kind == SceneEntityKind::Light;
             const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
             return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(instance_id);
@@ -93,6 +94,7 @@ namespace spectra {
                 return std::ranges::find(source.resources.instances, id, &scene::Instance::id)->transform;
             }
             if (entity.kind == SceneEntityKind::Camera) return std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->transform;
+            if (entity.kind == SceneEntityKind::Volume) return std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id)->transform;
             if (entity.kind != SceneEntityKind::Light) return std::nullopt;
             const scene::Light& light = *std::ranges::find(source.resources.lights, scene::LightId{entity.id}, &scene::Light::id);
             return std::visit(
@@ -110,6 +112,7 @@ namespace spectra {
         [[nodiscard]] const std::string& entity_name(const scene::Scene& source, const SceneEntityReference entity) noexcept {
             if (entity.kind == SceneEntityKind::Instance) return std::ranges::find(source.resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id)->name;
             if (entity.kind == SceneEntityKind::Camera) return std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->name;
+            if (entity.kind == SceneEntityKind::Volume) return std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id)->name;
             if (entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Light) return std::ranges::find(source.resources.lights, scene::LightId{entity.id}, &scene::Light::id)->name;
             std::unreachable();
         }
@@ -119,6 +122,7 @@ namespace spectra {
             if (entity.kind == SceneEntityKind::Camera) return "CAMERA";
             if (entity.kind == SceneEntityKind::Light) return "LIGHT";
             if (entity.kind == SceneEntityKind::AreaEmitter) return "AREA EMITTER";
+            if (entity.kind == SceneEntityKind::Volume) return "VOLUME";
             return "ENTITY";
         }
 
@@ -305,6 +309,9 @@ namespace spectra {
         } else if (entity.kind == SceneEntityKind::Light) {
             this->context.document.update_light_transform(this->context.document.content.source, scene::LightId{entity.id}, transform);
             this->context.document.update_light_transform(this->context.document.content.evaluated, scene::LightId{entity.id}, std::move(transform));
+        } else if (entity.kind == SceneEntityKind::Volume) {
+            this->context.document.update_volume_transform(this->context.document.content.source, scene::VolumeId{entity.id}, transform);
+            this->context.document.update_volume_transform(this->context.document.content.evaluated, scene::VolumeId{entity.id}, std::move(transform));
         }
     }
 
@@ -603,7 +610,7 @@ namespace spectra {
         }
 
         const dynamics::SimulationTimeline timeline = dynamic ? this->context.dynamics.timeline() : dynamics::SimulationTimeline{};
-        const std::string status                    = dynamic ? std::format("step {}  ·  {:.3f} s{}", timeline.simulation_step, timeline.simulation_seconds, pathtracer_preparation ? std::format("  ·  {}", preparation_status(*pathtracer_preparation)) : std::string{}) : std::format("{} / {} spp", render_progress->completed, render_progress->target);
+        const std::string status                    = dynamic ? std::format("step {}  ·  {:.3f} s{}", timeline.step, timeline.seconds, pathtracer_preparation ? std::format("  ·  {}", preparation_status(*pathtracer_preparation)) : std::string{}) : std::format("{} / {} spp", render_progress->completed, render_progress->target);
         const bool simulation_playing               = dynamic && this->context.dynamics.running();
         const char* playback_label                  = dynamic ? simulation_playing ? "Pause" : "Play" : render_progress->paused ? "Resume" : "Pause";
         const char* secondary_label                 = dynamic ? "Step" : "Reset";

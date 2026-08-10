@@ -8,7 +8,7 @@ namespace spectra {
     DisplayPass::DisplayPass(VulkanRuntime& runtime, std::filesystem::path shader_directory) noexcept : context{runtime, std::move(shader_directory)} {}
 
     DisplayPass::~DisplayPass() {
-        this->context.runtime.frames.retire_sampler_descriptor(this->sampler_descriptor);
+        this->context.runtime.frames.defer_destruction([shaders = std::move(this->shaders), linear = std::move(this->linear_image), display = std::move(this->image)]() mutable {});
     }
 
     void DisplayPass::initialize() {
@@ -49,10 +49,48 @@ namespace spectra {
 
     bool DisplayPass::resize(const vk::Extent2D extent) {
         if (*this->image.image && extent == this->image.extent) return false;
-        this->context.runtime.graphics.device.waitIdle();
-        this->image  = this->context.runtime.resources.create_image_2d(extent, vk::Format::eB8G8R8A8Srgb, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc);
+        GpuImage next_linear_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
+        GpuImage next_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eB8G8R8A8Srgb, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc);
+        DescriptorLease next_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        this->context.runtime.resources.write_sampled_image_descriptor(next_descriptor, next_linear_image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        if (*this->image.image) {
+            this->context.runtime.frames.defer_destruction([linear = std::move(this->linear_image), display = std::move(this->image)]() mutable {});
+        }
+        this->linear_image              = std::move(next_linear_image);
+        this->image                     = std::move(next_image);
+        this->linear_sampled_descriptor = std::move(next_descriptor);
+        this->linear_layout = vk::ImageLayout::eUndefined;
         this->layout = vk::ImageLayout::eUndefined;
         return true;
+    }
+
+    void DisplayPass::prepare_linear_composition(const vk::raii::CommandBuffer& command_buffer, const RenderOutput render_output) {
+        const vk::PipelineStageFlags2 destination_stage = this->linear_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eTopOfPipe : vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        const vk::AccessFlags2 destination_access = this->linear_layout == vk::ImageLayout::eUndefined ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderSampledRead | vk::AccessFlagBits2::eColorAttachmentWrite;
+        const std::array barriers{
+            vk::ImageMemoryBarrier2{render_output.source_stage, render_output.source_access, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, render_output.image_layout, vk::ImageLayout::eTransferSrcOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *render_output.image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+            vk::ImageMemoryBarrier2{destination_stage, destination_access, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, this->linear_layout, vk::ImageLayout::eTransferDstOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->linear_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+        };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, static_cast<std::uint32_t>(barriers.size()), barriers.data()});
+        command_buffer.copyImage(*render_output.image.image, vk::ImageLayout::eTransferSrcOptimal, *this->linear_image.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageCopy{{vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {}, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {}, {this->linear_image.extent.width, this->linear_image.extent.height, 1}});
+        const vk::ImageMemoryBarrier2 restore{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, render_output.source_stage, render_output.source_access, vk::ImageLayout::eTransferSrcOptimal, render_output.image_layout, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *render_output.image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &restore});
+        this->linear_layout      = vk::ImageLayout::eTransferDstOptimal;
+        this->linear_color_space = render_output.color_space;
+    }
+
+    ColorCompositionTarget DisplayPass::linear_target() noexcept {
+        return {this->linear_image, this->linear_layout, this->linear_color_space};
+    }
+
+    RenderOutput DisplayPass::linear_output(const RenderOutput renderer_output) const noexcept {
+        const vk::PipelineStageFlags2 stage = this->linear_layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::PipelineStageFlagBits2::eFragmentShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        const vk::AccessFlags2 access = this->linear_layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::AccessFlagBits2::eShaderSampledRead : vk::AccessFlagBits2::eColorAttachmentWrite;
+        return {this->linear_image, this->linear_sampled_descriptor, this->linear_layout, stage, access, renderer_output.color_space, renderer_output.exposure};
+    }
+
+    ColorCompositionTarget DisplayPass::target() noexcept {
+        return {this->image, this->layout, scene::SpectrumColorSpace::Srgb};
     }
 
     void DisplayPass::record(const vk::raii::CommandBuffer& command_buffer, const RenderOutput render_output, const float exposure) {
@@ -128,9 +166,9 @@ namespace spectra {
             DescriptorHandle source;
             DescriptorHandle sampler;
             float exposure;
-            std::uint32_t reserved;
+            std::uint32_t color_space;
         };
-        const DisplayPushData push_data{render_output.sampled_descriptor, this->sampler_descriptor, render_output.exposure + exposure, 0};
+        const DisplayPushData push_data{render_output.sampled_descriptor, this->sampler_descriptor, render_output.exposure + exposure, std::to_underlying(render_output.color_space)};
         this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
         command_buffer.draw(3, 1, 0, 0);
         command_buffer.endRendering();

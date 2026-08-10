@@ -4,6 +4,26 @@ public struct SpectraPluginTransform {
     public float matrix[16];
 }
 
+public struct SpectraPluginSphere {
+    public float3 position;
+    public float radius;
+}
+
+public struct SpectraPluginInstanceTransform {
+    public uint64_t instance_id;
+    public SpectraPluginTransform transform;
+}
+
+public struct SpectraPluginSceneBounds {
+    public float3 minimum;
+    public uint resource_kind;
+    public float3 maximum;
+    public uint domain;
+    public uint64_t resource_id;
+    public uint64_t reserved;
+    public SpectraPluginTransform world_from_local;
+}
+
 public struct SpectraPluginPoint {
     public float3 position;
     public float radius;
@@ -16,6 +36,7 @@ public struct SpectraPluginSegment {
     public float width;
     public float3 second_position;
     public float4 color;
+    public float scalar;
 }
 
 public struct SpectraPluginCurve {
@@ -25,6 +46,7 @@ public struct SpectraPluginCurve {
     public float3 control_2;
     public float3 control_3;
     public float4 color;
+    public float scalar;
 }
 
 public struct SpectraPluginVector {
@@ -32,6 +54,7 @@ public struct SpectraPluginVector {
     public float width;
     public float3 vector;
     public float4 color;
+    public float scalar;
 }
 
 public struct SpectraPluginCameraDistortion {

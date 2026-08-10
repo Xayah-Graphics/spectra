@@ -1,15 +1,5 @@
 module overlay_mesh;
 
-struct ViewportPrimitive {
-    uint transform_index;
-    uint reserved_0;
-    uint reserved_1;
-    uint reserved_2;
-    uint reserved_3;
-    uint reserved_4;
-    uint reserved_5;
-    uint reserved_6;
-}
 struct ViewportTransform {
     float4 transform_row_0;
     float4 transform_row_1;
@@ -27,13 +17,11 @@ struct MaskPushData {
     DescriptorHandle<StructuredBuffer<PackedFloat3>> positions;
     DescriptorHandle<StructuredBuffer<uint>> indices;
     DescriptorHandle<StructuredBuffer<float>> radii;
-    DescriptorHandle<StructuredBuffer<ViewportPrimitive>> primitives;
     DescriptorHandle<StructuredBuffer<ViewportTransform>> transforms;
     uint scene_primitive_index;
     uint element_count;
     uint draw_kind;
     uint reserved_0;
-    uint2 reserved_1;
     float4 color;
     float4 view_projection_row_0;
     float4 view_projection_row_1;
@@ -74,10 +62,8 @@ void overlay_mesh(
     if (thread_id >= emitted_elements)
         return;
     StructuredBuffer<PackedFloat3> positions = push_data.positions;
-    StructuredBuffer<ViewportPrimitive> primitives = push_data.primitives;
     StructuredBuffer<ViewportTransform> transforms = push_data.transforms;
-    const ViewportPrimitive primitive_data = primitives[push_data.scene_primitive_index];
-    const ViewportTransform transform = transforms[primitive_data.transform_index];
+    const ViewportTransform transform = transforms[push_data.scene_primitive_index];
     if (push_data.draw_kind == 0) {
         StructuredBuffer<uint> indices =
             push_data.indices;

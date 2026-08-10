@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 4.4.0)
+set(SPECTRA_PLUGIN_SDK_VERSION 19.0.0)
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    project(SpectraPluginSDK VERSION 17.0.0 LANGUAGES NONE)
+    project(SpectraPluginSDK VERSION ${SPECTRA_PLUGIN_SDK_VERSION} LANGUAGES NONE)
     if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
         set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Spectra Plugin SDK installation directory" FORCE)
     endif ()
@@ -29,7 +30,7 @@ configure_package_config_file(
 )
 write_basic_package_version_file(
         "${CMAKE_CURRENT_BINARY_DIR}/SpectraPluginSDKConfigVersion.cmake"
-        VERSION 17.0.0
+        VERSION "${SPECTRA_PLUGIN_SDK_VERSION}"
         COMPATIBILITY SameMajorVersion
 )
 install(

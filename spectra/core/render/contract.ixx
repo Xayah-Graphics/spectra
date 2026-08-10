@@ -7,12 +7,21 @@ import std;
 import vulkan;
 
 namespace spectra {
+    export enum class RenderOutputLayer : std::uint8_t {
+        RendererLinear,
+        RendererDisplay,
+        ComposedDisplay,
+    };
+
+    export [[nodiscard]] RenderOutputLayer parse_render_output_layer(std::string_view identifier);
+
     export struct RenderOutput {
         const GpuImage& image;
         DescriptorHandle sampled_descriptor{};
         vk::ImageLayout image_layout{};
         vk::PipelineStageFlags2 source_stage{};
         vk::AccessFlags2 source_access{};
+        scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
         float exposure{};
     };
 
@@ -29,6 +38,12 @@ namespace spectra {
         std::vector<std::uint64_t> object_ids{};
         std::vector<std::uint32_t> primitive_ids{};
         std::vector<std::uint64_t> material_ids{};
+    };
+
+    export struct RenderGBufferSnapshot {
+        vk::Extent2D extent{};
+        std::uint32_t accumulated_samples{};
+        GpuBuffer buffer{};
     };
 
     export struct RendererDescriptor {
@@ -94,6 +109,12 @@ namespace spectra {
         vk::ImageLayout& layout;
     };
 
+    export struct ColorCompositionTarget {
+        GpuImage& image;
+        vk::ImageLayout& layout;
+        scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
+    };
+
     export template <typename Type>
     concept SceneRenderer = requires(Type& renderer, const Type& constant_renderer, scene::SceneView scene, scene::SceneChange changes, GpuSceneUpdate gpu_update, const RenderView& view, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot) {
         { Type::descriptor } -> std::convertible_to<RendererDescriptor>;
@@ -111,7 +132,8 @@ namespace spectra {
     };
 
     export template <typename Type>
-    concept GBufferSceneRenderer = SceneRenderer<Type> && requires(Type& renderer) {
+    concept GBufferSceneRenderer = SceneRenderer<Type> && requires(Type& renderer, const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot) {
+        { renderer.record_readback(command_buffer, snapshot) } -> std::same_as<void>;
         { renderer.readback() } -> std::same_as<RenderGBufferReadback>;
     };
 } // namespace spectra

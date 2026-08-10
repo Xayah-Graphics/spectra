@@ -10,7 +10,6 @@ namespace spectra {
         constexpr std::size_t coefficient_count     = 3ull * table_resolution * table_resolution * table_resolution * 3ull;
         constexpr std::uint64_t rgb_table_size      = 16ull + table_resolution * sizeof(float) + coefficient_count * sizeof(float);
         constexpr std::uint64_t cie_table_size      = 16ull + 5ull * 471ull * sizeof(float);
-        constexpr std::uint64_t sampling_table_size = 6'005'504;
 
         struct ShaderEntry {
             const char* file{};
@@ -19,6 +18,10 @@ namespace spectra {
 
         constexpr std::array compute_shader_entries{
             ShaderEntry{"volume_majorant.spv", "build_majorant"},
+            ShaderEntry{"path_dynamic_area_light_shapes.spv", "update_dynamic_area_light_shapes"},
+            ShaderEntry{"path_dynamic_area_light_finalize.spv", "finalize_dynamic_area_light_range"},
+            ShaderEntry{"path_dynamic_light_selection.spv", "rebuild_dynamic_light_selection"},
+            ShaderEntry{"path_dynamic_light_bvh.spv", "rebuild_dynamic_light_bvh"},
             ShaderEntry{"path_generate_camera_rays.spv", "generate_camera_rays"},
             ShaderEntry{"path_evaluate_surface_textures.spv", "evaluate_surface_textures"},
             ShaderEntry{"path_record_surface_gbuffer.spv", "record_surface_gbuffer"},
@@ -26,6 +29,7 @@ namespace spectra {
             ShaderEntry{"path_shade_surfaces.spv", "shade_surfaces"},
             ShaderEntry{"path_resolve_visibility.spv", "resolve_visibility"},
             ShaderEntry{"path_accumulate_film.spv", "accumulate_film"},
+            ShaderEntry{"path_resolve_gbuffer_depth.spv", "resolve_gbuffer_depth"},
         };
 
         constexpr std::array ray_shader_entries{
@@ -118,17 +122,6 @@ namespace spectra {
             stream.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
             if (!stream) throw std::runtime_error(std::format("Cannot read Path Tracer asset: {}", path.string()));
             return data;
-        }
-
-        [[nodiscard]] std::vector<std::uint32_t> load_spirv(const std::filesystem::path& path) {
-            std::ifstream stream{path, std::ios::binary | std::ios::ate};
-            if (!stream) throw std::runtime_error(std::format("Cannot open shader: {}", path.string()));
-            const std::streamsize size = stream.tellg();
-            std::vector<std::uint32_t> code(static_cast<std::size_t>(size) / sizeof(std::uint32_t));
-            stream.seekg(0);
-            stream.read(reinterpret_cast<char*>(code.data()), size);
-            if (!stream) throw std::runtime_error(std::format("Cannot read shader: {}", path.string()));
-            return code;
         }
 
         [[nodiscard]] vk::raii::ShaderEXT create_compute_shader(const vk::raii::Device& device, const std::span<const std::uint32_t> code, const char* entry) {
@@ -272,27 +265,19 @@ namespace spectra {
         return this->compute_shaders[std::to_underlying(shader)];
     }
 
-    PathTracerResources::PathTracerResources(VulkanRuntime& runtime, const std::filesystem::path& resource_directory) : runtime(runtime) {
-        const std::filesystem::path shader_directory = resource_directory / "shaders";
-        this->shader_preparation                     = std::async(std::launch::async, [this, shader_directory] { initialize_shaders(*this, shader_directory); });
-
+    PathTracerResources::PathTracerResources(VulkanRuntime& runtime, SamplingResources& sampling, const std::filesystem::path& resource_directory) : runtime(runtime), sampling(sampling) {
         const std::filesystem::path spectral_directory = resource_directory / "spectral";
         this->rgb_to_spectrum_table_data               = load_rgb_tables(spectral_directory);
         const std::vector<std::byte> cie_table         = load_binary_asset(spectral_directory / "cie1931.spectrum", cie_table_size);
-        const std::vector<std::byte> sampling_table    = load_binary_asset(spectral_directory / "sampling.tables", sampling_table_size);
-        this->sampling_table_data.resize(sampling_table.size() / sizeof(std::uint32_t));
-        std::memcpy(this->sampling_table_data.data(), sampling_table.data(), sampling_table.size());
         this->cie_samples.resize(5u * 471u);
         std::memcpy(this->cie_samples.data(), cie_table.data() + 16, this->cie_samples.size() * sizeof(float));
-        const vk::DeviceSize rgb_offset      = 0;
-        const vk::DeviceSize cie_offset      = align_up(this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t), 16);
-        const vk::DeviceSize sampling_offset = align_up(cie_offset + cie_table.size(), 16);
-        const vk::DeviceSize zero_offset     = align_up(sampling_offset + this->sampling_table_data.size() * sizeof(std::uint32_t), 16);
-        const vk::DeviceSize total_size      = zero_offset + sizeof(std::uint32_t) * 4u;
+        const vk::DeviceSize rgb_offset  = 0;
+        const vk::DeviceSize cie_offset  = align_up(this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t), 16);
+        const vk::DeviceSize zero_offset = align_up(cie_offset + cie_table.size(), 16);
+        const vk::DeviceSize total_size  = zero_offset + sizeof(std::uint32_t) * 4u;
         GpuBuffer staging                    = runtime.resources.create_buffer(total_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         std::memcpy(static_cast<std::byte*>(staging.mapped) + rgb_offset, this->rgb_to_spectrum_table_data.data(), this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t));
         std::memcpy(static_cast<std::byte*>(staging.mapped) + cie_offset, cie_table.data(), cie_table.size());
-        std::memcpy(static_cast<std::byte*>(staging.mapped) + sampling_offset, this->sampling_table_data.data(), this->sampling_table_data.size() * sizeof(std::uint32_t));
         std::memset(static_cast<std::byte*>(staging.mapped) + zero_offset, 0, sizeof(std::uint32_t) * 4u);
         this->static_data = runtime.resources.create_buffer(total_size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
         runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
@@ -303,32 +288,39 @@ namespace spectra {
         this->zero_volume_field_descriptor      = runtime.resources.allocate_resource_descriptor();
         this->cie_spectra_descriptor            = runtime.resources.allocate_resource_descriptor();
         this->rgb_to_spectrum_tables_descriptor = runtime.resources.allocate_resource_descriptor();
-        this->sampling_tables_descriptor        = runtime.resources.allocate_resource_descriptor();
         runtime.resources.write_buffer_descriptor(this->zero_volume_field_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + zero_offset, sizeof(std::uint32_t) * 4u);
         runtime.resources.write_buffer_descriptor(this->cie_spectra_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + cie_offset, cie_table.size());
         runtime.resources.write_buffer_descriptor(this->rgb_to_spectrum_tables_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + rgb_offset, this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t));
-        runtime.resources.write_buffer_descriptor(this->sampling_tables_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + sampling_offset, this->sampling_table_data.size() * sizeof(std::uint32_t));
+        const std::filesystem::path shader_directory = resource_directory / "shaders";
+        this->shader_preparation = std::async(std::launch::async, [this, shader_directory] { initialize_shaders(*this, shader_directory); }).share();
     }
 
     PathTracerResources::~PathTracerResources() {
         if (this->shader_preparation.valid()) this->shader_preparation.wait();
-        this->runtime.frames.retire_resource_descriptor(this->zero_volume_field_descriptor);
-        this->runtime.frames.retire_resource_descriptor(this->cie_spectra_descriptor);
-        this->runtime.frames.retire_resource_descriptor(this->rgb_to_spectrum_tables_descriptor);
-        this->runtime.frames.retire_resource_descriptor(this->sampling_tables_descriptor);
+        this->runtime.frames.defer_destruction([
+            static_data = std::move(this->static_data),
+            zero_volume_field_descriptor = std::move(this->zero_volume_field_descriptor),
+            cie_spectra_descriptor = std::move(this->cie_spectra_descriptor),
+            rgb_to_spectrum_tables_descriptor = std::move(this->rgb_to_spectrum_tables_descriptor),
+            compute_shaders = std::move(this->compute_shaders),
+            pipeline = std::move(this->pipeline),
+            shader_binding_table = std::move(this->shader_binding_table)
+        ]() mutable {});
     }
 
     bool PathTracerResources::complete_preparation() {
-        if (!this->shader_preparation.valid()) return true;
+        if (this->prepared) return true;
         if (this->shader_preparation.wait_for(std::chrono::seconds{0}) != std::future_status::ready) return false;
         this->shader_preparation.get();
         this->preparation.report(PathTracerPreparationStage::CreatingShaderBindingTable);
         initialize_shader_binding_table(*this);
         this->preparation.report(PathTracerPreparationStage::Ready);
+        this->prepared = true;
         return true;
     }
 
     void PathTracerResources::wait_for_preparation() {
+        if (this->prepared) return;
         this->shader_preparation.wait();
         static_cast<void>(this->complete_preparation());
     }

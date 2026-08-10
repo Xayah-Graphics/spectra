@@ -11,6 +11,7 @@ struct RasterVertex {
     float3 emission : COLOR0;
     float3 color_modifier : COLOR1;
     nointerpolation uint material : MATERIAL;
+    nointerpolation uint area_light : AREA_LIGHT;
     nointerpolation uint sphere : SPHERE;
     nointerpolation float3 sphere_center : POSITION1;
     nointerpolation float sphere_radius : RADIUS;
@@ -19,50 +20,6 @@ struct RasterVertex {
 
 [vk::push_constant]
 uniform RasterPushData push_data;
-
-float3 transform_position(
-    RasterTransform transform,
-    float3 position) {
-    const float4 homogeneous =
-        float4(position, 1.0);
-    return float3(
-        dot(
-            transform.transform_row_0,
-            homogeneous),
-        dot(
-            transform.transform_row_1,
-            homogeneous),
-        dot(
-            transform.transform_row_2,
-            homogeneous));
-}
-
-float3 transform_normal(
-    RasterTransform transform,
-    float3 normal) {
-    const float3 column_0 =
-        float3(
-            transform.transform_row_0.x,
-            transform.transform_row_1.x,
-            transform.transform_row_2.x);
-    const float3 column_1 =
-        float3(
-            transform.transform_row_0.y,
-            transform.transform_row_1.y,
-            transform.transform_row_2.y);
-    const float3 column_2 =
-        float3(
-            transform.transform_row_0.z,
-            transform.transform_row_1.z,
-            transform.transform_row_2.z);
-    return normalize(
-        cross(column_1, column_2) *
-                normal.x +
-            cross(column_2, column_0) *
-                normal.y +
-            cross(column_0, column_1) *
-                normal.z);
-}
 
 float3 orthogonal(float3 normal) {
     if (abs(normal.x) > abs(normal.y))
@@ -118,8 +75,6 @@ void raster_mesh(
         bindings.transforms;
     StructuredBuffer<uint> face_materials =
         bindings.face_materials;
-    StructuredBuffer<RasterAreaLight> area_lights =
-        bindings.area_lights;
     const RasterPrimitive primitive =
         primitives[
             push_data.scene_primitive_index];
@@ -150,11 +105,11 @@ void raster_mesh(
                 triangle * 3 +
                 vertex];
         const float3 world_position =
-            transform_position(
+            raster_transform_position(
                 transform,
                 positions[source_index]);
         const float3 world_normal =
-            transform_normal(
+            raster_transform_normal(
                 transform,
                 normals[source_index]);
         const float3 world_tangent =
@@ -162,7 +117,7 @@ void raster_mesh(
                 push_data.attributes.x &
                 2
             ) != 0
-                ? transform_normal(
+                ? raster_transform_normal(
                       transform,
                       tangents[source_index])
                 : orthogonal(world_normal);
@@ -203,16 +158,13 @@ void raster_mesh(
                       source_index]
                 : float2(0.0);
         output.emission =
-            primitive.area_light_index ==
-                    0xffffffff
-                ? float3(0.0)
-                : area_lights[
-                      primitive.area_light_index]
-                      .emission.xyz;
+            float3(0.0);
         output.color_modifier =
             float3(1.0);
         output.material =
             material;
+        output.area_light =
+            primitive.area_light_index;
         output.sphere = 0;
         output.sphere_center = float3(0.0);
         output.sphere_radius = 0.0;

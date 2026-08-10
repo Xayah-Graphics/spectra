@@ -15,8 +15,8 @@ namespace spectra {
         struct FrameResources {
             GpuBuffer vertex_buffer{};
             GpuBuffer index_buffer{};
-            DescriptorHandle vertex_descriptor{};
-            DescriptorHandle index_descriptor{};
+            DescriptorLease vertex_descriptor{};
+            DescriptorLease index_descriptor{};
             std::size_t vertex_capacity{};
             std::size_t index_capacity{};
         };
@@ -45,8 +45,8 @@ namespace spectra {
         struct {
             vk::raii::ShaderEXTs shaders{nullptr};
             std::vector<FrameResources> frames{};
-            DescriptorHandle sampler_descriptor{};
-            DescriptorHandle viewport_descriptor{};
+            DescriptorLease sampler_descriptor{};
+            DescriptorLease viewport_descriptor{};
         } renderer;
 
         std::uint64_t viewport_texture_id{};

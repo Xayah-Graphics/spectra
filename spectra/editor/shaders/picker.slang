@@ -11,7 +11,9 @@ struct PickPushData {
     uint64_t acceleration_structure_address;
     DescriptorHandle<RWStructuredBuffer<uint>> result;
     DescriptorHandle<StructuredBuffer<ViewportPickPrimitive>> primitives;
+    DescriptorHandle<Texture2D<float>> depth;
     uint2 camera_metadata;
+    uint2 pixel;
     float4 camera_transform_row_0;
     float4 camera_transform_row_1;
     float4 camera_transform_row_2;
@@ -184,20 +186,37 @@ void pick() {
         dot(push_data.camera_transform_row_1.xyz, camera_direction),
         dot(push_data.camera_transform_row_2.xyz, camera_direction)));
     ray.TMax = push_data.far_plane;
-    RayQuery<RAY_FLAG_NONE> query;
-    query.TraceRayInline(acceleration_structure, RAY_FLAG_NONE, 0xff, ray);
+    Texture2D<float> depth =
+        push_data.depth;
+    const float visible_depth =
+        depth.Load(
+            int3(
+                push_data.pixel,
+                0));
+    const float candidate_depth_scale =
+        push_data.camera_metadata.x == 0
+            ? -camera_direction.z
+            : 1.0;
+    RayQuery<RAY_FLAG_FORCE_NON_OPAQUE> query;
+    query.TraceRayInline(acceleration_structure, RAY_FLAG_FORCE_NON_OPAQUE, 0xff, ray);
     StructuredBuffer<ViewportPickPrimitive> primitives =
         push_data.primitives;
     RWStructuredBuffer<uint> result =
         push_data.result;
-    while (query.Proceed())
+    while (query.Proceed()) {
+        float distance = -1.0;
         if (
+            query.CandidateType() ==
+            CANDIDATE_NON_OPAQUE_TRIANGLE)
+            distance =
+                query.CandidateTriangleRayT();
+        else if (
             query.CandidateType() ==
             CANDIDATE_PROCEDURAL_PRIMITIVE) {
             const ViewportPickPrimitive candidate =
                 primitives[
                     query.CandidateInstanceID()];
-            const float distance =
+            distance =
                 procedural_hit_distance(
                     candidate,
                     query.CandidateObjectRayOrigin(),
@@ -205,10 +224,28 @@ void pick() {
                     ray.TMin,
                     query.CommittedRayT(),
                     query.CandidatePrimitiveIndex());
-            if (distance > 0.0)
-                query.CommitProceduralPrimitiveHit(
-                    distance);
         }
+        if (distance <= 0.0) continue;
+        const float camera_depth =
+            distance *
+            candidate_depth_scale;
+        const float candidate_device_depth =
+            push_data.camera_metadata.x == 0
+                ? push_data.far_plane /
+                      (push_data.far_plane - push_data.near_plane) -
+                      push_data.far_plane * push_data.near_plane /
+                          ((push_data.far_plane - push_data.near_plane) * camera_depth)
+                : (camera_depth - push_data.near_plane) /
+                      (push_data.far_plane - push_data.near_plane);
+        if (abs(candidate_device_depth - visible_depth) > 0.001) continue;
+        if (
+            query.CandidateType() ==
+            CANDIDATE_NON_OPAQUE_TRIANGLE)
+            query.CommitNonOpaqueTriangleHit();
+        else
+            query.CommitProceduralPrimitiveHit(
+                distance);
+    }
     if (
         query.CommittedStatus() ==
             COMMITTED_TRIANGLE_HIT ||

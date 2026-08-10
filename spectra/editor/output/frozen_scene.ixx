@@ -1,6 +1,8 @@
 export module spectra.editor:output.frozen_scene;
 
 import spectra.render.scene;
+import spectra.dynamics.frozen;
+import spectra.dynamics.runtime;
 import spectra.runtime;
 import spectra.scene;
 import std;
@@ -15,12 +17,17 @@ namespace spectra {
         GeometryIndex,
         SpherePosition,
         SphereRadius,
+        InstanceTransform,
         VolumeField,
+        VisualizationBuffer,
+        TelemetryValues,
+        SceneBounds,
     };
 
     export struct FrozenSceneReadbackRegion {
         FrozenSceneReadbackKind kind{};
         std::uint32_t resource_index{};
+        std::uint32_t primitive_index{};
         GpuVolumeField volume_field{};
         vk::DeviceSize offset{};
         std::uint64_t element_count{};
@@ -30,6 +37,7 @@ namespace spectra {
         scene::Scene frozen_scene{};
         GpuBuffer readback_buffer{};
         std::vector<FrozenSceneReadbackRegion> readback_regions{};
+        std::optional<dynamics::FrozenFrame> frozen_frame{};
 
         void materialize();
     };
@@ -41,7 +49,7 @@ namespace spectra {
             std::filesystem::path source_scene_path{};
         };
 
-        FrozenSceneExporter(VulkanRuntime& runtime, GpuScene& gpu_scene) noexcept;
+        FrozenSceneExporter(VulkanRuntime& runtime, GpuScene& gpu_scene, DynamicsRuntime& dynamics) noexcept;
         ~FrozenSceneExporter();
 
         FrozenSceneExporter(const FrozenSceneExporter&)            = delete;
@@ -58,6 +66,7 @@ namespace spectra {
         struct {
             VulkanRuntime& runtime;
             GpuScene& gpu_scene;
+            DynamicsRuntime& dynamics;
         } context;
 
         struct {

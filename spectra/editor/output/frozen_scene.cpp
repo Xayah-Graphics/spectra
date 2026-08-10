@@ -1,3 +1,7 @@
+module;
+
+#include <spectra/plugin_api.h>
+
 module spectra.editor;
 
 import :output.frozen_scene;
@@ -15,7 +19,7 @@ namespace spectra {
                 if (std::filesystem::exists(destination)) throw std::runtime_error(std::format("Frozen Scene destination '{}' already exists", destination.string()));
                 std::filesystem::create_directory(temporary);
                 const std::filesystem::path scene_path = temporary / std::format("{}.spectra", name);
-                scene::save_scene(std::move(scene), scene_path, source_scene_path);
+                scene::save_scene(std::move(scene), scene_path, source_scene_path, scene::SceneSaveMode::MaterializeAssets);
                 std::filesystem::rename(temporary, destination);
                 return destination / scene_path.filename();
             } catch (const std::exception& error) {
@@ -25,10 +29,11 @@ namespace spectra {
             }
         }
 
-        FrozenSceneSnapshot record_gpu_snapshot(VulkanRuntime& runtime, const GpuSceneView gpu_scene, const vk::raii::CommandBuffer& command_buffer, const scene::Scene& current_scene, const scene::Camera& camera, const vk::Extent2D extent, const float exposure) {
+        FrozenSceneSnapshot record_gpu_snapshot(VulkanRuntime& runtime, const GpuSceneView gpu_scene, DynamicsRuntime& dynamics, const vk::raii::CommandBuffer& command_buffer, const scene::Scene& current_scene, const scene::Camera& camera, const vk::Extent2D extent, const float exposure) {
             FrozenSceneSnapshot snapshot{};
             snapshot.frozen_scene = current_scene;
             snapshot.frozen_scene.dynamic_setup.reset();
+            snapshot.frozen_scene.frozen_dynamic_frame.reset();
             scene::Camera snapshot_camera = camera;
             snapshot_camera.id            = {std::ranges::fold_left(snapshot.frozen_scene.resources.cameras, std::uint64_t{}, [](const std::uint64_t maximum, const scene::Camera& value) { return std::max(maximum, value.id.value); }) + 1};
             snapshot_camera.name          = "Snapshot Camera";
@@ -52,6 +57,12 @@ namespace spectra {
                 vk::BufferCopy region{};
             };
             std::vector<ReadbackCopy> readback_copies{};
+            const auto add_dynamic_readback = [&snapshot, &readback_copies, &size](const FrozenSceneReadbackKind kind, const std::uint32_t resource_index, const std::uint32_t buffer_index, const dynamics::GpuBufferView source, const vk::DeviceSize bytes) {
+                size = size + 15u & ~vk::DeviceSize{15u};
+                snapshot.readback_regions.emplace_back(kind, resource_index, buffer_index, GpuVolumeField::Density, size, bytes);
+                if (bytes != 0) readback_copies.emplace_back(source.buffer, vk::BufferCopy{0, size, bytes});
+                size += bytes;
+            };
             for (const GpuGeometry& geometry : gpu_scene.geometries) {
                 if (!geometry.cpu_data_stale) continue;
                 const std::uint32_t resource   = static_cast<std::uint32_t>(std::ranges::find(current_scene.resources.geometries, geometry.geometry_id, &scene::Geometry::id) - current_scene.resources.geometries.begin());
@@ -59,7 +70,7 @@ namespace spectra {
                     if (count == 0) return;
                     size                       = (size + 15u) & ~vk::DeviceSize{15u};
                     const vk::DeviceSize bytes = count * element_size;
-                    snapshot.readback_regions.emplace_back(kind, resource, GpuVolumeField::Density, size, count);
+                    snapshot.readback_regions.emplace_back(kind, resource, 0, GpuVolumeField::Density, size, count);
                     readback_copies.emplace_back(&source, vk::BufferCopy{0, size, bytes});
                     size += bytes;
                 };
@@ -76,7 +87,7 @@ namespace spectra {
                     if (count == 0) return;
                     size                       = (size + 15u) & ~vk::DeviceSize{15u};
                     const vk::DeviceSize bytes = count * element_size;
-                    snapshot.readback_regions.emplace_back(kind, resource, GpuVolumeField::Density, size, count);
+                    snapshot.readback_regions.emplace_back(kind, resource, 0, GpuVolumeField::Density, size, count);
                     readback_copies.emplace_back(&source, vk::BufferCopy{0, size, bytes});
                     size += bytes;
                 };
@@ -93,9 +104,115 @@ namespace spectra {
                     const std::uint64_t count         = volume.fields[field].size / element_size;
                     size                              = (size + 15u) & ~vk::DeviceSize{15u};
                     const vk::DeviceSize bytes        = count * element_size;
-                    snapshot.readback_regions.emplace_back(FrozenSceneReadbackKind::VolumeField, resource, kind, size, count);
+                    snapshot.readback_regions.emplace_back(FrozenSceneReadbackKind::VolumeField, resource, 0, kind, size, count);
                     readback_copies.emplace_back(&volume.fields[field], vk::BufferCopy{0, size, bytes});
                     size += bytes;
+                }
+            }
+            std::vector<scene::InstanceId> captured_instances{};
+            captured_instances.reserve(gpu_scene.primitives.size());
+            for (const GpuScenePrimitive& primitive : gpu_scene.primitives) {
+                const scene::InstanceId instance_id = gpu_scene.primitive_instance_ids[primitive.scene_primitive_index];
+                if (std::ranges::contains(captured_instances, instance_id)) continue;
+                captured_instances.push_back(instance_id);
+                const std::uint32_t resource = static_cast<std::uint32_t>(std::ranges::find(current_scene.resources.instances, instance_id, &scene::Instance::id) - current_scene.resources.instances.begin());
+                size = (size + 15u) & ~vk::DeviceSize{15u};
+                snapshot.readback_regions.emplace_back(FrozenSceneReadbackKind::InstanceTransform, resource, primitive.prototype_primitive_index, GpuVolumeField::Density, size, 1);
+                readback_copies.emplace_back(gpu_scene.primitive_transform_buffer, vk::BufferCopy{static_cast<vk::DeviceSize>(primitive.scene_primitive_index) * sizeof(math::Transform), size, sizeof(math::Transform)});
+                size += sizeof(math::Transform);
+            }
+
+            if (const dynamics::FrozenFrame* frozen = dynamics.frozen_frame()) {
+                snapshot.frozen_frame = *frozen;
+            } else if (current_scene.dynamic_setup) {
+                const dynamics::DynamicFrame& published = dynamics.published_frame();
+                snapshot.frozen_frame.emplace(dynamics::FrozenFrame{published.simulation, published.presentation});
+                for (const dynamics::GpuSceneUpdate& update : published.scene_updates)
+                    if (const auto* bounds = std::get_if<dynamics::GpuSceneBoundsUpdate>(&update.data)) {
+                        const std::uint32_t bounds_index = static_cast<std::uint32_t>(snapshot.frozen_frame->bounds.size());
+                        snapshot.frozen_frame->bounds.push_back({bounds->domain, std::vector<dynamics::SceneBound>(bounds->count)});
+                        add_dynamic_readback(FrozenSceneReadbackKind::SceneBounds, bounds_index, 0, bounds->bounds, bounds->count * sizeof(dynamics::SceneBound));
+                    }
+                const auto image_element_size = [](const dynamics::ImageFormat format) -> std::uint64_t {
+                    if (format == dynamics::ImageFormat::Rgba8Unorm) return sizeof(std::uint32_t);
+                    if (format == dynamics::ImageFormat::Rgba16Float) return sizeof(std::uint16_t) * 4u;
+                    return sizeof(float) * 4u;
+                };
+                for (const dynamics::GpuVisualization& source : dynamics.visualizations()) {
+                    const std::uint32_t visualization_index = static_cast<std::uint32_t>(snapshot.frozen_frame->visualizations.size());
+                    dynamics::FrozenVisualization destination{};
+                    std::visit(
+                        [&](const auto& visualization) {
+                            destination.style   = visualization.style;
+                            const auto buffer = [&](const dynamics::GpuBufferView view, const vk::DeviceSize bytes) {
+                                const std::uint32_t buffer_index = static_cast<std::uint32_t>(destination.buffers.size());
+                                destination.buffers.emplace_back();
+                                add_dynamic_readback(FrozenSceneReadbackKind::VisualizationBuffer, visualization_index, buffer_index, view, view.buffer == nullptr ? 0 : bytes);
+                            };
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuPointVisualization>) {
+                                destination.kind          = dynamics::FrozenVisualizationKind::Points;
+                                destination.primary_count = visualization.count;
+                                buffer(visualization.points, visualization.count * sizeof(SpectraPluginPoint));
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuSegmentVisualization>) {
+                                destination.kind          = dynamics::FrozenVisualizationKind::Segments;
+                                destination.primary_count = visualization.count;
+                                buffer(visualization.segments, visualization.count * sizeof(SpectraPluginSegment));
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuCurveVisualization>) {
+                                destination.kind          = dynamics::FrozenVisualizationKind::Curves;
+                                destination.primary_count = visualization.count;
+                                buffer(visualization.curves, visualization.count * sizeof(SpectraPluginCurve));
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuVectorVisualization>) {
+                                destination.kind          = dynamics::FrozenVisualizationKind::Vectors;
+                                destination.primary_count = visualization.count;
+                                buffer(visualization.vectors, visualization.count * sizeof(SpectraPluginVector));
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuFieldVisualization>) {
+                                destination.kind            = dynamics::FrozenVisualizationKind::Field;
+                                destination.resolution      = visualization.resolution;
+                                destination.local_from_grid = visualization.local_from_grid;
+                                destination.channel         = visualization.channel.channel;
+                                const std::uint64_t count    = static_cast<std::uint64_t>(visualization.resolution.x) * visualization.resolution.y * visualization.resolution.z;
+                                buffer(visualization.channel.values, count * (visualization.channel.channel.kind == dynamics::FieldChannelKind::Float ? sizeof(float) : sizeof(SpectraPluginFloat3)));
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuImageVisualization>) {
+                                destination.kind  = dynamics::FrozenVisualizationKind::Image;
+                                destination.image = visualization.image;
+                                buffer(visualization.pixels, static_cast<std::uint64_t>(visualization.image.extent[0]) * visualization.image.extent[1] * image_element_size(visualization.image.format));
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuCameraObservationVisualization>) {
+                                destination.kind                = dynamics::FrozenVisualizationKind::CameraObservations;
+                                destination.camera_observations = visualization.dataset;
+                                destination.primary_count       = visualization.count;
+                                buffer(visualization.observations, visualization.count * sizeof(SpectraPluginCameraObservation));
+                                buffer(visualization.images, visualization.count * visualization.dataset.images.extent[0] * visualization.dataset.images.extent[1] * image_element_size(visualization.dataset.images.format));
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuTransformVisualization>) {
+                                destination.kind          = dynamics::FrozenVisualizationKind::Transforms;
+                                destination.primary_count = visualization.count;
+                                buffer(visualization.transforms, visualization.count * sizeof(SpectraPluginTransform));
+                            } else {
+                                destination.kind            = dynamics::FrozenVisualizationKind::Surface;
+                                destination.primary_count   = visualization.vertex_count;
+                                destination.secondary_count = visualization.index_count;
+                                buffer(visualization.positions, visualization.vertex_count * sizeof(SpectraPluginFloat3));
+                                buffer(visualization.indices, visualization.index_count * sizeof(std::uint32_t));
+                                buffer(visualization.scalars, visualization.vertex_count * sizeof(float));
+                            }
+                        },
+                        source.data);
+                    snapshot.frozen_frame->visualizations.push_back(std::move(destination));
+                }
+                for (std::size_t system_index = 0; system_index != current_scene.dynamic_setup->systems.size(); ++system_index) {
+                    const scene::DynamicSystem& source_system = current_scene.dynamic_setup->systems[system_index];
+                    if (!source_system.enabled) continue;
+                    const dynamics::ProviderDescriptor& provider = dynamics.provider_descriptor(source_system.provider_id);
+                    dynamics::FrozenTelemetrySystem system{source_system.id.value, source_system.name, source_system.provider_id, provider.telemetry, dynamics.telemetry(system_index)};
+                    const auto update = std::ranges::find(published.telemetry, system_index, &dynamics::GpuTelemetryUpdate::system_index);
+                    if (update != published.telemetry.end()) {
+                        system.snapshot.phase    = update->phase;
+                        system.snapshot.headline = update->headline;
+                        system.snapshot.message  = update->message;
+                        system.snapshot.values.resize(update->value_count);
+                    }
+                    const std::uint32_t frozen_system_index = static_cast<std::uint32_t>(snapshot.frozen_frame->telemetry.size());
+                    snapshot.frozen_frame->telemetry.push_back(std::move(system));
+                    if (update != published.telemetry.end()) add_dynamic_readback(FrozenSceneReadbackKind::TelemetryValues, frozen_system_index, 0, update->values, update->value_count * sizeof(SpectraPluginTelemetryGpuValue));
                 }
             }
             if (size != 0) {
@@ -124,6 +241,15 @@ namespace spectra {
             case FrozenSceneReadbackKind::GeometryIndex: copy(std::get<scene::TriangleMeshGeometry>(this->frozen_scene.resources.geometries[source.resource_index].data).indices, source); break;
             case FrozenSceneReadbackKind::SpherePosition: copy(this->frozen_scene.resources.sphere_sets[source.resource_index].positions, source); break;
             case FrozenSceneReadbackKind::SphereRadius: copy(this->frozen_scene.resources.sphere_sets[source.resource_index].radii, source); break;
+            case FrozenSceneReadbackKind::InstanceTransform:
+                {
+                    scene::Instance& instance = this->frozen_scene.resources.instances[source.resource_index];
+                    const scene::Prototype& prototype = *std::ranges::find(this->frozen_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
+                    math::Transform world_from_primitive{};
+                    std::memcpy(&world_from_primitive, static_cast<const std::byte*>(this->readback_buffer.mapped) + source.offset, sizeof(world_from_primitive));
+                    instance.transform = world_from_primitive * prototype.primitives[source.primitive_index].transform.inverse();
+                }
+                break;
             case FrozenSceneReadbackKind::VolumeField:
                 {
                     scene::Volume& volume = this->frozen_scene.resources.volumes[source.resource_index];
@@ -153,11 +279,42 @@ namespace spectra {
                         volume.data);
                 }
                 break;
+            case FrozenSceneReadbackKind::VisualizationBuffer:
+                {
+                    std::vector<std::byte>& destination = this->frozen_frame->visualizations[source.resource_index].buffers[source.primitive_index];
+                    destination.resize(source.element_count);
+                    std::memcpy(destination.data(), static_cast<const std::byte*>(this->readback_buffer.mapped) + source.offset, source.element_count);
+                }
+                break;
+            case FrozenSceneReadbackKind::TelemetryValues:
+                {
+                    dynamics::FrozenTelemetrySystem& system = this->frozen_frame->telemetry[source.resource_index];
+                    const auto* values                       = reinterpret_cast<const SpectraPluginTelemetryGpuValue*>(static_cast<const std::byte*>(this->readback_buffer.mapped) + source.offset);
+                    dynamics::TelemetrySample sample{this->frozen_frame->simulation.step, this->frozen_frame->simulation.seconds};
+                    sample.values.reserve(system.descriptors.size());
+                    for (std::size_t index = 0; index != system.descriptors.size(); ++index) {
+                        const dynamics::TelemetryValue value{system.descriptors[index].kind, values[index].integer, {values[index].floating[0], values[index].floating[1], values[index].floating[2]}};
+                        system.snapshot.values[index] = value;
+                        sample.values.push_back(value);
+                    }
+                    if (!system.snapshot.history.empty() && system.snapshot.history.back().simulation_step == sample.simulation_step)
+                        system.snapshot.history.back() = std::move(sample);
+                    else
+                        system.snapshot.history.push_back(std::move(sample));
+                }
+                break;
+            case FrozenSceneReadbackKind::SceneBounds:
+                {
+                    std::vector<dynamics::SceneBound>& destination = this->frozen_frame->bounds[source.resource_index].values;
+                    std::memcpy(destination.data(), static_cast<const std::byte*>(this->readback_buffer.mapped) + source.offset, source.element_count);
+                }
+                break;
             }
+        if (this->frozen_frame) this->frozen_scene.frozen_dynamic_frame = scene::FrozenDynamicFrame{.payload = dynamics::serialize_frozen_frame(*this->frozen_frame)};
         this->frozen_scene.mark_all_changed();
     }
 
-    FrozenSceneExporter::FrozenSceneExporter(VulkanRuntime& runtime, GpuScene& gpu_scene) noexcept : context{runtime, gpu_scene} {
+    FrozenSceneExporter::FrozenSceneExporter(VulkanRuntime& runtime, GpuScene& gpu_scene, DynamicsRuntime& dynamics) noexcept : context{runtime, gpu_scene, dynamics} {
         this->export_state.slots.resize(VulkanFrames::frames_in_flight);
     }
 
@@ -183,13 +340,20 @@ namespace spectra {
     }
 
     void FrozenSceneExporter::wait() {
-        for (FrameSlot& slot : this->export_state.slots)
+        for (std::uint32_t frame_slot_index = 0; frame_slot_index != this->export_state.slots.size(); ++frame_slot_index) {
+            FrameSlot& slot = this->export_state.slots[frame_slot_index];
             if (slot.snapshot) {
+                if (this->context.runtime.frames.frame.recording && frame_slot_index == this->context.runtime.frames.frame.current_slot_index) {
+                    slot.snapshot.reset();
+                    continue;
+                }
+                this->context.runtime.frames.wait_frame(frame_slot_index);
                 slot.snapshot->materialize();
                 if (this->export_state.task.valid()) static_cast<void>(this->export_state.task.get());
                 this->export_state.task = std::async(std::launch::async, write_frozen_scene_package, std::move(slot.snapshot->frozen_scene), slot.output_path, slot.source_scene_path);
                 slot.snapshot.reset();
             }
+        }
         if (this->export_state.task.valid()) this->export_state.completed_result = this->export_state.task.get();
     }
 
@@ -210,6 +374,6 @@ namespace spectra {
         FrameSlot& slot        = this->export_state.slots[frame_slot_index];
         slot.output_path       = *std::exchange(this->export_state.pending_request, std::nullopt);
         slot.source_scene_path = source_scene_path;
-        slot.snapshot          = record_gpu_snapshot(this->context.runtime, this->context.gpu_scene.view(), command_buffer, current_scene, camera, extent, exposure);
+        slot.snapshot          = record_gpu_snapshot(this->context.runtime, this->context.gpu_scene.view(), this->context.dynamics, command_buffer, current_scene, camera, extent, exposure);
     }
 } // namespace spectra

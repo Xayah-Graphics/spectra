@@ -102,6 +102,7 @@ namespace spectra::math {
     }
 
     void Bounds3::include(const Bounds3 bounds) noexcept {
+        if (!bounds.valid()) return;
         this->include(bounds.minimum);
         this->include(bounds.maximum);
     }
@@ -123,6 +124,7 @@ namespace spectra::math {
     }
 
     Bounds3 Bounds3::transformed(const Transform& transform) const noexcept {
+        if (!this->valid()) return Bounds3::empty();
         Bounds3 result = Bounds3::empty();
         for (const float x : {this->minimum.x, this->maximum.x})
             for (const float y : {this->minimum.y, this->maximum.y})

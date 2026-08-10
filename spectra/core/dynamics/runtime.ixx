@@ -6,6 +6,7 @@ export module spectra.dynamics.runtime;
 
 export import spectra.dynamics;
 
+import spectra.dynamics.frozen;
 import spectra.runtime;
 import spectra.scene;
 import spectra.scene.document;
@@ -29,10 +30,10 @@ namespace spectra {
         };
 
         struct DynamicDatasetBuffer {
-            SpectraPluginDatasetBufferKind kind{};
+            SpectraPluginBufferSemantic semantic{};
             std::uint32_t channel_index{};
             GpuBuffer gpu_buffer{};
-            DescriptorHandle descriptor{};
+            DescriptorLease descriptor{};
             std::uint64_t byte_size{};
         };
 
@@ -94,6 +95,21 @@ namespace spectra {
             dynamics::TelemetrySnapshot telemetry{};
         };
 
+        struct PendingDatasetCommit {
+            DynamicSystemRuntime* system{};
+            DynamicDatasetRuntime* dataset{};
+            SpectraPluginDatasetCommit commit{};
+        };
+
+        struct PendingTelemetryCommit {
+            DynamicSystemRuntime* system{};
+            std::uint32_t slot_index{};
+            std::uint64_t signal_value{};
+            std::string phase{};
+            std::string headline{};
+            std::string message{};
+        };
+
         DynamicsRuntime(VulkanRuntime& runtime, SceneDocument& document) noexcept;
         ~DynamicsRuntime();
 
@@ -110,18 +126,25 @@ namespace spectra {
         void resolve_telemetry(std::uint32_t frame_slot_index);
         void record_telemetry(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         [[nodiscard]] bool controls(scene::InstanceId instance_id) const noexcept;
+        [[nodiscard]] bool controls(scene::VolumeId volume_id) const noexcept;
         [[nodiscard]] const dynamics::ProviderDescriptor& provider_descriptor(std::string_view provider_id) const;
         [[nodiscard]] const dynamics::TelemetrySnapshot& telemetry(std::size_t system_index) const;
         [[nodiscard]] bool initialized() const noexcept;
         [[nodiscard]] std::span<const dynamics::MeshOutputBinding> mesh_bindings() const noexcept;
         [[nodiscard]] std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings() const noexcept;
-        [[nodiscard]] std::span<const dynamics::GpuVisualizationDatasetView> visualizations() const noexcept;
+        [[nodiscard]] std::span<const dynamics::GpuVisualization> visualizations() const noexcept;
+        [[nodiscard]] const dynamics::DynamicFrame& published_frame() const noexcept;
+        [[nodiscard]] const dynamics::FrozenFrame* frozen_frame() const noexcept;
+        [[nodiscard]] dynamics::FrozenFrame telemetry_frame() const;
 
         [[nodiscard]] bool running() const noexcept;
         [[nodiscard]] dynamics::SimulationTimeline timeline() const noexcept;
+        [[nodiscard]] dynamics::PresentationTimeline presentation_timeline() const noexcept;
         void start();
         void pause();
         void step();
+        void evaluate(std::uint64_t simulation_step);
+        void evaluate_time(double simulation_seconds);
         void reset();
         void apply_parameter_changes(std::size_t system_index, std::span<const scene::DynamicParameterSetting> parameters, bool reset);
 
@@ -130,6 +153,8 @@ namespace spectra {
             VulkanRuntime& runtime;
             SceneDocument& document;
         } context;
+
+        dynamics::FrozenFrameRuntime frozen;
 
         struct {
             bool initialized{};
@@ -149,6 +174,8 @@ namespace spectra {
 
         struct {
             std::uint64_t simulation_step{};
+            std::uint64_t presentation_frame{};
+            double presentation_seconds{};
             std::chrono::duration<double> accumulator{};
             bool playing{};
         } clock;
@@ -157,8 +184,10 @@ namespace spectra {
             dynamics::DynamicFrame frame{};
             bool frame_pending{};
             DynamicSystemRuntime* publishing_system{};
-            dynamics::DynamicFrame* publishing_frame{};
-            std::vector<dynamics::GpuVisualizationDatasetView> visualizations{};
+            std::vector<PendingDatasetCommit> dataset_commits{};
+            std::vector<PendingTelemetryCommit> telemetry_commits{};
+            std::string callback_error{};
+            bool frozen_frame_pending{};
         } publication;
 
         struct {
@@ -175,15 +204,17 @@ namespace spectra {
         void flush_telemetry(DynamicSystemRuntime& system);
         [[nodiscard]] DynamicDatasetRuntime& dataset_runtime(DynamicSystemRuntime& system, std::uint64_t dataset_index);
         void apply_parameters(DynamicSystemRuntime& system);
-        void commit_dataset(DynamicSystemRuntime& system, DynamicDatasetRuntime& dataset, const SpectraPluginDatasetCommit& commit, dynamics::DynamicFrame& frame);
+        void append_dataset(const PendingDatasetCommit& pending, dynamics::DynamicFrame& frame) const;
+        void abort_publication(std::size_t first_dataset_commit = 0, std::size_t first_telemetry_commit = 0);
+        void commit_publication(dynamics::DynamicFrame& frame);
         void publish_frame(std::uint64_t simulation_step);
         void step_to(std::uint64_t target_step);
         void reset_systems();
         void evaluate_frame(std::uint64_t target_step);
         void reset_simulation();
         void advance_one_step();
-        static void collect_dataset(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit);
-        static void collect_capacity(void* context, std::uint64_t dataset_index, std::uint64_t capacity, std::uint64_t secondary_capacity);
-        static void collect_telemetry(void* context, const SpectraPluginTelemetryCommit* commit);
+        static SpectraPluginResult collect_dataset(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept;
+        static SpectraPluginResult collect_capacity(void* context, std::uint64_t dataset_index, std::uint64_t capacity, std::uint64_t secondary_capacity) noexcept;
+        static SpectraPluginResult collect_telemetry(void* context, const SpectraPluginTelemetryCommit* commit) noexcept;
     };
 } // namespace spectra

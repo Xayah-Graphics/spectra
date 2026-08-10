@@ -98,6 +98,11 @@ namespace spectra::scene {
         friend auto operator<=>(const AssetReference&, const AssetReference&) = default;
     };
 
+    export struct SourceReference {
+        std::string path{};
+        friend auto operator<=>(const SourceReference&, const SourceReference&) = default;
+    };
+
     export enum class SpectrumColorSpace : std::uint8_t {
         Srgb,
         Rec2020,
@@ -106,6 +111,7 @@ namespace spectra::scene {
 
     export struct TriangleMeshGeometry {
         AssetReference asset{};
+        SourceReference source{};
         std::vector<math::Float3> positions{};
         std::vector<math::Float3> normals{};
         std::vector<math::Float3> tangents{};
@@ -330,6 +336,7 @@ namespace spectra::scene {
 
     export struct ImageTexture {
         AssetReference asset{};
+        SourceReference source{};
         TextureMapping mapping{};
         TextureWrapMode wrap{TextureWrapMode::Repeat};
         TextureChannel channel{TextureChannel::Luminance};
@@ -572,7 +579,6 @@ namespace spectra::scene {
     export struct Primitive {
         GeometryId geometry{};
         SphereSetId spheres{};
-        VolumeId volume{};
         MaterialId material{};
         LightId area_light{};
         MediumInterface media{};
@@ -719,7 +725,7 @@ namespace spectra::scene {
     };
 
 
-    export inline constexpr std::uint32_t current_scene_format_version = 24;
+    export inline constexpr std::uint32_t current_scene_format_version = 28;
 
     export struct DynamicSystemId {
         std::string value{};
@@ -749,6 +755,11 @@ namespace spectra::scene {
         Tested,
         XRay,
         Overlay,
+    };
+
+    export enum class VisualizationCompositionDomain : std::uint8_t {
+        SceneLinear,
+        DisplayReferred,
     };
 
     export enum class PointGlyph : std::uint8_t {
@@ -809,6 +820,7 @@ namespace spectra::scene {
         std::string name{};
         VisualizationViewKind kind{VisualizationViewKind::Segments};
         VisualizationDepthMode depth_mode{VisualizationDepthMode::Tested};
+        VisualizationCompositionDomain composition_domain{VisualizationCompositionDomain::DisplayReferred};
         InstanceId anchor{};
         std::string channel_id{};
         math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
@@ -820,6 +832,8 @@ namespace spectra::scene {
         float scalar_maximum{1.0f};
         std::uint32_t sampling{8};
         std::uint32_t slice_axis{2};
+        std::uint32_t distortion_iterations{8};
+        float distortion_tolerance{1.0e-6f};
         PointGlyph point_glyph{PointGlyph::ScreenDisc};
         PointShading point_shading{PointShading::Unlit};
         VisualizationColorSource color_source{VisualizationColorSource::Element};
@@ -853,6 +867,12 @@ namespace spectra::scene {
         std::uint64_t seed{};
         std::vector<DynamicSystem> systems{};
         friend auto operator<=>(const DynamicSetup&, const DynamicSetup&) = default;
+    };
+
+    export struct FrozenDynamicFrame {
+        AssetReference asset{};
+        std::vector<std::byte> payload{};
+        friend auto operator<=>(const FrozenDynamicFrame&, const FrozenDynamicFrame&) = default;
     };
 
     export struct SceneResources {
@@ -924,6 +944,7 @@ namespace spectra::scene {
         SamplerId active_sampler{};
         TransportSettings transport{};
         std::optional<DynamicSetup> dynamic_setup{};
+        std::optional<FrozenDynamicFrame> frozen_dynamic_frame{};
 
         [[nodiscard]] SceneView view() const noexcept;
         [[nodiscard]] const Camera& camera() const noexcept;

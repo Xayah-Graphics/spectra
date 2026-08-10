@@ -15,10 +15,11 @@ namespace spectra {
     static_assert(sizeof(RasterCompositeTexture) == 16);
     static_assert(sizeof(RasterDirectionMixTexture) == 32);
     static_assert(sizeof(RasterBilerpTexture) == 80);
-    static_assert(sizeof(RasterAreaLight) == 16);
-    static_assert(sizeof(RasterSceneBindings) == 128);
-    static_assert(sizeof(RasterVolume) == 256);
-    static_assert(sizeof(RasterVolumeLight) == 80);
+    static_assert(sizeof(RasterAreaLight) == 32);
+    static_assert(sizeof(RasterLight) == 176);
+    static_assert(sizeof(RasterRayPrimitive) == 80);
+    static_assert(sizeof(RasterSceneBindings) == 144);
+    static_assert(sizeof(RasterVolume) == 272);
 
     namespace {
         constexpr std::uint32_t invalid_raster_index = std::numeric_limits<std::uint32_t>::max();
@@ -357,29 +358,6 @@ namespace spectra {
             return result;
         }
 
-        template <typename Element>
-        [[nodiscard]] GpuBuffer upload_raster_buffer(VulkanRuntime& runtime, const std::span<const Element> elements, const vk::BufferUsageFlags usage) {
-            GpuBuffer staging = runtime.resources.create_buffer(elements.size_bytes(), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-            std::memcpy(staging.mapped, elements.data(), elements.size_bytes());
-            GpuBuffer destination = runtime.resources.create_buffer(elements.size_bytes(), usage | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            runtime.resources.submit_immediate([&staging, &destination, usage](const vk::raii::CommandBuffer& command_buffer) {
-                command_buffer.copyBuffer(*staging.buffer, *destination.buffer, vk::BufferCopy{0, 0, staging.size});
-                const vk::BufferMemoryBarrier2 upload_dependency{
-                    vk::PipelineStageFlagBits2::eCopy,
-                    vk::AccessFlagBits2::eTransferWrite,
-                    static_cast<bool>(usage & vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR) ? vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR : vk::PipelineStageFlagBits2::eAllCommands,
-                    static_cast<bool>(usage & vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR) ? vk::AccessFlagBits2::eAccelerationStructureReadKHR : vk::AccessFlagBits2::eShaderStorageRead,
-                    vk::QueueFamilyIgnored,
-                    vk::QueueFamilyIgnored,
-                    *destination.buffer,
-                    0,
-                    destination.size,
-                };
-                command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 1, &upload_dependency});
-            });
-            return destination;
-        }
-
         template <class Sample>
         [[nodiscard]] std::vector<float> build_raster_majorant(const math::UInt3 resolution, Sample&& sample) {
             std::vector<float> majorant(16u * 16u * 16u);
@@ -433,16 +411,231 @@ namespace spectra {
         }
 
 
-        [[nodiscard]] std::vector<RasterTransform> compile_raster_transforms(const Rasterizer& renderer, const scene::SceneView scene) {
-            std::vector<RasterTransform> transforms{};
-            transforms.reserve(renderer.context.gpu_scene.view().primitives.size());
+        [[nodiscard]] float raster_emission_texture_luminance(const scene::SceneView scene, const scene::TextureId id) {
+            if (id.value == 0) return 1.0f;
+            const scene::Texture& texture    = *std::ranges::find(scene.resources.textures, id, &scene::Texture::id);
+            const scene::ImageTexture& image = std::get<scene::ImageTexture>(texture.data);
+            if (image.invert) throw std::runtime_error(std::format("Light Texture {} cannot use inversion", texture.name));
+            math::Float3 luminance{};
+            for (std::size_t index = 0; index != static_cast<std::size_t>(image.width) * image.height; ++index) luminance = luminance + raster_linear_srgb({image.texels[index].x, image.texels[index].y, image.texels[index].z}, texture.color_space == scene::TextureColorSpace::Rec2020 ? scene::SpectrumColorSpace::Rec2020 : texture.color_space == scene::TextureColorSpace::Aces2065_1 ? scene::SpectrumColorSpace::Aces2065_1 : scene::SpectrumColorSpace::Srgb);
+            luminance = luminance / static_cast<float>(image.width * image.height) * image.scale;
+            return 0.2126f * luminance.x + 0.7152f * luminance.y + 0.0722f * luminance.z;
+        }
+
+        void set_raster_light_transform(RasterLight& light, const math::Transform& transform) noexcept {
+            light.transform_row_0 = {transform.matrix[0], transform.matrix[1], transform.matrix[2], transform.matrix[3]};
+            light.transform_row_1 = {transform.matrix[4], transform.matrix[5], transform.matrix[6], transform.matrix[7]};
+            light.transform_row_2 = {transform.matrix[8], transform.matrix[9], transform.matrix[10], transform.matrix[11]};
+        }
+
+        [[nodiscard]] std::vector<RasterLight> compile_raster_lights(const Rasterizer& renderer, const scene::SceneView scene, const RasterTextureCompilation& textures, std::vector<RasterAreaLight>& surface_lights, std::vector<RasterDynamicAreaLightRange>& dynamic_area_lights) {
+            std::vector<RasterLight> lights{};
+            const float scene_radius  = scene.bounds().radius();
+            const auto texture_handle = [&](const scene::TextureId id) { return id.value == 0 ? invalid_raster_index : textures.handles[raster_texture_source_index(scene, id)]; };
+            surface_lights.reserve(renderer.context.gpu_scene.view().primitives.size());
+            for (const scene::Light& source : scene.resources.lights)
+                std::visit(
+                    [&](const auto& data) {
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiffuseAreaLight>)
+                            return;
+                        else {
+                            const scene::SpectrumParameter& spectrum = [&]() -> const scene::SpectrumParameter& {
+                                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight> || std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>)
+                                    return data.intensity;
+                                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>)
+                                    return data.radiance;
+                                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>)
+                                    return data.environment.radiance;
+                                else
+                                    return data.radiance;
+                            }();
+                            const float scale = [&]() {
+                                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>)
+                                    return data.environment.scale;
+                                else
+                                    return data.scale;
+                            }();
+                            const math::Float3 radiance     = raster_spectrum_rgb(spectrum) * scale;
+                            const float selection_luminance = 0.2126f * radiance.x + 0.7152f * radiance.y + 0.0722f * radiance.z;
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>) {
+                                if (data.environment.emission_texture.value == 0) throw std::runtime_error("Portal Infinite Light requires an Environment Image Texture");
+                                const math::Transform inverse = data.environment.transform.inverse();
+                                for (const std::array<math::Float3, 4>& portal : data.portals) {
+                                    RasterLight light{};
+                                    const math::Float3 edge_0 = portal[1] - portal[0];
+                                    const math::Float3 edge_1 = portal[3] - portal[0];
+                                    light.metadata            = {8, 1, texture_handle(data.environment.emission_texture), 0};
+                                    light.radiance            = {radiance.x, radiance.y, radiance.z, selection_luminance * raster_emission_texture_luminance(scene, data.environment.emission_texture) * edge_0.cross(edge_1).length()};
+                                    light.position            = {portal[0].x, portal[0].y, portal[0].z, 0.0f};
+                                    light.direction           = {edge_0.x, edge_0.y, edge_0.z, 0.0f};
+                                    light.parameters          = {edge_1.x, edge_1.y, edge_1.z, edge_0.cross(edge_1).length()};
+                                    set_raster_light_transform(light, inverse);
+                                    lights.push_back(light);
+                                }
+                            } else {
+                                RasterLight light{};
+                                const float texture_luminance = [&]() {
+                                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::InfiniteLight>)
+                                        return raster_emission_texture_luminance(scene, data.emission_texture);
+                                    else
+                                        return 1.0f;
+                                }();
+                                light.radiance = {radiance.x, radiance.y, radiance.z, selection_luminance * texture_luminance};
+                                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight> || std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) {
+                                    const math::Float3 position  = data.transform.transform_point({});
+                                    light.metadata[0]            = std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight> ? 0u : 1u;
+                                    light.position               = {position.x, position.y, position.z, 1.0f};
+                                    const math::Float3 direction = -data.transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
+                                    light.direction              = {direction.x, direction.y, direction.z, 0.0f};
+                                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) light.parameters = {std::cos(data.cone_angle * std::numbers::pi_v<float> / 180.0f), std::cos((data.cone_angle - data.cone_delta) * std::numbers::pi_v<float> / 180.0f), 0.0f, 0.0f};
+                                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>) {
+                                    light.metadata[0]            = 2;
+                                    const math::Float3 direction = -data.transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
+                                    light.direction              = {direction.x, direction.y, direction.z, 0.0f};
+                                } else {
+                                    light.metadata = {7, 0, texture_handle(data.emission_texture), 0};
+                                    set_raster_light_transform(light, data.transform.inverse());
+                                }
+                                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight>)
+                                    light.radiance[3] *= 4.0f * std::numbers::pi_v<float>;
+                                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>)
+                                    light.radiance[3] *= 2.0f * std::numbers::pi_v<float> * (1.0f - light.parameters[1] + (light.parameters[1] - light.parameters[0]) * 0.5f);
+                                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>)
+                                    light.radiance[3] *= std::numbers::pi_v<float> * scene_radius * scene_radius;
+                                else
+                                    light.radiance[3] *= 4.0f * std::numbers::pi_v<float> * std::numbers::pi_v<float> * scene_radius * scene_radius;
+                                lights.push_back(light);
+                            }
+                        }
+                    },
+                    source.data);
+
             for (const GpuScenePrimitive& gpu_primitive : renderer.context.gpu_scene.view().primitives) {
+                surface_lights.emplace_back();
                 const scene::Instance& instance   = scene.resources.instances[gpu_primitive.scene_instance_index];
                 const scene::Prototype& prototype = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
-                const math::Transform transform   = instance.transform * prototype.primitives[gpu_primitive.prototype_primitive_index].transform;
-                transforms.push_back(RasterTransform{{transform.matrix[0], transform.matrix[1], transform.matrix[2], transform.matrix[3]}, {transform.matrix[4], transform.matrix[5], transform.matrix[6], transform.matrix[7]}, {transform.matrix[8], transform.matrix[9], transform.matrix[10], transform.matrix[11]}, {transform.matrix[12], transform.matrix[13], transform.matrix[14], transform.matrix[15]}});
+                const scene::Primitive& primitive = prototype.primitives[gpu_primitive.prototype_primitive_index];
+                if (primitive.area_light.value == 0) continue;
+                const scene::DiffuseAreaLight& source = std::get<scene::DiffuseAreaLight>(std::ranges::find(scene.resources.lights, primitive.area_light, &scene::Light::id)->data);
+                const math::Transform transform       = instance.transform * primitive.transform;
+                const math::Float3 radiance          = raster_spectrum_rgb(source.radiance);
+                const float selection_luminance      = 0.2126f * radiance.x + 0.7152f * radiance.y + 0.0722f * radiance.z;
+                const float texture_luminance        = raster_emission_texture_luminance(scene, source.emission_texture);
+                const std::uint32_t flags            = (source.sidedness == scene::EmissionSidedness::Both ? 1u : 0u) | (primitive.reverse_orientation ? 2u : 0u);
+                const std::uint32_t emission_texture = texture_handle(source.emission_texture);
+                surface_lights.back()                = RasterAreaLight{{radiance.x * source.scale, radiance.y * source.scale, radiance.z * source.scale, 0.0f}, {emission_texture, flags, 0, 0}};
+                const std::uint32_t first_light      = static_cast<std::uint32_t>(lights.size());
+                std::uint32_t capacity{};
+                std::uint32_t range_kind{};
+                std::uint32_t light_kind{};
+                std::uint32_t attribute_mask{};
+                std::array<float, 4> geometry_parameters{};
+                if (gpu_primitive.kind == GpuScenePrimitiveKind::SphereSet) {
+                    const GpuSphereSet& spheres = renderer.context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
+                    capacity                    = spheres.sphere_capacity;
+                    range_kind                  = 1;
+                    light_kind                  = 4;
+                    for (std::uint32_t index = 0; index != capacity; ++index) {
+                        RasterLight light{};
+                        light.metadata   = {4, flags, emission_texture, 3};
+                        light.radiance   = {radiance.x * source.scale, radiance.y * source.scale, radiance.z * source.scale, 1.0f};
+                        light.parameters = {1.0f, -1.0f, 1.0f, 2.0f * std::numbers::pi_v<float>};
+                        light.selection[1] = 1.0f;
+                        set_raster_light_transform(light, transform);
+                        lights.push_back(light);
+                    }
+                } else {
+                    const scene::Geometry& geometry = *std::ranges::find(scene.resources.geometries, primitive.geometry, &scene::Geometry::id);
+                    const GpuGeometry& gpu_geometry = renderer.context.gpu_scene.view().geometries[gpu_primitive.resource_index];
+                    attribute_mask                 = gpu_geometry.attribute_mask;
+                    if (const scene::SphereGeometry* sphere = std::get_if<scene::SphereGeometry>(&geometry.data)) {
+                        capacity            = 1;
+                        range_kind          = 2;
+                        light_kind          = 4;
+                        geometry_parameters = {sphere->radius, sphere->z_min, sphere->z_max, sphere->phi_max * std::numbers::pi_v<float> / 180.0f};
+                    } else if (const scene::DiskGeometry* disk = std::get_if<scene::DiskGeometry>(&geometry.data)) {
+                        capacity            = 1;
+                        range_kind          = 2;
+                        light_kind          = 5;
+                        geometry_parameters = {disk->height, disk->radius, disk->inner_radius, disk->phi_max * std::numbers::pi_v<float> / 180.0f};
+                    } else if (const scene::CylinderGeometry* cylinder = std::get_if<scene::CylinderGeometry>(&geometry.data)) {
+                        capacity            = 1;
+                        range_kind          = 2;
+                        light_kind          = 6;
+                        geometry_parameters = {cylinder->radius, cylinder->z_min, cylinder->z_max, cylinder->phi_max * std::numbers::pi_v<float> / 180.0f};
+                    } else {
+                        capacity   = gpu_geometry.index_capacity / 3u;
+                        range_kind = 0;
+                        light_kind = 3;
+                    }
+                    for (std::uint32_t element = 0; element != capacity; ++element) {
+                        RasterLight light{};
+                        light.metadata   = {light_kind, flags, emission_texture, 3};
+                        light.radiance   = {radiance.x * source.scale, radiance.y * source.scale, radiance.z * source.scale, 1.0f};
+                        light.parameters = range_kind == 0 ? std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f} : geometry_parameters;
+                        light.selection[1] = 1.0f;
+                        set_raster_light_transform(light, transform);
+                        lights.push_back(light);
+                    }
+                }
+                dynamic_area_lights.push_back({gpu_primitive.scene_primitive_index, gpu_primitive.resource_index, first_light, capacity, range_kind, light_kind, flags, emission_texture, attribute_mask, geometry_parameters, {source.scale, source.power.value_or(-1.0f), source.sidedness == scene::EmissionSidedness::Both ? 2.0f : 1.0f, texture_luminance}, {radiance.x, radiance.y, radiance.z, selection_luminance}});
             }
-            return transforms;
+            std::erase_if(lights, [](const RasterLight& light) { return light.radiance[3] == 0.0f; });
+            float total_weight{};
+            for (const RasterLight& light : lights) total_weight += light.radiance[3];
+            float cumulative_weight{};
+            for (RasterLight& light : lights) {
+                cumulative_weight += light.radiance[3];
+                light.selection[0] = cumulative_weight / total_weight;
+                light.selection[1] = light.radiance[3];
+                light.radiance[3]  = 0.0f;
+            }
+            if (!lights.empty()) lights.back().selection[0] = 1.0f;
+            return lights;
+        }
+
+        [[nodiscard]] std::vector<RasterRayPrimitive> compile_raster_ray_primitives(const Rasterizer& renderer, const scene::SceneView scene, const RasterTextureCompilation& textures) {
+            std::vector<RasterRayPrimitive> result{};
+            result.reserve(renderer.context.gpu_scene.view().acceleration_primitive_indices.size());
+            for (const std::uint32_t scene_primitive_index : renderer.context.gpu_scene.view().acceleration_primitive_indices) {
+                const GpuScenePrimitive& gpu_primitive = renderer.context.gpu_scene.view().primitives[scene_primitive_index];
+                const scene::Instance& instance = scene.resources.instances[gpu_primitive.scene_instance_index];
+                const scene::Prototype& prototype = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
+                const scene::Primitive& primitive = prototype.primitives[gpu_primitive.prototype_primitive_index];
+                RasterRayPrimitive record{};
+                record.metadata[1] = primitive.alpha.value == 0 ? invalid_raster_index : textures.handles[raster_texture_source_index(scene, primitive.alpha)];
+                record.metadata[3] = primitive.reverse_orientation ? 1u : 0u;
+                record.scene_primitive_index = gpu_primitive.scene_primitive_index;
+                if (gpu_primitive.kind == GpuScenePrimitiveKind::SphereSet) {
+                    const GpuSphereSet& spheres = renderer.context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
+                    record.positions = spheres.positions_descriptor;
+                    record.radii = spheres.radii_descriptor;
+                    record.metadata[0] = 4;
+                } else {
+                    const GpuGeometry& gpu_geometry = renderer.context.gpu_scene.view().geometries[gpu_primitive.resource_index];
+                    const scene::Geometry& geometry = *std::ranges::find(scene.resources.geometries, primitive.geometry, &scene::Geometry::id);
+                    record.positions = gpu_geometry.positions_descriptor;
+                    record.texture_coordinates = gpu_geometry.texture_coordinates_descriptor;
+                    record.indices = gpu_geometry.indices_descriptor;
+                    record.metadata[2] = gpu_geometry.attribute_mask;
+                    std::visit(
+                        [&](const auto& data) {
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SphereGeometry>) {
+                                record.metadata[0] = 1;
+                                record.parameters = {data.radius, data.z_min, data.z_max, data.phi_max * std::numbers::pi_v<float> / 180.0f};
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiskGeometry>) {
+                                record.metadata[0] = 2;
+                                record.parameters = {data.height, data.radius, data.inner_radius, data.phi_max * std::numbers::pi_v<float> / 180.0f};
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::CylinderGeometry>) {
+                                record.metadata[0] = 3;
+                                record.parameters = {data.radius, data.z_min, data.z_max, data.phi_max * std::numbers::pi_v<float> / 180.0f};
+                            }
+                        },
+                        geometry.data);
+                }
+                result.push_back(record);
+            }
+            return result;
         }
 
     } // namespace
@@ -451,47 +644,54 @@ namespace spectra {
 
 namespace spectra {
     void Rasterizer::initialize_scene(const scene::SceneView scene) {
-        this->scene.material_descriptor          = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.face_material_descriptor     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.area_light_descriptor        = this->context.runtime.resources.allocate_resource_descriptor();
+        if (scene.camera.medium.value != 0) throw std::runtime_error("Rasterizer does not support camera media; use Path Tracer");
+        for (const scene::Instance& instance : scene.resources.instances) {
+            if (!instance.visible) continue;
+            const scene::Prototype& prototype = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
+            for (const scene::Primitive& primitive : prototype.primitives)
+                for (const scene::MediumId medium_id : {primitive.media.inside, primitive.media.outside}) {
+                    if (medium_id.value == 0) continue;
+                    const scene::Medium& medium = *std::ranges::find(scene.resources.media, medium_id, &scene::Medium::id);
+                    if (std::holds_alternative<scene::HomogeneousMedium>(medium.data)) throw std::runtime_error("Rasterizer does not support homogeneous boundary media; use Path Tracer");
+                }
+        }
         this->scene.zero_volume_field_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.primitives_descriptor        = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.transforms_descriptor        = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.bindings_descriptor          = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.volumes_descriptor           = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.volume_lights_descriptor     = this->context.runtime.resources.allocate_resource_descriptor();
         this->scene.uploaded_revision            = scene.revision;
         this->renderer.camera                    = scene.camera;
+        this->renderer.sampler                   = scene.sampler;
         this->renderer.film_exposure             = scene.film.exposure;
-        for (DescriptorHandle& descriptor : this->scene.texture_descriptors) descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        this->renderer.film_resolution           = scene.film.resolution;
+        this->renderer.film_pixel_minimum        = scene.film.pixel_minimum;
+        this->renderer.film_pixel_maximum        = scene.film.pixel_maximum;
         const std::vector<std::uint32_t> code = load_spirv(this->context.shader_directory / "volume_majorant.spv");
         this->scene.volume_majorant_shader    = vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, code.size() * sizeof(std::uint32_t), code.data(), "build_majorant"}};
+        const auto dynamic_shader = [this](const std::string_view file, const char* entry) {
+            const std::vector<std::uint32_t> shader_code = load_spirv(this->context.shader_directory / file);
+            return vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, shader_code.size() * sizeof(std::uint32_t), shader_code.data(), entry}};
+        };
+        this->scene.dynamic_light_shapes_shader    = dynamic_shader("raster_dynamic_area_light_shapes.spv", "update_raster_dynamic_area_light_shapes");
+        this->scene.dynamic_light_finalize_shader  = dynamic_shader("raster_dynamic_area_light_finalize.spv", "finalize_raster_dynamic_area_light_range");
+        this->scene.dynamic_light_selection_shader = dynamic_shader("raster_dynamic_light_selection.spv", "rebuild_raster_dynamic_light_selection");
         const std::array<math::Float3, 1> zero{};
-        this->scene.zero_volume_field_buffer = upload_raster_buffer(this->context.runtime, std::span<const math::Float3>{zero}, vk::BufferUsageFlagBits::eStorageBuffer);
-        this->context.runtime.resources.write_buffer_descriptor(this->scene.zero_volume_field_descriptor, vk::DescriptorType::eStorageBuffer, this->scene.zero_volume_field_buffer);
-        this->upload_scene(scene);
+        this->context.runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
+            this->scene.zero_volume_field_buffer = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const math::Float3>{zero}, vk::BufferUsageFlagBits::eStorageBuffer);
+            this->context.runtime.resources.write_buffer_descriptor(this->scene.zero_volume_field_descriptor, vk::DescriptorType::eStorageBuffer, this->scene.zero_volume_field_buffer);
+            this->upload_scene(scene, command_buffer);
+        });
     }
 
-    void Rasterizer::upload_scene(const scene::SceneView scene, const vk::raii::CommandBuffer* command_buffer) {
+    void Rasterizer::upload_scene(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         RasterTextureCompilation textures     = compile_raster_textures(*this, scene);
-        this->scene.texture_count             = static_cast<std::uint32_t>(scene.resources.textures.size());
-        this->scene.texture_stack_size        = textures.maximum_stack_size;
+        const std::uint32_t texture_count      = static_cast<std::uint32_t>(scene.resources.textures.size());
+        const std::uint32_t texture_stack_size = textures.maximum_stack_size;
         std::vector<RasterMaterial> materials = compile_raster_materials(scene, textures);
 
         std::vector<RasterAreaLight> area_lights{};
-        area_lights.reserve(scene.resources.lights.size());
-        for (const scene::Light& light : scene.resources.lights) {
-            math::Float3 emission{};
-            if (const scene::DiffuseAreaLight* area = std::get_if<scene::DiffuseAreaLight>(&light.data)) {
-                emission = raster_spectrum_rgb(area->radiance);
-                emission = {emission.x * area->scale, emission.y * area->scale, emission.z * area->scale};
-            }
-            area_lights.push_back(RasterAreaLight{{emission.x, emission.y, emission.z, 0.0f}});
-        }
+        std::vector<RasterDynamicAreaLightRange> dynamic_area_lights{};
+        std::vector<RasterLight> lights = compile_raster_lights(*this, scene, textures, area_lights, dynamic_area_lights);
         if (area_lights.empty()) area_lights.emplace_back();
 
         std::vector<RasterPrimitive> primitives{};
-        std::vector<RasterTransform> transforms = compile_raster_transforms(*this, scene);
         std::vector<std::uint32_t> face_materials{};
         primitives.reserve(this->context.gpu_scene.view().primitives.size());
         for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.view().primitives) {
@@ -507,8 +707,7 @@ namespace spectra {
             const std::vector<scene::Material>::const_iterator material = std::ranges::find(scene.resources.materials, primitive.material, &scene::Material::id);
             std::uint32_t area_light                                    = std::numeric_limits<std::uint32_t>::max();
             if (primitive.area_light.value != 0) {
-                const std::vector<scene::Light>::const_iterator light = std::ranges::find(scene.resources.lights, primitive.area_light, &scene::Light::id);
-                area_light                                            = static_cast<std::uint32_t>(light - scene.resources.lights.begin());
+                area_light = static_cast<std::uint32_t>(primitives.size());
             }
             const std::uint32_t transform_index = static_cast<std::uint32_t>(primitives.size());
             const std::uint32_t alpha_texture   = primitive.alpha.value == 0 ? invalid_raster_index : textures.handles[raster_texture_source_index(scene, primitive.alpha)];
@@ -516,16 +715,14 @@ namespace spectra {
         }
         if (primitives.empty()) {
             primitives.emplace_back();
-            transforms.emplace_back();
         }
         if (face_materials.empty()) face_materials.emplace_back();
 
-        GpuBuffer new_primitives         = command_buffer ? upload_raster_buffer(this->context.runtime, *command_buffer, std::span<const RasterPrimitive>{primitives}, vk::BufferUsageFlagBits::eStorageBuffer) : upload_raster_buffer(this->context.runtime, std::span<const RasterPrimitive>{primitives}, vk::BufferUsageFlagBits::eStorageBuffer);
-        GpuBuffer new_transforms         = command_buffer ? upload_raster_buffer(this->context.runtime, *command_buffer, std::span<const RasterTransform>{transforms}, vk::BufferUsageFlagBits::eStorageBuffer) : upload_raster_buffer(this->context.runtime, std::span<const RasterTransform>{transforms}, vk::BufferUsageFlagBits::eStorageBuffer);
-        GpuBuffer new_materials          = command_buffer ? upload_raster_buffer(this->context.runtime, *command_buffer, std::span<const RasterMaterial>{materials}, vk::BufferUsageFlagBits::eStorageBuffer) : upload_raster_buffer(this->context.runtime, std::span<const RasterMaterial>{materials}, vk::BufferUsageFlagBits::eStorageBuffer);
-        GpuBuffer new_face_materials     = command_buffer ? upload_raster_buffer(this->context.runtime, *command_buffer, std::span<const std::uint32_t>{face_materials}, vk::BufferUsageFlagBits::eStorageBuffer) : upload_raster_buffer(this->context.runtime, std::span<const std::uint32_t>{face_materials}, vk::BufferUsageFlagBits::eStorageBuffer);
-        GpuBuffer new_area_lights        = command_buffer ? upload_raster_buffer(this->context.runtime, *command_buffer, std::span<const RasterAreaLight>{area_lights}, vk::BufferUsageFlagBits::eStorageBuffer) : upload_raster_buffer(this->context.runtime, std::span<const RasterAreaLight>{area_lights}, vk::BufferUsageFlagBits::eStorageBuffer);
-        const auto upload_texture_buffer = [this, command_buffer]<typename Element>(const std::span<const Element> elements) { return command_buffer ? upload_raster_buffer(this->context.runtime, *command_buffer, elements, vk::BufferUsageFlagBits::eStorageBuffer) : upload_raster_buffer(this->context.runtime, elements, vk::BufferUsageFlagBits::eStorageBuffer); };
+        GpuBuffer new_primitives         = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const RasterPrimitive>{primitives}, vk::BufferUsageFlagBits::eStorageBuffer);
+        GpuBuffer new_materials          = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const RasterMaterial>{materials}, vk::BufferUsageFlagBits::eStorageBuffer);
+        GpuBuffer new_face_materials     = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const std::uint32_t>{face_materials}, vk::BufferUsageFlagBits::eStorageBuffer);
+        GpuBuffer new_area_lights        = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const RasterAreaLight>{area_lights}, vk::BufferUsageFlagBits::eStorageBuffer);
+        const auto upload_texture_buffer = [this, &command_buffer]<typename Element>(const std::span<const Element> elements) { return upload_raster_buffer(this->context.runtime, command_buffer, elements, vk::BufferUsageFlagBits::eStorageBuffer); };
         std::vector<RasterVolume> raster_volumes{};
         std::vector<VolumeResources> new_volume_gpu_data{};
         raster_volumes.reserve(scene.resources.volumes.size());
@@ -572,7 +769,7 @@ namespace spectra {
                     } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::RgbGridVolume>) {
                         gpu_data.resolution      = data.resolution;
                         record.metadata          = {1, data.resolution.x, data.resolution.y, data.resolution.z};
-                        record.majorant_metadata = {16, 16, 16, 0};
+                        record.majorant_metadata = {16, 16, 16, (data.sigma_a.empty() ? 0u : 1u) | (data.sigma_s.empty() ? 0u : 2u) | (data.emission.empty() ? 0u : 4u) | (std::to_underlying(data.color_space) << 8)};
                         majorant                 = build_raster_majorant(data.resolution, [&data](const std::size_t index) {
                             const math::Float3 absorption = data.sigma_a.empty() ? math::Float3{1.0f, 1.0f, 1.0f} : data.sigma_a[index];
                             const math::Float3 scattering = data.sigma_s.empty() ? math::Float3{1.0f, 1.0f, 1.0f} : data.sigma_s[index];
@@ -581,8 +778,7 @@ namespace spectra {
                     } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ProceduralCloudVolume>) {
                         record.metadata          = {2, 0, 0, 0};
                         record.majorant_metadata = {16, 16, 16, 0};
-                        record.scales[0] *= data.density;
-                        record.temperature[3] = data.frequency;
+                        record.procedural_parameters = {data.density, data.wispiness, data.frequency, 0.0f};
                         std::ranges::fill(majorant, 1.0f);
                     } else
                         throw std::runtime_error("Rasterizer requires dense or procedural Volume data; NanoVDB is currently a Path-only resource");
@@ -590,7 +786,7 @@ namespace spectra {
                 volume.data);
             gpu_data.majorant = upload_texture_buffer(std::span<const float>{majorant});
             this->context.runtime.resources.write_buffer_descriptor(gpu_data.majorant_descriptor, vk::DescriptorType::eStorageBuffer, gpu_data.majorant);
-            const auto field = [this, &shared](const GpuVolumeField field) {
+            const auto field = [this, &shared](const GpuVolumeField field) -> DescriptorHandle {
                 const std::size_t index = std::to_underlying(field);
                 return shared.field_present[index] ? shared.descriptors[index] : this->scene.zero_volume_field_descriptor;
             };
@@ -604,96 +800,16 @@ namespace spectra {
             raster_volumes.push_back(record);
             new_volume_gpu_data.push_back(std::move(gpu_data));
         }
-        this->scene.volume_count = static_cast<std::uint32_t>(raster_volumes.size());
+        const std::uint32_t volume_count = static_cast<std::uint32_t>(raster_volumes.size());
         if (raster_volumes.empty()) raster_volumes.emplace_back();
 
-        std::vector<RasterVolumeLight> volume_lights{};
-        for (const scene::Light& source : scene.resources.lights) {
-            if (std::holds_alternative<scene::DiffuseAreaLight>(source.data)) continue;
-            RasterVolumeLight light{};
-            std::visit(
-                [&](const auto& data) {
-                    const math::Float3 radiance = raster_spectrum_rgb([&]() -> const scene::SpectrumParameter& {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight> || std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>)
-                            return data.intensity;
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>)
-                            return data.radiance;
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiffuseAreaLight>)
-                            return data.radiance;
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>)
-                            return data.environment.radiance;
-                        else
-                            return data.radiance;
-                    }());
-                    const float scale           = [&]() {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>)
-                            return data.environment.scale;
-                        else
-                            return data.scale;
-                    }();
-                    light.radiance = {radiance.x * scale, radiance.y * scale, radiance.z * scale, 0.0f};
-                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight> || std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) {
-                        const std::array<float, 16>& transform = data.transform.matrix;
-                        light.metadata[0]                      = std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight> ? 0u : 1u;
-                        light.position                         = {transform[3], transform[7], transform[11], 1.0f};
-                        light.direction                        = {-transform[2], -transform[6], -transform[10], 0.0f};
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) light.parameters = {std::cos(data.cone_angle * std::numbers::pi_v<float> / 180.0f), std::cos((data.cone_angle - data.cone_delta) * std::numbers::pi_v<float> / 180.0f), 0.0f, 0.0f};
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>) {
-                        light.metadata[0]                      = 2;
-                        const std::array<float, 16>& transform = data.transform.matrix;
-                        light.direction                        = {-transform[2], -transform[6], -transform[10], 0.0f};
-                    } else
-                        light.metadata[0] = 4;
-                },
-                source.data);
-            volume_lights.push_back(light);
-        }
-        for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.view().primitives) {
-            const scene::Instance& instance   = scene.resources.instances[gpu_primitive.scene_instance_index];
-            const scene::Prototype& prototype = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
-            const scene::Primitive& primitive = prototype.primitives[gpu_primitive.prototype_primitive_index];
-            if (primitive.area_light.value == 0) continue;
-            if (gpu_primitive.kind != GpuScenePrimitiveKind::Geometry) throw std::runtime_error("Rasterizer does not bind a Diffuse Area Light to a SphereSet");
-            const scene::Light& source                = *std::ranges::find(scene.resources.lights, primitive.area_light, &scene::Light::id);
-            const scene::DiffuseAreaLight& area_light = std::get<scene::DiffuseAreaLight>(source.data);
-            const scene::Geometry& geometry           = *std::ranges::find(scene.resources.geometries, primitive.geometry, &scene::Geometry::id);
-            const math::Transform transform           = instance.transform * primitive.transform;
-            math::Float3 position                     = transform.transform_point(scene::geometry_bounds(geometry).center());
-            math::Float3 normal                       = transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
-            float area{};
-            if (const scene::TriangleMeshGeometry* mesh = std::get_if<scene::TriangleMeshGeometry>(&geometry.data)) {
-                math::Float3 weighted_position{};
-                math::Float3 weighted_normal{};
-                for (std::size_t index = 0; index < mesh->indices.size(); index += 3) {
-                    const math::Float3 first  = transform.transform_point(mesh->positions[mesh->indices[index]]);
-                    const math::Float3 second = transform.transform_point(mesh->positions[mesh->indices[index + 1]]);
-                    const math::Float3 third  = transform.transform_point(mesh->positions[mesh->indices[index + 2]]);
-                    const math::Float3 cross  = (second - first).cross(third - first);
-                    const float triangle_area = cross.length() * 0.5f;
-                    weighted_position         = weighted_position + (first + second + third) * (triangle_area / 3.0f);
-                    weighted_normal           = weighted_normal + cross;
-                    area += triangle_area;
-                }
-                if (area > 0.0f) position = weighted_position / area;
-                if (weighted_normal.length() > 0.0f) normal = weighted_normal.normalized();
-            } else
-                area = scene::surface_area(geometry, transform);
-            if (primitive.reverse_orientation) normal = -normal;
-            const math::Float3 radiance = raster_spectrum_rgb(area_light.radiance) * area_light.scale;
-            RasterVolumeLight light{};
-            light.metadata   = {3, area_light.sidedness == scene::EmissionSidedness::Both ? 1u : 0u, 0, 0};
-            light.position   = {position.x, position.y, position.z, 1.0f};
-            light.direction  = {normal.x, normal.y, normal.z, 0.0f};
-            light.radiance   = {radiance.x, radiance.y, radiance.z, 0.0f};
-            light.parameters = {area, 0.0f, 0.0f, 0.0f};
-            volume_lights.push_back(light);
-        }
-        this->scene.volume_light_count = static_cast<std::uint32_t>(volume_lights.size());
-        if (volume_lights.empty()) volume_lights.emplace_back();
-        GpuBuffer new_volume_buffer       = upload_texture_buffer(std::span<const RasterVolume>{raster_volumes});
-        GpuBuffer new_volume_light_buffer = upload_texture_buffer(std::span<const RasterVolumeLight>{volume_lights});
-        this->context.runtime.resources.write_buffer_descriptor(this->scene.volumes_descriptor, vk::DescriptorType::eStorageBuffer, new_volume_buffer);
-        this->context.runtime.resources.write_buffer_descriptor(this->scene.volume_lights_descriptor, vk::DescriptorType::eStorageBuffer, new_volume_light_buffer);
+        const std::uint32_t light_count = static_cast<std::uint32_t>(lights.size());
+        if (lights.empty()) lights.emplace_back();
+        std::vector<RasterRayPrimitive> ray_primitives = compile_raster_ray_primitives(*this, scene, textures);
+        if (ray_primitives.empty()) ray_primitives.emplace_back();
+        GpuBuffer new_volume_buffer        = upload_texture_buffer(std::span<const RasterVolume>{raster_volumes});
+        GpuBuffer new_light_buffer         = upload_texture_buffer(std::span<const RasterLight>{lights});
+        GpuBuffer new_ray_primitive_buffer = upload_texture_buffer(std::span<const RasterRayPrimitive>{ray_primitives});
         std::array<GpuBuffer, 9> new_texture_buffers{};
         new_texture_buffers[0] = upload_texture_buffer(std::span<const RasterTextureHeader>{textures.headers});
         new_texture_buffers[1] = upload_texture_buffer(std::span<const RasterTextureMapping>{textures.mappings});
@@ -705,89 +821,62 @@ namespace spectra {
         new_texture_buffers[7] = upload_texture_buffer(std::span<const RasterDirectionMixTexture>{textures.direction_mixes});
         new_texture_buffers[8] = upload_texture_buffer(std::span<const RasterBilerpTexture>{textures.bilerps});
         GpuBuffer new_binding_buffer{};
-        if (command_buffer) {
-            const DescriptorHandle primitives_descriptor    = this->context.runtime.resources.allocate_resource_descriptor();
-            const DescriptorHandle transforms_descriptor    = this->context.runtime.resources.allocate_resource_descriptor();
-            const DescriptorHandle material_descriptor      = this->context.runtime.resources.allocate_resource_descriptor();
-            const DescriptorHandle face_material_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            const DescriptorHandle area_light_descriptor    = this->context.runtime.resources.allocate_resource_descriptor();
-            this->context.runtime.resources.write_buffer_descriptor(primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            this->context.runtime.resources.write_buffer_descriptor(transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
-            this->context.runtime.resources.write_buffer_descriptor(material_descriptor, vk::DescriptorType::eStorageBuffer, new_materials);
-            this->context.runtime.resources.write_buffer_descriptor(face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
-            this->context.runtime.resources.write_buffer_descriptor(area_light_descriptor, vk::DescriptorType::eStorageBuffer, new_area_lights);
-            std::array<DescriptorHandle, 9> texture_descriptors{};
-            for (std::size_t index = 0; index != texture_descriptors.size(); ++index) {
-                texture_descriptors[index] = this->context.runtime.resources.allocate_resource_descriptor();
-                this->context.runtime.resources.write_buffer_descriptor(texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_texture_buffers[index]);
-            }
-            const RasterSceneBindings bindings{primitives_descriptor, transforms_descriptor, material_descriptor, face_material_descriptor, area_light_descriptor, texture_descriptors[0], texture_descriptors[1], texture_descriptors[2], texture_descriptors[3], texture_descriptors[4], texture_descriptors[5], texture_descriptors[6], texture_descriptors[7], texture_descriptors[8], {this->scene.texture_count, this->scene.texture_stack_size, 0, 0}};
-            new_binding_buffer                         = upload_texture_buffer(std::span{&bindings, 1});
-            const DescriptorHandle bindings_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            this->context.runtime.resources.write_buffer_descriptor(bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_binding_buffer);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.primitives_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.transforms_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.material_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.face_material_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.area_light_descriptor);
-            for (const DescriptorHandle descriptor : this->scene.texture_descriptors) this->context.runtime.frames.retire_resource_descriptor(descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.bindings_descriptor);
-            this->context.runtime.frames.defer_destruction([primitives = std::move(this->scene.primitive_buffer), transforms = std::move(this->scene.transform_buffer), materials = std::move(this->scene.material_buffer), face_materials = std::move(this->scene.face_material_buffer), area_lights = std::move(this->scene.area_light_buffer)]() mutable {});
-            this->context.runtime.frames.defer_destruction([texture_buffers = std::move(this->scene.texture_buffers), bindings = std::move(this->scene.scene_binding_buffer)]() mutable {});
-            this->scene.primitives_descriptor    = primitives_descriptor;
-            this->scene.transforms_descriptor    = transforms_descriptor;
-            this->scene.material_descriptor      = material_descriptor;
-            this->scene.face_material_descriptor = face_material_descriptor;
-            this->scene.area_light_descriptor    = area_light_descriptor;
-            this->scene.texture_descriptors      = texture_descriptors;
-            this->scene.bindings_descriptor      = bindings_descriptor;
-        } else {
-            this->context.runtime.resources.write_buffer_descriptor(this->scene.primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            this->context.runtime.resources.write_buffer_descriptor(this->scene.transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
-            this->context.runtime.resources.write_buffer_descriptor(this->scene.material_descriptor, vk::DescriptorType::eStorageBuffer, new_materials);
-            this->context.runtime.resources.write_buffer_descriptor(this->scene.face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
-            this->context.runtime.resources.write_buffer_descriptor(this->scene.area_light_descriptor, vk::DescriptorType::eStorageBuffer, new_area_lights);
-            for (std::size_t index = 0; index != this->scene.texture_descriptors.size(); ++index) this->context.runtime.resources.write_buffer_descriptor(this->scene.texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_texture_buffers[index]);
-            const RasterSceneBindings bindings{this->scene.primitives_descriptor, this->scene.transforms_descriptor, this->scene.material_descriptor, this->scene.face_material_descriptor, this->scene.area_light_descriptor, this->scene.texture_descriptors[0], this->scene.texture_descriptors[1], this->scene.texture_descriptors[2], this->scene.texture_descriptors[3], this->scene.texture_descriptors[4], this->scene.texture_descriptors[5], this->scene.texture_descriptors[6], this->scene.texture_descriptors[7], this->scene.texture_descriptors[8], {this->scene.texture_count, this->scene.texture_stack_size, 0, 0}};
-            new_binding_buffer = upload_texture_buffer(std::span{&bindings, 1});
-            this->context.runtime.resources.write_buffer_descriptor(this->scene.bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_binding_buffer);
+        DescriptorLease primitives_descriptor     = this->context.runtime.resources.allocate_resource_descriptor();
+        DescriptorLease material_descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
+        DescriptorLease face_material_descriptor  = this->context.runtime.resources.allocate_resource_descriptor();
+        DescriptorLease area_light_descriptor     = this->context.runtime.resources.allocate_resource_descriptor();
+        DescriptorLease volumes_descriptor        = this->context.runtime.resources.allocate_resource_descriptor();
+        DescriptorLease light_descriptor          = this->context.runtime.resources.allocate_resource_descriptor();
+        DescriptorLease ray_primitives_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        this->context.runtime.resources.write_buffer_descriptor(primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
+        this->context.runtime.resources.write_buffer_descriptor(material_descriptor, vk::DescriptorType::eStorageBuffer, new_materials);
+        this->context.runtime.resources.write_buffer_descriptor(face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
+        this->context.runtime.resources.write_buffer_descriptor(area_light_descriptor, vk::DescriptorType::eStorageBuffer, new_area_lights);
+        this->context.runtime.resources.write_buffer_descriptor(volumes_descriptor, vk::DescriptorType::eStorageBuffer, new_volume_buffer);
+        this->context.runtime.resources.write_buffer_descriptor(light_descriptor, vk::DescriptorType::eStorageBuffer, new_light_buffer);
+        this->context.runtime.resources.write_buffer_descriptor(ray_primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_ray_primitive_buffer);
+        std::array<DescriptorLease, 9> texture_descriptors{};
+        for (std::size_t index = 0; index != texture_descriptors.size(); ++index) {
+            texture_descriptors[index] = this->context.runtime.resources.allocate_resource_descriptor();
+            this->context.runtime.resources.write_buffer_descriptor(texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_texture_buffers[index]);
         }
+        const RasterSceneBindings bindings{primitives_descriptor, this->context.gpu_scene.view().primitive_transforms, material_descriptor, face_material_descriptor, area_light_descriptor, texture_descriptors[0], texture_descriptors[1], texture_descriptors[2], texture_descriptors[3], texture_descriptors[4], texture_descriptors[5], texture_descriptors[6], texture_descriptors[7], texture_descriptors[8], light_descriptor, ray_primitives_descriptor, {texture_count, texture_stack_size, light_count, 0}};
+        new_binding_buffer = upload_texture_buffer(std::span{&bindings, 1});
+        DescriptorLease bindings_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        this->context.runtime.resources.write_buffer_descriptor(bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_binding_buffer);
+        this->context.runtime.frames.defer_destruction([primitives = std::move(this->scene.primitive_buffer), materials = std::move(this->scene.material_buffer), face_materials = std::move(this->scene.face_material_buffer), area_lights = std::move(this->scene.area_light_buffer)]() mutable {});
+        this->context.runtime.frames.defer_destruction([texture_buffers = std::move(this->scene.texture_buffers), bindings = std::move(this->scene.scene_binding_buffer)]() mutable {});
+        this->scene.primitives_descriptor     = std::move(primitives_descriptor);
+        this->scene.material_descriptor       = std::move(material_descriptor);
+        this->scene.face_material_descriptor  = std::move(face_material_descriptor);
+        this->scene.area_light_descriptor     = std::move(area_light_descriptor);
+        this->scene.volumes_descriptor        = std::move(volumes_descriptor);
+        this->scene.light_descriptor          = std::move(light_descriptor);
+        this->scene.ray_primitives_descriptor = std::move(ray_primitives_descriptor);
+        this->scene.texture_descriptors       = std::move(texture_descriptors);
+        this->scene.bindings_descriptor       = std::move(bindings_descriptor);
         this->scene.primitive_buffer     = std::move(new_primitives);
-        this->scene.transform_buffer     = std::move(new_transforms);
         this->scene.material_buffer      = std::move(new_materials);
         this->scene.face_material_buffer = std::move(new_face_materials);
         this->scene.area_light_buffer    = std::move(new_area_lights);
-        for (const VolumeResources& volume : this->scene.volume_resources) this->context.runtime.frames.retire_resource_descriptor(volume.majorant_descriptor);
-        if (!this->scene.volume_resources.empty()) this->context.runtime.frames.defer_destruction([volumes = std::move(this->scene.volume_resources), records = std::move(this->scene.volume_buffer), lights = std::move(this->scene.volume_light_buffer)]() mutable {});
+        this->context.runtime.frames.defer_destruction([volumes = std::move(this->scene.volume_resources), records = std::move(this->scene.volume_buffer), lights = std::move(this->scene.light_buffer), ray_primitives = std::move(this->scene.ray_primitive_buffer)]() mutable {});
         this->scene.volume_resources     = std::move(new_volume_gpu_data);
         this->scene.volume_buffer        = std::move(new_volume_buffer);
-        this->scene.volume_light_buffer  = std::move(new_volume_light_buffer);
+        this->scene.light_buffer         = std::move(new_light_buffer);
+        this->scene.ray_primitive_buffer = std::move(new_ray_primitive_buffer);
         this->scene.texture_buffers      = std::move(new_texture_buffers);
         this->scene.scene_binding_buffer = std::move(new_binding_buffer);
-    }
-
-    void Rasterizer::update_transforms(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
-        std::vector<RasterTransform> transforms = compile_raster_transforms(*this, scene);
-        if (transforms.empty()) transforms.emplace_back();
-        GpuBuffer new_transforms                     = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const RasterTransform>{transforms}, vk::BufferUsageFlagBits::eStorageBuffer);
-        const DescriptorHandle transforms_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        this->context.runtime.resources.write_buffer_descriptor(transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
-        const RasterSceneBindings bindings{this->scene.primitives_descriptor, transforms_descriptor, this->scene.material_descriptor, this->scene.face_material_descriptor, this->scene.area_light_descriptor, this->scene.texture_descriptors[0], this->scene.texture_descriptors[1], this->scene.texture_descriptors[2], this->scene.texture_descriptors[3], this->scene.texture_descriptors[4], this->scene.texture_descriptors[5], this->scene.texture_descriptors[6], this->scene.texture_descriptors[7], this->scene.texture_descriptors[8], {this->scene.texture_count, this->scene.texture_stack_size, 0, 0}};
-        GpuBuffer new_bindings                     = upload_raster_buffer(this->context.runtime, command_buffer, std::span{&bindings, 1}, vk::BufferUsageFlagBits::eStorageBuffer);
-        const DescriptorHandle bindings_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        this->context.runtime.resources.write_buffer_descriptor(bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.transforms_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.bindings_descriptor);
-        this->context.runtime.frames.defer_destruction([transforms = std::move(this->scene.transform_buffer), bindings = std::move(this->scene.scene_binding_buffer)]() mutable {});
-        this->scene.transform_buffer      = std::move(new_transforms);
-        this->scene.scene_binding_buffer  = std::move(new_bindings);
-        this->scene.transforms_descriptor = transforms_descriptor;
-        this->scene.bindings_descriptor   = bindings_descriptor;
+        this->scene.texture_count        = texture_count;
+        this->scene.texture_stack_size   = texture_stack_size;
+        this->scene.volume_count         = volume_count;
+        this->scene.light_count          = light_count;
+        this->scene.dynamic_area_lights  = std::move(dynamic_area_lights);
+        this->update_dynamic_lights(command_buffer);
     }
 
     void Rasterizer::update_volumes(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         if (scene.resources.volumes.size() != this->scene.volume_resources.size()) {
-            this->upload_scene(scene, &command_buffer);
+            this->upload_scene(scene, command_buffer);
             return;
         }
         for (std::size_t index = 0; index != scene.resources.volumes.size(); ++index) {
@@ -795,15 +884,15 @@ namespace spectra {
             VolumeResources& volume     = this->scene.volume_resources[index];
             const GpuVolume& shared     = this->context.gpu_scene.view().volumes[index];
             if (source.id != volume.volume_id || shared.volume_id != volume.volume_id) {
-                this->upload_scene(scene, &command_buffer);
+                this->upload_scene(scene, command_buffer);
                 return;
             }
             if (shared.revision.content == volume.revision.content) continue;
             if (shared.revision.topology != volume.revision.topology || !shared.dirty_region) {
-                this->upload_scene(scene, &command_buffer);
+                this->upload_scene(scene, command_buffer);
                 return;
             }
-            const auto descriptor = [this, &shared](const GpuVolumeField field) {
+            const auto descriptor = [this, &shared](const GpuVolumeField field) -> DescriptorHandle {
                 const std::size_t field_index = std::to_underlying(field);
                 return shared.field_present[field_index] ? shared.descriptors[field_index] : this->scene.zero_volume_field_descriptor;
             };
@@ -814,14 +903,18 @@ namespace spectra {
             std::uint32_t majorant_flags{};
             const math::UInt3 resolution = shared.resolution;
             if (std::holds_alternative<scene::RgbGridVolume>(source.data)) {
+                const scene::RgbGridVolume& data = std::get<scene::RgbGridVolume>(source.data);
                 majorant_mode = 1;
                 if (shared.field_present[std::to_underlying(GpuVolumeField::SigmaA)]) majorant_flags |= 1u;
                 if (shared.field_present[std::to_underlying(GpuVolumeField::SigmaS)]) majorant_flags |= 2u;
+                if (shared.field_present[std::to_underlying(GpuVolumeField::Emission)]) majorant_flags |= 4u;
+                majorant_flags |= std::to_underlying(data.color_space) << 8;
             } else if (!std::holds_alternative<scene::DensityGridVolume>(source.data)) {
-                this->upload_scene(scene, &command_buffer);
+                this->upload_scene(scene, command_buffer);
                 return;
             }
-            const scene::VolumeRegion expanded{{shared.dirty_region->minimum.x > 0 ? shared.dirty_region->minimum.x - 1 : 0, shared.dirty_region->minimum.y > 0 ? shared.dirty_region->minimum.y - 1 : 0, shared.dirty_region->minimum.z > 0 ? shared.dirty_region->minimum.z - 1 : 0}, {std::min(resolution.x, shared.dirty_region->maximum.x + 1), std::min(resolution.y, shared.dirty_region->maximum.y + 1), std::min(resolution.z, shared.dirty_region->maximum.z + 1)}};
+            const scene::VolumeRegion dirty_region = shared.revision.content == volume.revision.content + 1u ? *shared.dirty_region : scene::VolumeRegion{{}, resolution};
+            const scene::VolumeRegion expanded{{dirty_region.minimum.x > 0 ? dirty_region.minimum.x - 1 : 0, dirty_region.minimum.y > 0 ? dirty_region.minimum.y - 1 : 0, dirty_region.minimum.z > 0 ? dirty_region.minimum.z - 1 : 0}, {std::min(resolution.x, dirty_region.maximum.x + 1), std::min(resolution.y, dirty_region.maximum.y + 1), std::min(resolution.z, dirty_region.maximum.z + 1)}};
             const std::array<std::uint32_t, 4> brick_minimum{expanded.minimum.x * 16u / resolution.x, expanded.minimum.y * 16u / resolution.y, expanded.minimum.z * 16u / resolution.z, 0};
             const std::array<std::uint32_t, 4> brick_maximum{std::min(16u, (expanded.maximum.x * 16u + resolution.x - 1u) / resolution.x), std::min(16u, (expanded.maximum.y * 16u + resolution.y - 1u) / resolution.y), std::min(16u, (expanded.maximum.z * 16u + resolution.z - 1u) / resolution.z), 0};
             struct alignas(16) MajorantPushData {
@@ -847,6 +940,80 @@ namespace spectra {
         }
     }
 
+    void Rasterizer::update_dynamic_lights(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->scene.dynamic_area_lights.empty()) return;
+        struct alignas(16) DynamicAreaLightPushData {
+            DescriptorHandle positions{};
+            DescriptorHandle indices{};
+            DescriptorHandle radii{};
+            DescriptorHandle texture_coordinates{};
+            DescriptorHandle transforms{};
+            DescriptorHandle lights{};
+            DescriptorHandle area_lights{};
+            DescriptorHandle reserved{};
+            std::array<std::uint32_t, 4> range{};
+            std::array<std::uint32_t, 4> metadata{};
+            std::array<float, 4> geometry_parameters{};
+            std::array<float, 4> emission_parameters{};
+            std::array<float, 4> source_radiance{};
+        };
+        static_assert(sizeof(DynamicAreaLightPushData) == 144);
+        const GpuSceneView gpu_scene = this->context.gpu_scene.view();
+        const auto push_for_range = [&](const RasterDynamicAreaLightRange& range) {
+            DynamicAreaLightPushData push{};
+            push.transforms          = gpu_scene.primitive_transforms;
+            push.lights              = this->scene.light_descriptor;
+            push.area_lights         = this->scene.area_light_descriptor;
+            push.geometry_parameters = range.geometry_parameters;
+            push.emission_parameters = range.emission_parameters;
+            push.source_radiance     = range.radiance;
+            std::uint32_t active_count{1};
+            if (range.kind == 0) {
+                const GpuGeometry& geometry = gpu_scene.geometries[range.resource_index];
+                push.positions             = geometry.positions_descriptor;
+                push.indices               = geometry.indices_descriptor;
+                push.texture_coordinates   = geometry.texture_coordinates_descriptor;
+                active_count               = geometry.index_count / 3u;
+            } else if (range.kind == 1) {
+                const GpuSphereSet& spheres = gpu_scene.sphere_sets[range.resource_index];
+                push.positions             = spheres.positions_descriptor;
+                push.radii                 = spheres.radii_descriptor;
+                active_count               = spheres.sphere_count;
+            }
+            push.range    = {range.scene_primitive_index, range.first_light, active_count, range.capacity};
+            push.metadata = {range.kind | (range.attribute_mask << 8), range.light_kind, range.flags, range.emission_texture};
+            return push;
+        };
+        this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->scene.dynamic_light_shapes_shader);
+        for (const RasterDynamicAreaLightRange& range : this->scene.dynamic_area_lights) {
+            const DynamicAreaLightPushData push = push_for_range(range);
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+            command_buffer.dispatch((range.capacity + 63u) / 64u, 1, 1);
+        }
+        const vk::MemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &dependency});
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->scene.dynamic_light_finalize_shader);
+        for (const RasterDynamicAreaLightRange& range : this->scene.dynamic_area_lights) {
+            const DynamicAreaLightPushData push = push_for_range(range);
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+            command_buffer.dispatch(1, 1, 1);
+        }
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &dependency});
+        struct alignas(16) DynamicSelectionPushData {
+            DescriptorHandle lights{};
+            std::uint32_t light_count{};
+            std::uint32_t reserved{};
+        };
+        static_assert(sizeof(DynamicSelectionPushData) == 16);
+        const DynamicSelectionPushData selection_push{this->scene.light_descriptor, this->scene.light_count};
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->scene.dynamic_light_selection_shader);
+        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&selection_push, 1}));
+        command_buffer.dispatch(1, 1, 1);
+        const vk::MemoryBarrier2 render_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eMeshShaderEXT | vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &render_dependency});
+    }
+
     void Rasterizer::synchronize_scene(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         if (scene.revision.number == this->scene.uploaded_revision.number) return;
         bool recompiled = (scene.revision.changes & (scene::SceneChange::Geometry | scene::SceneChange::Texture | scene::SceneChange::Material | scene::SceneChange::Light | scene::SceneChange::Medium)) != scene::SceneChange::None;
@@ -858,26 +1025,40 @@ namespace spectra {
                     break;
                 }
             }
-        if (recompiled) this->upload_scene(scene, &command_buffer);
+        if (recompiled) this->upload_scene(scene, command_buffer);
         if (!recompiled && (scene.revision.changes & scene::SceneChange::Volume) != scene::SceneChange::None) this->update_volumes(scene, command_buffer);
-        if (!recompiled && (scene.revision.changes & scene::SceneChange::Transform) != scene::SceneChange::None) this->update_transforms(scene, command_buffer);
+        if (!recompiled && (scene.revision.changes & scene::SceneChange::Transform) != scene::SceneChange::None) {
+            this->upload_scene(scene, command_buffer);
+            recompiled = true;
+        }
         if ((scene.revision.changes & scene::SceneChange::Camera) != scene::SceneChange::None) this->renderer.camera = scene.camera;
-        if ((scene.revision.changes & scene::SceneChange::Film) != scene::SceneChange::None) this->renderer.film_exposure = scene.film.exposure;
+        if ((scene.revision.changes & scene::SceneChange::Film) != scene::SceneChange::None) {
+            this->renderer.film_exposure      = scene.film.exposure;
+            this->renderer.film_resolution    = scene.film.resolution;
+            this->renderer.film_pixel_minimum = scene.film.pixel_minimum;
+            this->renderer.film_pixel_maximum = scene.film.pixel_maximum;
+        }
+        if ((scene.revision.changes & scene::SceneChange::Sampler) != scene::SceneChange::None) this->renderer.sampler = scene.sampler;
         this->scene.uploaded_revision = scene.revision;
     }
 
     void Rasterizer::initialize_renderer() {
         this->renderer.sampled_output_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
         this->renderer.storage_output_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        this->renderer.storage_sample_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
         this->renderer.sampled_depth_descriptor  = this->context.runtime.resources.allocate_resource_descriptor();
         this->create_shaders();
     }
 
     void Rasterizer::create_shaders() {
         const std::vector<std::uint32_t> mesh_code     = load_spirv(this->context.shader_directory / "raster_mesh.spv");
-        const std::vector<std::uint32_t> sphere_code = load_spirv(this->context.shader_directory / "raster_spheres.spv");
+        const std::vector<std::uint32_t> sphere_code   = load_spirv(this->context.shader_directory / "raster_spheres.spv");
         const std::vector<std::uint32_t> fragment_code = load_spirv(this->context.shader_directory / "raster_fragment.spv");
-        const std::array create_infos{
+        vk::DescriptorMappingSourceDataEXT acceleration_structure_source{};
+        acceleration_structure_source.pushAddressOffset = 0;
+        const vk::DescriptorSetAndBindingMappingEXT acceleration_structure_mapping{0, 0, 1, vk::SpirvResourceTypeFlagBitsEXT::eAccelerationStructure, vk::DescriptorMappingSourceEXT::ePushAddress, acceleration_structure_source};
+        const vk::ShaderDescriptorSetAndBindingMappingInfoEXT mapping{acceleration_structure_mapping};
+        std::array create_infos{
             vk::ShaderCreateInfoEXT{
                 vk::ShaderCreateFlagBitsEXT::eDescriptorHeap | vk::ShaderCreateFlagBitsEXT::eNoTaskShader,
                 vk::ShaderStageFlagBits::eMeshEXT,
@@ -897,45 +1078,87 @@ namespace spectra {
                 "raster_fragment",
             },
         };
+        create_infos[1].pNext                        = &mapping;
         this->renderer.shaders                       = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, create_infos};
         this->renderer.sphere_shader                 = vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap | vk::ShaderCreateFlagBitsEXT::eNoTaskShader, vk::ShaderStageFlagBits::eMeshEXT, {}, vk::ShaderCodeTypeEXT::eSpirv, sphere_code.size() * sizeof(std::uint32_t), sphere_code.data(), "raster_spheres"}};
         const std::vector<std::uint32_t> volume_code = load_spirv(this->context.shader_directory / "raster_volume.spv");
-        vk::DescriptorMappingSourceDataEXT acceleration_structure_source{};
-        acceleration_structure_source.pushAddressOffset = 0;
-        const vk::DescriptorSetAndBindingMappingEXT acceleration_structure_mapping{0, 0, 1, vk::SpirvResourceTypeFlagBitsEXT::eAccelerationStructure, vk::DescriptorMappingSourceEXT::ePushAddress, acceleration_structure_source};
-        const vk::ShaderDescriptorSetAndBindingMappingInfoEXT mapping{acceleration_structure_mapping};
         vk::ShaderCreateInfoEXT volume_create_info{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, volume_code.size() * sizeof(std::uint32_t), volume_code.data(), "raster_volume"};
-        volume_create_info.pNext     = &mapping;
-        this->renderer.volume_shader = vk::raii::ShaderEXT{this->context.runtime.graphics.device, volume_create_info};
+        volume_create_info.pNext                         = &mapping;
+        this->renderer.volume_shader                     = vk::raii::ShaderEXT{this->context.runtime.graphics.device, volume_create_info};
+        const std::vector<std::uint32_t> background_code = load_spirv(this->context.shader_directory / "raster_background.spv");
+        vk::ShaderCreateInfoEXT background_create_info{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, background_code.size() * sizeof(std::uint32_t), background_code.data(), "raster_background"};
+        this->renderer.background_shader                   = vk::raii::ShaderEXT{this->context.runtime.graphics.device, background_create_info};
+        const std::vector<std::uint32_t> accumulation_code = load_spirv(this->context.shader_directory / "raster_accumulate.spv");
+        this->renderer.accumulation_shader                 = vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, accumulation_code.size() * sizeof(std::uint32_t), accumulation_code.data(), "raster_accumulate"}};
     }
 
     void Rasterizer::create_output(const vk::Extent2D extent) {
-        this->renderer.output_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage);
-        this->renderer.depth_image  = this->context.runtime.resources.create_image_2d(extent, vk::Format::eD32Sfloat, vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eDepth);
-        this->context.runtime.resources.write_sampled_image_descriptor(this->renderer.sampled_output_descriptor, this->renderer.output_image, vk::ImageLayout::eShaderReadOnlyOptimal);
-        this->context.runtime.resources.write_storage_image_descriptor(this->renderer.storage_output_descriptor, this->renderer.output_image, vk::ImageLayout::eGeneral);
-        this->context.runtime.resources.write_sampled_image_descriptor(this->renderer.sampled_depth_descriptor, this->renderer.depth_image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        GpuImage next_sample = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage);
+        GpuImage next_output = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage);
+        GpuImage next_depth  = this->context.runtime.resources.create_image_2d(extent, vk::Format::eD32Sfloat, vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eDepth);
+        const bool replacing = *this->renderer.output_image.image;
+        DescriptorLease sampled_output = replacing ? this->context.runtime.resources.allocate_resource_descriptor() : std::move(this->renderer.sampled_output_descriptor);
+        DescriptorLease storage_output = replacing ? this->context.runtime.resources.allocate_resource_descriptor() : std::move(this->renderer.storage_output_descriptor);
+        DescriptorLease storage_sample = replacing ? this->context.runtime.resources.allocate_resource_descriptor() : std::move(this->renderer.storage_sample_descriptor);
+        DescriptorLease sampled_depth  = replacing ? this->context.runtime.resources.allocate_resource_descriptor() : std::move(this->renderer.sampled_depth_descriptor);
+        this->context.runtime.resources.write_sampled_image_descriptor(sampled_output, next_output, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->context.runtime.resources.write_storage_image_descriptor(storage_output, next_output, vk::ImageLayout::eGeneral);
+        this->context.runtime.resources.write_storage_image_descriptor(storage_sample, next_sample, vk::ImageLayout::eGeneral);
+        this->context.runtime.resources.write_sampled_image_descriptor(sampled_depth, next_depth, vk::ImageLayout::eShaderReadOnlyOptimal);
+        if (replacing) {
+            this->context.runtime.frames.defer_destruction([sample = std::move(this->renderer.sample_image), output = std::move(this->renderer.output_image), depth = std::move(this->renderer.depth_image)]() mutable {});
+        }
+        this->renderer.sample_image              = std::move(next_sample);
+        this->renderer.output_image              = std::move(next_output);
+        this->renderer.depth_image               = std::move(next_depth);
+        this->renderer.sampled_output_descriptor = std::move(sampled_output);
+        this->renderer.storage_output_descriptor = std::move(storage_output);
+        this->renderer.storage_sample_descriptor = std::move(storage_sample);
+        this->renderer.sampled_depth_descriptor  = std::move(sampled_depth);
         this->renderer.output_layout = vk::ImageLayout::eUndefined;
+        this->renderer.sample_layout = vk::ImageLayout::eUndefined;
         this->renderer.depth_layout  = vk::ImageLayout::eUndefined;
+        this->renderer.sample_index  = 0;
     }
 
     void Rasterizer::record_commands(const vk::raii::CommandBuffer& command_buffer) {
         const bool wireframe_only = this->renderer.display_mode == RasterDisplayMode::Wireframe;
+        const scene::CameraMatrices camera_matrices = this->renderer.camera.matrices();
+        std::array<float, 16> view_projection = camera_matrices.view_projection;
+        std::array<float, 16> inverse_view_projection = camera_matrices.inverse_view_projection;
+        const std::array<std::uint32_t, 4> film_bounds{
+            static_cast<std::uint32_t>(static_cast<std::uint64_t>(this->renderer.film_pixel_minimum[0]) * this->renderer.sample_image.extent.width / this->renderer.film_resolution[0]),
+            static_cast<std::uint32_t>(static_cast<std::uint64_t>(this->renderer.film_pixel_minimum[1]) * this->renderer.sample_image.extent.height / this->renderer.film_resolution[1]),
+            static_cast<std::uint32_t>((static_cast<std::uint64_t>(this->renderer.film_pixel_maximum[0]) * this->renderer.sample_image.extent.width + this->renderer.film_resolution[0] - 1u) / this->renderer.film_resolution[0]),
+            static_cast<std::uint32_t>((static_cast<std::uint64_t>(this->renderer.film_pixel_maximum[1]) * this->renderer.sample_image.extent.height + this->renderer.film_resolution[1] - 1u) / this->renderer.film_resolution[1]),
+        };
+        std::array<float, 2> projection_jitter{};
+        if (this->renderer.sampler.jitter && this->renderer.sample_index != 0) {
+            projection_jitter = {
+                (std::fmod(0.5f + static_cast<float>(this->renderer.sample_index) * 0.754877666f, 1.0f) - 0.5f) * 2.0f / static_cast<float>(this->renderer.sample_image.extent.width),
+                (std::fmod(0.5f + static_cast<float>(this->renderer.sample_index) * 0.569840296f, 1.0f) - 0.5f) * 2.0f / static_cast<float>(this->renderer.sample_image.extent.height),
+            };
+            for (std::size_t column = 0; column != 4; ++column) {
+                view_projection[column] += projection_jitter[0] * view_projection[12 + column];
+                view_projection[4 + column] += projection_jitter[1] * view_projection[12 + column];
+            }
+            for (std::size_t row = 0; row != 4; ++row) inverse_view_projection[row * 4 + 3] -= projection_jitter[0] * inverse_view_projection[row * 4] + projection_jitter[1] * inverse_view_projection[row * 4 + 1];
+        }
         const std::array barriers{
             vk::ImageMemoryBarrier2{
-                this->renderer.output_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone
-                : this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::PipelineStageFlagBits2::eComputeShader
+                this->renderer.sample_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone
+                : this->renderer.sample_layout == vk::ImageLayout::eGeneral ? vk::PipelineStageFlagBits2::eComputeShader
                                                                             : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                this->renderer.output_layout == vk::ImageLayout::eUndefined ? vk::AccessFlags2{}
-                : this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::AccessFlagBits2::eShaderStorageWrite
+                this->renderer.sample_layout == vk::ImageLayout::eUndefined ? vk::AccessFlags2{}
+                : this->renderer.sample_layout == vk::ImageLayout::eGeneral ? vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite
                                                                             : vk::AccessFlagBits2::eColorAttachmentWrite,
-                vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                vk::AccessFlagBits2::eColorAttachmentWrite,
-                this->renderer.output_layout,
-                vk::ImageLayout::eColorAttachmentOptimal,
+                vk::PipelineStageFlagBits2::eComputeShader,
+                vk::AccessFlagBits2::eShaderStorageWrite,
+                this->renderer.sample_layout,
+                vk::ImageLayout::eGeneral,
                 vk::QueueFamilyIgnored,
                 vk::QueueFamilyIgnored,
-                *this->renderer.output_image.image,
+                *this->renderer.sample_image.image,
                 {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
             },
             vk::ImageMemoryBarrier2{
@@ -957,15 +1180,36 @@ namespace spectra {
         };
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(barriers.size()), barriers.data()});
 
+        struct alignas(16) BackgroundPushData {
+            DescriptorHandle output;
+            DescriptorHandle bindings;
+            std::array<std::uint32_t, 2> extent;
+            std::array<std::uint32_t, 2> reserved;
+            std::array<std::uint32_t, 4> film_bounds;
+            std::array<float, 4> inverse_view_projection_row_0;
+            std::array<float, 4> inverse_view_projection_row_1;
+            std::array<float, 4> inverse_view_projection_row_2;
+            std::array<float, 4> inverse_view_projection_row_3;
+        };
+        static_assert(sizeof(BackgroundPushData) == 112);
+        const BackgroundPushData background_push_data{this->renderer.storage_sample_descriptor, this->scene.bindings_descriptor, {this->renderer.sample_image.extent.width, this->renderer.sample_image.extent.height}, {}, film_bounds, {inverse_view_projection[0], inverse_view_projection[1], inverse_view_projection[2], inverse_view_projection[3]}, {inverse_view_projection[4], inverse_view_projection[5], inverse_view_projection[6], inverse_view_projection[7]}, {inverse_view_projection[8], inverse_view_projection[9], inverse_view_projection[10], inverse_view_projection[11]}, {inverse_view_projection[12], inverse_view_projection[13], inverse_view_projection[14], inverse_view_projection[15]}};
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->renderer.background_shader);
+        this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
+        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&background_push_data, 1}));
+        command_buffer.dispatch((this->renderer.sample_image.extent.width + 7) / 8, (this->renderer.sample_image.extent.height + 7) / 8, 1);
+        const vk::ImageMemoryBarrier2 background_barrier{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite, vk::ImageLayout::eGeneral, vk::ImageLayout::eColorAttachmentOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->renderer.sample_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 0, nullptr, 1, &background_barrier});
+        this->renderer.sample_layout = vk::ImageLayout::eColorAttachmentOptimal;
+
         const vk::RenderingAttachmentInfo color_attachment{
-            *this->renderer.output_image.view,
+            *this->renderer.sample_image.view,
             vk::ImageLayout::eColorAttachmentOptimal,
             vk::ResolveModeFlagBits::eNone,
             {},
             vk::ImageLayout::eUndefined,
-            vk::AttachmentLoadOp::eClear,
+            vk::AttachmentLoadOp::eLoad,
             vk::AttachmentStoreOp::eStore,
-            vk::ClearValue{vk::ClearColorValue{std::array{0.01f, 0.015f, 0.025f, 1.0f}}},
+            {},
         };
         const vk::RenderingAttachmentInfo depth_attachment{
             *this->renderer.depth_image.view,
@@ -979,7 +1223,7 @@ namespace spectra {
         };
         command_buffer.beginRendering(vk::RenderingInfo{
             {},
-            vk::Rect2D{{0, 0}, this->renderer.output_image.extent},
+            vk::Rect2D{{0, 0}, this->renderer.sample_image.extent},
             1,
             0,
             1,
@@ -989,13 +1233,13 @@ namespace spectra {
 
         const vk::Viewport viewport{
             0.0f,
-            static_cast<float>(this->renderer.output_image.extent.height),
-            static_cast<float>(this->renderer.output_image.extent.width),
-            -static_cast<float>(this->renderer.output_image.extent.height),
+            static_cast<float>(this->renderer.sample_image.extent.height),
+            static_cast<float>(this->renderer.sample_image.extent.width),
+            -static_cast<float>(this->renderer.sample_image.extent.height),
             0.0f,
             1.0f,
         };
-        const vk::Rect2D scissor{{0, 0}, this->renderer.output_image.extent};
+        const vk::Rect2D scissor{{static_cast<std::int32_t>(film_bounds[0]), static_cast<std::int32_t>(film_bounds[1])}, {film_bounds[2] - film_bounds[0], film_bounds[3] - film_bounds[1]}};
         command_buffer.setViewportWithCount(viewport);
         command_buffer.setScissorWithCount(scissor);
         command_buffer.setCullMode(vk::CullModeFlagBits::eNone);
@@ -1031,6 +1275,7 @@ namespace spectra {
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
 
         struct alignas(16) RasterPushData {
+            vk::DeviceAddress acceleration_structure_address;
             DescriptorHandle positions;
             DescriptorHandle normals;
             DescriptorHandle tangents;
@@ -1040,6 +1285,12 @@ namespace spectra {
             std::uint32_t scene_primitive_index;
             std::uint32_t element_count;
             std::array<std::uint32_t, 2> attributes;
+            DescriptorHandle sampling_tables;
+            std::array<std::uint32_t, 4> sampler_metadata;
+            std::array<std::uint32_t, 4> sampler_parameters;
+            std::array<std::uint32_t, 2> extent;
+            std::uint32_t sample_index;
+            std::uint32_t reserved;
             std::array<float, 4> view_projection_row_0;
             std::array<float, 4> view_projection_row_1;
             std::array<float, 4> view_projection_row_2;
@@ -1047,14 +1298,15 @@ namespace spectra {
             std::array<float, 4> camera_position;
             std::array<float, 4> camera_right;
             std::array<float, 4> camera_up;
+            std::array<float, 4> camera_forward;
         };
-        static_assert(sizeof(RasterPushData) == 176);
-        const std::array<float, 16> view_projection = this->renderer.camera.matrices().view_projection;
+        static_assert(sizeof(RasterPushData) == 256);
         const scene::CameraFrame camera             = this->renderer.camera.frame();
         for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.view().primitives) {
             if (gpu_primitive.kind != GpuScenePrimitiveKind::Geometry) continue;
             const GpuGeometry& mesh = this->context.gpu_scene.view().geometries[gpu_primitive.resource_index];
             const RasterPushData push_data{
+                this->context.gpu_scene.view().acceleration_structure,
                 mesh.positions_descriptor,
                 mesh.normals_descriptor,
                 mesh.tangents_descriptor,
@@ -1064,13 +1316,20 @@ namespace spectra {
                 gpu_primitive.scene_primitive_index,
                 mesh.index_count / 3u,
                 {mesh.attribute_mask, static_cast<std::uint32_t>(this->renderer.display_mode)},
+                this->context.sampling.tables_descriptor,
+                {std::to_underlying(this->renderer.sampler.kind), std::to_underlying(this->renderer.sampler.randomization), this->renderer.sampler.samples_per_pixel, this->renderer.sampler.seed},
+                {this->renderer.sampler.x_strata, this->renderer.sampler.y_strata, this->renderer.sampler.jitter ? 1u : 0u, 0},
+                {this->renderer.sample_image.extent.width, this->renderer.sample_image.extent.height},
+                this->renderer.sample_index,
+                0,
                 {view_projection[0], view_projection[1], view_projection[2], view_projection[3]},
                 {view_projection[4], view_projection[5], view_projection[6], view_projection[7]},
                 {view_projection[8], view_projection[9], view_projection[10], view_projection[11]},
                 {view_projection[12], view_projection[13], view_projection[14], view_projection[15]},
-                {camera.position.x, camera.position.y, camera.position.z, 1.0f},
+                {camera.position.x, camera.position.y, camera.position.z, std::holds_alternative<scene::PerspectiveCameraData>(this->renderer.camera.data) ? 1.0f : 0.0f},
                 {camera.right.x, camera.right.y, camera.right.z, 0.0f},
                 {camera.up.x, camera.up.y, camera.up.z, 0.0f},
+                {camera.forward.x, camera.forward.y, camera.forward.z, 0.0f},
             };
             this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
             command_buffer.drawMeshTasksEXT((push_data.element_count + 31u) / 32u, 1, 1);
@@ -1082,6 +1341,7 @@ namespace spectra {
                 if (gpu_primitive.kind != GpuScenePrimitiveKind::SphereSet) continue;
                 const GpuSphereSet& spheres = this->context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
                 const RasterPushData push_data{
+                    this->context.gpu_scene.view().acceleration_structure,
                     spheres.positions_descriptor,
                     spheres.radii_descriptor,
                     spheres.positions_descriptor,
@@ -1091,52 +1351,95 @@ namespace spectra {
                     gpu_primitive.scene_primitive_index,
                     spheres.sphere_count,
                     {0, static_cast<std::uint32_t>(this->renderer.display_mode)},
+                    this->context.sampling.tables_descriptor,
+                    {std::to_underlying(this->renderer.sampler.kind), std::to_underlying(this->renderer.sampler.randomization), this->renderer.sampler.samples_per_pixel, this->renderer.sampler.seed},
+                    {this->renderer.sampler.x_strata, this->renderer.sampler.y_strata, this->renderer.sampler.jitter ? 1u : 0u, 0},
+                    {this->renderer.sample_image.extent.width, this->renderer.sample_image.extent.height},
+                    this->renderer.sample_index,
+                    0,
                     {view_projection[0], view_projection[1], view_projection[2], view_projection[3]},
                     {view_projection[4], view_projection[5], view_projection[6], view_projection[7]},
                     {view_projection[8], view_projection[9], view_projection[10], view_projection[11]},
                     {view_projection[12], view_projection[13], view_projection[14], view_projection[15]},
-                    {camera.position.x, camera.position.y, camera.position.z, 1.0f},
+                    {camera.position.x, camera.position.y, camera.position.z, std::holds_alternative<scene::PerspectiveCameraData>(this->renderer.camera.data) ? 1.0f : 0.0f},
                     {camera.right.x, camera.right.y, camera.right.z, 0.0f},
                     {camera.up.x, camera.up.y, camera.up.z, 0.0f},
+                    {camera.forward.x, camera.forward.y, camera.forward.z, 0.0f},
                 };
                 this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
                 command_buffer.drawMeshTasksEXT((push_data.element_count + 31u) / 32u, 1, 1);
             }
         }
         command_buffer.endRendering();
-        if (wireframe_only || this->scene.volume_count == 0) {
-            this->renderer.output_layout = vk::ImageLayout::eColorAttachmentOptimal;
+        if (!wireframe_only && this->scene.volume_count != 0) {
+            const std::array volume_barriers{
+                vk::ImageMemoryBarrier2{vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eGeneral, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->renderer.sample_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+                vk::ImageMemoryBarrier2{vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests, vk::AccessFlagBits2::eDepthStencilAttachmentWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eDepthAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->renderer.depth_image.image, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}},
+            };
+            const vk::MemoryBarrier2 acceleration_structure_barrier{vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR, vk::AccessFlagBits2::eAccelerationStructureWriteKHR, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eAccelerationStructureReadKHR};
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &acceleration_structure_barrier, 0, nullptr, static_cast<std::uint32_t>(volume_barriers.size()), volume_barriers.data()});
+            struct alignas(16) VolumePushData {
+                vk::DeviceAddress acceleration_structure_address;
+                DescriptorHandle output;
+                DescriptorHandle depth;
+                DescriptorHandle volumes;
+                DescriptorHandle bindings;
+                DescriptorHandle sampling_tables;
+                std::array<std::uint32_t, 4> metadata;
+                std::array<std::uint32_t, 4> sampler_metadata;
+                std::array<std::uint32_t, 4> sampler_parameters;
+                std::array<std::uint32_t, 4> film_bounds;
+                std::uint32_t sample_index;
+                std::array<std::uint32_t, 3> reserved;
+                std::array<float, 4> inverse_view_projection_row_0;
+                std::array<float, 4> inverse_view_projection_row_1;
+                std::array<float, 4> inverse_view_projection_row_2;
+                std::array<float, 4> inverse_view_projection_row_3;
+            };
+            static_assert(sizeof(VolumePushData) == 192);
+            const VolumePushData volume_push_data{this->context.gpu_scene.view().acceleration_structure, this->renderer.storage_sample_descriptor, this->renderer.sampled_depth_descriptor, this->scene.volumes_descriptor, this->scene.bindings_descriptor, this->context.sampling.tables_descriptor, {this->renderer.sample_image.extent.width, this->renderer.sample_image.extent.height, this->scene.volume_count, this->scene.light_count}, {std::to_underlying(this->renderer.sampler.kind), std::to_underlying(this->renderer.sampler.randomization), this->renderer.sampler.samples_per_pixel, this->renderer.sampler.seed}, {this->renderer.sampler.x_strata, this->renderer.sampler.y_strata, this->renderer.sampler.jitter ? 1u : 0u, 0}, film_bounds, this->renderer.sample_index, {}, {inverse_view_projection[0], inverse_view_projection[1], inverse_view_projection[2], inverse_view_projection[3]}, {inverse_view_projection[4], inverse_view_projection[5], inverse_view_projection[6], inverse_view_projection[7]},
+                {inverse_view_projection[8], inverse_view_projection[9], inverse_view_projection[10], inverse_view_projection[11]}, {inverse_view_projection[12], inverse_view_projection[13], inverse_view_projection[14], inverse_view_projection[15]}};
+            command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->renderer.volume_shader);
+            this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&volume_push_data, 1}));
+            command_buffer.dispatch((this->renderer.sample_image.extent.width + 7) / 8, (this->renderer.sample_image.extent.height + 7) / 8, 1);
+            this->renderer.sample_layout = vk::ImageLayout::eGeneral;
+            this->renderer.depth_layout  = vk::ImageLayout::eShaderReadOnlyOptimal;
+            const vk::MemoryBarrier2 sample_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead};
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &sample_dependency});
+        } else {
+            const vk::ImageMemoryBarrier2 sample_barrier{vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eGeneral, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->renderer.sample_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 0, nullptr, 1, &sample_barrier});
+            this->renderer.sample_layout = vk::ImageLayout::eGeneral;
             this->renderer.depth_layout  = vk::ImageLayout::eDepthAttachmentOptimal;
-            return;
         }
-        const std::array volume_barriers{
-            vk::ImageMemoryBarrier2{vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eGeneral, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->renderer.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
-            vk::ImageMemoryBarrier2{vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests, vk::AccessFlagBits2::eDepthStencilAttachmentWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eDepthAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->renderer.depth_image.image, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}},
+        const vk::ImageMemoryBarrier2 output_barrier{
+            this->renderer.output_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eComputeShader,
+            this->renderer.output_layout == vk::ImageLayout::eUndefined ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderStorageWrite,
+            vk::PipelineStageFlagBits2::eComputeShader,
+            vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite,
+            this->renderer.output_layout,
+            vk::ImageLayout::eGeneral,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            *this->renderer.output_image.image,
+            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         };
-        const vk::MemoryBarrier2 acceleration_structure_barrier{vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR, vk::AccessFlagBits2::eAccelerationStructureWriteKHR, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eAccelerationStructureReadKHR};
-        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &acceleration_structure_barrier, 0, nullptr, static_cast<std::uint32_t>(volume_barriers.size()), volume_barriers.data()});
-        struct alignas(16) VolumePushData {
-            vk::DeviceAddress acceleration_structure_address;
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 0, nullptr, 1, &output_barrier});
+        struct alignas(16) AccumulationPushData {
+            DescriptorHandle sample;
             DescriptorHandle output;
-            DescriptorHandle depth;
-            DescriptorHandle volumes;
-            DescriptorHandle lights;
-            std::array<std::uint32_t, 2> reserved;
-            std::array<std::uint32_t, 4> metadata;
-            std::array<float, 4> inverse_view_projection_row_0;
-            std::array<float, 4> inverse_view_projection_row_1;
-            std::array<float, 4> inverse_view_projection_row_2;
-            std::array<float, 4> inverse_view_projection_row_3;
+            std::array<std::uint32_t, 2> extent;
+            std::uint32_t sample_index;
+            std::uint32_t reserved;
         };
-        static_assert(sizeof(VolumePushData) == 128);
-        const std::array<float, 16> inverse_view_projection = this->renderer.camera.matrices().inverse_view_projection;
-        const VolumePushData volume_push_data{this->context.gpu_scene.view().acceleration_structure, this->renderer.storage_output_descriptor, this->renderer.sampled_depth_descriptor, this->scene.volumes_descriptor, this->scene.volume_lights_descriptor, {}, {this->renderer.output_image.extent.width, this->renderer.output_image.extent.height, this->scene.volume_count, this->scene.volume_light_count}, {inverse_view_projection[0], inverse_view_projection[1], inverse_view_projection[2], inverse_view_projection[3]}, {inverse_view_projection[4], inverse_view_projection[5], inverse_view_projection[6], inverse_view_projection[7]}, {inverse_view_projection[8], inverse_view_projection[9], inverse_view_projection[10], inverse_view_projection[11]}, {inverse_view_projection[12], inverse_view_projection[13], inverse_view_projection[14], inverse_view_projection[15]}};
-        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->renderer.volume_shader);
+        static_assert(sizeof(AccumulationPushData) == 32);
+        const AccumulationPushData accumulation_push_data{this->renderer.storage_sample_descriptor, this->renderer.storage_output_descriptor, {this->renderer.output_image.extent.width, this->renderer.output_image.extent.height}, this->renderer.sample_index, 0};
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->renderer.accumulation_shader);
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
-        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&volume_push_data, 1}));
+        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&accumulation_push_data, 1}));
         command_buffer.dispatch((this->renderer.output_image.extent.width + 7) / 8, (this->renderer.output_image.extent.height + 7) / 8, 1);
         this->renderer.output_layout = vk::ImageLayout::eGeneral;
-        this->renderer.depth_layout  = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 
     RenderOutput Rasterizer::output() const noexcept {
@@ -1144,12 +1447,13 @@ namespace spectra {
             this->renderer.output_image,
             this->renderer.sampled_output_descriptor,
             this->renderer.output_layout,
-            this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::PipelineStageFlagBits2::eComputeShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::AccessFlagBits2::eShaderStorageWrite : vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits2::eComputeShader,
+            vk::AccessFlagBits2::eShaderStorageWrite,
+            scene::SpectrumColorSpace::Srgb,
             this->renderer.film_exposure,
         };
     }
-    Rasterizer::Rasterizer(VulkanRuntime& runtime, GpuScene& gpu_scene, const scene::SceneView scene_view, std::filesystem::path shader_directory) : context{runtime, gpu_scene, std::move(shader_directory)} {
+    Rasterizer::Rasterizer(VulkanRuntime& runtime, GpuScene& gpu_scene, SamplingResources& sampling, const scene::SceneView scene_view, std::filesystem::path shader_directory) : context{runtime, gpu_scene, sampling, std::move(shader_directory)} {
         this->initialize_scene(scene_view);
         this->initialize_renderer();
     }
@@ -1164,36 +1468,87 @@ namespace spectra {
     }
 
     void Rasterizer::prepare(scene::SceneView scene_view, const RenderView& view, const vk::raii::CommandBuffer& command_buffer) {
+        bool reset_required{};
         if (this->renderer.pending_changes != scene::SceneChange::None) {
             scene_view.revision.changes = this->renderer.pending_changes;
             this->synchronize_scene(scene_view, command_buffer);
             this->renderer.pending_changes = scene::SceneChange::None;
+            reset_required                 = true;
         }
-        if ((this->renderer.pending_gpu_changes & GpuSceneChange::Volume) != GpuSceneChange::None) this->update_volumes(scene_view, command_buffer);
+        bool gpu_recompiled{};
+        if ((this->renderer.pending_gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None) {
+            this->upload_scene(scene_view, command_buffer);
+            reset_required = true;
+            gpu_recompiled = true;
+        } else if ((this->renderer.pending_gpu_changes & GpuSceneChange::Volume) != GpuSceneChange::None) {
+            this->update_volumes(scene_view, command_buffer);
+            reset_required = true;
+        }
+        if (!gpu_recompiled && (this->renderer.pending_gpu_changes & (GpuSceneChange::Geometry | GpuSceneChange::Transform)) != GpuSceneChange::None) this->update_dynamic_lights(command_buffer);
+        if ((this->renderer.pending_gpu_changes & (GpuSceneChange::Geometry | GpuSceneChange::Transform)) != GpuSceneChange::None) reset_required = true;
         this->renderer.pending_gpu_changes = GpuSceneChange::None;
+        if (this->renderer.camera_revision != view.camera_revision) {
+            this->renderer.camera_revision = view.camera_revision;
+            reset_required                 = true;
+        }
         this->renderer.camera = view.camera;
-        if (!*this->renderer.output_image.image || this->renderer.output_image.extent != view.extent) this->create_output(view.extent);
+        if (!*this->renderer.output_image.image || this->renderer.output_image.extent != view.extent) {
+            this->create_output(view.extent);
+            reset_required = false;
+        }
+        if (reset_required) this->reset();
     }
 
     void Rasterizer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t) {
+        if (this->renderer.paused || this->renderer.sample_index >= this->progress().target) return;
         this->record_commands(command_buffer);
+        ++this->renderer.sample_index;
+    }
+
+    RenderProgress Rasterizer::progress() const noexcept {
+        return {this->renderer.sample_index, this->renderer.display_mode == RasterDisplayMode::Wireframe ? 1u : this->renderer.sampler.samples_per_pixel, this->renderer.paused};
+    }
+
+    void Rasterizer::set_paused(const bool paused) noexcept {
+        this->renderer.paused = paused;
+    }
+
+    void Rasterizer::reset() noexcept {
+        this->renderer.sample_index = 0;
+    }
+
+    void Rasterizer::set_display_mode(const RasterDisplayMode mode) noexcept {
+        if (this->renderer.display_mode == mode) return;
+        this->renderer.display_mode = mode;
+        this->reset();
     }
 
     void Rasterizer::destroy() noexcept {
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.primitives_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.transforms_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.material_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.face_material_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.area_light_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.bindings_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.volumes_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.volume_lights_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.zero_volume_field_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->renderer.sampled_output_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->renderer.storage_output_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->renderer.sampled_depth_descriptor);
-        for (const DescriptorHandle descriptor : this->scene.texture_descriptors) this->context.runtime.frames.retire_resource_descriptor(descriptor);
-        for (const VolumeResources& volume : this->scene.volume_resources) this->context.runtime.frames.retire_resource_descriptor(volume.majorant_descriptor);
+        this->context.runtime.frames.defer_destruction([
+            primitive_buffer = std::move(this->scene.primitive_buffer),
+            material_buffer = std::move(this->scene.material_buffer),
+            face_material_buffer = std::move(this->scene.face_material_buffer),
+            area_light_buffer = std::move(this->scene.area_light_buffer),
+            light_buffer = std::move(this->scene.light_buffer),
+            ray_primitive_buffer = std::move(this->scene.ray_primitive_buffer),
+            volume_buffer = std::move(this->scene.volume_buffer),
+            zero_volume_field_buffer = std::move(this->scene.zero_volume_field_buffer),
+            texture_buffers = std::move(this->scene.texture_buffers),
+            binding_buffer = std::move(this->scene.scene_binding_buffer),
+            volume_resources = std::move(this->scene.volume_resources),
+            volume_majorant_shader = std::move(this->scene.volume_majorant_shader),
+            dynamic_shapes_shader = std::move(this->scene.dynamic_light_shapes_shader),
+            dynamic_finalize_shader = std::move(this->scene.dynamic_light_finalize_shader),
+            dynamic_selection_shader = std::move(this->scene.dynamic_light_selection_shader),
+            sample_image = std::move(this->renderer.sample_image),
+            output_image = std::move(this->renderer.output_image),
+            depth_image = std::move(this->renderer.depth_image),
+            shaders = std::move(this->renderer.shaders),
+            sphere_shader = std::move(this->renderer.sphere_shader),
+            volume_shader = std::move(this->renderer.volume_shader),
+            background_shader = std::move(this->renderer.background_shader),
+            accumulation_shader = std::move(this->renderer.accumulation_shader)
+        ]() mutable {});
     }
 
 } // namespace spectra

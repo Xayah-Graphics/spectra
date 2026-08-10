@@ -35,6 +35,11 @@ namespace spectra {
         return *this;
     }
 
+    std::uint64_t ExternalHandle::release() noexcept {
+        this->type = ExternalHandleType::None;
+        return std::exchange(this->value, 0);
+    }
+
     namespace {
         constexpr vk::DeviceSize resource_heap_size       = 16u * 1024u * 1024u;
         constexpr vk::DeviceSize sampler_heap_size        = 1u * 1024u * 1024u;
@@ -77,6 +82,7 @@ namespace spectra {
 
             if (!dedicated) {
                 for (std::uint32_t block_index = 0; block_index < this->blocks.size(); ++block_index) {
+                    if (!this->blocks[block_index]) continue;
                     Block& block = *this->blocks[block_index];
                     if (block.dedicated || block.memory_type != memory_type || block.device_address != request.device_address || block.resource_class != request.resource_class) continue;
                     if (const std::optional<vk::DeviceSize> offset = this->allocate_range(block, request.requirements.size, request.requirements.alignment)) return this->make_allocation(block_index, *offset, request.requirements.size);
@@ -115,11 +121,15 @@ namespace spectra {
             if (static_cast<bool>(request.properties & vk::MemoryPropertyFlagBits::eHostVisible)) block->mapped = block->memory.mapMemory(0, allocation_size);
             if (!dedicated) block->free_ranges.emplace_back(0, allocation_size);
 
-            const std::uint32_t block_index = static_cast<std::uint32_t>(this->blocks.size());
-            this->blocks.emplace_back(std::move(block));
+            const auto empty_slot = std::ranges::find(this->blocks, nullptr);
+            const std::uint32_t block_index = empty_slot == this->blocks.end() ? static_cast<std::uint32_t>(this->blocks.size()) : static_cast<std::uint32_t>(empty_slot - this->blocks.begin());
+            if (empty_slot == this->blocks.end())
+                this->blocks.emplace_back(std::move(block));
+            else
+                *empty_slot = std::move(block);
             if (dedicated) return this->make_allocation(block_index, 0, request.requirements.size);
 
-            const std::optional<vk::DeviceSize> offset = this->allocate_range(*this->blocks.back(), request.requirements.size, request.requirements.alignment);
+            const std::optional<vk::DeviceSize> offset = this->allocate_range(*this->blocks[block_index], request.requirements.size, request.requirements.alignment);
             if (!offset) throw std::runtime_error("Spectra GPU allocator failed to suballocate a new memory block");
             return this->make_allocation(block_index, *offset, request.requirements.size);
         }
@@ -140,11 +150,7 @@ namespace spectra {
         void release(const std::uint32_t block_index, const vk::DeviceSize offset, const vk::DeviceSize size) noexcept {
             Block& block = *this->blocks[block_index];
             if (block.dedicated) {
-                if (block.mapped) {
-                    block.memory.unmapMemory();
-                    block.mapped = nullptr;
-                }
-                block.memory = nullptr;
+                this->blocks[block_index].reset();
                 return;
             }
 
@@ -287,7 +293,7 @@ namespace spectra {
 
     void GpuResources::create_descriptor_heaps() {
         const vk::PhysicalDeviceDescriptorHeapPropertiesEXT& properties = this->context.graphics.descriptor_heap_properties;
-        this->descriptors.resource_stride                               = std::max(align_up(properties.imageDescriptorSize, properties.imageDescriptorAlignment), align_up(properties.bufferDescriptorSize, properties.bufferDescriptorAlignment));
+        this->descriptors.resource_stride                               = align_up(std::max(properties.imageDescriptorSize, properties.bufferDescriptorSize), std::max(properties.imageDescriptorAlignment, properties.bufferDescriptorAlignment));
         this->descriptors.sampler_stride                                = align_up(properties.samplerDescriptorSize, properties.samplerDescriptorAlignment);
 
         const vk::DeviceSize resource_size       = align_down(std::min(align_up(resource_heap_size + properties.minResourceHeapReservedRange, properties.resourceHeapAlignment), properties.maxResourceHeapSize), properties.resourceHeapAlignment);
@@ -371,30 +377,36 @@ namespace spectra {
         return result;
     }
 
-    DescriptorHandle GpuResources::allocate_resource_descriptor() {
+    DescriptorLease GpuResources::allocate_resource_descriptor() {
         if (!this->descriptors.free_resource_indices.empty()) {
             const DescriptorHandle handle{
                 this->descriptors.free_resource_indices.back(),
             };
             this->descriptors.free_resource_indices.pop_back();
-            return handle;
+            return DescriptorLease{*this->frames, handle, DescriptorKind::Resource};
         }
-        const DescriptorHandle handle{this->descriptors.next_resource_index++};
+        const DescriptorHandle handle{this->descriptors.next_resource_index};
         if (static_cast<vk::DeviceSize>(handle.slot_index + 1u) * this->descriptors.resource_stride > this->descriptors.resource_heap.size - this->descriptors.properties.minResourceHeapReservedRange) throw std::runtime_error("Spectra resource descriptor heap is exhausted");
-        return handle;
+        ++this->descriptors.next_resource_index;
+        return DescriptorLease{*this->frames, handle, DescriptorKind::Resource};
     }
 
-    DescriptorHandle GpuResources::allocate_sampler_descriptor() {
+    DescriptorLease GpuResources::allocate_sampler_descriptor() {
         if (!this->descriptors.free_sampler_indices.empty()) {
             const DescriptorHandle handle{
                 this->descriptors.free_sampler_indices.back(),
             };
             this->descriptors.free_sampler_indices.pop_back();
-            return handle;
+            return DescriptorLease{*this->frames, handle, DescriptorKind::Sampler};
         }
-        const DescriptorHandle handle{this->descriptors.next_sampler_index++};
+        const DescriptorHandle handle{this->descriptors.next_sampler_index};
         if (static_cast<vk::DeviceSize>(handle.slot_index + 1u) * this->descriptors.sampler_stride > this->descriptors.sampler_heap.size - this->descriptors.properties.minSamplerHeapReservedRange) throw std::runtime_error("Spectra sampler descriptor heap is exhausted");
-        return handle;
+        ++this->descriptors.next_sampler_index;
+        return DescriptorLease{*this->frames, handle, DescriptorKind::Sampler};
+    }
+
+    void GpuResources::attach_frames(VulkanFrames& descriptor_frames) noexcept {
+        this->frames = &descriptor_frames;
     }
 
     void GpuResources::reclaim_resource_descriptor(const std::uint32_t slot_index) noexcept {
@@ -580,14 +592,15 @@ namespace spectra {
         record(command_buffer);
         command_buffer.end();
         const vk::CommandBuffer raw_command_buffer = *command_buffer;
+        const vk::raii::Fence fence{this->context.graphics.device, vk::FenceCreateInfo{}};
         this->context.graphics.queue.submit(vk::SubmitInfo{
             0,
             nullptr,
             nullptr,
             1,
             &raw_command_buffer,
-        });
-        this->context.graphics.queue.waitIdle();
+        }, *fence);
+        if (this->context.graphics.device.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Immediate Vulkan submission failed");
     }
 
     void GpuResources::submit_external_immediate(const GpuExternalTimelineSemaphore& timeline, const std::uint64_t wait_value, const std::uint64_t signal_value, std::move_only_function<void(const vk::raii::CommandBuffer&)> record) {
@@ -599,8 +612,9 @@ namespace spectra {
         const vk::SemaphoreSubmitInfo wait{*timeline.semaphore, wait_value, vk::PipelineStageFlagBits2::eCopy};
         const vk::SemaphoreSubmitInfo signal{*timeline.semaphore, signal_value, vk::PipelineStageFlagBits2::eAllCommands};
         const vk::CommandBufferSubmitInfo command{*command_buffer};
-        this->context.graphics.queue.submit2(vk::SubmitInfo2{{}, 1, &wait, 1, &command, 1, &signal});
-        this->context.graphics.queue.waitIdle();
+        const vk::raii::Fence fence{this->context.graphics.device, vk::FenceCreateInfo{}};
+        this->context.graphics.queue.submit2(vk::SubmitInfo2{{}, 1, &wait, 1, &command, 1, &signal}, *fence);
+        if (this->context.graphics.device.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Immediate external Vulkan submission failed");
     }
 
     void GpuResources::bind_descriptor_heaps(const vk::raii::CommandBuffer& command_buffer) const noexcept {

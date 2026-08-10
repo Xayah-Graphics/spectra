@@ -41,6 +41,7 @@ public struct WavefrontParameters {
 
 public struct WavefrontBindings {
     public DescriptorHandle<RWTexture2D<float4>> output;
+    public DescriptorHandle<RWTexture2D<float>> depth;
     public DescriptorHandle<RWStructuredBuffer<uint>> queue_counts;
     public DescriptorHandle<RWStructuredBuffer<uint>> ray_queue_0;
     public DescriptorHandle<RWStructuredBuffer<uint>> ray_queue_1;

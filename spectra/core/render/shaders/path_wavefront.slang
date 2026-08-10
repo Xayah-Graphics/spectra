@@ -238,6 +238,14 @@ void record_surface_gbuffer(
             : bindings.ray_queue_1;
     const uint path_id =
         read_queue[queue_index];
+    RWStructuredBuffer<uint4>
+        gbuffer_sample_identity_1 =
+            bindings
+                .gbuffer_sample_identity_1;
+    if (
+        gbuffer_sample_identity_1[
+            path_id]
+            .z != 0) return;
     RWStructuredBuffer<uint4> hit_identifiers =
         bindings.hit_identifiers;
     const uint4 identifiers =
@@ -422,10 +430,6 @@ void record_surface_gbuffer(
         gbuffer_sample_identity_0 =
             bindings
                 .gbuffer_sample_identity_0;
-    RWStructuredBuffer<uint4>
-        gbuffer_sample_identity_1 =
-            bindings
-                .gbuffer_sample_identity_1;
     gbuffer_sample_albedo[path_id] =
         albedo.spectrum;
     gbuffer_sample_shading_normal[
@@ -467,6 +471,53 @@ void record_surface_gbuffer(
             1,
             asuint(
                 -camera_position.z));
+}
+
+[shader("compute")]
+[numthreads(256, 1, 1)]
+void resolve_gbuffer_depth(
+    uint3 dispatch_thread_id : SV_DispatchThreadID) {
+    StructuredBuffer<WavefrontBindings> binding_buffer =
+        push_data.bindings;
+    const WavefrontBindings bindings =
+        binding_buffer[0];
+    StructuredBuffer<WavefrontParameters> parameter_buffer =
+        push_data.parameters;
+    const WavefrontParameters parameters =
+        parameter_buffer[0];
+    const uint path_id =
+        dispatch_thread_id.x;
+    const uint path_count =
+        parameters.extent.x *
+        parameters.extent.y;
+    if (path_id >= path_count) return;
+    RWStructuredBuffer<uint4> identity =
+        bindings.gbuffer_identity_1;
+    const uint4 surface =
+        identity[path_id];
+    float device_depth = 1.0;
+    if (surface.z != 0) {
+        const float camera_depth =
+            asfloat(surface.w);
+        const float near_plane =
+            parameters.camera_lens.z;
+        const float far_plane =
+            parameters.camera_lens.w;
+        device_depth =
+            parameters.camera_metadata.x == 0
+                ? far_plane /
+                      (far_plane - near_plane) -
+                      far_plane * near_plane /
+                          ((far_plane - near_plane) * camera_depth)
+                : (camera_depth - near_plane) /
+                      (far_plane - near_plane);
+    }
+    RWTexture2D<float> depth =
+        bindings.depth;
+    depth[uint2(
+        path_id % parameters.extent.x,
+        path_id / parameters.extent.x)] =
+        device_depth;
 }
 
 [shader("compute")]
@@ -954,7 +1005,9 @@ void shade_surfaces(
             primitive.first_light_shape +
             (
                 primitive.attributes.z ==
-                        geometry_triangle
+                        geometry_triangle ||
+                primitive.attributes.z ==
+                        geometry_sphere_set
                     ? identifiers.y
                     : 0
             );
@@ -1506,11 +1559,7 @@ void accumulate_film(
                 parameters
                     .film_sensor_to_output_row_2
                     .xyz,
-                sensor_rgb)) *
-        exp2(
-            parameters
-                .filter_parameters_0
-                .w);
+                sensor_rgb));
     output[pixel] =
         float4(
             output_rgb,

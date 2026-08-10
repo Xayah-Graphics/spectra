@@ -344,6 +344,7 @@ namespace spectra::scene {
             const Prototype& prototype = *std::ranges::find(this->resources.prototypes, instance.prototype, &Prototype::id);
             for (const Primitive& primitive : prototype.primitives) include_primitive_bounds(result, *this, primitive, instance.transform);
         }
+        for (const Volume& volume : this->resources.volumes) result.include(volume.bounds.transformed(volume.transform));
         return result;
     }
 

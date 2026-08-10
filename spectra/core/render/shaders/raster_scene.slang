@@ -22,6 +22,114 @@ public struct RasterTransform {
     public float4 transform_row_3;
 }
 
+public float3 raster_transform_position(
+    RasterTransform transform,
+    float3 position) {
+    const float4 homogeneous =
+        float4(position, 1.0);
+    return float3(
+        dot(
+            transform.transform_row_0,
+            homogeneous),
+        dot(
+            transform.transform_row_1,
+            homogeneous),
+        dot(
+            transform.transform_row_2,
+            homogeneous));
+}
+
+public float3 raster_transform_normal(
+    RasterTransform transform,
+    float3 normal) {
+    const float3 column_0 =
+        float3(
+            transform.transform_row_0.x,
+            transform.transform_row_1.x,
+            transform.transform_row_2.x);
+    const float3 column_1 =
+        float3(
+            transform.transform_row_0.y,
+            transform.transform_row_1.y,
+            transform.transform_row_2.y);
+    const float3 column_2 =
+        float3(
+            transform.transform_row_0.z,
+            transform.transform_row_1.z,
+            transform.transform_row_2.z);
+    return normalize(
+        cross(column_1, column_2) *
+                normal.x +
+            cross(column_2, column_0) *
+                normal.y +
+            cross(column_0, column_1) *
+                normal.z);
+}
+
+public float3 raster_inverse_transform_position(
+    RasterTransform transform,
+    float3 position) {
+    const float3 column_0 =
+        float3(
+            transform.transform_row_0.x,
+            transform.transform_row_1.x,
+            transform.transform_row_2.x);
+    const float3 column_1 =
+        float3(
+            transform.transform_row_0.y,
+            transform.transform_row_1.y,
+            transform.transform_row_2.y);
+    const float3 column_2 =
+        float3(
+            transform.transform_row_0.z,
+            transform.transform_row_1.z,
+            transform.transform_row_2.z);
+    const float determinant =
+        dot(
+            column_0,
+            cross(column_1, column_2));
+    const float3 offset =
+        position -
+        float3(
+            transform.transform_row_0.w,
+            transform.transform_row_1.w,
+            transform.transform_row_2.w);
+    return float3(
+        dot(cross(column_1, column_2), offset),
+        dot(cross(column_2, column_0), offset),
+        dot(cross(column_0, column_1), offset)) /
+        determinant;
+}
+
+public float3 raster_inverse_transform_vector(
+    RasterTransform transform,
+    float3 vector) {
+    const float3 column_0 =
+        float3(
+            transform.transform_row_0.x,
+            transform.transform_row_1.x,
+            transform.transform_row_2.x);
+    const float3 column_1 =
+        float3(
+            transform.transform_row_0.y,
+            transform.transform_row_1.y,
+            transform.transform_row_2.y);
+    const float3 column_2 =
+        float3(
+            transform.transform_row_0.z,
+            transform.transform_row_1.z,
+            transform.transform_row_2.z);
+    const float determinant =
+        dot(
+            column_0,
+            cross(column_1, column_2));
+    return float3(
+        dot(cross(column_1, column_2), vector),
+        dot(cross(column_2, column_0), vector),
+        dot(cross(column_0, column_1), vector)) /
+        determinant;
+}
+
 public struct RasterMaterial {
     public uint4 metadata;
     public uint4 materials;
@@ -82,6 +190,32 @@ public struct RasterBilerpTexture {
 
 public struct RasterAreaLight {
     public float4 emission;
+    public uint4 metadata;
+}
+
+public struct RasterLight {
+    public uint4 metadata;
+    public float4 radiance;
+    public float4 position;
+    public float4 direction;
+    public float4 parameters;
+    public float4 transform_row_0;
+    public float4 transform_row_1;
+    public float4 transform_row_2;
+    public float4 texture_coordinates_0;
+    public float4 texture_coordinates_1;
+    public float4 selection;
+}
+
+public struct RasterRayPrimitive {
+    public DescriptorHandle<StructuredBuffer<float3>> positions;
+    public DescriptorHandle<StructuredBuffer<float2>> texture_coordinates;
+    public DescriptorHandle<StructuredBuffer<uint>> indices;
+    public DescriptorHandle<StructuredBuffer<float>> radii;
+    public uint4 metadata;
+    public float4 parameters;
+    public uint scene_primitive_index;
+    public uint3 reserved;
 }
 
 public struct RasterSceneBindings {
@@ -99,10 +233,13 @@ public struct RasterSceneBindings {
     public DescriptorHandle<StructuredBuffer<RasterCompositeTexture>> mix_textures;
     public DescriptorHandle<StructuredBuffer<RasterDirectionMixTexture>> direction_mix_textures;
     public DescriptorHandle<StructuredBuffer<RasterBilerpTexture>> bilerp_textures;
+    public DescriptorHandle<StructuredBuffer<RasterLight>> lights;
+    public DescriptorHandle<StructuredBuffer<RasterRayPrimitive>> ray_primitives;
     public uint4 metadata;
 }
 
 public struct RasterPushData {
+    public uint64_t acceleration_structure_address;
     public DescriptorHandle<StructuredBuffer<float3>> positions;
     public DescriptorHandle<StructuredBuffer<float3>> normals;
     public DescriptorHandle<StructuredBuffer<float3>> tangents;
@@ -112,6 +249,12 @@ public struct RasterPushData {
     public uint scene_primitive_index;
     public uint element_count;
     public uint2 attributes;
+    public DescriptorHandle<StructuredBuffer<uint>> sampling_tables;
+    public uint4 sampler_metadata;
+    public uint4 sampler_parameters;
+    public uint2 extent;
+    public uint sample_index;
+    public uint reserved;
     public float4 view_projection_row_0;
     public float4 view_projection_row_1;
     public float4 view_projection_row_2;
@@ -119,6 +262,7 @@ public struct RasterPushData {
     public float4 camera_position;
     public float4 camera_right;
     public float4 camera_up;
+    public float4 camera_forward;
 }
 
 public struct RasterVolume {
@@ -134,6 +278,7 @@ public struct RasterVolume {
     public float4 emission;
     public float4 scales;
     public float4 temperature;
+    public float4 procedural_parameters;
     public DescriptorHandle<StructuredBuffer<float>> density;
     public DescriptorHandle<StructuredBuffer<float>> temperature_field;
     public DescriptorHandle<StructuredBuffer<float3>> sigma_a_field;
@@ -141,12 +286,4 @@ public struct RasterVolume {
     public DescriptorHandle<StructuredBuffer<float>> emission_scale_field;
     public DescriptorHandle<StructuredBuffer<float3>> emission_field;
     public DescriptorHandle<StructuredBuffer<float>> majorant;
-}
-
-public struct RasterVolumeLight {
-    public uint4 metadata;
-    public float4 position;
-    public float4 direction;
-    public float4 radiance;
-    public float4 parameters;
 }

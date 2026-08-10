@@ -5,11 +5,11 @@ import :viewport.interaction;
 import std;
 
 namespace spectra {
-    ViewportInteraction::ViewportInteraction(SceneDocument& document, DynamicsRuntime& dynamics) noexcept : context{document, dynamics} {}
+    ViewportInteraction::ViewportInteraction(SceneDocument& document, DynamicsRuntime& dynamics, GpuScene& gpu_scene) noexcept : context{document, dynamics, gpu_scene} {}
 
     void ViewportInteraction::initialize_from_scene() {
         this->view.camera          = this->context.document.content.source.camera();
-        this->view.focus           = this->context.document.content.source.view().bounds().center();
+        this->view.focus           = this->effective_scene_bounds().center();
         this->view.navigation_up   = {0.0f, 1.0f, 0.0f};
         this->view.camera_revision = 1;
         const scene::Film& film    = this->context.document.content.source.film();
@@ -125,7 +125,7 @@ namespace spectra {
     }
 
     void ViewportInteraction::frame_scene(const float aspect) noexcept {
-        this->frame_viewport_camera(this->context.document.content.evaluated.view().bounds(), aspect);
+        this->frame_viewport_camera(this->effective_scene_bounds(), aspect);
         this->view.source = CameraSource::Viewport;
         this->camera_changed();
     }
@@ -141,7 +141,7 @@ namespace spectra {
         if (found)
             this->frame_viewport_camera(selected, aspect);
         else
-            this->frame_viewport_camera(this->context.document.content.evaluated.view().bounds(), aspect);
+            this->frame_viewport_camera(this->effective_scene_bounds(), aspect);
         this->view.source = CameraSource::Viewport;
         this->camera_changed();
     }
@@ -154,7 +154,7 @@ namespace spectra {
                 selected.include(*entity_bound);
                 found = true;
             }
-        const math::Bounds3 bounds                  = found ? selected : this->context.document.content.evaluated.view().bounds();
+        const math::Bounds3 bounds                  = found ? selected : this->effective_scene_bounds();
         this->view.focus                            = bounds.center();
         this->view.navigation_up                    = std::abs(direction.y) > 0.9f ? math::Float3{0.0f, 0.0f, -1.0f} : math::Float3{0.0f, 1.0f, 0.0f};
         this->view.camera.transform                 = math::Transform::look_at(this->view.focus + direction.normalized() * bounds.radius() * 3.0f, this->view.focus, this->view.navigation_up);
@@ -203,6 +203,7 @@ namespace spectra {
         if (entity.kind == SceneEntityKind::Instance) return std::ranges::contains(resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id);
         if (entity.kind == SceneEntityKind::Camera) return std::ranges::contains(resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id);
         if (entity.kind == SceneEntityKind::Light) return std::ranges::contains(resources.lights, scene::LightId{entity.id}, &scene::Light::id);
+        if (entity.kind == SceneEntityKind::Volume) return std::ranges::contains(resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id);
         if (entity.kind != SceneEntityKind::AreaEmitter) return false;
         const auto instance = std::ranges::find(resources.instances, scene::InstanceId{entity.owner}, &scene::Instance::id);
         if (instance == resources.instances.end()) return false;
@@ -210,11 +211,30 @@ namespace spectra {
         return entity.subindex < prototype.primitives.size() && prototype.primitives[entity.subindex].area_light == scene::LightId{entity.id};
     }
 
+    math::Bounds3 ViewportInteraction::effective_scene_bounds() const noexcept {
+        math::Bounds3 bounds = this->context.document.content.evaluated.view().bounds();
+        bounds.include(this->context.gpu_scene.view().resolved_dynamic_bounds);
+        return bounds;
+    }
+
     std::optional<math::Bounds3> ViewportInteraction::entity_bounds(const SceneEntityReference entity) const noexcept {
         const scene::Scene& source = this->context.document.content.evaluated;
+        for (const dynamics::SceneBound& dynamic_bound : this->context.gpu_scene.view().resolved_dynamic_bound_records) {
+            const bool resource_matches =
+                (entity.kind == SceneEntityKind::Instance && dynamic_bound.resource_kind == dynamics::BoundResourceKind::Instance && dynamic_bound.resource_id == entity.id) ||
+                (entity.kind == SceneEntityKind::AreaEmitter && dynamic_bound.resource_kind == dynamics::BoundResourceKind::Instance && dynamic_bound.resource_id == entity.owner) ||
+                (entity.kind == SceneEntityKind::Volume && dynamic_bound.resource_kind == dynamics::BoundResourceKind::Volume && dynamic_bound.resource_id == entity.id);
+            if (!resource_matches) continue;
+            const math::Bounds3 bounds{dynamic_bound.minimum, dynamic_bound.maximum};
+            return dynamic_bound.domain == dynamics::BoundsDomain::World ? bounds : bounds.transformed(dynamic_bound.world_from_local);
+        }
         if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) return source.view().bounds(std::array{scene::InstanceId{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner}});
-        const math::Bounds3 scene_bounds = source.view().bounds();
+        const math::Bounds3 scene_bounds = this->effective_scene_bounds();
         const float extent               = std::max(scene_bounds.radius() * 0.05f, 0.05f);
+        if (entity.kind == SceneEntityKind::Volume) {
+            const scene::Volume& volume = *std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id);
+            return volume.bounds.transformed(volume.transform);
+        }
         if (entity.kind == SceneEntityKind::Camera) {
             const scene::Camera& camera = *std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id);
             const math::Float3 position = camera.frame().position;

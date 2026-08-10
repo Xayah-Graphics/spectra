@@ -1,6 +1,7 @@
 export module spectra.render.rasterizer;
 
 import spectra.render.contract;
+import spectra.render.sampling;
 import spectra.render.scene;
 import spectra.runtime;
 import spectra.scene;
@@ -87,6 +88,47 @@ namespace spectra {
 
     struct alignas(16) RasterAreaLight {
         std::array<float, 4> emission{};
+        std::array<std::uint32_t, 4> metadata{};
+    };
+
+    struct alignas(16) RasterLight {
+        std::array<std::uint32_t, 4> metadata{};
+        std::array<float, 4> radiance{};
+        std::array<float, 4> position{};
+        std::array<float, 4> direction{};
+        std::array<float, 4> parameters{};
+        std::array<float, 4> transform_row_0{};
+        std::array<float, 4> transform_row_1{};
+        std::array<float, 4> transform_row_2{};
+        std::array<float, 4> texture_coordinates_0{};
+        std::array<float, 4> texture_coordinates_1{};
+        std::array<float, 4> selection{};
+    };
+
+    struct alignas(16) RasterRayPrimitive {
+        DescriptorHandle positions{};
+        DescriptorHandle texture_coordinates{};
+        DescriptorHandle indices{};
+        DescriptorHandle radii{};
+        std::array<std::uint32_t, 4> metadata{};
+        std::array<float, 4> parameters{};
+        std::uint32_t scene_primitive_index{};
+        std::array<std::uint32_t, 3> reserved{};
+    };
+
+    struct RasterDynamicAreaLightRange {
+        std::uint32_t scene_primitive_index{};
+        std::uint32_t resource_index{};
+        std::uint32_t first_light{};
+        std::uint32_t capacity{};
+        std::uint32_t kind{};
+        std::uint32_t light_kind{};
+        std::uint32_t flags{};
+        std::uint32_t emission_texture{};
+        std::uint32_t attribute_mask{};
+        std::array<float, 4> geometry_parameters{};
+        std::array<float, 4> emission_parameters{};
+        std::array<float, 4> radiance{};
     };
 
     struct alignas(16) RasterSceneBindings {
@@ -104,6 +146,8 @@ namespace spectra {
         DescriptorHandle mix_textures{};
         DescriptorHandle direction_mix_textures{};
         DescriptorHandle bilerp_textures{};
+        DescriptorHandle lights{};
+        DescriptorHandle ray_primitives{};
         std::array<std::uint32_t, 4> metadata{};
     };
 
@@ -120,6 +164,7 @@ namespace spectra {
         std::array<float, 4> emission{};
         std::array<float, 4> scales{};
         std::array<float, 4> temperature{};
+        std::array<float, 4> procedural_parameters{};
         DescriptorHandle density{};
         DescriptorHandle temperature_field{};
         DescriptorHandle sigma_a_field{};
@@ -127,14 +172,6 @@ namespace spectra {
         DescriptorHandle emission_scale_field{};
         DescriptorHandle emission_field{};
         DescriptorHandle majorant{};
-    };
-
-    struct alignas(16) RasterVolumeLight {
-        std::array<std::uint32_t, 4> metadata{};
-        std::array<float, 4> position{};
-        std::array<float, 4> direction{};
-        std::array<float, 4> radiance{};
-        std::array<float, 4> parameters{};
     };
 
     export struct Rasterizer {
@@ -145,10 +182,10 @@ namespace spectra {
             scene::ResourceRevision revision{};
             math::UInt3 resolution{};
             GpuBuffer majorant{};
-            DescriptorHandle majorant_descriptor{};
+            DescriptorLease majorant_descriptor{};
         };
 
-        Rasterizer(VulkanRuntime& runtime, GpuScene& gpu_scene, scene::SceneView scene, std::filesystem::path shader_directory);
+        Rasterizer(VulkanRuntime& runtime, GpuScene& gpu_scene, SamplingResources& sampling, scene::SceneView scene, std::filesystem::path shader_directory);
         ~Rasterizer();
 
         Rasterizer(const Rasterizer&)            = delete;
@@ -160,66 +197,87 @@ namespace spectra {
         void prepare(scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer);
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         [[nodiscard]] RenderOutput output() const noexcept;
+        [[nodiscard]] RenderProgress progress() const noexcept;
+        void set_paused(bool paused) noexcept;
+        void reset() noexcept;
+        void set_display_mode(RasterDisplayMode mode) noexcept;
 
         struct {
             VulkanRuntime& runtime;
             GpuScene& gpu_scene;
+            SamplingResources& sampling;
             std::filesystem::path shader_directory{};
         } context;
 
         struct {
             GpuBuffer primitive_buffer{};
-            GpuBuffer transform_buffer{};
             GpuBuffer material_buffer{};
             GpuBuffer face_material_buffer{};
             GpuBuffer area_light_buffer{};
+            GpuBuffer light_buffer{};
+            GpuBuffer ray_primitive_buffer{};
             GpuBuffer volume_buffer{};
-            GpuBuffer volume_light_buffer{};
             GpuBuffer zero_volume_field_buffer{};
             std::array<GpuBuffer, 9> texture_buffers{};
             GpuBuffer scene_binding_buffer{};
-            DescriptorHandle material_descriptor{};
-            DescriptorHandle face_material_descriptor{};
-            DescriptorHandle area_light_descriptor{};
-            DescriptorHandle zero_volume_field_descriptor{};
-            std::array<DescriptorHandle, 9> texture_descriptors{};
+            DescriptorLease material_descriptor{};
+            DescriptorLease face_material_descriptor{};
+            DescriptorLease area_light_descriptor{};
+            DescriptorLease light_descriptor{};
+            DescriptorLease ray_primitives_descriptor{};
+            DescriptorLease zero_volume_field_descriptor{};
+            std::array<DescriptorLease, 9> texture_descriptors{};
             std::uint32_t texture_count{};
             std::uint32_t texture_stack_size{};
             scene::SceneRevision uploaded_revision{};
             std::vector<VolumeResources> volume_resources{};
             vk::raii::ShaderEXT volume_majorant_shader{nullptr};
-            DescriptorHandle primitives_descriptor{};
-            DescriptorHandle transforms_descriptor{};
-            DescriptorHandle bindings_descriptor{};
-            DescriptorHandle volumes_descriptor{};
-            DescriptorHandle volume_lights_descriptor{};
+            DescriptorLease primitives_descriptor{};
+            DescriptorLease bindings_descriptor{};
+            DescriptorLease volumes_descriptor{};
             std::uint32_t volume_count{};
-            std::uint32_t volume_light_count{};
+            std::uint32_t light_count{};
+            std::vector<RasterDynamicAreaLightRange> dynamic_area_lights{};
+            vk::raii::ShaderEXT dynamic_light_shapes_shader{nullptr};
+            vk::raii::ShaderEXT dynamic_light_finalize_shader{nullptr};
+            vk::raii::ShaderEXT dynamic_light_selection_shader{nullptr};
         } scene;
 
         struct {
             scene::Camera camera{};
+            std::uint64_t camera_revision{};
             float film_exposure{};
+            std::array<std::uint32_t, 2> film_resolution{};
+            std::array<std::uint32_t, 2> film_pixel_minimum{};
+            std::array<std::uint32_t, 2> film_pixel_maximum{};
             RasterDisplayMode display_mode{RasterDisplayMode::Material};
             vk::raii::ShaderEXTs shaders{nullptr};
             vk::raii::ShaderEXT sphere_shader{nullptr};
             vk::raii::ShaderEXT volume_shader{nullptr};
+            vk::raii::ShaderEXT background_shader{nullptr};
+            vk::raii::ShaderEXT accumulation_shader{nullptr};
+            GpuImage sample_image{};
             GpuImage output_image{};
             GpuImage depth_image{};
-            DescriptorHandle sampled_output_descriptor{};
-            DescriptorHandle storage_output_descriptor{};
-            DescriptorHandle sampled_depth_descriptor{};
+            DescriptorLease sampled_output_descriptor{};
+            DescriptorLease storage_output_descriptor{};
+            DescriptorLease storage_sample_descriptor{};
+            DescriptorLease sampled_depth_descriptor{};
             vk::ImageLayout output_layout{vk::ImageLayout::eUndefined};
+            vk::ImageLayout sample_layout{vk::ImageLayout::eUndefined};
             vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
+            scene::Sampler sampler{};
+            std::uint32_t sample_index{};
+            bool paused{};
             scene::SceneChange pending_changes{scene::SceneChange::None};
             GpuSceneChange pending_gpu_changes{GpuSceneChange::None};
         } renderer;
 
     private:
         void initialize_scene(scene::SceneView scene);
-        void upload_scene(scene::SceneView scene, const vk::raii::CommandBuffer* command_buffer = nullptr);
-        void update_transforms(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void upload_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void update_dynamic_lights(const vk::raii::CommandBuffer& command_buffer);
         void synchronize_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void initialize_renderer();
         void create_shaders();
@@ -229,4 +287,5 @@ namespace spectra {
     };
 
     static_assert(SceneRenderer<Rasterizer>);
+    static_assert(ProgressiveSceneRenderer<Rasterizer>);
 } // namespace spectra

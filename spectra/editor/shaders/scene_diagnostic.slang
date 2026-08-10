@@ -38,10 +38,20 @@ uniform DiagnosticPushData push_data;
 
 float4 transform_position(float3 position) {
     const float4 value = float4(position, 1.0);
+    if (push_data.detail.w != 0xffffffff) {
+        RWByteAddressBuffer transforms = push_data.tertiary;
+        const uint offset = push_data.detail.w * 64;
+        return float4(dot(transforms.Load<float4>(offset), value), dot(transforms.Load<float4>(offset + 16), value), dot(transforms.Load<float4>(offset + 32), value), dot(transforms.Load<float4>(offset + 48), value));
+    }
     return float4(dot(push_data.transform_row_0, value), dot(push_data.transform_row_1, value), dot(push_data.transform_row_2, value), dot(push_data.transform_row_3, value));
 }
 
 float3 transform_vector(float3 vector) {
+    if (push_data.detail.w != 0xffffffff) {
+        RWByteAddressBuffer transforms = push_data.tertiary;
+        const uint offset = push_data.detail.w * 64;
+        return float3(dot(transforms.Load<float4>(offset).xyz, vector), dot(transforms.Load<float4>(offset + 16).xyz, vector), dot(transforms.Load<float4>(offset + 32).xyz, vector));
+    }
     return float3(dot(push_data.transform_row_0.xyz, vector), dot(push_data.transform_row_1.xyz, vector), dot(push_data.transform_row_2.xyz, vector));
 }
 
@@ -118,8 +128,44 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
         const float3 second = float3(dot(transform_row_0, second_value), dot(transform_row_1, second_value), dot(transform_row_2, second_value));
         return make_line(first, second, push_data.parameters.x, color, metadata.z, metadata.w, vertex_id % 6);
     }
+    if (kind == 7) {
+        ByteAddressBuffer bounds = push_data.primary;
+        const uint offset = instance_id * 112;
+        const float3 minimum = bounds.Load<float3>(offset);
+        const float3 maximum = bounds.Load<float3>(offset + 16);
+        const uint domain = bounds.Load<uint>(offset + 28);
+        const uint edges[24] = {0,1, 1,3, 3,2, 2,0, 4,5, 5,7, 7,6, 6,4, 0,4, 1,5, 2,6, 3,7};
+        const uint edge = vertex_id / 6;
+        const uint first_corner = edges[edge * 2];
+        const uint second_corner = edges[edge * 2 + 1];
+        float3 first = float3((first_corner & 1) != 0 ? maximum.x : minimum.x, (first_corner & 2) != 0 ? maximum.y : minimum.y, (first_corner & 4) != 0 ? maximum.z : minimum.z);
+        float3 second = float3((second_corner & 1) != 0 ? maximum.x : minimum.x, (second_corner & 2) != 0 ? maximum.y : minimum.y, (second_corner & 4) != 0 ? maximum.z : minimum.z);
+        if (domain == 0) {
+            const float4 first_value = float4(first, 1.0);
+            const float4 second_value = float4(second, 1.0);
+            const float4 row_0 = bounds.Load<float4>(offset + 48);
+            const float4 row_1 = bounds.Load<float4>(offset + 64);
+            const float4 row_2 = bounds.Load<float4>(offset + 80);
+            first = float3(dot(row_0, first_value), dot(row_1, first_value), dot(row_2, first_value));
+            second = float3(dot(row_0, second_value), dot(row_1, second_value), dot(row_2, second_value));
+        }
+        return make_line(first, second, push_data.parameters.x, push_data.color, 0, push_data.metadata.w, vertex_id % 6);
+    }
     ByteAddressBuffer primary = push_data.primary;
     ByteAddressBuffer secondary = push_data.secondary;
+    if (kind == 8) {
+        const uint line_vertex = vertex_id % 6;
+        const uint segment_index = vertex_id / 6;
+        const uint axis = segment_index / 32;
+        const uint segment = segment_index % 32;
+        const float first_angle = float(segment) * 2.0 * 3.14159265358979323846 / 32.0;
+        const float second_angle = float(segment + 1) * 2.0 * 3.14159265358979323846 / 32.0;
+        const float3 center = primary.Load<float3>(instance_id * 12);
+        const float radius = secondary.Load<float>(instance_id * 4);
+        const float3 first_offset = axis == 0 ? float3(0.0, cos(first_angle), sin(first_angle)) : axis == 1 ? float3(cos(first_angle), 0.0, sin(first_angle)) : float3(cos(first_angle), sin(first_angle), 0.0);
+        const float3 second_offset = axis == 0 ? float3(0.0, cos(second_angle), sin(second_angle)) : axis == 1 ? float3(cos(second_angle), 0.0, sin(second_angle)) : float3(cos(second_angle), sin(second_angle), 0.0);
+        return make_line(center + first_offset * radius, center + second_offset * radius, push_data.parameters.x, push_data.color, push_data.metadata.z, push_data.metadata.w, line_vertex);
+    }
     if (kind == 2) {
         const uint edge_index = vertex_id / 6;
         const uint triangle = edge_index / 3;

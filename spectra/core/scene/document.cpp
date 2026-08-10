@@ -99,4 +99,11 @@ namespace spectra {
         ++resource.revision.content;
         this->mark_change(target_scene, scene::SceneChange::Light);
     }
+
+    void SceneDocument::update_volume_transform(scene::Scene& target_scene, const scene::VolumeId volume_id, math::Transform transform) {
+        scene::Volume& resource = *std::ranges::find(target_scene.resources.volumes, volume_id, &scene::Volume::id);
+        resource.transform      = std::move(transform);
+        ++resource.revision.content;
+        this->mark_change(target_scene, scene::SceneChange::Volume);
+    }
 } // namespace spectra

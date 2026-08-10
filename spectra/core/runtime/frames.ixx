@@ -21,6 +21,7 @@ namespace spectra {
         static constexpr std::uint32_t frames_in_flight = 2;
 
         VulkanFrames(VulkanGraphics& graphics, GpuResources& resources);
+        ~VulkanFrames();
 
         VulkanFrames(const VulkanFrames&)            = delete;
         VulkanFrames(VulkanFrames&&)                 = delete;
@@ -45,7 +46,8 @@ namespace spectra {
         } context;
 
         struct {
-            GpuBuffer buffer{};
+            std::array<std::vector<GpuBuffer>, frames_in_flight> buffers{};
+            std::array<std::size_t, frames_in_flight> current_buffers{};
             std::array<vk::DeviceSize, frames_in_flight> offsets{};
         } uploads;
 
@@ -55,13 +57,25 @@ namespace spectra {
             std::vector<vk::raii::Fence> fences{};
             std::array<std::vector<vk::SemaphoreSubmitInfo>, frames_in_flight> submit_waits{};
             std::array<std::vector<vk::SemaphoreSubmitInfo>, frames_in_flight> submit_signals{};
+            std::array<std::uint64_t, frames_in_flight> submitted_serials{};
+            std::uint64_t next_submission_serial{1};
+            std::uint64_t completed_serial{};
             std::uint32_t current_slot_index{};
+            bool recording{};
         } frame;
 
         struct {
-            std::array<std::vector<std::move_only_function<void()>>, frames_in_flight> destructions{};
-            std::array<std::vector<std::uint32_t>, frames_in_flight> resource_indices{};
-            std::array<std::vector<std::uint32_t>, frames_in_flight> sampler_indices{};
+            struct Destruction {
+                std::uint64_t serial{};
+                std::move_only_function<void()> callback{};
+            };
+            struct Descriptor {
+                std::uint64_t serial{};
+                std::uint32_t index{};
+            };
+            std::vector<Destruction> destructions{};
+            std::vector<Descriptor> resource_indices{};
+            std::vector<Descriptor> sampler_indices{};
         } deferred;
     };
 

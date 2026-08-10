@@ -5,6 +5,7 @@ export import spectra.render.contract;
 import spectra.render.pathtracer;
 import spectra.render.pathtracer.resources;
 import spectra.render.rasterizer;
+import spectra.render.sampling;
 import spectra.render.scene;
 import spectra.runtime;
 import spectra.scene;
@@ -40,6 +41,7 @@ namespace spectra {
         void set_paused(bool paused);
         void reset();
         [[nodiscard]] bool gbuffer_available() const noexcept;
+        void record_gbuffer_readback(const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot);
         [[nodiscard]] RenderGBufferReadback readback();
 
     private:
@@ -47,9 +49,11 @@ namespace spectra {
             VulkanRuntime& runtime;
             GpuScene& gpu_scene;
             std::filesystem::path shader_directory{};
+            std::filesystem::path pathtracer_directory{};
         } context;
 
-        PathTracerResources pathtracer_resources;
+        SamplingResources sampling_resources;
+        std::optional<PathTracerResources> pathtracer_resources{};
 
         struct {
             std::optional<Rasterizer> rasterizer{};

@@ -1,46 +1,28 @@
-module spectra.editor;
+module spectra.overlay;
 
 import spectra.runtime.shaders;
-
-import :viewport.overlay;
 
 import std;
 import vulkan;
 
 namespace spectra {
-    struct alignas(16) ViewportOverlayPrimitive {
-        std::uint32_t transform_index{};
-        std::array<std::uint32_t, 7> reserved{};
-    };
-
-    struct alignas(16) ViewportOverlayTransform {
-        std::array<float, 4> transform_row_0{};
-        std::array<float, 4> transform_row_1{};
-        std::array<float, 4> transform_row_2{};
-        std::array<float, 4> transform_row_3{};
-    };
-
-    static_assert(sizeof(ViewportOverlayPrimitive) == 32);
-    static_assert(sizeof(ViewportOverlayTransform) == 64);
     namespace {
         struct alignas(16) MaskPushData {
             DescriptorHandle positions;
             DescriptorHandle indices;
             DescriptorHandle radii;
-            DescriptorHandle primitives;
             DescriptorHandle transforms;
             std::uint32_t scene_primitive_index;
             std::uint32_t element_count;
             std::uint32_t draw_kind;
             std::uint32_t reserved_0;
-            std::array<std::uint32_t, 2> reserved_1;
             std::array<float, 4> color;
             std::array<float, 4> view_projection_row_0;
             std::array<float, 4> view_projection_row_1;
             std::array<float, 4> view_projection_row_2;
             std::array<float, 4> view_projection_row_3;
         };
-        static_assert(sizeof(MaskPushData) == 144);
+        static_assert(sizeof(MaskPushData) == 128);
 
         struct alignas(16) AxesPushData {
             std::array<float, 4> view_projection_row_0;
@@ -90,7 +72,6 @@ namespace spectra {
     void ViewportOverlay::initialize_overlay() {
         this->overlay.mask_descriptor                       = this->context.runtime.resources.allocate_resource_descriptor();
         this->overlay.sampler_descriptor                    = this->context.runtime.resources.allocate_sampler_descriptor();
-        this->overlay.initialized                           = true;
         const std::vector<std::uint32_t> mask_mesh_code     = load_spirv(this->context.shader_directory / "overlay_mesh.spv");
         const std::vector<std::uint32_t> mask_fragment_code = load_spirv(this->context.shader_directory / "overlay_mask.spv");
         const std::array mask_create_infos{
@@ -174,9 +155,17 @@ namespace spectra {
     }
 
     void ViewportOverlay::create_overlay_images(const vk::Extent2D extent) {
-        this->overlay.mask  = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
-        this->overlay.depth = this->context.runtime.resources.create_image_2d(extent, vk::Format::eD32Sfloat, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageAspectFlagBits::eDepth);
-        this->context.runtime.resources.write_sampled_image_descriptor(this->overlay.mask_descriptor, this->overlay.mask, vk::ImageLayout::eShaderReadOnlyOptimal);
+        GpuImage next_mask = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
+        GpuImage next_depth = this->context.runtime.resources.create_image_2d(extent, vk::Format::eD32Sfloat, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageAspectFlagBits::eDepth);
+        if (*this->overlay.mask.image) {
+            DescriptorLease next_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            this->context.runtime.resources.write_sampled_image_descriptor(next_descriptor, next_mask, vk::ImageLayout::eShaderReadOnlyOptimal);
+            this->overlay.mask_descriptor = std::move(next_descriptor);
+            this->context.runtime.frames.defer_destruction([mask = std::move(this->overlay.mask), depth = std::move(this->overlay.depth)]() mutable {});
+        } else
+            this->context.runtime.resources.write_sampled_image_descriptor(this->overlay.mask_descriptor, next_mask, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->overlay.mask            = std::move(next_mask);
+        this->overlay.depth           = std::move(next_depth);
         this->overlay.mask_layout  = vk::ImageLayout::eUndefined;
         this->overlay.depth_layout = vk::ImageLayout::eUndefined;
     }
@@ -271,13 +260,11 @@ namespace spectra {
                 mesh ? mesh->positions_descriptor : spheres->positions_descriptor,
                 mesh ? mesh->indices_descriptor : spheres->positions_descriptor,
                 spheres ? spheres->radii_descriptor : mesh->positions_descriptor,
-                this->scene.primitives_descriptor,
-                this->scene.transforms_descriptor,
+                this->context.gpu_scene.view().primitive_transforms,
                 scene_primitive_index,
                 mesh ? mesh->index_count / 3u : spheres->sphere_count,
                 static_cast<std::uint32_t>(gpu_primitive.kind),
                 0,
-                {},
                 color,
                 {matrices.view_projection[0], matrices.view_projection[1], matrices.view_projection[2], matrices.view_projection[3]},
                 {matrices.view_projection[4], matrices.view_projection[5], matrices.view_projection[6], matrices.view_projection[7]},
@@ -467,110 +454,35 @@ namespace spectra {
         };
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &target_to_sample});
     }
-    namespace {
-        template <typename Element>
-        [[nodiscard]] GpuBuffer upload_overlay_buffer(VulkanRuntime& runtime, const std::span<const Element> elements, const vk::raii::CommandBuffer* command_buffer) {
-            const vk::DeviceSize size = std::max<vk::DeviceSize>(sizeof(Element), elements.size_bytes());
-            if (!command_buffer) {
-                GpuBuffer buffer = runtime.resources.create_buffer(size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-                if (!elements.empty()) std::memcpy(buffer.mapped, elements.data(), elements.size_bytes());
-                return buffer;
-            }
-            GpuBuffer buffer = runtime.resources.create_buffer(size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            if (!elements.empty()) {
-                const GpuUploadSlice upload = runtime.frames.stage_upload(std::as_bytes(elements));
-                command_buffer->copyBuffer(upload.buffer, *buffer.buffer, vk::BufferCopy{upload.offset, 0, upload.size});
-                const vk::BufferMemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eMeshShaderEXT | vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderStorageRead, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *buffer.buffer, 0, buffer.size};
-                command_buffer->pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, 1, &dependency});
-            }
-            return buffer;
-        }
-    } // namespace
-
-    void ViewportOverlay::initialize(const scene::SceneView scene) {
-        this->scene.primitives_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.transforms_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.initialized           = true;
-        this->upload(scene);
+    void ViewportOverlay::initialize() {
         this->initialize_overlay();
-    }
-
-    void ViewportOverlay::destroy_scene() noexcept {
-        this->destroy_overlay();
-        if (!this->scene.initialized) return;
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.primitives_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->scene.transforms_descriptor);
-        this->scene.primitives  = {};
-        this->scene.transforms  = {};
-        this->scene.initialized = false;
-    }
-
-    void ViewportOverlay::upload(const scene::SceneView scene, const vk::raii::CommandBuffer* command_buffer) {
-        std::vector<ViewportOverlayPrimitive> primitives{};
-        std::vector<ViewportOverlayTransform> transforms{};
-        primitives.reserve(this->context.gpu_scene.view().primitives.size());
-        transforms.reserve(this->context.gpu_scene.view().primitives.size());
-        for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.view().primitives) {
-            const scene::Instance& instance     = scene.resources.instances[gpu_primitive.scene_instance_index];
-            const scene::Prototype& prototype   = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
-            const scene::Primitive& primitive   = prototype.primitives[gpu_primitive.prototype_primitive_index];
-            const math::Transform transform     = instance.transform * primitive.transform;
-            const std::uint32_t transform_index = static_cast<std::uint32_t>(transforms.size());
-            primitives.push_back(ViewportOverlayPrimitive{transform_index});
-            transforms.push_back(ViewportOverlayTransform{{transform.matrix[0], transform.matrix[1], transform.matrix[2], transform.matrix[3]}, {transform.matrix[4], transform.matrix[5], transform.matrix[6], transform.matrix[7]}, {transform.matrix[8], transform.matrix[9], transform.matrix[10], transform.matrix[11]}, {transform.matrix[12], transform.matrix[13], transform.matrix[14], transform.matrix[15]}});
-        }
-        if (primitives.empty()) primitives.emplace_back();
-        if (transforms.empty()) transforms.emplace_back();
-        GpuBuffer new_primitives = upload_overlay_buffer(this->context.runtime, std::span<const ViewportOverlayPrimitive>{primitives}, command_buffer);
-        GpuBuffer new_transforms = upload_overlay_buffer(this->context.runtime, std::span<const ViewportOverlayTransform>{transforms}, command_buffer);
-        if (command_buffer) {
-            const DescriptorHandle primitives_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            const DescriptorHandle transforms_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            this->context.runtime.resources.write_buffer_descriptor(primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            this->context.runtime.resources.write_buffer_descriptor(transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.primitives_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(this->scene.transforms_descriptor);
-            this->context.runtime.frames.defer_destruction([primitives = std::move(this->scene.primitives), transforms = std::move(this->scene.transforms)]() mutable {});
-            this->scene.primitives_descriptor = primitives_descriptor;
-            this->scene.transforms_descriptor = transforms_descriptor;
-        } else {
-            this->context.runtime.resources.write_buffer_descriptor(this->scene.primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            this->context.runtime.resources.write_buffer_descriptor(this->scene.transforms_descriptor, vk::DescriptorType::eStorageBuffer, new_transforms);
-        }
-        this->scene.primitives = std::move(new_primitives);
-        this->scene.transforms = std::move(new_transforms);
-    }
-
-    void ViewportOverlay::synchronize(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
-        if ((scene.revision.changes & (scene::SceneChange::Geometry | scene::SceneChange::Transform)) != scene::SceneChange::None) this->upload(scene, &command_buffer);
     }
 
     ViewportOverlay::ViewportOverlay(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory) : context{runtime, gpu_scene, std::move(shader_directory)} {}
 
     ViewportOverlay::~ViewportOverlay() {
-        this->context.runtime.graphics.device.waitIdle();
-        this->destroy_scene();
+        this->destroy();
     }
 
-
-    void ViewportOverlay::destroy_overlay() noexcept {
-        if (this->overlay.initialized) {
-            this->context.runtime.frames.retire_resource_descriptor(this->overlay.mask_descriptor);
-            this->context.runtime.frames.retire_sampler_descriptor(this->overlay.sampler_descriptor);
-        }
-        this->overlay.mask_shaders            = nullptr;
-        this->overlay.axes_shaders            = nullptr;
-        this->overlay.outline_shaders         = nullptr;
-        this->overlay.mask                    = {};
-        this->overlay.depth                   = {};
-        this->overlay.initialized             = false;
+    void ViewportOverlay::destroy() noexcept {
+        this->context.runtime.frames.defer_destruction([
+            mask_shaders = std::move(this->overlay.mask_shaders),
+            axes_shaders = std::move(this->overlay.axes_shaders),
+            outline_shaders = std::move(this->overlay.outline_shaders),
+            mask = std::move(this->overlay.mask),
+            depth = std::move(this->overlay.depth)
+        ]() mutable {});
+        this->overlay.mask_descriptor = {};
+        this->overlay.sampler_descriptor = {};
+        this->overlay.mask_layout  = vk::ImageLayout::eUndefined;
+        this->overlay.depth_layout = vk::ImageLayout::eUndefined;
     }
 
     void ViewportOverlay::record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const scene::Camera& camera, const ViewportOverlayState& state) {
         std::vector<std::uint32_t> selected_indices{};
         std::vector<std::uint32_t> active_indices{};
         std::vector<std::uint32_t> hovered_indices{};
-        const auto collect = [this, &state](const scene::InstanceId instance, std::vector<std::uint32_t>& destination) {
+        const auto collect = [this](const scene::InstanceId instance, std::vector<std::uint32_t>& destination) {
             for (std::uint32_t gpu_instance = 0; gpu_instance < this->context.gpu_scene.view().primitive_instance_ids.size(); ++gpu_instance) {
                 if (this->context.gpu_scene.view().primitive_instance_ids[gpu_instance] == instance) destination.push_back(gpu_instance);
             }

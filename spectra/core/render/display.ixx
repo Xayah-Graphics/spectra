@@ -2,6 +2,7 @@ export module spectra.render.display;
 
 import spectra.runtime;
 import spectra.render.contract;
+import spectra.scene;
 import std;
 import vulkan;
 
@@ -17,6 +18,10 @@ namespace spectra {
 
         void initialize();
         [[nodiscard]] bool resize(vk::Extent2D extent);
+        void prepare_linear_composition(const vk::raii::CommandBuffer& command_buffer, RenderOutput render_output);
+        [[nodiscard]] ColorCompositionTarget linear_target() noexcept;
+        [[nodiscard]] RenderOutput linear_output(RenderOutput renderer_output) const noexcept;
+        [[nodiscard]] ColorCompositionTarget target() noexcept;
         void record(const vk::raii::CommandBuffer& command_buffer, RenderOutput render_output, float exposure);
 
         struct {
@@ -25,7 +30,11 @@ namespace spectra {
         } context;
 
         vk::raii::ShaderEXTs shaders{nullptr};
-        DescriptorHandle sampler_descriptor{};
+        DescriptorLease sampler_descriptor{};
+        DescriptorLease linear_sampled_descriptor{};
+        GpuImage linear_image{};
+        vk::ImageLayout linear_layout{vk::ImageLayout::eUndefined};
+        scene::SpectrumColorSpace linear_color_space{scene::SpectrumColorSpace::Srgb};
         GpuImage image{};
         vk::ImageLayout layout{vk::ImageLayout::eUndefined};
     };

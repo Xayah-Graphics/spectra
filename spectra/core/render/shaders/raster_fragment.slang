@@ -2,6 +2,9 @@ module raster_fragment;
 
 import raster_scene;
 import raster_texture;
+import raster_light;
+import path_sampler;
+import path_queue;
 
 struct RasterVertex {
     float4 position : SV_Position;
@@ -12,6 +15,7 @@ struct RasterVertex {
     float3 emission : COLOR0;
     float3 color_modifier : COLOR1;
     nointerpolation uint material : MATERIAL;
+    nointerpolation uint area_light : AREA_LIGHT;
     nointerpolation uint sphere : SPHERE;
     nointerpolation float3 sphere_center : POSITION1;
     nointerpolation float sphere_radius : RADIUS;
@@ -675,22 +679,60 @@ RasterFragmentOutput raster_fragment(
                 wire_coverage);
     }
     if (input.sphere != 0) {
-        const float3 ray_origin =
-            push_data.camera_position.xyz;
+        StructuredBuffer<RasterSceneBindings> sphere_binding_table =
+            push_data.bindings;
+        const RasterSceneBindings sphere_bindings =
+            sphere_binding_table[0];
+        StructuredBuffer<RasterPrimitive> sphere_primitives =
+            sphere_bindings.primitives;
+        StructuredBuffer<RasterTransform> sphere_transforms =
+            sphere_bindings.transforms;
+        const RasterPrimitive sphere_primitive =
+            sphere_primitives[
+                push_data.scene_primitive_index];
+        const RasterTransform sphere_transform =
+            sphere_transforms[
+                sphere_primitive.transform_index];
+        const bool perspective =
+            push_data.camera_position.w != 0.0;
         const float3 ray_direction =
-            normalize(
-                input.world_position -
+            perspective
+                ? normalize(
+                      input.world_position -
+                      push_data.camera_position.xyz)
+                : push_data.camera_forward.xyz;
+        const float3 ray_origin =
+            perspective
+                ? push_data.camera_position.xyz
+                : input.world_position +
+                      dot(
+                          push_data.camera_position.xyz -
+                              input.world_position,
+                          ray_direction) *
+                          ray_direction;
+        const float3 object_ray_origin =
+            raster_inverse_transform_position(
+                sphere_transform,
                 ray_origin);
+        const float3 object_ray_direction =
+            raster_inverse_transform_vector(
+                sphere_transform,
+                ray_direction);
         const float3 offset =
-            ray_origin -
+            object_ray_origin -
             input.sphere_center;
+        const float direction_length_squared =
+            dot(
+                object_ray_direction,
+                object_ray_direction);
         const float half_b =
             dot(
                 offset,
-                ray_direction);
+                object_ray_direction);
         const float discriminant =
             half_b *
                 half_b -
+            direction_length_squared *
             (
                 dot(
                     offset,
@@ -700,17 +742,26 @@ RasterFragmentOutput raster_fragment(
             );
         if (discriminant < 0.0) discard;
         const float distance =
-            -half_b -
-            sqrt(discriminant);
+            (
+                -half_b -
+                sqrt(discriminant)
+            ) /
+            direction_length_squared;
         if (distance <= 0.0) discard;
         input.world_position =
             ray_origin +
             distance *
                 ray_direction;
-        input.world_normal =
+        const float3 object_normal =
             normalize(
-                input.world_position -
+                raster_inverse_transform_position(
+                    sphere_transform,
+                    input.world_position) -
                 input.sphere_center);
+        input.world_normal =
+            raster_transform_normal(
+                sphere_transform,
+                object_normal);
         input.world_tangent =
             normalize(
                 abs(input.world_normal.z) < 0.999
@@ -720,8 +771,8 @@ RasterFragmentOutput raster_fragment(
                     : float3(1.0, 0.0, 0.0));
         const float phi =
             atan2(
-                input.world_normal.y,
-                input.world_normal.x);
+                object_normal.y,
+                object_normal.x);
         input.texture_coordinates = float2(
             (
                 phi < 0.0
@@ -736,7 +787,7 @@ RasterFragmentOutput raster_fragment(
                 ),
             acos(
                 clamp(
-                    input.world_normal.z,
+                    object_normal.z,
                     -1.0,
                     1.0)) /
                 3.14159265358979323846);
@@ -795,9 +846,11 @@ RasterFragmentOutput raster_fragment(
                 1.0);
     }
     float3 outgoing =
-        normalize(
-            push_data.camera_position.xyz -
-            input.world_position);
+        push_data.camera_position.w != 0.0
+            ? normalize(
+                  push_data.camera_position.xyz -
+                  input.world_position)
+            : -push_data.camera_forward.xyz;
     const uint material_index =
         resolve_raster_material(
             materials,
@@ -953,12 +1006,66 @@ RasterFragmentOutput raster_fragment(
     }
     texture_context.normal =
         normal;
-    const float3 incoming =
-        normalize(
-            float3(
-                -0.35,
-                0.8,
-                0.45));
+    float3 color = input.emission;
+    if (input.area_light != 0xffffffff) {
+        StructuredBuffer<RasterAreaLight> area_lights = bindings.area_lights;
+        const RasterAreaLight area_light = area_lights[input.area_light];
+        const bool front_facing = dot(input.world_normal, outgoing) * ((area_light.metadata.y & 2) == 0 ? 1.0 : -1.0) > 0.0;
+        if ((area_light.metadata.y & 1) != 0 || front_facing) {
+            color = area_light.emission.xyz;
+            if (area_light.metadata.x != 0xffffffff)
+                color *= evaluate_raster_texture(bindings, area_light.metadata.x, texture_context).xyz;
+        }
+        else color = float3(0.0);
+    }
+    const WavefrontParameters sampling_parameters = {
+        float4(0.0), float4(0.0), float4(0.0),
+        float4(0.0), float4(0.0), float4(0.0),
+        float4(0.0), float4(0.0), uint4(0), float4(0.0),
+        float4(0.0), float4(0.0), uint4(0),
+        DescriptorHandle<StructuredBuffer<float>>(uint64_t(0)),
+        push_data.sampling_tables,
+        push_data.sampler_metadata,
+        push_data.sampler_parameters,
+        uint4(0),
+        DescriptorHandle<StructuredBuffer<float2>>(uint64_t(0)),
+        DescriptorHandle<StructuredBuffer<float>>(uint64_t(0)),
+        float4(0.0), float4(0.0), float4(0.0), float4(0.0), uint4(0),
+        push_data.extent,
+        push_data.sample_index,
+        0,
+        0,
+        0,
+    };
+    StructuredBuffer<RasterLight> lights = bindings.lights;
+    [loop]
+    for (uint selected_light = 0; selected_light != min(bindings.metadata.z, 1); ++selected_light) {
+        float light_probability;
+        const uint light_index =
+            sample_raster_light_index(
+                lights,
+                bindings.metadata.z,
+                path_sample_1d(
+                    sampling_parameters,
+                    uint2(input.position.xy),
+                    6),
+                light_probability);
+        const RasterLightSample light_sample =
+            sample_raster_light(
+                lights[light_index],
+                bindings,
+                input.world_position,
+                path_sample_2d(
+                    sampling_parameters,
+                    uint2(input.position.xy),
+                    7));
+        if (light_sample.valid == 0 || all(light_sample.weight == float3(0.0))) continue;
+        if (!raster_surface_visible(
+                bindings,
+                input.world_position + normal * 1.0e-3,
+                light_sample.direction,
+                light_sample.distance - 2.0e-3)) continue;
+        const float3 incoming = light_sample.direction;
     const float no_l =
         max(
             dot(
@@ -979,8 +1086,6 @@ RasterFragmentOutput raster_fragment(
         (material.metadata.w & 1) != 0;
     float3 brdf =
         float3(0.0);
-    float3 ambient =
-        float3(0.0);
     if (material.metadata.x == 1) {
         const float3 reflectance =
             raster_spectrum_parameter(
@@ -992,9 +1097,6 @@ RasterFragmentOutput raster_fragment(
         brdf =
             reflectance /
             3.14159265358979323846;
-        ambient =
-            0.08 *
-            reflectance;
     }
     else if (material.metadata.x == 2) {
         const float3 reflectance =
@@ -1019,9 +1121,6 @@ RasterFragmentOutput raster_fragment(
         brdf =
             preview /
             3.14159265358979323846;
-        ambient =
-            0.08 *
-            preview;
     }
     else if (material.metadata.x == 3) {
         float3 eta;
@@ -1062,12 +1161,6 @@ RasterFragmentOutput raster_fragment(
                 k,
                 alpha_x,
                 alpha_y);
-        ambient =
-            0.025 *
-            conductor_fresnel(
-                no_v,
-                eta,
-                k);
     }
     else if (
         material.metadata.x == 4 ||
@@ -1108,11 +1201,6 @@ RasterFragmentOutput raster_fragment(
                 eta,
                 alpha_x,
                 alpha_y);
-        ambient =
-            0.025 *
-            dielectric_fresnel(
-                no_v,
-                eta);
     }
     else if (material.metadata.x == 6) {
         const float3 reflectance =
@@ -1213,17 +1301,6 @@ RasterFragmentOutput raster_fragment(
                 alpha_y) +
             diffuse +
             layer_scattering;
-        ambient =
-            0.08 *
-            (
-                reflectance *
-                    transmittance +
-                albedo *
-                    (
-                        float3(1.0) -
-                        transmittance
-                    )
-            );
     }
     else if (material.metadata.x == 7) {
         const float interface_eta =
@@ -1352,27 +1429,13 @@ RasterFragmentOutput raster_fragment(
                 interface_alpha_y) +
             bottom +
             layer_scattering;
-        ambient =
-            0.025 *
-            (
-                conductor_fresnel(
-                    no_v,
-                    eta,
-                    k) *
-                    transmittance +
-                albedo *
-                    (
-                        float3(1.0) -
-                        transmittance
-                    )
-            );
     }
-    float3 color =
-        input.emission +
-        ambient +
-        brdf *
+        color +=
+            brdf *
             no_l *
-            3.0;
+            light_sample.weight *
+            (1.0 / light_probability);
+    }
     if (
         push_data.attributes.y ==
             raster_display_material_wireframe &&

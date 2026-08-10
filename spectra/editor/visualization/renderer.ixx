@@ -1,8 +1,7 @@
-export module spectra.editor:visualization.renderer;
+export module spectra.visualization;
 
 import spectra.dynamics;
 import spectra.render.contract;
-import spectra.render.display;
 import spectra.runtime;
 import spectra.scene;
 import std;
@@ -11,13 +10,15 @@ import vulkan;
 namespace spectra {
     export struct VisualizationRenderer {
         VisualizationRenderer(VulkanRuntime& runtime, std::filesystem::path shader_directory);
+        ~VisualizationRenderer();
 
         VisualizationRenderer(const VisualizationRenderer&)            = delete;
         VisualizationRenderer(VisualizationRenderer&&)                 = delete;
         VisualizationRenderer& operator=(const VisualizationRenderer&) = delete;
         VisualizationRenderer& operator=(VisualizationRenderer&&)      = delete;
 
-        void record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, DepthBufferView depth, const scene::Camera& camera, std::span<const dynamics::GpuVisualizationDatasetView> views);
+        [[nodiscard]] bool has_visible(std::span<const dynamics::GpuVisualization> views, scene::VisualizationCompositionDomain domain) const noexcept;
+        void record(const vk::raii::CommandBuffer& command_buffer, ColorCompositionTarget target, DepthBufferView depth, const scene::Camera& camera, std::span<const dynamics::GpuVisualization> views, scene::VisualizationCompositionDomain domain);
 
         struct {
             VulkanRuntime& runtime;

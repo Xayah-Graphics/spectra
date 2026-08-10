@@ -18,10 +18,10 @@ namespace spectra {
 
     struct GpuBufferBinding {
         GpuBuffer buffer{};
-        DescriptorHandle descriptor{};
+        DescriptorLease descriptor{};
 
         GpuBufferBinding() = default;
-        explicit GpuBufferBinding(const DescriptorHandle descriptor) noexcept : descriptor(descriptor) {}
+        explicit GpuBufferBinding(DescriptorLease descriptor) noexcept : descriptor(std::move(descriptor)) {}
         GpuBufferBinding(GpuBufferBinding&&) noexcept            = default;
         GpuBufferBinding& operator=(GpuBufferBinding&&) noexcept = default;
         GpuBufferBinding(const GpuBufferBinding&)                = delete;
@@ -29,7 +29,7 @@ namespace spectra {
     };
 
     struct PathBufferSlice {
-        DescriptorHandle descriptor{};
+        DescriptorLease descriptor{};
         vk::DeviceSize offset{};
         vk::DeviceSize size{};
     };
@@ -133,6 +133,21 @@ namespace spectra {
         std::uint32_t pixel_tile_size{1};
     };
 
+    struct PathDynamicAreaLightRange {
+        std::uint32_t scene_primitive_index{};
+        std::uint32_t resource_index{};
+        std::uint32_t first_light{};
+        std::uint32_t capacity{};
+        std::uint32_t kind{};
+        std::uint32_t geometry_kind{};
+        std::uint32_t reverse_orientation{};
+        std::uint32_t alpha_texture{};
+        std::uint32_t attribute_mask{};
+        std::array<float, 4> geometry_parameters{};
+        std::array<float, 4> emission_parameters{};
+        std::array<float, 4> selection_parameters{};
+    };
+
     export struct PathTracer {
         static constexpr RendererDescriptor descriptor = pathtracer_descriptor;
 
@@ -154,6 +169,7 @@ namespace spectra {
         [[nodiscard]] RenderProgress progress() const noexcept;
         void set_paused(bool paused) noexcept;
         void reset() noexcept;
+        void record_readback(const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot);
         [[nodiscard]] RenderGBufferReadback readback();
 
         struct {
@@ -173,6 +189,8 @@ namespace spectra {
             PathBufferSlice portals{};
             PathBufferSlice light_bvh_nodes{};
             PathBufferSlice light_bvh_bit_trails{};
+            GpuBuffer light_bvh_counters{};
+            DescriptorLease light_bvh_counters_descriptor{};
             PathBufferSlice face_materials{};
             PathBufferSlice media{};
             PathBufferSlice volumes{};
@@ -184,6 +202,7 @@ namespace spectra {
             PathFilterResources filter{};
             PathSamplerResources sampler{};
             std::uint32_t light_count{};
+            std::uint32_t light_bvh_node_count{};
             std::uint32_t texture_stack_size{1};
             std::uint32_t material_texture_value_count{1};
             std::uint32_t camera_medium_index{std::numeric_limits<std::uint32_t>::max()};
@@ -193,16 +212,21 @@ namespace spectra {
             std::vector<math::Transform> compiled_instance_transforms{};
             scene::SceneRevision compiled_revision{};
             std::uint64_t compiled_gpu_structure_revision{};
+            std::vector<PathDynamicAreaLightRange> dynamic_area_lights{};
             bool initialized{};
         } scene;
 
         struct {
             vk::Extent2D render_extent{};
-            std::uint32_t pixel_capacity{};
+            std::uint64_t pixel_capacity{};
             GpuImage output_image{};
-            DescriptorHandle output_descriptor{};
-            DescriptorHandle sampled_output_descriptor{};
+            DescriptorLease output_descriptor{};
+            DescriptorLease sampled_output_descriptor{};
             vk::ImageLayout output_layout{vk::ImageLayout::eUndefined};
+            GpuImage depth_image{};
+            DescriptorLease storage_depth_descriptor{};
+            DescriptorLease sampled_depth_descriptor{};
+            vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
             PathBufferSlice queue_counts{};
             PathBufferSlice ray_queue_0{};
             PathBufferSlice ray_queue_1{};
@@ -294,10 +318,10 @@ namespace spectra {
         void compile_filter(const scene::Film& film, const vk::raii::CommandBuffer& command_buffer);
         void compile_sampler(const scene::Sampler& sampler, const vk::raii::CommandBuffer& command_buffer);
         void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void update_dynamic_lights(const vk::raii::CommandBuffer& command_buffer);
         void initialize_session();
         void destroy_session() noexcept;
         void resize_session(vk::Extent2D extent, std::uint32_t texture_evaluation_stack_size, std::uint32_t material_texture_value_count);
-        [[nodiscard]] std::vector<float> read_radiance();
         void configure_indirect_commands();
         void record_integrator(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         void destroy() noexcept;

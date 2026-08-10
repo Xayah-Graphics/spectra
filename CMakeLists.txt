@@ -256,6 +256,19 @@ target_include_directories(spectra_ckdlpp PUBLIC "${SPECTRA_CKDL_SOURCE_DIR}/bin
 target_compile_definitions(spectra_ckdlpp PUBLIC KDLPP_STATIC_LIB)
 target_link_libraries(spectra_ckdlpp PUBLIC spectra_ckdl)
 
+set(SPECTRA_LODEPNG_COMMIT "ed6fe5825c6a4fbb7f58ab35a4231c7543cd452a")
+spectra_prepare_commit_dependency(
+        SPECTRA_LODEPNG_SOURCE_DIR
+        lvandeve
+        lodepng
+        "${SPECTRA_LODEPNG_COMMIT}"
+        "E3E5A62322B7AFD5037D0AAA27188457226CCDAACC1353D0A1EFCCCD8F87F504"
+)
+add_library(spectra_lodepng STATIC "${SPECTRA_LODEPNG_SOURCE_DIR}/lodepng.cpp")
+target_compile_features(spectra_lodepng PUBLIC cxx_std_23)
+target_include_directories(spectra_lodepng SYSTEM PUBLIC "${SPECTRA_LODEPNG_SOURCE_DIR}")
+target_compile_definitions(spectra_lodepng PRIVATE _CRT_SECURE_NO_WARNINGS)
+
 set(SPECTRA_TINYEXR_TAG "v3.2.0")
 spectra_prepare_archive_dependency(
         SPECTRA_TINYEXR_SOURCE_DIR
@@ -453,7 +466,15 @@ file(
         CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/*.slang"
 )
-set(SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders")
+list(APPEND SPECTRA_SHADER_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/visualization.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/scene_diagnostic.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/overlay_mask.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/overlay_mesh.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/overlay_axes.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/overlay_outline.slang"
+)
+set(SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders" "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders")
 if (SPECTRA_BUILD_UI)
     file(
             GLOB
@@ -503,8 +524,8 @@ set(
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/rec2020.rgb2spec"
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/aces2065_1.rgb2spec"
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/cie1931.spectrum"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/sampling.tables"
 )
+set(SPECTRA_SAMPLING_ASSET "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/sampling.tables")
 
 
 # ============================================================================
@@ -531,11 +552,14 @@ target_sources(
         spectra/core/util/math.ixx
         spectra/core/util/hash.ixx
         spectra/core/scene/scene.ixx
+        spectra/core/scene/source.ixx
         spectra/core/scene/format.ixx
         spectra/core/scene/document.ixx
         spectra/core/dynamics/contract.ixx
+        spectra/core/dynamics/frozen.ixx
         spectra/core/dynamics/runtime.ixx
         spectra/core/render/contract.ixx
+        spectra/core/render/sampling.ixx
         spectra/core/render/scene.ixx
         spectra/core/render/capture.ixx
         spectra/core/render/rasterizer.ixx
@@ -543,6 +567,10 @@ target_sources(
         spectra/core/render/pathtracer.ixx
         spectra/core/render/render.ixx
         spectra/core/render/display.ixx
+        spectra/core/render/diagnostics.ixx
+        spectra/editor/visualization/renderer.ixx
+        spectra/editor/diagnostics/renderer.ixx
+        spectra/editor/viewport/overlay.ixx
         PRIVATE
         FILE_SET generated_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
@@ -558,10 +586,13 @@ target_sources(
         spectra/core/util/math.cpp
         spectra/core/util/hash.cpp
         spectra/core/scene/scene.cpp
+        spectra/core/scene/source.cpp
         spectra/core/scene/format.cpp
         spectra/core/scene/document.cpp
         spectra/core/dynamics/runtime.cpp
+        spectra/core/dynamics/frozen.cpp
         spectra/core/render/contract.cpp
+        spectra/core/render/sampling.cpp
         spectra/core/render/scene.cpp
         spectra/core/render/capture.cpp
         spectra/core/render/rasterizer.cpp
@@ -569,6 +600,9 @@ target_sources(
         spectra/core/render/pathtracer.cpp
         spectra/core/render/render.cpp
         spectra/core/render/display.cpp
+        spectra/editor/visualization/renderer.cpp
+        spectra/editor/diagnostics/renderer.cpp
+        spectra/editor/viewport/overlay.cpp
 )
 target_link_libraries(
         spectra_core
@@ -577,6 +611,7 @@ target_link_libraries(
         spectra::plugin_contract
         PRIVATE
         spectra_ckdlpp
+        spectra_lodepng
         spectra::tinyexr
 )
 if (UNIX AND NOT APPLE)
@@ -605,11 +640,8 @@ if (SPECTRA_BUILD_UI)
             spectra/editor/platform/presentation.ixx
             spectra/editor/platform/dialogs.ixx
             spectra/editor/diagnostics/settings.ixx
-            spectra/editor/diagnostics/renderer.ixx
             spectra/editor/viewport/interaction.ixx
             spectra/editor/viewport/picker.ixx
-            spectra/editor/viewport/overlay.ixx
-            spectra/editor/visualization/renderer.ixx
             spectra/editor/ui/imgui.ixx
             spectra/editor/ui/ui.ixx
             spectra/editor/output/capture.ixx
@@ -620,11 +652,8 @@ if (SPECTRA_BUILD_UI)
             spectra/editor/platform/presentation.cpp
             spectra/editor/platform/dialogs.cpp
             spectra/editor/diagnostics/settings.cpp
-            spectra/editor/diagnostics/renderer.cpp
             spectra/editor/viewport/interaction.cpp
             spectra/editor/viewport/picker.cpp
-            spectra/editor/viewport/overlay.cpp
-            spectra/editor/visualization/renderer.cpp
             spectra/editor/ui/imgui.cpp
             spectra/editor/ui/ui.cpp
             spectra/editor/output/capture.cpp
@@ -693,17 +722,21 @@ add_custom_command(
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/shaders"
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
+        COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_BUILD_RESOURCE_DIR}/sampling"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/shaders"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/sampling"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_RUNTIME_SHADER_OUTPUTS} "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_PATH_TRACER_SHADER_OUTPUTS} "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/shaders"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_SPECTRAL_ASSETS} "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SPECTRA_SAMPLING_ASSET}" "${SPECTRA_BUILD_RESOURCE_DIR}/sampling"
         COMMAND "${CMAKE_COMMAND}" -E touch "${SPECTRA_RUNTIME_RESOURCE_STAMP}"
         DEPENDS
         ${SPECTRA_RUNTIME_SHADER_OUTPUTS}
         ${SPECTRA_PATH_TRACER_SHADER_OUTPUTS}
         ${SPECTRA_SPECTRAL_ASSETS}
+        "${SPECTRA_SAMPLING_ASSET}"
         VERBATIM
 )
 add_custom_target(spectra_runtime_resources ALL DEPENDS "${SPECTRA_RUNTIME_RESOURCE_STAMP}")
@@ -734,5 +767,14 @@ install(
 install(
         FILES ${SPECTRA_SPECTRAL_ASSETS}
         DESTINATION "${CMAKE_INSTALL_DATADIR}/spectra/pathtracer/spectral"
+        COMPONENT Spectra
+)
+install(
+        CODE "file(REMOVE_RECURSE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/spectra/sampling\")"
+        COMPONENT Spectra
+)
+install(
+        FILES "${SPECTRA_SAMPLING_ASSET}"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/spectra/sampling"
         COMPONENT Spectra
 )

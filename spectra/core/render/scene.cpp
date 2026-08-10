@@ -12,6 +12,13 @@ namespace spectra {
     }
 
     namespace {
+        struct DynamicInstanceBinding {
+            std::array<std::uint32_t, 4> metadata{};
+            math::Transform primitive_from_instance{};
+        };
+
+        static_assert(sizeof(DynamicInstanceBinding) == 80);
+
         [[nodiscard]] std::uint16_t float_to_half(const float value) noexcept {
             const std::uint32_t bits = std::bit_cast<std::uint32_t>(value);
             const std::uint32_t sign     = (bits >> 16u) & 0x8000u;
@@ -34,7 +41,7 @@ namespace spectra {
 
     } // namespace
 
-    GpuTextureImage upload_texture_image(VulkanRuntime& runtime, const scene::ImageTexture& data, const vk::Format format, const vk::PipelineStageFlags2 destination_stages, const vk::raii::CommandBuffer* command_buffer) {
+    GpuTextureImage upload_texture_image(VulkanRuntime& runtime, const scene::ImageTexture& data, const vk::Format format, const vk::PipelineStageFlags2 destination_stages, const vk::raii::CommandBuffer& command_buffer) {
         GpuTextureImage result{runtime.resources.create_image_2d({data.width, data.height}, format, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageAspectFlagBits::eColor, static_cast<std::uint32_t>(data.mip_offsets.size())), runtime.resources.allocate_resource_descriptor(), runtime.resources.allocate_sampler_descriptor()};
         runtime.resources.write_sampled_image_descriptor(result.image_descriptor, result.image, vk::ImageLayout::eShaderReadOnlyOptimal);
         const vk::SamplerAddressMode address_mode = data.wrap == scene::TextureWrapMode::Repeat ? vk::SamplerAddressMode::eRepeat : data.wrap == scene::TextureWrapMode::Clamp ? vk::SamplerAddressMode::eClampToEdge : vk::SamplerAddressMode::eClampToBorder;
@@ -75,11 +82,8 @@ namespace spectra {
             const vk::ImageMemoryBarrier2 to_shader{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, destination_stages, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *result.image.image, {vk::ImageAspectFlagBits::eColor, 0, result.image.mip_levels, 0, 1}};
             commands.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_shader});
         };
-        if (command_buffer) {
-            record(*command_buffer);
-            runtime.frames.defer_destruction([upload = std::move(staging)]() mutable {});
-        } else
-            runtime.resources.submit_immediate(record);
+        record(command_buffer);
+        runtime.frames.defer_destruction([upload = std::move(staging)]() mutable {});
         return result;
     }
 
@@ -89,7 +93,7 @@ namespace spectra {
                 vk::Format::eR32G32B32Sfloat,
                 vk::DeviceOrHostAddressConstKHR{mesh.positions.address},
                 sizeof(math::Float3),
-                mesh.vertex_count - 1u,
+                std::max(mesh.vertex_count, 1u) - 1u,
                 vk::IndexType::eUint32,
                 vk::DeviceOrHostAddressConstKHR{mesh.indices.address},
                 vk::DeviceOrHostAddressConstKHR{},
@@ -119,7 +123,9 @@ namespace spectra {
             };
         }
 
-        [[nodiscard]] scene::TriangleMeshGeometry tessellate_geometry(const scene::Geometry& geometry) {
+    } // namespace
+
+    scene::TriangleMeshGeometry tessellate_geometry(const scene::Geometry& geometry) {
             if (const scene::TriangleMeshGeometry* mesh = std::get_if<scene::TriangleMeshGeometry>(&geometry.data)) return *mesh;
             scene::TriangleMeshGeometry result{};
             const auto vertex = [&result](const math::Float3 position, const math::Float3 normal, const math::Float3 tangent, const math::Float2 uv) {
@@ -204,34 +210,14 @@ namespace spectra {
             return result;
         }
 
-        template <typename Element>
-        [[nodiscard]] GpuBuffer upload_buffer(VulkanRuntime& runtime, const std::span<const Element> elements, const vk::BufferUsageFlags usage, const std::size_t element_capacity = 0) {
-            GpuBuffer staging = runtime.resources.create_buffer(elements.size_bytes(), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-            std::memcpy(staging.mapped, elements.data(), elements.size_bytes());
-            GpuBuffer destination = runtime.resources.create_buffer(std::max(elements.size(), element_capacity) * sizeof(Element), usage | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            runtime.resources.submit_immediate([&staging, &destination, usage](const vk::raii::CommandBuffer& command_buffer) {
-                command_buffer.copyBuffer(*staging.buffer, *destination.buffer, vk::BufferCopy{0, 0, staging.size});
-                const bool acceleration_structure = static_cast<bool>(usage & vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
-                const vk::BufferMemoryBarrier2 dependency{
-                    vk::PipelineStageFlagBits2::eCopy,
-                    vk::AccessFlagBits2::eTransferWrite,
-                    acceleration_structure ? vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR : vk::PipelineStageFlagBits2::eAllCommands,
-                    acceleration_structure ? vk::AccessFlagBits2::eAccelerationStructureReadKHR : vk::AccessFlagBits2::eShaderStorageRead,
-                    vk::QueueFamilyIgnored,
-                    vk::QueueFamilyIgnored,
-                    *destination.buffer,
-                    0,
-                    destination.size,
-                };
-                command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 1, &dependency});
-            });
-            return destination;
-        }
+    namespace {
 
         template <typename Element>
         [[nodiscard]] GpuBuffer upload_buffer(VulkanRuntime& runtime, const vk::raii::CommandBuffer& command_buffer, const std::span<const Element> elements, const vk::BufferUsageFlags usage, const std::size_t element_capacity = 0) {
-            GpuBuffer destination       = runtime.resources.create_buffer(std::max(elements.size(), element_capacity) * sizeof(Element), usage | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            const GpuUploadSlice upload = runtime.frames.stage_upload(std::as_bytes(elements));
+            const std::array<Element, 1> empty{};
+            const std::span<const Element> source = elements.empty() ? std::span<const Element>{empty} : elements;
+            GpuBuffer destination       = runtime.resources.create_buffer(std::max(source.size(), element_capacity) * sizeof(Element), usage | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
+            const GpuUploadSlice upload = runtime.frames.stage_upload(std::as_bytes(source));
             command_buffer.copyBuffer(upload.buffer, *destination.buffer, vk::BufferCopy{upload.offset, 0, upload.size});
             const bool acceleration_structure = static_cast<bool>(usage & vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
             const vk::BufferMemoryBarrier2 dependency{
@@ -251,12 +237,17 @@ namespace spectra {
     } // namespace
 
     void GpuScene::initialize(const scene::Scene& source_scene, const std::span<const GpuGeometryBinding> geometry_bindings, const std::span<const std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities) {
+        GpuScene next{this->context.runtime, this->context.shader_directory};
+        next.initialize_resources(source_scene, geometry_bindings, sphere_capacities);
+        this->destroy();
+        std::swap(this->resources, next.resources);
+    }
+
+    void GpuScene::initialize_resources(const scene::Scene& source_scene, const std::span<const GpuGeometryBinding> geometry_bindings, const std::span<const std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities) {
         this->resources.dynamic_changes            = GpuSceneChange::None;
         this->resources.dynamic_revision           = 0;
         this->resources.dynamic_structure_revision = 0;
         this->resources.geometry_bindings = {geometry_bindings.begin(), geometry_bindings.end()};
-        this->resources.instance_transforms.reserve(source_scene.resources.instances.size());
-        for (const scene::Instance& instance : source_scene.resources.instances) this->resources.instance_transforms.emplace_back(instance.id, instance.transform);
         const scene::SceneView scene = source_scene.view();
         const auto create_shader     = [this](const std::string_view file, const char* entry) {
             const std::vector<std::uint32_t> code = load_spirv(this->context.shader_directory / file);
@@ -265,71 +256,89 @@ namespace spectra {
         this->resources.attribute_clear_shader         = create_shader("dynamic_mesh_attribute_clear.spv", "clear_dynamic_attributes");
         this->resources.attribute_accumulation_shader  = create_shader("dynamic_mesh_attribute_accumulation.spv", "accumulate_dynamic_attributes");
         this->resources.attribute_normalization_shader = create_shader("dynamic_mesh_attribute_normalization.spv", "normalize_dynamic_attributes");
-        this->resources.point_unpack_shader             = create_shader("dataset_point_unpack.spv", "unpack_dataset_points");
-        this->cache_texture_images(scene);
-        this->resources.geometries.reserve(scene.resources.geometries.size());
-        for (const scene::Geometry& geometry : scene.resources.geometries) this->resources.geometries.emplace_back(this->create_geometry(geometry));
-        this->resources.sphere_sets.reserve(scene.resources.sphere_sets.size());
-        for (const scene::SphereSet& spheres : scene.resources.sphere_sets) {
-            const auto capacity = std::ranges::find(sphere_capacities, spheres.id, &std::pair<scene::SphereSetId, std::uint32_t>::first);
-            this->resources.sphere_sets.emplace_back(this->create_sphere_set(spheres, nullptr, capacity == sphere_capacities.end() ? 0 : capacity->second));
-        }
-        this->resources.volumes.reserve(scene.resources.volumes.size());
-        for (const scene::Volume& volume : scene.resources.volumes) this->resources.volumes.emplace_back(this->create_volume(volume));
+        this->resources.sphere_unpack_shader            = create_shader("dataset_sphere_unpack.spv", "unpack_dataset_spheres");
+        this->resources.instance_apply_shader            = create_shader("dataset_instance_apply.spv", "apply_instance_transforms");
+        this->context.runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
+            this->cache_texture_images(scene, command_buffer);
+            this->resources.geometries.reserve(scene.resources.geometries.size());
+            for (const scene::Geometry& geometry : scene.resources.geometries) this->resources.geometries.emplace_back(this->create_geometry(geometry, command_buffer));
+            this->resources.sphere_sets.reserve(scene.resources.sphere_sets.size());
+            for (const scene::SphereSet& spheres : scene.resources.sphere_sets) {
+                const auto capacity = std::ranges::find(sphere_capacities, spheres.id, &std::pair<scene::SphereSetId, std::uint32_t>::first);
+                this->resources.sphere_sets.emplace_back(this->create_sphere_set(spheres, command_buffer, capacity == sphere_capacities.end() ? 0 : capacity->second));
+            }
+            this->resources.volumes.reserve(scene.resources.volumes.size());
+            for (const scene::Volume& volume : scene.resources.volumes) this->resources.volumes.emplace_back(this->create_volume(volume, command_buffer));
 
-        const std::vector<vk::AccelerationStructureInstanceKHR> instances = this->acceleration_structure_instance_data(scene);
-        const std::array<vk::AccelerationStructureInstanceKHR, 1> empty_instance_storage{};
-        const std::uint32_t instance_capacity            = static_cast<std::uint32_t>(std::max<std::size_t>(this->resources.primitives.size(), 1));
-        this->resources.acceleration_structure_instances = upload_buffer(this->context.runtime, instances.empty() ? std::span<const vk::AccelerationStructureInstanceKHR>{empty_instance_storage} : std::span<const vk::AccelerationStructureInstanceKHR>{instances}, vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR, instance_capacity);
-        this->resources.top_level_acceleration_structure = this->build_top_level(instances, instance_capacity);
+            const std::vector<vk::AccelerationStructureInstanceKHR> instances = this->acceleration_structure_instance_data(scene);
+            const std::array<vk::AccelerationStructureInstanceKHR, 1> empty_instance_storage{};
+            const std::uint32_t instance_capacity            = static_cast<std::uint32_t>(std::max<std::size_t>(this->resources.primitives.size(), 1));
+            this->resources.acceleration_structure_instances = upload_buffer(this->context.runtime, command_buffer, instances.empty() ? std::span<const vk::AccelerationStructureInstanceKHR>{empty_instance_storage} : std::span<const vk::AccelerationStructureInstanceKHR>{instances}, vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer, instance_capacity);
+            this->resources.acceleration_structure_instances_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            this->context.runtime.resources.write_buffer_descriptor(this->resources.acceleration_structure_instances_descriptor, vk::DescriptorType::eStorageBuffer, this->resources.acceleration_structure_instances);
+            this->resources.top_level_acceleration_structure = this->build_top_level(instances, instance_capacity, command_buffer);
+            std::vector<math::Transform> primitive_transforms{};
+            std::vector<DynamicInstanceBinding> instance_bindings{};
+            std::vector<std::uint32_t> acceleration_indices(this->resources.primitives.size(), std::numeric_limits<std::uint32_t>::max());
+            for (std::uint32_t acceleration_index = 0; acceleration_index < this->resources.acceleration_primitive_indices.size(); ++acceleration_index) acceleration_indices[this->resources.acceleration_primitive_indices[acceleration_index]] = acceleration_index;
+            primitive_transforms.reserve(this->resources.primitives.size());
+            instance_bindings.reserve(this->resources.primitives.size());
+            for (const GpuScenePrimitive& primitive : this->resources.primitives) {
+                const scene::Instance& instance   = scene.resources.instances[primitive.scene_instance_index];
+                const scene::Prototype& prototype = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
+                const math::Transform local       = prototype.primitives[primitive.prototype_primitive_index].transform;
+                primitive_transforms.emplace_back(instance.transform * local);
+                instance_bindings.emplace_back(std::array{static_cast<std::uint32_t>(instance.id.value), static_cast<std::uint32_t>(instance.id.value >> 32u), acceleration_indices[primitive.scene_primitive_index], 0u}, local);
+            }
+            if (primitive_transforms.empty()) primitive_transforms.emplace_back();
+            if (instance_bindings.empty()) instance_bindings.emplace_back();
+            this->resources.primitive_transforms        = upload_buffer(this->context.runtime, command_buffer, std::span<const math::Transform>{primitive_transforms}, vk::BufferUsageFlagBits::eStorageBuffer, primitive_transforms.size());
+            this->resources.dynamic_instance_bindings  = upload_buffer(this->context.runtime, command_buffer, std::span<const DynamicInstanceBinding>{instance_bindings}, vk::BufferUsageFlagBits::eStorageBuffer, instance_bindings.size());
+            this->resources.primitive_transforms_descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
+            this->resources.dynamic_instance_bindings_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            this->context.runtime.resources.write_buffer_descriptor(this->resources.primitive_transforms_descriptor, vk::DescriptorType::eStorageBuffer, this->resources.primitive_transforms);
+            this->context.runtime.resources.write_buffer_descriptor(this->resources.dynamic_instance_bindings_descriptor, vk::DescriptorType::eStorageBuffer, this->resources.dynamic_instance_bindings);
+        });
         this->resources.synchronized_revision            = scene.revision;
         this->resources.initialized                      = true;
     }
 
     void GpuScene::destroy() noexcept {
-        if (!this->resources.initialized) return;
-        for (const GpuTextureImage& image : this->resources.texture_images) {
-            this->context.runtime.frames.retire_resource_descriptor(image.image_descriptor);
-            this->context.runtime.frames.retire_sampler_descriptor(image.sampler_descriptor);
-        }
-        for (const GpuGeometry& mesh : this->resources.geometries) {
-            this->context.runtime.frames.retire_resource_descriptor(mesh.positions_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(mesh.normals_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(mesh.tangents_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(mesh.texture_coordinates_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(mesh.indices_descriptor);
-        }
-        for (const GpuSphereSet& spheres : this->resources.sphere_sets) {
-            this->context.runtime.frames.retire_resource_descriptor(spheres.positions_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(spheres.radii_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(spheres.axis_aligned_boxes_descriptor);
-        }
-        for (const GpuVolume& volume : this->resources.volumes)
-            for (std::size_t field = 0; field != volume.fields.size(); ++field)
-                if (volume.field_present[field]) this->context.runtime.frames.retire_resource_descriptor(volume.descriptors[field]);
-        this->resources.attribute_clear_shader          = nullptr;
-        this->resources.attribute_accumulation_shader   = nullptr;
-        this->resources.attribute_normalization_shader  = nullptr;
-        this->resources.point_unpack_shader             = nullptr;
+        this->context.runtime.frames.defer_destruction([
+            attribute_clear_shader = std::move(this->resources.attribute_clear_shader),
+            attribute_accumulation_shader = std::move(this->resources.attribute_accumulation_shader),
+            attribute_normalization_shader = std::move(this->resources.attribute_normalization_shader),
+            sphere_unpack_shader = std::move(this->resources.sphere_unpack_shader),
+            instance_apply_shader = std::move(this->resources.instance_apply_shader),
+            texture_images = std::move(this->resources.texture_images),
+            acceleration_instances = std::move(this->resources.acceleration_structure_instances),
+            primitive_transforms = std::move(this->resources.primitive_transforms),
+            instance_bindings = std::move(this->resources.dynamic_instance_bindings),
+            bounds_readbacks = std::move(this->resources.dynamic_bounds_readbacks),
+            immediate_scratch = std::move(this->resources.immediate_scratch),
+            frame_scratch = std::move(this->resources.frame_scratch),
+            geometries = std::move(this->resources.geometries),
+            sphere_sets = std::move(this->resources.sphere_sets),
+            volumes = std::move(this->resources.volumes),
+            top_level = std::move(this->resources.top_level_acceleration_structure)
+        ]() mutable {});
         this->resources.texture_image_indices.clear();
-        this->resources.texture_images.clear();
-        this->resources.acceleration_structure_instances = {};
-        this->resources.immediate_scratch                = {};
-        this->resources.frame_scratch                    = {};
+        this->resources.acceleration_structure_instances_descriptor = {};
+        this->resources.primitive_transforms_descriptor   = {};
+        this->resources.dynamic_instance_bindings_descriptor = {};
+        this->resources.dynamic_bounds_readback_counts    = {};
+        this->resources.dynamic_bounds.clear();
+        this->resources.resolved_dynamic_bounds           = math::Bounds3::empty();
+        this->resources.resolved_dynamic_bound_records.clear();
         this->resources.scratch_offsets                  = {};
-        this->resources.instance_transforms.clear();
         this->resources.external_geometries.clear();
         this->resources.external_sphere_sets.clear();
         this->resources.external_volumes.clear();
         this->resources.geometry_bindings.clear();
-        this->resources.geometries.clear();
-        this->resources.sphere_sets.clear();
-        this->resources.volumes.clear();
         this->resources.primitives.clear();
         this->resources.acceleration_primitive_indices.clear();
         this->resources.primitive_instance_ids.clear();
         this->resources.acceleration_instance_ids.clear();
-        this->resources.top_level_acceleration_structure = {};
         this->resources.resource_binding_changes         = scene::SceneChange::None;
         this->resources.dynamic_changes                  = GpuSceneChange::None;
         this->resources.dynamic_revision                 = 0;
@@ -338,21 +347,32 @@ namespace spectra {
         this->resources.initialized                      = false;
     }
 
-    void GpuScene::cache_texture_images(const scene::SceneView scene, const vk::raii::CommandBuffer* command_buffer) {
+    void GpuScene::cache_texture_images(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         for (const scene::Texture& texture : scene.resources.textures) {
             const scene::ImageTexture* image = std::get_if<scene::ImageTexture>(&texture.data);
             if (!image) continue;
             const vk::Format format = texture.spectrum_type == scene::TextureSpectrumType::Albedo ? vk::Format::eR16G16B16A16Sfloat : vk::Format::eR32G32B32A32Sfloat;
-            const std::pair key{texture_cache_key(texture), format};
-            if (this->resources.texture_image_indices.contains(key)) continue;
+            const std::pair key{texture.id, format};
+            const std::string revision = texture_cache_key(texture);
+            if (const auto cached = this->resources.texture_image_indices.find(key); cached != this->resources.texture_image_indices.end()) {
+                GpuTextureImage& destination = this->resources.texture_images[cached->second];
+                if (destination.cache_revision == revision) continue;
+                GpuTextureImage replacement = upload_texture_image(this->context.runtime, *image, format, vk::PipelineStageFlagBits2::eAllCommands, command_buffer);
+                replacement.cache_revision = revision;
+                this->context.runtime.frames.defer_destruction([previous = std::move(destination)]() mutable {});
+                destination = std::move(replacement);
+                continue;
+            }
             const std::size_t index = this->resources.texture_images.size();
-            this->resources.texture_images.emplace_back(upload_texture_image(this->context.runtime, *image, format, vk::PipelineStageFlagBits2::eAllCommands, command_buffer));
+            GpuTextureImage uploaded = upload_texture_image(this->context.runtime, *image, format, vk::PipelineStageFlagBits2::eAllCommands, command_buffer);
+            uploaded.cache_revision = revision;
+            this->resources.texture_images.emplace_back(std::move(uploaded));
             this->resources.texture_image_indices.emplace(key, index);
         }
     }
 
     const GpuTextureImage& GpuScene::texture_image(const scene::Texture& texture, const vk::Format format) const {
-        return this->resources.texture_images[this->resources.texture_image_indices.at({texture_cache_key(texture), format})];
+        return this->resources.texture_images[this->resources.texture_image_indices.at({texture.id, format})];
     }
 
     GpuSceneView GpuScene::view() const noexcept {
@@ -365,12 +385,17 @@ namespace spectra {
             this->resources.primitive_instance_ids,
             this->resources.acceleration_instance_ids,
             this->resources.top_level_acceleration_structure.address,
+            this->resources.primitive_transforms_descriptor,
+            &this->resources.primitive_transforms,
+            this->resources.dynamic_bounds,
+            this->resources.resolved_dynamic_bounds,
+            this->resources.resolved_dynamic_bound_records,
             this->resources.dynamic_revision,
             this->resources.dynamic_structure_revision,
         };
     }
 
-    GpuGeometry GpuScene::create_geometry(const scene::Geometry& geometry, const vk::raii::CommandBuffer* command_buffer) {
+    GpuGeometry GpuScene::create_geometry(const scene::Geometry& geometry, const vk::raii::CommandBuffer& command_buffer) {
         const scene::TriangleMeshGeometry mesh = tessellate_geometry(geometry);
         GpuGeometry result{};
         result.geometry_id                  = geometry.id;
@@ -379,29 +404,30 @@ namespace spectra {
         result.acceleration_kind            = std::holds_alternative<scene::SphereGeometry>(geometry.data) || std::holds_alternative<scene::DiskGeometry>(geometry.data) || std::holds_alternative<scene::CylinderGeometry>(geometry.data) ? AccelerationGeometryKind::Procedural : AccelerationGeometryKind::Triangle;
         result.vertex_count                 = static_cast<std::uint32_t>(mesh.positions.size());
         result.index_count                  = static_cast<std::uint32_t>(mesh.indices.size());
-        result.vertex_capacity              = result.vertex_count;
-        result.index_capacity               = result.index_count;
+        result.vertex_capacity              = std::max({result.vertex_count, binding == this->resources.geometry_bindings.end() ? 0u : binding->vertex_capacity, 1u});
+        result.index_capacity               = std::max({result.index_count, binding == this->resources.geometry_bindings.end() ? 0u : binding->index_capacity, 3u});
         result.acceleration_primitive_count = result.acceleration_kind == AccelerationGeometryKind::Triangle ? result.index_count / 3u : 1u;
         result.attribute_mask               = (mesh.normals.empty() ? 0u : 1u) | (mesh.tangents.empty() ? 0u : 2u) | (mesh.texture_coordinates.empty() ? 0u : 4u);
         const std::array<math::Float3, 1> missing_float3{};
-        const std::vector<math::Float3> missing_dynamic_float3(result.update_mode == GpuMeshUpdateMode::Immutable ? 0 : mesh.positions.size());
         const std::array<math::Float2, 1> missing_float2{};
-        const std::span<const math::Float3> positions{mesh.positions};
-        const std::span<const math::Float3> normals             = mesh.normals.empty() ? missing_dynamic_float3.empty() ? std::span<const math::Float3>{missing_float3} : std::span<const math::Float3>{missing_dynamic_float3} : std::span<const math::Float3>{mesh.normals};
-        const std::span<const math::Float3> tangents            = mesh.tangents.empty() ? missing_dynamic_float3.empty() ? std::span<const math::Float3>{missing_float3} : std::span<const math::Float3>{missing_dynamic_float3} : std::span<const math::Float3>{mesh.tangents};
+        const std::array<std::uint32_t, 3> missing_indices{};
+        const std::span<const math::Float3> positions           = mesh.positions.empty() ? std::span<const math::Float3>{missing_float3} : std::span<const math::Float3>{mesh.positions};
+        const std::span<const math::Float3> normals             = mesh.normals.empty() ? std::span<const math::Float3>{missing_float3} : std::span<const math::Float3>{mesh.normals};
+        const std::span<const math::Float3> tangents            = mesh.tangents.empty() ? std::span<const math::Float3>{missing_float3} : std::span<const math::Float3>{mesh.tangents};
         const std::span<const math::Float2> texture_coordinates = mesh.texture_coordinates.empty() ? std::span<const math::Float2>{missing_float2} : std::span<const math::Float2>{mesh.texture_coordinates};
-        const std::span<const std::uint32_t> indices{mesh.indices};
+        const std::span<const std::uint32_t> indices            = mesh.indices.empty() ? std::span<const std::uint32_t>{missing_indices} : std::span<const std::uint32_t>{mesh.indices};
         const vk::BufferUsageFlags position_usage  = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer;
         const vk::BufferUsageFlags attribute_usage = vk::BufferUsageFlagBits::eStorageBuffer;
-        result.positions                           = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, positions, position_usage) : upload_buffer(this->context.runtime, positions, position_usage);
-        result.normals                             = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, normals, attribute_usage) : upload_buffer(this->context.runtime, normals, attribute_usage);
-        result.tangents                            = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, tangents, attribute_usage) : upload_buffer(this->context.runtime, tangents, attribute_usage);
-        result.texture_coordinates                 = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, texture_coordinates, attribute_usage) : upload_buffer(this->context.runtime, texture_coordinates, attribute_usage);
-        result.indices                             = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, indices, position_usage) : upload_buffer(this->context.runtime, indices, position_usage);
+        const std::uint32_t attribute_capacity     = result.update_mode == GpuMeshUpdateMode::Immutable ? 1u : result.vertex_capacity;
+        result.positions                           = upload_buffer(this->context.runtime, command_buffer, positions, position_usage, result.vertex_capacity);
+        result.normals                             = upload_buffer(this->context.runtime, command_buffer, normals, attribute_usage, mesh.normals.empty() ? attribute_capacity : result.vertex_capacity);
+        result.tangents                            = upload_buffer(this->context.runtime, command_buffer, tangents, attribute_usage, mesh.tangents.empty() ? attribute_capacity : result.vertex_capacity);
+        result.texture_coordinates                 = upload_buffer(this->context.runtime, command_buffer, texture_coordinates, attribute_usage, mesh.texture_coordinates.empty() ? attribute_capacity : result.vertex_capacity);
+        result.indices                             = upload_buffer(this->context.runtime, command_buffer, indices, position_usage, result.index_capacity);
         if (result.acceleration_kind == AccelerationGeometryKind::Procedural) {
             const math::Bounds3 bounds = scene::geometry_bounds(geometry);
             const std::array aabbs{vk::AabbPositionsKHR{bounds.minimum.x, bounds.minimum.y, bounds.minimum.z, bounds.maximum.x, bounds.maximum.y, bounds.maximum.z}};
-            result.axis_aligned_boxes = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, std::span<const vk::AabbPositionsKHR>{aabbs}, vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR) : upload_buffer(this->context.runtime, std::span<const vk::AabbPositionsKHR>{aabbs}, vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
+            result.axis_aligned_boxes = upload_buffer(this->context.runtime, command_buffer, std::span<const vk::AabbPositionsKHR>{aabbs}, vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
         }
         result.positions_descriptor           = this->context.runtime.resources.allocate_resource_descriptor();
         result.normals_descriptor             = this->context.runtime.resources.allocate_resource_descriptor();
@@ -413,13 +439,13 @@ namespace spectra {
         this->context.runtime.resources.write_buffer_descriptor(result.tangents_descriptor, vk::DescriptorType::eStorageBuffer, result.tangents);
         this->context.runtime.resources.write_buffer_descriptor(result.texture_coordinates_descriptor, vk::DescriptorType::eStorageBuffer, result.texture_coordinates);
         this->context.runtime.resources.write_buffer_descriptor(result.indices_descriptor, vk::DescriptorType::eStorageBuffer, result.indices);
-        if (command_buffer && result.update_mode != GpuMeshUpdateMode::Immutable && (mesh.normals.empty() || mesh.tangents.empty())) this->generate_dynamic_attributes(result, mesh.normals.empty(), mesh.tangents.empty(), *command_buffer);
-        result.bottom_level_acceleration_structure = this->build_bottom_level(result.acceleration_kind == AccelerationGeometryKind::Triangle ? triangle_geometry(result) : procedural_geometry(result), result.acceleration_primitive_count, result.update_mode, command_buffer);
-        result.cpu_data_stale                      = command_buffer && result.update_mode != GpuMeshUpdateMode::Immutable;
+        if (result.update_mode != GpuMeshUpdateMode::Immutable && (mesh.normals.empty() || mesh.tangents.empty())) this->generate_dynamic_attributes(result, mesh.normals.empty(), mesh.tangents.empty(), command_buffer);
+        result.bottom_level_acceleration_structure = this->build_bottom_level(result.acceleration_kind == AccelerationGeometryKind::Triangle ? triangle_geometry(result) : procedural_geometry(result), result.acceleration_primitive_count, result.update_mode, command_buffer, result.acceleration_kind == AccelerationGeometryKind::Triangle ? std::max(result.index_capacity / 3u, 1u) : 1u);
+        result.cpu_data_stale                      = result.update_mode != GpuMeshUpdateMode::Immutable;
         return result;
     }
 
-    GpuSphereSet GpuScene::create_sphere_set(const scene::SphereSet& spheres, const vk::raii::CommandBuffer* command_buffer, const std::uint32_t capacity) {
+    GpuSphereSet GpuScene::create_sphere_set(const scene::SphereSet& spheres, const vk::raii::CommandBuffer& command_buffer, const std::uint32_t capacity) {
         GpuSphereSet result{};
         result.sphere_set_id   = spheres.id;
         result.sphere_count    = static_cast<std::uint32_t>(spheres.positions.size());
@@ -434,10 +460,10 @@ namespace spectra {
             axis_aligned_boxes.emplace_back(minimum.x, minimum.y, minimum.z, maximum.x, maximum.y, maximum.z);
         }
         const vk::BufferUsageFlags attribute_usage = vk::BufferUsageFlagBits::eStorageBuffer;
-        result.positions                           = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, std::span<const math::Float3>{spheres.positions}, attribute_usage, result.sphere_capacity) : upload_buffer(this->context.runtime, std::span<const math::Float3>{spheres.positions}, attribute_usage, result.sphere_capacity);
-        result.radii                               = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, std::span<const float>{spheres.radii}, attribute_usage, result.sphere_capacity) : upload_buffer(this->context.runtime, std::span<const float>{spheres.radii}, attribute_usage, result.sphere_capacity);
+        result.positions                           = upload_buffer(this->context.runtime, command_buffer, std::span<const math::Float3>{spheres.positions}, attribute_usage, result.sphere_capacity);
+        result.radii                               = upload_buffer(this->context.runtime, command_buffer, std::span<const float>{spheres.radii}, attribute_usage, result.sphere_capacity);
         const vk::BufferUsageFlags aabb_usage       = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
-        result.axis_aligned_boxes                   = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, std::span<const vk::AabbPositionsKHR>{axis_aligned_boxes}, aabb_usage, result.sphere_capacity) : upload_buffer(this->context.runtime, std::span<const vk::AabbPositionsKHR>{axis_aligned_boxes}, aabb_usage, result.sphere_capacity);
+        result.axis_aligned_boxes                   = upload_buffer(this->context.runtime, command_buffer, std::span<const vk::AabbPositionsKHR>{axis_aligned_boxes}, aabb_usage, result.sphere_capacity);
         result.positions_descriptor                = this->context.runtime.resources.allocate_resource_descriptor();
         result.radii_descriptor                    = this->context.runtime.resources.allocate_resource_descriptor();
         result.axis_aligned_boxes_descriptor        = this->context.runtime.resources.allocate_resource_descriptor();
@@ -448,14 +474,14 @@ namespace spectra {
         return result;
     }
 
-    GpuVolume GpuScene::create_volume(const scene::Volume& volume, const vk::raii::CommandBuffer* command_buffer) {
+    GpuVolume GpuScene::create_volume(const scene::Volume& volume, const vk::raii::CommandBuffer& command_buffer) {
         GpuVolume result{};
         result.volume_id  = volume.id;
         result.revision   = volume.revision;
-        const auto upload = [this, command_buffer, &result](const GpuVolumeField field, const auto values) {
+        const auto upload = [this, &command_buffer, &result](const GpuVolumeField field, const auto values) {
             if (values.empty()) return;
             const std::size_t index   = std::to_underlying(field);
-            result.fields[index]      = command_buffer ? upload_buffer(this->context.runtime, *command_buffer, values, vk::BufferUsageFlagBits::eStorageBuffer) : upload_buffer(this->context.runtime, values, vk::BufferUsageFlagBits::eStorageBuffer);
+            result.fields[index]      = upload_buffer(this->context.runtime, command_buffer, values, vk::BufferUsageFlagBits::eStorageBuffer);
             result.descriptors[index] = this->context.runtime.resources.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(result.descriptors[index], vk::DescriptorType::eStorageBuffer, result.fields[index]);
             result.field_present[index] = true;
@@ -751,11 +777,6 @@ namespace spectra {
                 if (preserved_vertices != 0 && !texture_coordinates && (mesh.attribute_mask & 4u) != 0) command_buffer.copyBuffer(*mesh.texture_coordinates.buffer, *replacement.texture_coordinates.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(math::Float2)});
                 const std::uint32_t preserved_indices = std::min(mesh.index_count, updated_index_count);
                 if (preserved_indices != 0 && !indices) command_buffer.copyBuffer(*mesh.indices.buffer, *replacement.indices.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_indices) * sizeof(std::uint32_t)});
-                this->context.runtime.frames.retire_resource_descriptor(mesh.positions_descriptor);
-                this->context.runtime.frames.retire_resource_descriptor(mesh.normals_descriptor);
-                this->context.runtime.frames.retire_resource_descriptor(mesh.tangents_descriptor);
-                this->context.runtime.frames.retire_resource_descriptor(mesh.texture_coordinates_descriptor);
-                this->context.runtime.frames.retire_resource_descriptor(mesh.indices_descriptor);
                 this->context.runtime.frames.defer_destruction([previous = std::move(mesh)]() mutable {});
                 mesh                                     = std::move(replacement);
                 this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Structure;
@@ -790,7 +811,7 @@ namespace spectra {
 
         const vk::AccelerationStructureGeometryKHR geometry = triangle_geometry(mesh);
         if (mesh.update_mode == GpuMeshUpdateMode::TopologyChanging) {
-            GpuAccelerationStructure replacement = this->build_bottom_level(geometry, mesh.acceleration_primitive_count, mesh.update_mode, &command_buffer);
+            GpuAccelerationStructure replacement = this->build_bottom_level(geometry, mesh.acceleration_primitive_count, mesh.update_mode, command_buffer);
             if (*mesh.bottom_level_acceleration_structure.acceleration_structure) this->context.runtime.frames.defer_destruction([previous = std::move(mesh.bottom_level_acceleration_structure)]() mutable {});
             mesh.bottom_level_acceleration_structure      = std::move(replacement);
             this->resources.external_bottom_level_rebuilt = true;
@@ -852,7 +873,7 @@ namespace spectra {
         command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
     }
 
-    void GpuScene::synchronize_external_sphere_set(const scene::SphereSetId sphere_set_id, const DescriptorHandle points_descriptor, const std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer) {
+    void GpuScene::synchronize_external_sphere_set(const scene::SphereSetId sphere_set_id, const DescriptorHandle spheres_descriptor, const std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer) {
         GpuSphereSet& spheres = *std::ranges::find(this->resources.sphere_sets, sphere_set_id, &GpuSphereSet::sphere_set_id);
         const bool acceleration_presence_changed = (spheres.sphere_count == 0) != (sphere_count == 0);
         bool rebuild_acceleration{};
@@ -872,9 +893,6 @@ namespace spectra {
             this->context.runtime.resources.write_buffer_descriptor(replacement.positions_descriptor, vk::DescriptorType::eStorageBuffer, replacement.positions);
             this->context.runtime.resources.write_buffer_descriptor(replacement.radii_descriptor, vk::DescriptorType::eStorageBuffer, replacement.radii);
             this->context.runtime.resources.write_buffer_descriptor(replacement.axis_aligned_boxes_descriptor, vk::DescriptorType::eStorageBuffer, replacement.axis_aligned_boxes);
-            this->context.runtime.frames.retire_resource_descriptor(spheres.positions_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(spheres.radii_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(spheres.axis_aligned_boxes_descriptor);
             this->context.runtime.frames.defer_destruction([previous = std::move(spheres)]() mutable {});
             spheres                                  = std::move(replacement);
             this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Structure;
@@ -883,7 +901,7 @@ namespace spectra {
             spheres.sphere_count = sphere_count;
 
         if (sphere_count != 0) {
-            struct alignas(8) PointUnpackPushData {
+            struct alignas(8) SphereUnpackPushData {
                 DescriptorHandle source{};
                 DescriptorHandle positions{};
                 DescriptorHandle radii{};
@@ -891,17 +909,17 @@ namespace spectra {
                 std::uint32_t point_count{};
                 std::uint32_t reserved{};
             };
-            static_assert(sizeof(PointUnpackPushData) == 40);
-            const PointUnpackPushData push_data{points_descriptor, spheres.positions_descriptor, spheres.radii_descriptor, spheres.axis_aligned_boxes_descriptor, sphere_count, 0};
+            static_assert(sizeof(SphereUnpackPushData) == 40);
+            const SphereUnpackPushData push_data{spheres_descriptor, spheres.positions_descriptor, spheres.radii_descriptor, spheres.axis_aligned_boxes_descriptor, sphere_count, 0};
             this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
             this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
-            command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->resources.point_unpack_shader);
+            command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->resources.sphere_unpack_shader);
             command_buffer.dispatch((sphere_count + 255u) / 256u, 1, 1);
         }
         const vk::MemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eAccelerationStructureReadKHR};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &dependency});
         if (rebuild_acceleration) {
-            spheres.bottom_level_acceleration_structure = this->build_bottom_level(sphere_set_geometry(spheres), spheres.sphere_count, GpuMeshUpdateMode::Deformable, &command_buffer, spheres.sphere_capacity);
+            spheres.bottom_level_acceleration_structure = this->build_bottom_level(sphere_set_geometry(spheres), spheres.sphere_count, GpuMeshUpdateMode::Deformable, command_buffer, spheres.sphere_capacity);
             this->resources.external_bottom_level_rebuilt = true;
         } else
             this->update_sphere_set_acceleration(spheres, command_buffer);
@@ -909,6 +927,27 @@ namespace spectra {
         if (acceleration_presence_changed) this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Structure;
         if (!std::ranges::contains(this->resources.external_sphere_sets, sphere_set_id)) this->resources.external_sphere_sets.push_back(sphere_set_id);
         spheres.cpu_data_stale = true;
+    }
+
+    void GpuScene::synchronize_external_instance_transforms(const dynamics::GpuInstanceTransformUpdate& update, const vk::raii::CommandBuffer& command_buffer) {
+        if (update.count == 0 || this->resources.primitives.empty()) return;
+        struct alignas(8) InstanceApplyPushData {
+            DescriptorHandle updates{};
+            DescriptorHandle bindings{};
+            DescriptorHandle transforms{};
+            DescriptorHandle acceleration_instances{};
+            std::uint32_t update_count{};
+            std::uint32_t primitive_count{};
+        };
+        static_assert(sizeof(InstanceApplyPushData) == 40);
+        const InstanceApplyPushData push_data{update.instances.descriptor, this->resources.dynamic_instance_bindings_descriptor, this->resources.primitive_transforms_descriptor, this->resources.acceleration_structure_instances_descriptor, static_cast<std::uint32_t>(update.count), static_cast<std::uint32_t>(this->resources.primitives.size())};
+        this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
+        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->resources.instance_apply_shader);
+        command_buffer.dispatch((push_data.primitive_count + 63u) / 64u, 1, 1);
+        const vk::MemoryBarrier2 transform_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eMeshShaderEXT | vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eRayTracingShaderKHR, vk::AccessFlagBits2::eShaderStorageRead};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &transform_dependency});
+        this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Transform;
     }
 
     void GpuScene::synchronize_external_volume(const scene::VolumeId volume_id, const GpuBuffer* density, const GpuBuffer* temperature, const GpuBuffer* emission_scale, const GpuBuffer* sigma_a, const GpuBuffer* sigma_s, const GpuBuffer* emission, const std::uint64_t voxel_count, const scene::VolumeRegion dirty_region, const vk::raii::CommandBuffer& command_buffer) {
@@ -921,10 +960,12 @@ namespace spectra {
             if (!volume.field_present[index]) throw std::runtime_error("CUDA External Volume published a field absent from its Scene resource");
             std::vector<vk::BufferCopy> regions{};
             const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(dirty_region.maximum.x - dirty_region.minimum.x) * element_size;
+            vk::DeviceSize source_offset{};
             for (std::uint32_t z = dirty_region.minimum.z; z != dirty_region.maximum.z; ++z)
                 for (std::uint32_t y = dirty_region.minimum.y; y != dirty_region.maximum.y; ++y) {
-                    const vk::DeviceSize offset = (static_cast<vk::DeviceSize>(z) * volume.resolution.y * volume.resolution.x + static_cast<vk::DeviceSize>(y) * volume.resolution.x + dirty_region.minimum.x) * element_size;
-                    regions.emplace_back(offset, offset, bytes);
+                    const vk::DeviceSize destination_offset = (static_cast<vk::DeviceSize>(z) * volume.resolution.y * volume.resolution.x + static_cast<vk::DeviceSize>(y) * volume.resolution.x + dirty_region.minimum.x) * element_size;
+                    regions.emplace_back(source_offset, destination_offset, bytes);
+                    source_offset += bytes;
                 }
             command_buffer.copyBuffer(*source->buffer, *volume.fields[index].buffer, regions);
         };
@@ -937,7 +978,19 @@ namespace spectra {
         const vk::MemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eRayTracingShaderKHR | vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderStorageRead};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &dependency});
         if (!std::ranges::contains(this->resources.external_volumes, volume_id)) this->resources.external_volumes.push_back(volume_id);
-        volume.dirty_region = dirty_region;
+        if (volume.dirty_region) {
+            volume.dirty_region->minimum = {
+                std::min(volume.dirty_region->minimum.x, dirty_region.minimum.x),
+                std::min(volume.dirty_region->minimum.y, dirty_region.minimum.y),
+                std::min(volume.dirty_region->minimum.z, dirty_region.minimum.z),
+            };
+            volume.dirty_region->maximum = {
+                std::max(volume.dirty_region->maximum.x, dirty_region.maximum.x),
+                std::max(volume.dirty_region->maximum.y, dirty_region.maximum.y),
+                std::max(volume.dirty_region->maximum.z, dirty_region.maximum.z),
+            };
+        } else
+            volume.dirty_region = dirty_region;
         ++volume.revision.content;
         volume.cpu_data_stale = true;
     }
@@ -946,13 +999,50 @@ namespace spectra {
         for (const scene::Volume& source : scene.resources.volumes) {
             GpuVolume& volume = *std::ranges::find(this->resources.volumes, source.id, &GpuVolume::volume_id);
             if (std::ranges::contains(this->resources.external_volumes, source.id) || source.revision.content == volume.revision.content) continue;
-            GpuVolume replacement = this->create_volume(source, &command_buffer);
-            for (std::size_t field = 0; field != volume.fields.size(); ++field)
-                if (volume.field_present[field]) this->context.runtime.frames.retire_resource_descriptor(volume.descriptors[field]);
+            GpuVolume replacement = this->create_volume(source, command_buffer);
             this->context.runtime.frames.defer_destruction([previous = std::move(volume)]() mutable {});
             volume                                   = std::move(replacement);
             this->resources.resource_binding_changes = this->resources.resource_binding_changes | scene::SceneChange::Volume;
         }
+    }
+
+    void GpuScene::update_instance_state(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
+        std::vector<math::Transform> primitive_transforms{};
+        std::vector<DynamicInstanceBinding> instance_bindings{};
+        std::vector<std::uint32_t> acceleration_indices(this->resources.primitives.size(), std::numeric_limits<std::uint32_t>::max());
+        for (std::uint32_t acceleration_index = 0; acceleration_index < this->resources.acceleration_primitive_indices.size(); ++acceleration_index) acceleration_indices[this->resources.acceleration_primitive_indices[acceleration_index]] = acceleration_index;
+        primitive_transforms.reserve(this->resources.primitives.size());
+        instance_bindings.reserve(this->resources.primitives.size());
+        for (const GpuScenePrimitive& primitive : this->resources.primitives) {
+            const scene::Instance& instance   = scene.resources.instances[primitive.scene_instance_index];
+            const scene::Prototype& prototype = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
+            const math::Transform local       = prototype.primitives[primitive.prototype_primitive_index].transform;
+            primitive_transforms.emplace_back(instance.transform * local);
+            instance_bindings.emplace_back(std::array{static_cast<std::uint32_t>(instance.id.value), static_cast<std::uint32_t>(instance.id.value >> 32u), acceleration_indices[primitive.scene_primitive_index], 0u}, local);
+        }
+        if (primitive_transforms.empty()) primitive_transforms.emplace_back();
+        if (instance_bindings.empty()) instance_bindings.emplace_back();
+        const std::array uploads{
+            this->context.runtime.frames.stage_upload(std::as_bytes(std::span<const math::Transform>{primitive_transforms})),
+            this->context.runtime.frames.stage_upload(std::as_bytes(std::span<const DynamicInstanceBinding>{instance_bindings})),
+        };
+        command_buffer.copyBuffer(uploads[0].buffer, *this->resources.primitive_transforms.buffer, vk::BufferCopy{uploads[0].offset, 0, uploads[0].size});
+        command_buffer.copyBuffer(uploads[1].buffer, *this->resources.dynamic_instance_bindings.buffer, vk::BufferCopy{uploads[1].offset, 0, uploads[1].size});
+        const vk::MemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eMeshShaderEXT | vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderStorageRead};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &dependency});
+    }
+
+    void GpuScene::update_top_level_from_gpu(const std::uint32_t instance_count, const vk::raii::CommandBuffer& command_buffer) {
+        const vk::AccelerationStructureGeometryInstancesDataKHR instance_data{vk::False, vk::DeviceOrHostAddressConstKHR{this->resources.acceleration_structure_instances.address}};
+        const vk::AccelerationStructureGeometryKHR geometry{vk::GeometryTypeKHR::eInstances, vk::AccelerationStructureGeometryDataKHR{instance_data}};
+        vk::AccelerationStructureBuildGeometryInfoKHR build_info{vk::AccelerationStructureTypeKHR::eTopLevel, vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace | vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate, vk::BuildAccelerationStructureModeKHR::eUpdate, *this->resources.top_level_acceleration_structure.acceleration_structure, *this->resources.top_level_acceleration_structure.acceleration_structure, 1, &geometry};
+        const vk::AccelerationStructureBuildSizesInfoKHR sizes = this->context.runtime.graphics.device.getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, build_info, instance_count);
+        build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize, false)};
+        const vk::AccelerationStructureBuildRangeInfoKHR range{instance_count, 0, 0, 0};
+        const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
+        const vk::BufferMemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR, vk::AccessFlagBits2::eAccelerationStructureReadKHR, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->resources.acceleration_structure_instances.buffer, 0, this->resources.acceleration_structure_instances.size};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, 1, &dependency});
+        command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
     }
 
     void GpuScene::update_top_level(const std::span<const vk::AccelerationStructureInstanceKHR> instances, const vk::raii::CommandBuffer& command_buffer) {
@@ -998,71 +1088,96 @@ namespace spectra {
     GpuSceneUpdate GpuScene::apply(const dynamics::DynamicFrame& frame, const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         this->resources.resource_binding_changes = scene::SceneChange::None;
         this->resources.dynamic_changes          = GpuSceneChange::None;
+        const std::uint32_t frame_slot_index = this->context.runtime.frames.frame.current_slot_index;
+        GpuBuffer& bounds_readback            = this->resources.dynamic_bounds_readbacks[frame_slot_index];
+        const std::uint32_t completed_bound_count = std::exchange(this->resources.dynamic_bounds_readback_counts[frame_slot_index], 0);
+        if (completed_bound_count != 0) {
+            const auto* bounds = static_cast<const dynamics::SceneBound*>(bounds_readback.mapped);
+            math::Bounds3 resolved = math::Bounds3::empty();
+            this->resources.resolved_dynamic_bound_records.assign(bounds, bounds + completed_bound_count);
+            for (std::uint32_t index = 0; index < completed_bound_count; ++index)
+                if (bounds[index].domain == dynamics::BoundsDomain::World)
+                    resolved.include({bounds[index].minimum, bounds[index].maximum});
+                else
+                    resolved.include(math::Bounds3{bounds[index].minimum, bounds[index].maximum}.transformed(bounds[index].world_from_local));
+            this->resources.resolved_dynamic_bounds = resolved;
+        }
         std::vector<scene::GeometryId> external_geometries{};
         std::vector<scene::SphereSetId> external_sphere_sets{};
         std::vector<scene::VolumeId> external_volumes{};
-        for (const dynamics::GpuSceneDatasetView& update : frame.scene_updates) {
-            if (update.kind == dynamics::DatasetKind::Mesh)
-                external_geometries.push_back(std::get<scene::GeometryId>(update.resource_id));
-            else if (update.kind == dynamics::DatasetKind::PointSet)
-                external_sphere_sets.push_back(std::get<scene::SphereSetId>(update.resource_id));
-            else if (update.kind == dynamics::DatasetKind::Field)
-                external_volumes.push_back(std::get<scene::VolumeId>(update.resource_id));
+        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates) {
+            if (const auto* mesh = std::get_if<dynamics::GpuTriangleMeshUpdate>(&update.data))
+                external_geometries.push_back(mesh->geometry_id);
+            else if (const auto* spheres = std::get_if<dynamics::GpuSphereSetUpdate>(&update.data))
+                external_sphere_sets.push_back(spheres->sphere_set_id);
+            else if (const auto* field = std::get_if<dynamics::GpuFieldUpdate>(&update.data))
+                external_volumes.push_back(field->volume_id);
         }
         this->begin_external_updates(external_geometries, external_sphere_sets, external_volumes);
         this->synchronize_scene(scene, command_buffer);
 
-        for (const dynamics::GpuSceneDatasetView& update : frame.scene_updates) {
-            if (update.kind == dynamics::DatasetKind::Mesh) {
-                const GpuBuffer* positions{};
-                const GpuBuffer* normals{};
-                const GpuBuffer* tangents{};
-                const GpuBuffer* texture_coordinates{};
-                const GpuBuffer* indices{};
-                for (const dynamics::GpuDatasetBufferView& buffer : update.buffers) {
-                    if (buffer.kind == dynamics::DatasetBufferKind::MeshPosition)
-                        positions = buffer.buffer;
-                    else if (buffer.kind == dynamics::DatasetBufferKind::MeshNormal)
-                        normals = buffer.buffer;
-                    else if (buffer.kind == dynamics::DatasetBufferKind::MeshTangent)
-                        tangents = buffer.buffer;
-                    else if (buffer.kind == dynamics::DatasetBufferKind::MeshTextureCoordinate)
-                        texture_coordinates = buffer.buffer;
-                    else if (buffer.kind == dynamics::DatasetBufferKind::MeshIndex)
-                        indices = buffer.buffer;
-                }
-                this->synchronize_external_geometry(std::get<scene::GeometryId>(update.resource_id), positions, normals, tangents, texture_coordinates, indices, static_cast<std::uint32_t>(update.active_count), static_cast<std::uint32_t>(update.secondary_count), command_buffer);
+        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates) {
+            if (const auto* mesh = std::get_if<dynamics::GpuTriangleMeshUpdate>(&update.data)) {
+                this->synchronize_external_geometry(mesh->geometry_id, mesh->positions.buffer, mesh->normals ? mesh->normals->buffer : nullptr, mesh->tangents ? mesh->tangents->buffer : nullptr, mesh->texture_coordinates ? mesh->texture_coordinates->buffer : nullptr, mesh->indices ? mesh->indices->buffer : nullptr, static_cast<std::uint32_t>(mesh->vertex_count), static_cast<std::uint32_t>(mesh->index_count), command_buffer);
                 this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Geometry;
                 continue;
             }
-            if (update.kind == dynamics::DatasetKind::PointSet) {
-                const dynamics::GpuDatasetBufferView& points = *std::ranges::find(update.buffers, dynamics::DatasetBufferKind::Point, &dynamics::GpuDatasetBufferView::kind);
-                this->synchronize_external_sphere_set(std::get<scene::SphereSetId>(update.resource_id), points.descriptor, static_cast<std::uint32_t>(update.active_count), command_buffer);
+            if (const auto* spheres = std::get_if<dynamics::GpuSphereSetUpdate>(&update.data)) {
+                this->synchronize_external_sphere_set(spheres->sphere_set_id, spheres->spheres.descriptor, static_cast<std::uint32_t>(spheres->count), command_buffer);
                 this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Geometry;
                 continue;
             }
-            if (update.kind != dynamics::DatasetKind::Field) continue;
+            const auto* field = std::get_if<dynamics::GpuFieldUpdate>(&update.data);
+            if (!field) continue;
             std::array<const GpuBuffer*, static_cast<std::size_t>(GpuVolumeField::Count)> fields{};
-            for (const dynamics::GpuDatasetBufferView& buffer : update.buffers) {
-                const std::string& channel = update.field_channels[buffer.channel_index].id;
+            for (const dynamics::GpuFieldChannelView& channel_view : field->channels) {
+                const std::string& channel = channel_view.channel.id;
                 if (channel == "density")
-                    fields[std::to_underlying(GpuVolumeField::Density)] = buffer.buffer;
+                    fields[std::to_underlying(GpuVolumeField::Density)] = channel_view.values.buffer;
                 else if (channel == "temperature")
-                    fields[std::to_underlying(GpuVolumeField::Temperature)] = buffer.buffer;
+                    fields[std::to_underlying(GpuVolumeField::Temperature)] = channel_view.values.buffer;
                 else if (channel == "emission-scale")
-                    fields[std::to_underlying(GpuVolumeField::EmissionScale)] = buffer.buffer;
+                    fields[std::to_underlying(GpuVolumeField::EmissionScale)] = channel_view.values.buffer;
                 else if (channel == "sigma-a")
-                    fields[std::to_underlying(GpuVolumeField::SigmaA)] = buffer.buffer;
+                    fields[std::to_underlying(GpuVolumeField::SigmaA)] = channel_view.values.buffer;
                 else if (channel == "sigma-s")
-                    fields[std::to_underlying(GpuVolumeField::SigmaS)] = buffer.buffer;
+                    fields[std::to_underlying(GpuVolumeField::SigmaS)] = channel_view.values.buffer;
                 else if (channel == "emission")
-                    fields[std::to_underlying(GpuVolumeField::Emission)] = buffer.buffer;
+                    fields[std::to_underlying(GpuVolumeField::Emission)] = channel_view.values.buffer;
             }
-            const scene::VolumeRegion region = update.dirty_region.value_or(scene::VolumeRegion{{}, update.resolution});
-            this->synchronize_external_volume(std::get<scene::VolumeId>(update.resource_id), fields[std::to_underlying(GpuVolumeField::Density)], fields[std::to_underlying(GpuVolumeField::Temperature)], fields[std::to_underlying(GpuVolumeField::EmissionScale)], fields[std::to_underlying(GpuVolumeField::SigmaA)], fields[std::to_underlying(GpuVolumeField::SigmaS)], fields[std::to_underlying(GpuVolumeField::Emission)], update.active_count, region, command_buffer);
+            const scene::VolumeRegion region = field->dirty_region.value_or(scene::VolumeRegion{{}, field->resolution});
+            const std::uint64_t voxel_count = static_cast<std::uint64_t>(region.maximum.x - region.minimum.x) * (region.maximum.y - region.minimum.y) * (region.maximum.z - region.minimum.z);
+            this->synchronize_external_volume(field->volume_id, fields[std::to_underlying(GpuVolumeField::Density)], fields[std::to_underlying(GpuVolumeField::Temperature)], fields[std::to_underlying(GpuVolumeField::EmissionScale)], fields[std::to_underlying(GpuVolumeField::SigmaA)], fields[std::to_underlying(GpuVolumeField::SigmaS)], fields[std::to_underlying(GpuVolumeField::Emission)], voxel_count, region, command_buffer);
             this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Volume;
         }
         this->end_external_updates(scene, command_buffer);
+        bool instance_transforms_updated{};
+        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates)
+            if (const auto* transforms = std::get_if<dynamics::GpuInstanceTransformUpdate>(&update.data)) {
+                this->synchronize_external_instance_transforms(*transforms, command_buffer);
+                instance_transforms_updated = instance_transforms_updated || transforms->count != 0;
+            }
+        if (instance_transforms_updated) {
+            this->update_top_level_from_gpu(static_cast<std::uint32_t>(this->resources.acceleration_primitive_indices.size()), command_buffer);
+            this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Transform;
+        }
+
+        std::uint64_t total_bound_count{};
+        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates)
+            if (const auto* bounds = std::get_if<dynamics::GpuSceneBoundsUpdate>(&update.data)) total_bound_count += bounds->count;
+        const vk::DeviceSize bounds_byte_size = total_bound_count * sizeof(dynamics::SceneBound);
+        if (bounds_readback.size < bounds_byte_size) bounds_readback = this->context.runtime.resources.create_buffer(bounds_byte_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+        this->resources.dynamic_bounds.clear();
+        vk::DeviceSize bounds_offset{};
+        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates)
+            if (const auto* bounds = std::get_if<dynamics::GpuSceneBoundsUpdate>(&update.data)) {
+                const vk::DeviceSize byte_size = bounds->count * sizeof(dynamics::SceneBound);
+                if (byte_size != 0) command_buffer.copyBuffer(*bounds->bounds.buffer->buffer, *bounds_readback.buffer, vk::BufferCopy{0, bounds_offset, byte_size});
+                bounds_offset += byte_size;
+                this->resources.dynamic_bounds.emplace_back(bounds->bounds.descriptor, static_cast<std::uint32_t>(bounds->count), bounds->domain);
+            }
+        this->resources.dynamic_bounds_readback_counts[frame_slot_index] = static_cast<std::uint32_t>(total_bound_count);
+        if (total_bound_count != 0) this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Bounds;
         if (this->resources.dynamic_changes != GpuSceneChange::None) ++this->resources.dynamic_revision;
         if ((this->resources.dynamic_changes & GpuSceneChange::Structure) != GpuSceneChange::None) ++this->resources.dynamic_structure_revision;
         return {
@@ -1086,7 +1201,7 @@ namespace spectra {
 
     void GpuScene::synchronize_scene(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         if (scene.revision.number == this->resources.synchronized_revision.number) return;
-        this->cache_texture_images(scene, &command_buffer);
+        this->cache_texture_images(scene, command_buffer);
         if (this->resources.external_geometries.empty()) this->resources.scratch_offsets[this->context.runtime.frames.frame.current_slot_index] = 0;
         bool rebuilt_bottom_level = std::exchange(this->resources.external_bottom_level_rebuilt, false);
         if ((scene.revision.changes & scene::SceneChange::Geometry) != scene::SceneChange::None) {
@@ -1094,12 +1209,7 @@ namespace spectra {
                 const scene::Geometry& geometry = *std::ranges::find(scene.resources.geometries, mesh.geometry_id, &scene::Geometry::id);
                 if (std::ranges::contains(this->resources.external_geometries, mesh.geometry_id)) continue;
                 if (mesh.update_mode != GpuMeshUpdateMode::Deformable) {
-                    GpuGeometry replacement = this->create_geometry(geometry, &command_buffer);
-                    this->context.runtime.frames.retire_resource_descriptor(mesh.positions_descriptor);
-                    this->context.runtime.frames.retire_resource_descriptor(mesh.normals_descriptor);
-                    this->context.runtime.frames.retire_resource_descriptor(mesh.tangents_descriptor);
-                    this->context.runtime.frames.retire_resource_descriptor(mesh.texture_coordinates_descriptor);
-                    this->context.runtime.frames.retire_resource_descriptor(mesh.indices_descriptor);
+                    GpuGeometry replacement = this->create_geometry(geometry, command_buffer);
                     this->context.runtime.frames.defer_destruction([previous = std::move(mesh)]() mutable {});
                     mesh                                     = std::move(replacement);
                     this->resources.resource_binding_changes = this->resources.resource_binding_changes | scene::SceneChange::Geometry;
@@ -1112,10 +1222,7 @@ namespace spectra {
                 const scene::SphereSet& source = *std::ranges::find(scene.resources.sphere_sets, spheres.sphere_set_id, &scene::SphereSet::id);
                 if (std::ranges::contains(this->resources.external_sphere_sets, spheres.sphere_set_id)) continue;
                 if (source.positions.size() > spheres.sphere_capacity) {
-                    GpuSphereSet replacement = this->create_sphere_set(source, &command_buffer, std::bit_ceil(static_cast<std::uint32_t>(std::max<std::size_t>(source.positions.size(), 1))));
-                    this->context.runtime.frames.retire_resource_descriptor(spheres.positions_descriptor);
-                    this->context.runtime.frames.retire_resource_descriptor(spheres.radii_descriptor);
-                    this->context.runtime.frames.retire_resource_descriptor(spheres.axis_aligned_boxes_descriptor);
+                    GpuSphereSet replacement = this->create_sphere_set(source, command_buffer, std::bit_ceil(static_cast<std::uint32_t>(std::max<std::size_t>(source.positions.size(), 1))));
                     this->context.runtime.frames.defer_destruction([previous = std::move(spheres)]() mutable {});
                     spheres                                  = std::move(replacement);
                     this->resources.resource_binding_changes = this->resources.resource_binding_changes | scene::SceneChange::Geometry;
@@ -1135,6 +1242,7 @@ namespace spectra {
         if (rebuilt_bottom_level || (scene.revision.changes & scene::SceneChange::Transform) != scene::SceneChange::None) {
             const std::vector<vk::AccelerationStructureInstanceKHR> instances = this->acceleration_structure_instance_data(scene);
             this->update_top_level(instances, command_buffer);
+            this->update_instance_state(scene, command_buffer);
         }
         this->resources.synchronized_revision = scene.revision;
     }
@@ -1149,17 +1257,15 @@ namespace spectra {
         if (std::exchange(this->resources.external_bottom_level_rebuilt, false)) {
             const std::vector<vk::AccelerationStructureInstanceKHR> instances = this->acceleration_structure_instance_data(scene);
             this->update_top_level(instances, command_buffer);
+            this->update_instance_state(scene, command_buffer);
         }
         this->resources.external_geometries.clear();
         this->resources.external_sphere_sets.clear();
         this->resources.external_volumes.clear();
     }
-    GpuAccelerationStructure GpuScene::build_bottom_level(const vk::AccelerationStructureGeometryKHR& geometry, const std::uint32_t primitive_count, const GpuMeshUpdateMode update_mode, const vk::raii::CommandBuffer* command_buffer, const std::uint32_t maximum_primitive_count) {
+    GpuAccelerationStructure GpuScene::build_bottom_level(const vk::AccelerationStructureGeometryKHR& geometry, const std::uint32_t primitive_count, const GpuMeshUpdateMode update_mode, const vk::raii::CommandBuffer& command_buffer, const std::uint32_t maximum_primitive_count) {
         vk::BuildAccelerationStructureFlagsKHR flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace | vk::BuildAccelerationStructureFlagBitsKHR::eAllowDataAccess;
-        if (update_mode == GpuMeshUpdateMode::Deformable)
-            flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate;
-        else if (!command_buffer)
-            flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction;
+        if (update_mode == GpuMeshUpdateMode::Deformable) flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate;
         vk::AccelerationStructureBuildGeometryInfoKHR build_info{
             vk::AccelerationStructureTypeKHR::eBottomLevel,
             flags,
@@ -1179,47 +1285,15 @@ namespace spectra {
             vk::AccelerationStructureCreateInfoKHR{{}, *result.storage.buffer, 0, sizes.accelerationStructureSize, vk::AccelerationStructureTypeKHR::eBottomLevel},
         };
         build_info.dstAccelerationStructure = *result.acceleration_structure;
-        build_info.scratchData              = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.buildScratchSize, !command_buffer)};
+        build_info.scratchData              = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.buildScratchSize, false)};
         const vk::AccelerationStructureBuildRangeInfoKHR range{primitive_count, 0, 0, 0};
         const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
-        if (command_buffer) {
-            command_buffer->buildAccelerationStructuresKHR(build_info, ranges);
-            result.address = this->context.runtime.graphics.device.getAccelerationStructureAddressKHR(vk::AccelerationStructureDeviceAddressInfoKHR{*result.acceleration_structure});
-            return result;
-        }
-        std::optional<vk::raii::QueryPool> compaction_query{};
-        if (update_mode == GpuMeshUpdateMode::Immutable) compaction_query.emplace(this->context.runtime.graphics.device, vk::QueryPoolCreateInfo{{}, vk::QueryType::eAccelerationStructureCompactedSizeKHR, 1});
-        this->context.runtime.resources.submit_immediate([&build_info, &ranges, &result, &compaction_query](const vk::raii::CommandBuffer& command_buffer) {
-            if (compaction_query) command_buffer.resetQueryPool(**compaction_query, 0, 1);
-            command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
-            if (compaction_query) {
-                const vk::MemoryBarrier2 build_dependency{
-                    vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-                    vk::AccessFlagBits2::eAccelerationStructureWriteKHR,
-                    vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-                    vk::AccessFlagBits2::eAccelerationStructureReadKHR,
-                };
-                command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &build_dependency});
-                const std::array<vk::AccelerationStructureKHR, 1> structures{*result.acceleration_structure};
-                command_buffer.writeAccelerationStructuresPropertiesKHR(structures, vk::QueryType::eAccelerationStructureCompactedSizeKHR, **compaction_query, 0);
-            }
-        });
-        if (compaction_query) {
-            std::uint64_t compacted_size{};
-            if (compaction_query->getResults(0, 1, sizeof(compacted_size), &compacted_size, sizeof(compacted_size), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait) != vk::Result::eSuccess) throw std::runtime_error("Static BLAS compaction size query failed");
-            if (compacted_size != 0 && compacted_size < result.storage.size) {
-                GpuAccelerationStructure compacted{};
-                compacted.storage                = this->context.runtime.resources.create_buffer(compacted_size, vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-                compacted.acceleration_structure = vk::raii::AccelerationStructureKHR{this->context.runtime.graphics.device, vk::AccelerationStructureCreateInfoKHR{{}, *compacted.storage.buffer, 0, compacted_size, vk::AccelerationStructureTypeKHR::eBottomLevel}};
-                this->context.runtime.resources.submit_immediate([&result, &compacted](const vk::raii::CommandBuffer& command_buffer) { command_buffer.copyAccelerationStructureKHR(vk::CopyAccelerationStructureInfoKHR{*result.acceleration_structure, *compacted.acceleration_structure, vk::CopyAccelerationStructureModeKHR::eCompact}); });
-                result = std::move(compacted);
-            }
-        }
+        command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
         result.address = this->context.runtime.graphics.device.getAccelerationStructureAddressKHR(vk::AccelerationStructureDeviceAddressInfoKHR{*result.acceleration_structure});
         return result;
     }
 
-    GpuAccelerationStructure GpuScene::build_top_level(const std::span<const vk::AccelerationStructureInstanceKHR> instances, const std::uint32_t maximum_primitive_count) {
+    GpuAccelerationStructure GpuScene::build_top_level(const std::span<const vk::AccelerationStructureInstanceKHR> instances, const std::uint32_t maximum_primitive_count, const vk::raii::CommandBuffer& command_buffer) {
         const vk::AccelerationStructureGeometryInstancesDataKHR instance_data{
             vk::False,
             vk::DeviceOrHostAddressConstKHR{this->resources.acceleration_structure_instances.address},
@@ -1247,19 +1321,17 @@ namespace spectra {
             vk::AccelerationStructureCreateInfoKHR{{}, *result.storage.buffer, 0, sizes.accelerationStructureSize, vk::AccelerationStructureTypeKHR::eTopLevel},
         };
         build_info.dstAccelerationStructure = *result.acceleration_structure;
-        build_info.scratchData              = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.buildScratchSize, true)};
+        build_info.scratchData              = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.buildScratchSize, false)};
         const vk::AccelerationStructureBuildRangeInfoKHR range{primitive_count, 0, 0, 0};
         const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
-        this->context.runtime.resources.submit_immediate([&build_info, &ranges](const vk::raii::CommandBuffer& command_buffer) {
-            const vk::MemoryBarrier2 blas_build_dependency{
-                vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-                vk::AccessFlagBits2::eAccelerationStructureWriteKHR,
-                vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-                vk::AccessFlagBits2::eAccelerationStructureReadKHR,
-            };
-            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &blas_build_dependency});
-            command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
-        });
+        const vk::MemoryBarrier2 blas_build_dependency{
+            vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            vk::AccessFlagBits2::eAccelerationStructureWriteKHR,
+            vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            vk::AccessFlagBits2::eAccelerationStructureReadKHR,
+        };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &blas_build_dependency});
+        command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
         result.address = this->context.runtime.graphics.device.getAccelerationStructureAddressKHR(vk::AccelerationStructureDeviceAddressInfoKHR{*result.acceleration_structure});
         return result;
     }

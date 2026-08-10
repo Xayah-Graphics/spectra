@@ -16,13 +16,9 @@ namespace spectra {
 
     ImGuiBackend::~ImGuiBackend() {
         if (!this->initialized) return;
-        this->context.runtime.graphics.device.waitIdle();
-        for (const FrameResources& frame : this->renderer.frames) {
-            this->context.runtime.frames.retire_resource_descriptor(frame.vertex_descriptor);
-            this->context.runtime.frames.retire_resource_descriptor(frame.index_descriptor);
-        }
-        this->context.runtime.frames.retire_sampler_descriptor(this->renderer.sampler_descriptor);
-        this->context.runtime.frames.retire_resource_descriptor(this->renderer.viewport_descriptor);
+        for (ImTextureData* texture : ImGui::GetPlatformIO().Textures)
+            if (texture->BackendUserData != nullptr) this->destroy_texture(*texture);
+        this->context.runtime.frames.defer_destruction([frames = std::move(this->renderer.frames), shaders = std::move(this->renderer.shaders)]() mutable {});
         ImGuiIO& io                = ImGui::GetIO();
         io.BackendRendererUserData = nullptr;
         io.BackendRendererName     = nullptr;
@@ -63,7 +59,10 @@ namespace spectra {
 
     void ImGuiBackend::resize_viewport(const vk::Extent2D extent) {
         if (!this->context.display.resize(extent)) return;
-        this->context.runtime.resources.write_sampled_image_descriptor(this->renderer.viewport_descriptor, this->context.display.image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        this->context.runtime.resources.write_sampled_image_descriptor(descriptor, this->context.display.image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->renderer.viewport_descriptor = std::move(descriptor);
+        this->viewport_texture_id          = static_cast<std::uint64_t>(this->renderer.viewport_descriptor.handle().slot_index) + 1u;
     }
 } // namespace spectra
 
@@ -71,7 +70,7 @@ namespace spectra {
     namespace {
         struct ImGuiTexture {
             GpuImage image{};
-            DescriptorHandle descriptor{};
+            DescriptorLease descriptor{};
         };
 
         struct alignas(16) ImGuiPushData {
@@ -92,7 +91,7 @@ namespace spectra {
     void ImGuiBackend::initialize_renderer() {
         this->renderer.sampler_descriptor  = this->context.runtime.resources.allocate_sampler_descriptor();
         this->renderer.viewport_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        this->viewport_texture_id          = static_cast<std::uint64_t>(this->renderer.viewport_descriptor.slot_index) + 1u;
+        this->viewport_texture_id          = static_cast<std::uint64_t>(this->renderer.viewport_descriptor.handle().slot_index) + 1u;
         this->renderer.frames.reserve(VulkanFrames::frames_in_flight);
         for (std::uint32_t index = 0; index < VulkanFrames::frames_in_flight; ++index) this->renderer.frames.emplace_back(GpuBuffer{}, GpuBuffer{}, this->context.runtime.resources.allocate_resource_descriptor(), this->context.runtime.resources.allocate_resource_descriptor());
         const std::vector<std::uint32_t> vertex_code   = load_spirv(this->context.shader_directory / "imgui_vertex.spv");
@@ -156,7 +155,7 @@ namespace spectra {
             };
             this->context.runtime.resources.write_sampled_image_descriptor(backend_texture->descriptor, backend_texture->image, vk::ImageLayout::eShaderReadOnlyOptimal);
             texture.BackendUserData = backend_texture;
-            texture.SetTexID(static_cast<ImTextureID>(backend_texture->descriptor.slot_index) + 1u);
+            texture.SetTexID(static_cast<ImTextureID>(backend_texture->descriptor.handle().slot_index) + 1u);
         }
 
         ImGuiTexture& backend_texture    = *static_cast<ImGuiTexture*>(texture.BackendUserData);
@@ -229,7 +228,7 @@ namespace spectra {
 
     void ImGuiBackend::destroy_texture(ImTextureData& texture) {
         ImGuiTexture* backend_texture = static_cast<ImGuiTexture*>(texture.BackendUserData);
-        this->context.runtime.frames.retire_resource_descriptor(backend_texture->descriptor);
+        this->context.runtime.frames.defer_destruction([image = std::move(backend_texture->image)]() mutable {});
         delete backend_texture;
         texture.BackendUserData = nullptr;
         texture.SetTexID(ImTextureID_Invalid);

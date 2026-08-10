@@ -3,6 +3,8 @@ export module spectra.editor:viewport.interaction;
 import spectra.scene;
 import spectra.scene.document;
 import spectra.dynamics.runtime;
+import spectra.render.scene;
+import spectra.diagnostics;
 import std;
 
 namespace spectra {
@@ -17,31 +19,8 @@ namespace spectra {
         Yz,
     };
 
-    export enum class SceneEntityKind : std::uint32_t {
-        None,
-        Instance,
-        Camera,
-        Light,
-        AreaEmitter,
-    };
-
-    export struct SceneEntityReference {
-        SceneEntityKind kind{SceneEntityKind::None};
-        std::uint64_t id{};
-        std::uint64_t owner{};
-        std::uint32_t subindex{};
-
-        friend auto operator<=>(const SceneEntityReference&, const SceneEntityReference&) = default;
-    };
-
-    export struct SelectionState {
-        std::vector<SceneEntityReference> selected{};
-        std::optional<SceneEntityReference> active{};
-        std::optional<SceneEntityReference> hovered{};
-    };
-
     export struct ViewportInteraction {
-        ViewportInteraction(SceneDocument& document, DynamicsRuntime& dynamics) noexcept;
+        ViewportInteraction(SceneDocument& document, DynamicsRuntime& dynamics, GpuScene& gpu_scene) noexcept;
 
         void initialize_from_scene();
         void camera_changed() noexcept;
@@ -59,6 +38,7 @@ namespace spectra {
         struct {
             SceneDocument& document;
             DynamicsRuntime& dynamics;
+            GpuScene& gpu_scene;
         } context;
 
         struct {
@@ -80,6 +60,7 @@ namespace spectra {
 
     private:
         void frame_viewport_camera(math::Bounds3 bounds, float aspect) noexcept;
+        [[nodiscard]] math::Bounds3 effective_scene_bounds() const noexcept;
         [[nodiscard]] bool entity_exists(SceneEntityReference entity) const noexcept;
         [[nodiscard]] std::optional<math::Bounds3> entity_bounds(SceneEntityReference entity) const noexcept;
     };

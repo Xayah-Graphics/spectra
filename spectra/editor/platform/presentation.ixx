@@ -36,6 +36,7 @@ namespace spectra {
 
     export struct VulkanPresentation {
         VulkanPresentation(WindowPlatform& platform, VulkanSurface& surface, VulkanGraphics& graphics, VulkanFrames& frames);
+        ~VulkanPresentation();
 
         VulkanPresentation(const VulkanPresentation&)            = delete;
         VulkanPresentation(VulkanPresentation&&)                 = delete;

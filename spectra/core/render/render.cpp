@@ -3,7 +3,7 @@ module spectra.render;
 import std;
 
 namespace spectra {
-    RenderEngine::RenderEngine(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory, const std::filesystem::path& pathtracer_directory, std::optional<std::string> initial_renderer, const RasterDisplayMode initial_raster_display_mode) : context{runtime, gpu_scene, std::move(shader_directory)}, pathtracer_resources{runtime, pathtracer_directory} {
+    RenderEngine::RenderEngine(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory, const std::filesystem::path& pathtracer_directory, std::optional<std::string> initial_renderer, const RasterDisplayMode initial_raster_display_mode) : context{runtime, gpu_scene, std::move(shader_directory), pathtracer_directory}, sampling_resources{runtime, this->context.shader_directory.parent_path() / "sampling"} {
         this->backends.raster_display_mode = initial_raster_display_mode;
         if (initial_renderer) {
             if (*initial_renderer != rasterizer_descriptor.id && *initial_renderer != pathtracer_descriptor.id) throw std::runtime_error(std::format("Unknown Scene Renderer: {}", *initial_renderer));
@@ -29,11 +29,12 @@ namespace spectra {
 
     void RenderEngine::activate(const std::string_view id, const scene::SceneView scene) {
         if (id == rasterizer_descriptor.id) {
-            if (!this->backends.rasterizer) this->backends.rasterizer.emplace(this->context.runtime, this->context.gpu_scene, scene, this->context.shader_directory);
-            this->backends.rasterizer->renderer.display_mode = this->backends.raster_display_mode;
+            if (!this->backends.rasterizer) this->backends.rasterizer.emplace(this->context.runtime, this->context.gpu_scene, this->sampling_resources, scene, this->context.shader_directory);
+            this->backends.rasterizer->set_display_mode(this->backends.raster_display_mode);
             this->backends.active                            = std::ref(*this->backends.rasterizer);
         } else if (id == pathtracer_descriptor.id) {
-            if (!this->backends.pathtracer) this->backends.pathtracer.emplace(this->context.runtime, this->context.gpu_scene, this->pathtracer_resources, scene);
+            if (!this->pathtracer_resources) this->pathtracer_resources.emplace(this->context.runtime, this->sampling_resources, this->context.pathtracer_directory);
+            if (!this->backends.pathtracer) this->backends.pathtracer.emplace(this->context.runtime, this->context.gpu_scene, *this->pathtracer_resources, scene);
             this->backends.active.reset();
         } else
             throw std::runtime_error(std::format("Unknown Scene Renderer: {}", id));
@@ -42,11 +43,11 @@ namespace spectra {
 
     void RenderEngine::set_raster_display_mode(const RasterDisplayMode mode) noexcept {
         this->backends.raster_display_mode = mode;
-        if (this->backends.rasterizer) this->backends.rasterizer->renderer.display_mode = mode;
+        if (this->backends.rasterizer) this->backends.rasterizer->set_display_mode(mode);
     }
 
     void RenderEngine::wait_for_pathtracer() {
-        this->pathtracer_resources.wait_for_preparation();
+        this->pathtracer_resources->wait_for_preparation();
         if (this->backends.pathtracer) this->backends.pathtracer->wait_for_preparation();
     }
 
@@ -65,14 +66,22 @@ namespace spectra {
 
     std::optional<PathTracerPreparationProgress> RenderEngine::pathtracer_preparation() const {
         if (this->backends.selected_id != pathtracer_descriptor.id || this->backends.active) return std::nullopt;
-        const PathTracerPreparationProgress runtime_progress = this->pathtracer_resources.preparation_progress();
+        const PathTracerPreparationProgress runtime_progress = this->pathtracer_resources->preparation_progress();
         if (runtime_progress.stage != PathTracerPreparationStage::Ready) return runtime_progress;
         return this->backends.pathtracer->preparation_progress();
     }
 
     std::optional<DepthBufferView> RenderEngine::depth_buffer() noexcept {
-        if (!this->backends.active || !std::holds_alternative<std::reference_wrapper<Rasterizer>>(*this->backends.active)) return std::nullopt;
-        return DepthBufferView{this->backends.rasterizer->renderer.depth_image, this->backends.rasterizer->renderer.sampled_depth_descriptor, this->backends.rasterizer->renderer.depth_layout};
+        if (!this->backends.active) return std::nullopt;
+        return std::visit(
+            [](const auto active) -> DepthBufferView {
+                auto& renderer = active.get();
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(renderer)>, Rasterizer>)
+                    return {renderer.renderer.depth_image, renderer.renderer.sampled_depth_descriptor, renderer.renderer.depth_layout};
+                else
+                    return {renderer.session.depth_image, renderer.session.sampled_depth_descriptor, renderer.session.depth_layout};
+            },
+            *this->backends.active);
     }
 
     void RenderEngine::invalidate(const scene::SceneChange changes, const GpuSceneUpdate gpu_update) noexcept {
@@ -82,7 +91,7 @@ namespace spectra {
 
     bool RenderEngine::prepare(const scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer) {
         if (this->backends.selected_id == pathtracer_descriptor.id && !this->backends.active) {
-            if (!this->pathtracer_resources.complete_preparation()) return false;
+            if (!this->pathtracer_resources->complete_preparation()) return false;
             if (!this->backends.pathtracer->complete_preparation(scene, command_buffer)) return false;
             this->backends.active = std::ref(*this->backends.pathtracer);
         }
@@ -143,6 +152,19 @@ namespace spectra {
     bool RenderEngine::gbuffer_available() const noexcept {
         if (!this->backends.active) return false;
         return std::visit([](const auto active) { return GBufferSceneRenderer<std::remove_cvref_t<decltype(active.get())>>; }, *this->backends.active);
+    }
+
+    void RenderEngine::record_gbuffer_readback(const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot) {
+        if (!this->backends.active) throw std::runtime_error("No active Scene Renderer");
+        std::visit(
+            [&](const auto active_reference) {
+                auto& active = active_reference.get();
+                if constexpr (GBufferSceneRenderer<std::remove_cvref_t<decltype(active)>>)
+                    active.record_readback(command_buffer, snapshot);
+                else
+                    throw std::runtime_error("The active Scene Renderer does not expose a GBuffer");
+            },
+            *this->backends.active);
     }
 
     RenderGBufferReadback RenderEngine::readback() {

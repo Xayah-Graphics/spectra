@@ -51,9 +51,9 @@ namespace spectra {
             if (this->context.surface && !std::ranges::contains(available_extensions, std::string_view{vk::KHRSwapchainExtensionName}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; })) continue;
 
             const auto features = candidate.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorHeapFeaturesEXT, vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR, vk::PhysicalDeviceAccelerationStructureFeaturesKHR, vk::PhysicalDeviceRayTracingPipelineFeaturesKHR, vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR, vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR, vk::PhysicalDeviceRayQueryFeaturesKHR, vk::PhysicalDeviceShaderObjectFeaturesEXT, vk::PhysicalDeviceMeshShaderFeaturesEXT, vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT>();
-            if (!features.get<vk::PhysicalDeviceFeatures2>().features.shaderInt64) continue;
+            if (!features.get<vk::PhysicalDeviceFeatures2>().features.shaderInt64 || !features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy) continue;
             if (!features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters) continue;
-            if (!features.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress || !features.get<vk::PhysicalDeviceVulkan12Features>().scalarBlockLayout) continue;
+            if (!features.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress || !features.get<vk::PhysicalDeviceVulkan12Features>().scalarBlockLayout || !features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) continue;
             if (!features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 || !features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) continue;
             if (!features.get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>().descriptorHeap) continue;
             if (!features.get<vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR>().shaderUntypedPointers) continue;
@@ -65,6 +65,20 @@ namespace spectra {
             if (!features.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject) continue;
             if (!features.get<vk::PhysicalDeviceMeshShaderFeaturesEXT>().meshShader) continue;
             if (!features.get<vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT>().shaderBufferFloat32AtomicAdd) continue;
+
+#if defined(_WIN32)
+            constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+            constexpr vk::ExternalSemaphoreHandleTypeFlagBits external_semaphore_handle = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
+#else
+            constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+            constexpr vk::ExternalSemaphoreHandleTypeFlagBits external_semaphore_handle = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
+#endif
+            constexpr vk::BufferUsageFlags external_buffer_usage = vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress;
+            const vk::ExternalMemoryProperties external_memory = candidate.getExternalBufferProperties(vk::PhysicalDeviceExternalBufferInfo{{}, external_buffer_usage, external_memory_handle}).externalMemoryProperties;
+            if (!(external_memory.externalMemoryFeatures & vk::ExternalMemoryFeatureFlagBits::eExportable) || !(external_memory.compatibleHandleTypes & external_memory_handle)) continue;
+            const vk::SemaphoreTypeCreateInfo timeline_type{vk::SemaphoreType::eTimeline, 0};
+            const vk::ExternalSemaphoreProperties external_semaphore = candidate.getExternalSemaphoreProperties(vk::PhysicalDeviceExternalSemaphoreInfo{external_semaphore_handle, &timeline_type});
+            if (!(external_semaphore.externalSemaphoreFeatures & vk::ExternalSemaphoreFeatureFlagBits::eExportable) || !(external_semaphore.compatibleHandleTypes & external_semaphore_handle)) continue;
 
             const std::vector<vk::QueueFamilyProperties> queue_families = candidate.getQueueFamilyProperties();
             std::uint32_t graphics_family_index                         = static_cast<std::uint32_t>(queue_families.size());
@@ -85,9 +99,11 @@ namespace spectra {
     void VulkanGraphics::create_device() {
         vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorHeapFeaturesEXT, vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR, vk::PhysicalDeviceAccelerationStructureFeaturesKHR, vk::PhysicalDeviceRayTracingPipelineFeaturesKHR, vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR, vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR, vk::PhysicalDeviceRayQueryFeaturesKHR, vk::PhysicalDeviceShaderObjectFeaturesEXT, vk::PhysicalDeviceMeshShaderFeaturesEXT, vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT> enabled_features{};
         enabled_features.get<vk::PhysicalDeviceFeatures2>().features.shaderInt64                                         = vk::True;
+        enabled_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy                                  = vk::True;
         enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters                                  = vk::True;
         enabled_features.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress                                   = vk::True;
         enabled_features.get<vk::PhysicalDeviceVulkan12Features>().scalarBlockLayout                                     = vk::True;
+        enabled_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore                                    = vk::True;
         enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2                                      = vk::True;
         enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering                                      = vk::True;
         enabled_features.get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>().descriptorHeap                               = vk::True;

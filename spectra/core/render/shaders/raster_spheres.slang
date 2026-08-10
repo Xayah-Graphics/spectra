@@ -11,6 +11,7 @@ struct RasterVertex {
     float3 emission : COLOR0;
     float3 color_modifier : COLOR1;
     nointerpolation uint material : MATERIAL;
+    nointerpolation uint area_light : AREA_LIGHT;
     nointerpolation uint sphere : SPHERE;
     nointerpolation float3 sphere_center : POSITION1;
     nointerpolation float sphere_radius : RADIUS;
@@ -18,6 +19,7 @@ struct RasterVertex {
 }
 
 struct RasterSpherePushData {
+    uint64_t acceleration_structure_address;
     DescriptorHandle<StructuredBuffer<float3>> positions;
     DescriptorHandle<StructuredBuffer<float>> radii;
     DescriptorHandle<StructuredBuffer<float3>> colors;
@@ -27,6 +29,12 @@ struct RasterSpherePushData {
     uint scene_primitive_index;
     uint element_count;
     uint2 attributes;
+    DescriptorHandle<StructuredBuffer<uint>> sampling_tables;
+    uint4 sampler_metadata;
+    uint4 sampler_parameters;
+    uint2 extent;
+    uint sample_index;
+    uint reserved;
     float4 view_projection_row_0;
     float4 view_projection_row_1;
     float4 view_projection_row_2;
@@ -34,54 +42,11 @@ struct RasterSpherePushData {
     float4 camera_position;
     float4 camera_right;
     float4 camera_up;
+    float4 camera_forward;
 }
 
 [vk::push_constant]
 uniform RasterSpherePushData push_data;
-
-float3 transform_position(
-    RasterTransform transform,
-    float3 position) {
-    const float4 homogeneous =
-        float4(position, 1.0);
-    return float3(
-        dot(
-            transform.transform_row_0,
-            homogeneous),
-        dot(
-            transform.transform_row_1,
-            homogeneous),
-        dot(
-            transform.transform_row_2,
-            homogeneous));
-}
-
-float3 transform_normal(
-    RasterTransform transform,
-    float3 normal) {
-    const float3 column_0 =
-        float3(
-            transform.transform_row_0.x,
-            transform.transform_row_1.x,
-            transform.transform_row_2.x);
-    const float3 column_1 =
-        float3(
-            transform.transform_row_0.y,
-            transform.transform_row_1.y,
-            transform.transform_row_2.y);
-    const float3 column_2 =
-        float3(
-            transform.transform_row_0.z,
-            transform.transform_row_1.z,
-            transform.transform_row_2.z);
-    return normalize(
-        cross(column_1, column_2) *
-                normal.x +
-            cross(column_2, column_0) *
-                normal.y +
-            cross(column_0, column_1) *
-                normal.z);
-}
 
 float3 blackbody(float temperature) {
     temperature =
@@ -173,8 +138,6 @@ void raster_spheres(
         bindings.transforms;
     StructuredBuffer<uint> sphere_materials =
         push_data.materials;
-    StructuredBuffer<RasterAreaLight> area_lights =
-        bindings.area_lights;
     const RasterPrimitive primitive =
         primitives[
             push_data.scene_primitive_index];
@@ -202,7 +165,7 @@ void raster_spheres(
         color_modifier =
             colors[sphere];
     const float3 world_center =
-        transform_position(
+        raster_transform_position(
             transform,
             center);
     const float3 column_0 =
@@ -284,31 +247,26 @@ void raster_spheres(
                 1.0
             );
         output.emission =
-            primitive.area_light_index ==
-                    0xffffffff
-                ? (
-                      (
-                          push_data.attributes.x &
-                          4
-                      ) != 0
-                          ? blackbody(
-                                temperatures[
-                                    sphere]) *
-                                color_modifier
-                          : float3(0.0)
-                  )
-                : area_lights[
-                      primitive.area_light_index]
-                      .emission.xyz;
+            (
+                push_data.attributes.x &
+                4
+            ) != 0
+                ? blackbody(
+                      temperatures[
+                          sphere]) *
+                      color_modifier
+                : float3(0.0);
         output.color_modifier =
             color_modifier;
         output.material =
             material;
+        output.area_light =
+            primitive.area_light_index;
         output.sphere = 1;
         output.sphere_center =
-            world_center;
+            center;
         output.sphere_radius =
-            world_radius;
+            radius;
         output.wire_coordinates =
             float3(1.0);
         vertices[

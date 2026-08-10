@@ -1,7 +1,6 @@
-export module spectra.editor:diagnostics.renderer;
+export module spectra.diagnostics.renderer;
 
-import :diagnostics.settings;
-import :viewport.interaction;
+import spectra.diagnostics;
 import spectra.render.contract;
 import spectra.render.display;
 import spectra.render.scene;
@@ -15,9 +14,9 @@ namespace spectra {
         GpuBuffer line_buffer{};
         GpuBuffer box_buffer{};
         GpuBuffer bounds_buffer{};
-        DescriptorHandle line_descriptor{};
-        DescriptorHandle box_descriptor{};
-        DescriptorHandle bounds_descriptor{};
+        DescriptorLease line_descriptor{};
+        DescriptorLease box_descriptor{};
+        DescriptorLease bounds_descriptor{};
         std::size_t line_capacity{};
         std::size_t box_capacity{};
         std::size_t bounds_capacity{};

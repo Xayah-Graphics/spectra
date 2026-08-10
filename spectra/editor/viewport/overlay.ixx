@@ -1,4 +1,4 @@
-export module spectra.editor:viewport.overlay;
+export module spectra.overlay;
 
 import spectra.render.display;
 import spectra.runtime;
@@ -26,9 +26,8 @@ namespace spectra {
         ViewportOverlay& operator=(const ViewportOverlay&) = delete;
         ViewportOverlay& operator=(ViewportOverlay&&)      = delete;
 
-        void initialize(scene::SceneView scene);
-        void destroy_scene() noexcept;
-        void synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void initialize();
+        void destroy() noexcept;
         void record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const scene::Camera& camera, const ViewportOverlayState& state);
 
         struct {
@@ -38,30 +37,19 @@ namespace spectra {
         } context;
 
         struct {
-            GpuBuffer primitives{};
-            GpuBuffer transforms{};
-            DescriptorHandle primitives_descriptor{};
-            DescriptorHandle transforms_descriptor{};
-            bool initialized{};
-        } scene;
-
-        struct {
             vk::raii::ShaderEXTs mask_shaders{nullptr};
             vk::raii::ShaderEXTs axes_shaders{nullptr};
             vk::raii::ShaderEXTs outline_shaders{nullptr};
             GpuImage mask{};
             GpuImage depth{};
-            DescriptorHandle mask_descriptor{};
-            DescriptorHandle sampler_descriptor{};
+            DescriptorLease mask_descriptor{};
+            DescriptorLease sampler_descriptor{};
             vk::ImageLayout mask_layout{vk::ImageLayout::eUndefined};
             vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
-            bool initialized{};
         } overlay;
 
     private:
-        void upload(scene::SceneView scene, const vk::raii::CommandBuffer* command_buffer = nullptr);
         void initialize_overlay();
-        void destroy_overlay() noexcept;
         void create_overlay_images(vk::Extent2D extent);
         void configure_mask_render_state(const vk::raii::CommandBuffer& command_buffer, vk::Rect2D render_region, vk::CompareOp depth_compare, bool depth_write);
         void record_impl(const vk::raii::CommandBuffer& command_buffer, vk::Image target_image, vk::ImageView target_view, vk::ImageLayout target_layout, vk::Extent2D extent, vk::Rect2D render_region, const scene::Camera& camera, std::span<const std::uint32_t> selected_instances, std::span<const std::uint32_t> active_instances, std::span<const std::uint32_t> hovered_instances, std::uint32_t axes_plane, bool axes_visible, bool outline_visible);

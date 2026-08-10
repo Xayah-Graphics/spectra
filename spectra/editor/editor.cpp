@@ -2,7 +2,7 @@ module spectra.editor;
 
 import :output.capture;
 import :output.frozen_scene;
-import :diagnostics.renderer;
+import spectra.diagnostics.renderer;
 import :diagnostics.settings;
 import :platform.dialogs;
 import :platform.presentation;
@@ -10,9 +10,9 @@ import :platform.window;
 import :ui;
 import :ui.imgui;
 import :viewport.interaction;
-import :viewport.overlay;
+import spectra.overlay;
 import :viewport.picker;
-import :visualization.renderer;
+import spectra.visualization;
 import spectra.dynamics.runtime;
 import spectra.render;
 import spectra.render.display;
@@ -81,7 +81,7 @@ namespace spectra {
     };
 
     EditorApplication::EditorApplication(EditorRequest request, const std::filesystem::path& shader_directory, const std::filesystem::path& pathtracer_directory, const std::filesystem::path& output_directory)
-        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, settings{output_directory / "spectra.editor-settings"}, dynamics{runtime, document}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics}, display{runtime, shader_directory}, visualization{runtime, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, capture{runtime, render_engine, display, output_directory}, frozen_export{runtime, gpu_scene}, imgui{platform, runtime, display, shader_directory}, ui{document, settings, dynamics, render_engine, viewport, picker, frozen_export, imgui} {
+        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, settings{output_directory / "spectra.editor-settings"}, dynamics{runtime, document}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics, gpu_scene}, display{runtime, shader_directory}, visualization{runtime, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, capture{runtime, render_engine, display, output_directory}, frozen_export{runtime, gpu_scene, dynamics}, imgui{platform, runtime, display, shader_directory}, ui{document, settings, dynamics, render_engine, viewport, picker, frozen_export, imgui} {
         this->display.initialize();
         this->diagnostics.initialize();
         this->imgui.initialize();
@@ -90,7 +90,7 @@ namespace spectra {
 
     void EditorApplication::destroy_rendering() noexcept {
         this->picker.destroy_scene();
-        this->overlay.destroy_scene();
+        this->overlay.destroy();
         this->render_engine.destroy();
         this->gpu_scene.destroy();
     }
@@ -110,13 +110,12 @@ namespace spectra {
         for (const dynamics::SphereSetOutputBinding& binding : this->dynamics.sphere_set_bindings()) sphere_capacities.emplace_back(binding.sphere_set_id, binding.capacity);
         this->gpu_scene.initialize(source_scene, geometry_bindings, sphere_capacities);
         this->render_engine.rebuild(this->document.content.evaluated.view());
-        this->overlay.initialize(this->document.content.evaluated.view());
+        this->overlay.initialize();
         this->picker.initialize(this->document.content.evaluated.view());
     }
 
     void EditorApplication::open_scene(const std::filesystem::path& path) {
         scene::Scene next_scene = scene::load_scene(path);
-        this->runtime.graphics.device.waitIdle();
         const bool previous_loaded                   = this->document.content.loaded;
         const bool previous_modified                 = this->document.content.modified;
         scene::Scene previous_source                 = std::move(this->document.content.source);
@@ -129,7 +128,7 @@ namespace spectra {
             this->document.content.source    = std::move(next_scene);
             this->document.content.evaluated = this->document.content.source;
             this->document.content.path      = path;
-            if (this->document.content.source.dynamic_setup) this->dynamics.initialize(path, this->document.content.source);
+            if (this->document.content.source.dynamic_setup || this->document.content.source.frozen_dynamic_frame) this->dynamics.initialize(path, this->document.content.source);
             this->rebuild_rendering(this->document.content.source);
             this->viewport.initialize_from_scene();
             this->document.content.loaded               = true;
@@ -137,7 +136,6 @@ namespace spectra {
             this->rendering.synchronized_scene_revision = 0;
         } catch (...) {
             const std::exception_ptr open_error = std::current_exception();
-            this->runtime.graphics.device.waitIdle();
             this->destroy_rendering();
             this->dynamics.destroy();
             this->document.content.source    = std::move(previous_source);
@@ -148,12 +146,11 @@ namespace spectra {
             this->rendering.synchronized_scene_revision = 0;
             if (previous_loaded) {
                 try {
-                    if (this->document.content.source.dynamic_setup) this->dynamics.initialize(this->document.content.path, this->document.content.source);
+                    if (this->document.content.source.dynamic_setup || this->document.content.source.frozen_dynamic_frame) this->dynamics.initialize(this->document.content.path, this->document.content.source);
                     this->rebuild_rendering(this->document.content.source);
                     this->viewport.initialize_from_scene();
                     this->document.content.loaded = true;
                 } catch (const std::exception& restore_error) {
-                    this->runtime.graphics.device.waitIdle();
                     this->destroy_rendering();
                     this->dynamics.destroy();
                     throw std::runtime_error(std::format("Opening '{}' failed and restoring the previous scene also failed: {}", path.string(), restore_error.what()));
@@ -266,11 +263,10 @@ namespace spectra {
     bool EditorApplication::prepare_rendering(const vk::raii::CommandBuffer& command_buffer, const vk::Extent2D extent) {
         GpuSceneUpdate gpu_update{};
         bool gpu_scene_synchronized{};
-        if (this->dynamics.initialized())
-            if (const dynamics::DynamicFrame* frame = this->dynamics.pending_frame()) {
-                gpu_update             = this->gpu_scene.apply(*frame, this->document.content.evaluated.view(), command_buffer);
-                gpu_scene_synchronized = true;
-            }
+        if (const dynamics::DynamicFrame* frame = this->dynamics.pending_frame()) {
+            gpu_update             = this->gpu_scene.apply(*frame, this->document.content.evaluated.view(), command_buffer);
+            gpu_scene_synchronized = true;
+        }
 
         const scene::SceneRevision revision = this->document.content.evaluated.revision();
         const bool scene_changed            = revision.number != this->rendering.synchronized_scene_revision;
@@ -279,7 +275,6 @@ namespace spectra {
         if (scene_changes != scene::SceneChange::None || gpu_update.gpu_changes != GpuSceneChange::None) {
             scene::SceneView synchronized_scene = this->document.content.evaluated.view();
             synchronized_scene.revision.changes = scene_changes;
-            if (scene_changes != scene::SceneChange::None) this->overlay.synchronize(synchronized_scene, command_buffer);
             this->picker.synchronize(synchronized_scene, gpu_update, command_buffer);
             this->render_engine.invalidate(scene_changes, gpu_update);
         }
@@ -302,8 +297,8 @@ namespace spectra {
         const bool renderer_ready = this->render_engine.prepare(this->document.content.evaluated.view(), RenderView{this->viewport.view.render_camera, extent, this->viewport.view.render_camera_revision}, command_buffer);
         if (this->dynamics.initialized()) {
             this->dynamics.record_telemetry(command_buffer, this->runtime.frames.frame.current_slot_index);
-            this->dynamics.consume_frame();
         }
+        this->dynamics.consume_frame();
         return renderer_ready;
     }
 
@@ -377,13 +372,19 @@ namespace spectra {
                 if (this->prepare_rendering(frame->frame.command_buffer, viewport_extent)) {
                     this->render_engine.record(frame->frame.command_buffer, frame->frame.slot_index);
                     const RenderOutput output = this->render_engine.output();
-                    this->display.record(frame->frame.command_buffer, output, this->ui.controls.exposure);
                     const std::optional<DepthBufferView> depth = this->render_engine.depth_buffer();
+                    std::optional<RenderOutput> renderer_composition{};
+                    if (depth && this->visualization.has_visible(this->dynamics.visualizations(), scene::VisualizationCompositionDomain::SceneLinear)) {
+                        this->display.prepare_linear_composition(frame->frame.command_buffer, output);
+                        this->visualization.record(frame->frame.command_buffer, this->display.linear_target(), *depth, this->viewport.view.render_camera, this->dynamics.visualizations(), scene::VisualizationCompositionDomain::SceneLinear);
+                        renderer_composition.emplace(this->display.linear_output(output));
+                    }
+                    this->display.record(frame->frame.command_buffer, renderer_composition ? *renderer_composition : output, this->ui.controls.exposure);
                     if (depth) {
                         if (this->settings.diagnostics.enabled) this->diagnostics.record(frame->frame.command_buffer, frame->frame.slot_index, this->display, *depth, this->document.content.evaluated.view(), this->viewport.view.render_camera, this->settings.diagnostics, this->viewport.view.selection);
-                        this->visualization.record(frame->frame.command_buffer, this->display, *depth, this->viewport.view.render_camera, this->dynamics.visualizations());
+                        this->visualization.record(frame->frame.command_buffer, this->display.target(), *depth, this->viewport.view.render_camera, this->dynamics.visualizations(), scene::VisualizationCompositionDomain::DisplayReferred);
                     }
-                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->viewport.view.render_camera, depth && this->settings.diagnostics.enabled ? &this->diagnostics.pick_image() : nullptr);
+                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->viewport.view.render_camera, *depth, this->settings.diagnostics.enabled ? &this->diagnostics.pick_image() : nullptr);
                     this->record_editor_overlays(frame->frame.command_buffer, actions.show_axes);
                     this->capture.record(frame->frame.command_buffer, frame->frame.slot_index, output);
                 }
