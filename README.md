@@ -11,9 +11,13 @@ Spectra is a C++23 Vulkan 1.4 graphics research workspace for native `.spectra` 
 One shared scene is consumed by an interactive rasterizer and a spectral wavefront path tracer. The Windows build
 includes the editor, while the same executable also supports headless rendering on Windows and Linux.
 
-| Path Tracing                                                                                                                                | Dynamic Scene Providers                                                                                                                               | Interactive Rasterization                                                                                                                                 |
-|---------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| ![Cornell Box](https://github.com/Xayah-Graphics/imagebed/blob/883141b90fd655fa7e4b227d8a54842ee137392c/spectra-pathtracer-cornell-box.png) | ![Dynamic Scene](https://github.com/Xayah-Graphics/imagebed/blob/0b600f42860a713b7bad36e350fbb55f29a4d97c/spectra-pathtracer-cloth-simulation.png)      | ![Interactive Rasterization](https://github.com/Xayah-Graphics/imagebed/blob/eae3d3fd1d4073f8876f69cc38927ee88448df21/spectra-rasterizer-instant-ngp.png) |
+## Gallery
+
+| Cornell Box                                                                                                                                | Geometry Mapping Garden                                                                                                                                  | Lighting Pavilion                                                                                                                            |
+|--------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| ![Cornell Box](https://github.com/Xayah-Graphics/imagebed/blob/58258914e0a8b7772eeefd52a6bf08c5e44c2cdf/cornell-box-4096spp.png)           | ![Geometry Mapping Garden](https://github.com/Xayah-Graphics/imagebed/blob/58258914e0a8b7772eeefd52a6bf08c5e44c2cdf/geometry-mapping-garden-4096spp.png) | ![Lighting Pavilion](https://github.com/Xayah-Graphics/imagebed/blob/58258914e0a8b7772eeefd52a6bf08c5e44c2cdf/lighting-pavilion-4096spp.png) |
+| Material Atelier                                                                                                                           | PBRT Book                                                                                                                                                | Volume Chambers                                                                                                                              |
+| ![Material Atelier](https://github.com/Xayah-Graphics/imagebed/blob/58258914e0a8b7772eeefd52a6bf08c5e44c2cdf/material-atelier-4096spp.png) | ![PBRT Book](https://github.com/Xayah-Graphics/imagebed/blob/58258914e0a8b7772eeefd52a6bf08c5e44c2cdf/pbrt-book-4096spp.png)                             | ![Volume Chambers](https://github.com/Xayah-Graphics/imagebed/blob/58258914e0a8b7772eeefd52a6bf08c5e44c2cdf/volume-chambers-4096spp.png)     |
 
 ## Build Instruction
 
@@ -61,7 +65,3 @@ Render a scene headlessly with either renderer:
 spectra /path/to/scene.spectra --renderer rasterizer
 spectra /path/to/scene.spectra --renderer pathtracer
 ```
-
-Headless rendering writes display PNG and linear EXR outputs under `renders` in the current working directory by default. Use `--output` to select
-another output basename and `--gbuffer-output` to request a Path Tracer GBuffer EXR. A dynamic `.spectra` scene loads
-its declared Provider libraries from the scene directory. The editor also accepts one dropped `.spectra` scene.
