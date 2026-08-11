@@ -203,11 +203,11 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
     if (kind == 0) {
         StructuredBuffer<SpectraPluginPoint> points = DescriptorHandle<StructuredBuffer<SpectraPluginPoint>>(push_data.primary);
         const SpectraPluginPoint point = points[instance_id];
-        const float3 center = point.position;
+        const float3 center = plugin_float3(point.position);
         float radius = point.radius * push_data.parameters.x;
         const float transform_scale = max(length(push_data.transform_row_0.xyz), max(length(push_data.transform_row_1.xyz), length(push_data.transform_row_2.xyz)));
         if (push_data.detail.x == 1 || push_data.detail.x == 2) radius *= transform_scale;
-        const float4 element_color = point.color;
+        const float4 element_color = plugin_float4(point.color);
         const float scalar = point.scalar;
         const float4 color = element_visualization_color(element_color, scalar);
         const float2 corners[6] = {float2(-1, -1), float2(1, -1), float2(1, 1), float2(-1, -1), float2(1, 1), float2(-1, 1)};
@@ -227,7 +227,7 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
     if (kind == 1) {
         StructuredBuffer<SpectraPluginSegment> segments = DescriptorHandle<StructuredBuffer<SpectraPluginSegment>>(push_data.primary);
         const SpectraPluginSegment segment = segments[instance_id];
-        return make_line(segment.first_position, segment.second_position, segment.width * push_data.parameters.x, element_visualization_color(segment.color, segment.scalar), vertex_id);
+        return make_line(plugin_float3(segment.first_position), plugin_float3(segment.second_position), segment.width * push_data.parameters.x, element_visualization_color(plugin_float4(segment.color), segment.scalar), vertex_id);
     }
     if (kind == 2) {
         StructuredBuffer<SpectraPluginCurve> curves = DescriptorHandle<StructuredBuffer<SpectraPluginCurve>>(push_data.primary);
@@ -235,7 +235,11 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         const uint segment = vertex_id / 6;
         const float first_t = float(segment) / 16.0;
         const float second_t = float(segment + 1) / 16.0;
-        return make_line(bezier(curve.control_0, curve.control_1, curve.control_2, curve.control_3, first_t), bezier(curve.control_0, curve.control_1, curve.control_2, curve.control_3, second_t), curve.width * push_data.parameters.x, element_visualization_color(curve.color, curve.scalar), vertex_id % 6);
+        const float3 control_0 = plugin_float3(curve.control_0);
+        const float3 control_1 = plugin_float3(curve.control_1);
+        const float3 control_2 = plugin_float3(curve.control_2);
+        const float3 control_3 = plugin_float3(curve.control_3);
+        return make_line(bezier(control_0, control_1, control_2, control_3, first_t), bezier(control_0, control_1, control_2, control_3, second_t), curve.width * push_data.parameters.x, element_visualization_color(plugin_float4(curve.color), curve.scalar), vertex_id % 6);
     }
     if (kind == 3 || kind == 5) {
         float3 origin;
@@ -245,10 +249,10 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         if (kind == 3) {
             StructuredBuffer<SpectraPluginVector> vectors = DescriptorHandle<StructuredBuffer<SpectraPluginVector>>(push_data.primary);
             const SpectraPluginVector element = vectors[instance_id];
-            origin = element.origin;
-            vector = element.vector * push_data.parameters.y;
+            origin = plugin_float3(element.origin);
+            vector = plugin_float3(element.vector) * push_data.parameters.y;
             width = element.width * push_data.parameters.x;
-            color = element_visualization_color(element.color, element.scalar);
+            color = element_visualization_color(plugin_float4(element.color), element.scalar);
         } else {
             ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
             const uint sampling = push_data.detail.y;
@@ -298,13 +302,14 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         const float4 row_1 = float4(camera.world_from_camera.matrix[4], camera.world_from_camera.matrix[5], camera.world_from_camera.matrix[6], camera.world_from_camera.matrix[7]);
         const float4 row_2 = float4(camera.world_from_camera.matrix[8], camera.world_from_camera.matrix[9], camera.world_from_camera.matrix[10], camera.world_from_camera.matrix[11]);
         const float4 row_3 = float4(camera.world_from_camera.matrix[12], camera.world_from_camera.matrix[13], camera.world_from_camera.matrix[14], camera.world_from_camera.matrix[15]);
+        const float4 intrinsics = plugin_float4(camera.intrinsics);
         const float depth = push_data.parameters.y;
         const float3 camera_corners[5] = {
             float3(0.0),
-            camera_corner(float2(0.0, 0.0), camera.intrinsics, camera.distortion, depth),
-            camera_corner(float2(push_data.dimensions.z, 0.0), camera.intrinsics, camera.distortion, depth),
-            camera_corner(float2(push_data.dimensions.z, push_data.dimensions.w), camera.intrinsics, camera.distortion, depth),
-            camera_corner(float2(0.0, push_data.dimensions.w), camera.intrinsics, camera.distortion, depth)};
+            camera_corner(float2(0.0, 0.0), intrinsics, camera.distortion, depth),
+            camera_corner(float2(push_data.dimensions.z, 0.0), intrinsics, camera.distortion, depth),
+            camera_corner(float2(push_data.dimensions.z, push_data.dimensions.w), intrinsics, camera.distortion, depth),
+            camera_corner(float2(0.0, push_data.dimensions.w), intrinsics, camera.distortion, depth)};
         const uint edges[16] = {0,1, 0,2, 0,3, 0,4, 1,2, 2,3, 3,4, 4,1};
         if (vertex_id < 48) {
             const uint edge = vertex_id / 6;

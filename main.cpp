@@ -96,7 +96,7 @@ int main(int argument_count, char** raw_arguments) {
 
         if (scene_path.empty()) throw std::runtime_error("Headless rendering requires a scene path");
 
-        const std::string selected_renderer            = renderer.value_or("rasterizer");
+        const std::string selected_renderer            = renderer.value_or("pathtracer");
         const std::string selected_raster_display_mode = raster_display_mode.value_or("material");
         if (output_base.empty()) {
             const std::string output_name = selected_renderer == "rasterizer" && selected_raster_display_mode != "material" ? std::format("{}-{}", selected_renderer, selected_raster_display_mode) : selected_renderer;

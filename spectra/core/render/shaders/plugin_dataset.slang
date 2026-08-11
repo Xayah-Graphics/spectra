@@ -5,7 +5,7 @@ public struct SpectraPluginTransform {
 }
 
 public struct SpectraPluginSphere {
-    public float3 position;
+    public float position[3];
     public float radius;
 }
 
@@ -15,35 +15,35 @@ public struct SpectraPluginInstanceTransform {
 }
 
 public struct SpectraPluginPoint {
-    public float3 position;
+    public float position[3];
     public float radius;
-    public float4 color;
+    public float color[4];
     public float scalar;
 }
 
 public struct SpectraPluginSegment {
-    public float3 first_position;
+    public float first_position[3];
     public float width;
-    public float3 second_position;
-    public float4 color;
+    public float second_position[3];
+    public float color[4];
     public float scalar;
 }
 
 public struct SpectraPluginCurve {
-    public float3 control_0;
+    public float control_0[3];
     public float width;
-    public float3 control_1;
-    public float3 control_2;
-    public float3 control_3;
-    public float4 color;
+    public float control_1[3];
+    public float control_2[3];
+    public float control_3[3];
+    public float color[4];
     public float scalar;
 }
 
 public struct SpectraPluginVector {
-    public float3 origin;
+    public float origin[3];
     public float width;
-    public float3 vector;
-    public float4 color;
+    public float vector[3];
+    public float color[4];
     public float scalar;
 }
 
@@ -56,7 +56,15 @@ public struct SpectraPluginCameraDistortion {
 
 public struct SpectraPluginCameraObservation {
     public SpectraPluginTransform world_from_camera;
-    public float4 intrinsics;
+    public float intrinsics[4];
     public SpectraPluginCameraDistortion distortion;
     public uint image_layer;
+}
+
+public float3 plugin_float3(const float value[3]) {
+    return float3(value[0], value[1], value[2]);
+}
+
+public float4 plugin_float4(const float value[4]) {
+    return float4(value[0], value[1], value[2], value[3]);
 }

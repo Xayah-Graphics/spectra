@@ -29,7 +29,8 @@ void unpack_dataset_spheres(uint3 dispatch_thread_id : SV_DispatchThreadID) {
     RWStructuredBuffer<float> radii = push_data.radii;
     RWStructuredBuffer<SphereAabb> axis_aligned_boxes = push_data.axis_aligned_boxes;
     const SpectraPluginSphere sphere = source[sphere_index];
-    positions[sphere_index] = sphere.position;
+    const float3 position = plugin_float3(sphere.position);
+    positions[sphere_index] = position;
     radii[sphere_index] = sphere.radius;
-    axis_aligned_boxes[sphere_index] = {sphere.position - sphere.radius, sphere.position + sphere.radius};
+    axis_aligned_boxes[sphere_index] = {position - sphere.radius, position + sphere.radius};
 }

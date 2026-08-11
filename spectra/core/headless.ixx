@@ -7,7 +7,7 @@ namespace spectra {
         std::filesystem::path scene_path{};
         std::filesystem::path png_output_path{};
         std::filesystem::path linear_output_path{};
-        std::string renderer{"rasterizer"};
+        std::string renderer{"pathtracer"};
         std::string raster_display_mode{"material"};
         std::string output_layer{"renderer-display"};
         std::string composition{"all"};

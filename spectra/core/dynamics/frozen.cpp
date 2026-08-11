@@ -4,6 +4,7 @@ module;
 
 module spectra.dynamics.frozen;
 
+import spectra.scene;
 import std;
 import vulkan;
 
