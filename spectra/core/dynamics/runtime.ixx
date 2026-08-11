@@ -5,6 +5,7 @@ module;
 export module spectra.dynamics.runtime;
 
 export import spectra.dynamics;
+export import spectra.dynamics.gpu;
 
 import spectra.dynamics.frozen;
 import spectra.runtime;
@@ -27,6 +28,7 @@ namespace spectra {
             std::filesystem::path library_path{};
             void* library_handle{};
             const SpectraPluginApi* plugin_api{};
+            SpectraPluginProviderDescriptor descriptor{};
         };
 
         struct DynamicDatasetBuffer {
@@ -44,15 +46,11 @@ namespace spectra {
             std::vector<scene::DynamicVisualizationView> visualizations{};
             std::vector<std::vector<DynamicDatasetBuffer>> buffer_slots{};
             GpuExternalTimelineSemaphore timeline_semaphore{};
-            std::uint64_t capacity{};
-            std::uint64_t secondary_capacity{};
-            std::uint64_t requested_capacity{};
-            std::uint64_t requested_secondary_capacity{};
-            std::uint64_t active_count{};
-            std::uint64_t secondary_count{};
+            std::uint32_t capacity{};
+            std::uint32_t secondary_capacity{};
+            std::uint32_t requested_capacity{};
+            std::uint32_t requested_secondary_capacity{};
             std::uint64_t timeline_signal_value{};
-            std::uint32_t current_slot_index{};
-            std::optional<scene::VolumeRegion> dirty_region{};
             bool output_pending{};
         };
 
@@ -214,7 +212,7 @@ namespace spectra {
         void reset_simulation();
         void advance_one_step();
         static SpectraPluginResult collect_dataset(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept;
-        static SpectraPluginResult collect_capacity(void* context, std::uint64_t dataset_index, std::uint64_t capacity, std::uint64_t secondary_capacity) noexcept;
+        static SpectraPluginResult collect_capacity(void* context, std::uint64_t dataset_index, std::uint32_t capacity, std::uint32_t secondary_capacity) noexcept;
         static SpectraPluginResult collect_telemetry(void* context, const SpectraPluginTelemetryCommit* commit) noexcept;
     };
 } // namespace spectra

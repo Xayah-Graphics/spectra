@@ -25,23 +25,31 @@ namespace spectra {
     void ImGuiBackend::initialize() {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
-        ImGuiIO& io    = ImGui::GetIO();
-        io.IniFilename = nullptr;
-        ImGui::StyleColorsDark();
-        ImGuiStyle& style               = ImGui::GetStyle();
-        style.WindowRounding            = 0.0f;
-        style.WindowBorderSize          = 0.0f;
-        style.ChildRounding             = 0.0f;
-        style.FrameRounding             = 6.0f;
-        style.PopupRounding             = 8.0f;
-        style.ScrollbarRounding         = 8.0f;
-        style.GrabRounding              = 5.0f;
-        style.FramePadding              = {8.0f, 5.0f};
-        style.ItemSpacing               = {8.0f, 6.0f};
-        style.Colors[ImGuiCol_WindowBg] = ImVec4{0.025f, 0.035f, 0.045f, 1.0f};
-        if (!ImGui_ImplGlfw_InitForVulkan(this->context.platform.window, true)) throw std::runtime_error("Failed to initialize ImGui GLFW platform backend");
-        this->initialize_renderer();
-        this->initialized = true;
+        bool platform_initialized{};
+        try {
+            ImGuiIO& io    = ImGui::GetIO();
+            io.IniFilename = nullptr;
+            ImGui::StyleColorsDark();
+            ImGuiStyle& style               = ImGui::GetStyle();
+            style.WindowRounding            = 0.0f;
+            style.WindowBorderSize          = 0.0f;
+            style.ChildRounding             = 0.0f;
+            style.FrameRounding             = 6.0f;
+            style.PopupRounding             = 8.0f;
+            style.ScrollbarRounding         = 8.0f;
+            style.GrabRounding              = 5.0f;
+            style.FramePadding              = {8.0f, 5.0f};
+            style.ItemSpacing               = {8.0f, 6.0f};
+            style.Colors[ImGuiCol_WindowBg] = ImVec4{0.025f, 0.035f, 0.045f, 1.0f};
+            platform_initialized            = ImGui_ImplGlfw_InitForVulkan(this->context.platform.window, true);
+            if (!platform_initialized) throw std::runtime_error("Failed to initialize ImGui GLFW platform backend");
+            this->initialize_renderer();
+            this->initialized = true;
+        } catch (...) {
+            if (platform_initialized) ImGui_ImplGlfw_Shutdown();
+            ImGui::DestroyContext();
+            throw;
+        }
     }
 
     void ImGuiBackend::begin_frame() {
@@ -60,16 +68,14 @@ namespace spectra {
         this->renderer.viewport_descriptor = std::move(descriptor);
         this->viewport_texture_id          = static_cast<std::uint64_t>(this->renderer.viewport_descriptor.handle().slot_index) + 1u;
     }
-} // namespace spectra
 
-namespace spectra {
     namespace {
         struct ImGuiTexture {
             GpuImage image{};
             DescriptorLease descriptor{};
         };
 
-        struct alignas(16) ImGuiPushData {
+        struct ImGuiPushData {
             DescriptorHandle vertices;
             DescriptorHandle indices;
             DescriptorHandle texture;
@@ -78,9 +84,8 @@ namespace spectra {
             std::uint32_t vertex_offset;
             std::array<float, 2> scale;
             std::array<float, 2> translation;
-            std::array<std::uint32_t, 2> reserved;
         };
-        static_assert(sizeof(ImGuiPushData) == 64);
+        static_assert(sizeof(ImGuiPushData) == 56);
 
     } // namespace
 
@@ -137,7 +142,7 @@ namespace spectra {
         io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     }
 
-    void ImGuiBackend::update_texture(ImTextureData& texture) {
+    void ImGuiBackend::update_texture(ImTextureData& texture, const vk::raii::CommandBuffer& command_buffer) {
         if (texture.Status == ImTextureStatus_WantDestroy) {
             if (texture.UnusedFrames >= static_cast<int>(this->renderer.frames.size())) this->destroy_texture(texture);
             return;
@@ -145,13 +150,13 @@ namespace spectra {
         if (texture.Status != ImTextureStatus_WantCreate && texture.Status != ImTextureStatus_WantUpdates) return;
 
         if (texture.Status == ImTextureStatus_WantCreate) {
-            ImGuiTexture* backend_texture = new ImGuiTexture{
+            std::unique_ptr<ImGuiTexture> backend_texture = std::make_unique<ImGuiTexture>(ImGuiTexture{
                 this->context.runtime.resources.create_image_2d({static_cast<std::uint32_t>(texture.Width), static_cast<std::uint32_t>(texture.Height)}, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst),
                 this->context.runtime.frames.allocate_resource_descriptor(),
-            };
+            });
             this->context.runtime.resources.write_sampled_image_descriptor(backend_texture->descriptor, backend_texture->image, vk::ImageLayout::eShaderReadOnlyOptimal);
-            texture.BackendUserData = backend_texture;
             texture.SetTexID(static_cast<ImTextureID>(backend_texture->descriptor.handle().slot_index) + 1u);
+            texture.BackendUserData = backend_texture.release();
         }
 
         ImGuiTexture& backend_texture    = *static_cast<ImGuiTexture*>(texture.BackendUserData);
@@ -178,47 +183,46 @@ namespace spectra {
         }
 
         const bool creating = texture.Status == ImTextureStatus_WantCreate;
-        this->context.runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
-            const vk::ImageMemoryBarrier2 to_transfer{
-                creating ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader,
-                creating ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderSampledRead,
-                vk::PipelineStageFlagBits2::eCopy,
-                vk::AccessFlagBits2::eTransferWrite,
-                creating ? vk::ImageLayout::eUndefined : vk::ImageLayout::eShaderReadOnlyOptimal,
-                vk::ImageLayout::eTransferDstOptimal,
-                vk::QueueFamilyIgnored,
-                vk::QueueFamilyIgnored,
-                *backend_texture.image.image,
-                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-            };
-            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_transfer});
-            command_buffer.copyBufferToImage(*upload.buffer, *backend_texture.image.image, vk::ImageLayout::eTransferDstOptimal,
-                vk::BufferImageCopy{
-                    0,
-                    0,
-                    0,
-                    {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                    {upload_x, upload_y, 0},
-                    {
-                        static_cast<std::uint32_t>(upload_width),
-                        static_cast<std::uint32_t>(upload_height),
-                        1,
-                    },
-                });
-            const vk::ImageMemoryBarrier2 to_shader{
-                vk::PipelineStageFlagBits2::eCopy,
-                vk::AccessFlagBits2::eTransferWrite,
-                vk::PipelineStageFlagBits2::eFragmentShader,
-                vk::AccessFlagBits2::eShaderSampledRead,
-                vk::ImageLayout::eTransferDstOptimal,
-                vk::ImageLayout::eShaderReadOnlyOptimal,
-                vk::QueueFamilyIgnored,
-                vk::QueueFamilyIgnored,
-                *backend_texture.image.image,
-                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-            };
-            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_shader});
-        });
+        const vk::ImageMemoryBarrier2 to_transfer{
+            creating ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader,
+            creating ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderSampledRead,
+            vk::PipelineStageFlagBits2::eCopy,
+            vk::AccessFlagBits2::eTransferWrite,
+            creating ? vk::ImageLayout::eUndefined : vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::ImageLayout::eTransferDstOptimal,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            *backend_texture.image.image,
+            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_transfer});
+        command_buffer.copyBufferToImage(*upload.buffer, *backend_texture.image.image, vk::ImageLayout::eTransferDstOptimal,
+            vk::BufferImageCopy{
+                0,
+                0,
+                0,
+                {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                {upload_x, upload_y, 0},
+                {
+                    static_cast<std::uint32_t>(upload_width),
+                    static_cast<std::uint32_t>(upload_height),
+                    1,
+                },
+            });
+        const vk::ImageMemoryBarrier2 to_shader{
+            vk::PipelineStageFlagBits2::eCopy,
+            vk::AccessFlagBits2::eTransferWrite,
+            vk::PipelineStageFlagBits2::eFragmentShader,
+            vk::AccessFlagBits2::eShaderSampledRead,
+            vk::ImageLayout::eTransferDstOptimal,
+            vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            *backend_texture.image.image,
+            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_shader});
+        this->context.runtime.frames.defer_destruction([upload = std::move(upload)]() mutable {});
         texture.SetStatus(ImTextureStatus_OK);
     }
 
@@ -231,7 +235,7 @@ namespace spectra {
         texture.SetStatus(ImTextureStatus_Destroyed);
     }
 
-    void ImGuiBackend::setup_render_state(const vk::raii::CommandBuffer& command_buffer, const ImDrawData& draw_data, const FrameResources& frame, const vk::Extent2D extent) {
+    void ImGuiBackend::setup_render_state(const vk::raii::CommandBuffer& command_buffer, const vk::Extent2D extent) {
         command_buffer.setViewportWithCount(vk::Viewport{
             0.0f,
             0.0f,
@@ -281,32 +285,13 @@ namespace spectra {
         };
         command_buffer.bindShadersEXT(stages, shader_handles);
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
-
-        const ImGuiPushData push_data{
-            frame.vertex_descriptor,
-            frame.index_descriptor,
-            {},
-            this->renderer.sampler_descriptor,
-            0,
-            0,
-            {
-                2.0f / draw_data.DisplaySize.x,
-                2.0f / draw_data.DisplaySize.y,
-            },
-            {
-                -1.0f - draw_data.DisplayPos.x * 2.0f / draw_data.DisplaySize.x,
-                -1.0f - draw_data.DisplayPos.y * 2.0f / draw_data.DisplaySize.y,
-            },
-            {},
-        };
-        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
     }
 
     void ImGuiBackend::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const vk::Image target_image, const vk::ImageView target_view, const vk::Extent2D extent, const vk::ImageLayout target_layout, const vk::ImageLayout final_layout) {
         ImDrawData& draw_data = *ImGui::GetDrawData();
         FrameResources& frame = this->renderer.frames[frame_slot_index];
         if (draw_data.Textures != nullptr)
-            for (ImTextureData* texture : *draw_data.Textures) this->update_texture(*texture);
+            for (ImTextureData* texture : *draw_data.Textures) this->update_texture(*texture, command_buffer);
 
         if (draw_data.TotalVtxCount != 0) {
             static_assert(sizeof(ImDrawVert) == 20);
@@ -376,7 +361,7 @@ namespace spectra {
                 vk::AccessFlagBits2::eShaderStorageRead,
             };
             command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_to_shader});
-            this->setup_render_state(command_buffer, draw_data, frame, extent);
+            this->setup_render_state(command_buffer, extent);
 
             const std::array scale{
                 2.0f / draw_data.DisplaySize.x,
@@ -392,7 +377,7 @@ namespace spectra {
                 for (const ImDrawCmd& draw_command : draw_list->CmdBuffer) {
                     if (draw_command.UserCallback != nullptr) {
                         if (draw_command.UserCallback == ImDrawCallback_ResetRenderState)
-                            this->setup_render_state(command_buffer, draw_data, frame, extent);
+                            this->setup_render_state(command_buffer, extent);
                         else
                             draw_command.UserCallback(draw_list, &draw_command);
                         continue;
@@ -431,7 +416,6 @@ namespace spectra {
                         global_vertex_offset + draw_command.VtxOffset,
                         scale,
                         translation,
-                        {},
                     };
                     this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
                     command_buffer.draw(draw_command.ElemCount, 1, 0, 0);

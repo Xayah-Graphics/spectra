@@ -15,9 +15,7 @@ namespace spectra {
         this->controls.status       = std::move(message);
         this->controls.status_error = error;
     }
-} // namespace spectra
 
-namespace spectra {
     namespace {
         constexpr float top_strip_height       = 36.0f;
         constexpr float transform_tools_left   = 10.0f;
@@ -229,9 +227,6 @@ namespace spectra {
         }
     } // namespace
 
-} // namespace spectra
-
-namespace spectra {
     void EditorUi::apply_dynamic_parameters(std::vector<scene::DynamicParameterSetting> parameters, const bool reset) {
         try {
             this->context.document.update_dynamic_system_parameters(this->context.document.content.source, this->controls.selected_dynamic_system, std::move(parameters));
@@ -249,16 +244,12 @@ namespace spectra {
         }
     }
 
-    bool EditorUi::inspector_available() noexcept {
-        return this->context.document.content.loaded;
-    }
-
     bool EditorUi::pointer_over_interface(const ImVec2 position, const ImVec2 size, const bool show_axes) const noexcept {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         if (mouse.y <= position.y + top_strip_height + 5.0f) return true;
         if (show_axes && mouse.x >= position.x + size.x - 116.0f && mouse.y <= position.y + 126.0f) return true;
         const SceneEntityReference* entity = active_entity(*this);
-        const bool transform_visible = entity && entity_transform(this->context.document.content.source, *entity).has_value();
+        const bool transform_visible       = entity && entity_transform(this->context.document.content.source, *entity).has_value();
         if (transform_visible) {
             const float tools_top = position.y + size.y * 0.5f - transform_tools_height * 0.5f;
             if (mouse.x >= position.x + transform_tools_left && mouse.x <= position.x + transform_tools_left + transform_tools_width && mouse.y >= tools_top && mouse.y <= tools_top + transform_tools_height) return true;
@@ -276,14 +267,14 @@ namespace spectra {
             return;
         }
         if (this->controls.transform_drag_active || this->controls.gizmo_active) return;
-        const bool editable                 = transform_editable(*this, *entity);
-        const scene::Scene& transform_scene = editable ? this->context.document.content.source : this->context.document.content.evaluated;
+        const bool editable                            = transform_editable(*this, *entity);
+        const scene::Scene& transform_scene            = editable ? this->context.document.content.source : this->context.document.content.evaluated;
         const std::optional<math::Transform> transform = entity_transform(transform_scene, *entity);
         if (!transform) {
             this->controls.transform_entity.reset();
             return;
         }
-        const std::uint64_t revision        = transform_scene.revision().number;
+        const std::uint64_t revision = transform_scene.revision().number;
         if (this->controls.transform_entity == *entity && this->controls.transform_revision == revision && this->controls.transform_editable == editable) return;
         std::array<float, 16> matrix = column_major(transform->matrix);
         ImGuizmo::DecomposeMatrixToComponents(matrix.data(), this->controls.translation.data(), this->controls.rotation.data(), this->controls.scale.data());
@@ -447,7 +438,7 @@ namespace spectra {
     void EditorUi::draw_gizmo(const ImVec2 minimum, const ImVec2 size, const bool blocked, const bool transform_editable) {
         const SceneEntityReference* entity = active_entity(*this);
         if (!entity) return;
-        const scene::Scene& transform_scene = transform_editable ? this->context.document.content.source : this->context.document.content.evaluated;
+        const scene::Scene& transform_scene            = transform_editable ? this->context.document.content.source : this->context.document.content.evaluated;
         const std::optional<math::Transform> transform = entity_transform(transform_scene, *entity);
         if (!transform) return;
         math::Float3 pivot{};
@@ -505,8 +496,8 @@ namespace spectra {
             this->context.viewport.clear_hover();
             return;
         }
-        const float x                                             = std::clamp((io.MousePos.x - minimum.x) / size.x, 0.0f, 1.0f);
-        const float y                                             = std::clamp((io.MousePos.y - minimum.y) / size.y, 0.0f, 1.0f);
+        const float x = std::clamp((io.MousePos.x - minimum.x) / size.x, 0.0f, 1.0f);
+        const float y = std::clamp((io.MousePos.y - minimum.y) / size.y, 0.0f, 1.0f);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left, false))
             this->context.picker.submit_pick(x, y, true, io.KeyShift);
         else
@@ -840,8 +831,8 @@ namespace spectra {
         if (!parameter_systems.empty() && std::ranges::find(parameter_systems, this->controls.selected_dynamic_system) == parameter_systems.end()) this->controls.selected_dynamic_system = parameter_systems.front();
 
         const SceneEntityReference* entity = active_entity(*this);
-        const bool transform_visible = entity && entity_transform(this->context.document.content.source, *entity).has_value();
-        const float inspector_top = transform_visible ? floating_panel_top + transform_hud_height + inspector_gap : floating_panel_top;
+        const bool transform_visible       = entity && entity_transform(this->context.document.content.source, *entity).has_value();
+        const float inspector_top          = transform_visible ? floating_panel_top + transform_hud_height + inspector_gap : floating_panel_top;
         ImGui::SetNextWindowPos(ImVec2{position.x + size.x - floating_panel_right - floating_panel_width, position.y + inspector_top});
         ImGui::SetNextWindowSize(ImVec2{floating_panel_width, size.y - inspector_top - inspector_bottom});
         ImGui::SetNextWindowBgAlpha(0.0f);
@@ -862,8 +853,10 @@ namespace spectra {
                 const scene::Camera& camera = *std::ranges::find(this->context.document.content.source.resources.cameras, scene::CameraId{entity->id}, &scene::Camera::id);
                 std::visit(
                     [](const auto& data) {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) ImGui::Text("Perspective · %.2f deg", data.vertical_fov);
-                        else ImGui::TextUnformatted("Orthographic");
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>)
+                            ImGui::Text("Perspective · %.2f deg", data.vertical_fov);
+                        else
+                            ImGui::TextUnformatted("Orthographic");
                         ImGui::TextDisabled("Near %.5g · Far %.5g", data.near_plane, data.far_plane);
                         ImGui::TextDisabled("Focus %.5g · Lens %.5g", data.focal_distance, data.lens_radius);
                     },
@@ -872,12 +865,18 @@ namespace spectra {
                 const scene::Light& light = *std::ranges::find(this->context.document.content.source.resources.lights, scene::LightId{entity->id}, &scene::Light::id);
                 std::visit(
                     [entity](const auto& data) {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight>) ImGui::Text("Point · Scale %.5g", data.scale);
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) ImGui::Text("Spot · %.3g / %.3g deg · Scale %.5g", data.cone_angle - data.cone_delta, data.cone_angle, data.scale);
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>) ImGui::Text("Distant · Scale %.5g", data.scale);
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiffuseAreaLight>) ImGui::Text("Diffuse Area · %s · Instance %llu", data.sidedness == scene::EmissionSidedness::Both ? "two-sided" : "front", entity->owner);
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::InfiniteLight>) ImGui::Text("Infinite · Scale %.5g", data.scale);
-                        else ImGui::Text("Portal Infinite · %zu portals · Scale %.5g", data.portals.size(), data.environment.scale);
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight>)
+                            ImGui::Text("Point · Scale %.5g", data.scale);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>)
+                            ImGui::Text("Spot · %.3g / %.3g deg · Scale %.5g", data.cone_angle - data.cone_delta, data.cone_angle, data.scale);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>)
+                            ImGui::Text("Distant · Scale %.5g", data.scale);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiffuseAreaLight>)
+                            ImGui::Text("Diffuse Area · %s · Instance %llu", data.sidedness == scene::EmissionSidedness::Both ? "two-sided" : "front", entity->owner);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::InfiniteLight>)
+                            ImGui::Text("Infinite · Scale %.5g", data.scale);
+                        else
+                            ImGui::Text("Portal Infinite · %zu portals · Scale %.5g", data.portals.size(), data.environment.scale);
                     },
                     light.data);
             }
@@ -908,7 +907,7 @@ namespace spectra {
         ImGui::Checkbox("Volume grid", &diagnostics.volume_grid);
         ImGui::Checkbox("Medium boundaries", &diagnostics.medium_boundaries);
         const char* depth_modes[] = {"Tested", "X-Ray", "Overlay"};
-        int depth_mode = static_cast<int>(std::to_underlying(diagnostics.depth_mode));
+        int depth_mode            = static_cast<int>(std::to_underlying(diagnostics.depth_mode));
         if (ImGui::Combo("Depth", &depth_mode, depth_modes, 3)) {
             diagnostics.depth_mode = static_cast<scene::VisualizationDepthMode>(depth_mode);
         }
@@ -1132,19 +1131,13 @@ namespace spectra {
             this->draw_status_toast(position, size);
             return actions;
         }
-        actions.show_axes              = ImGui::IsKeyDown(ImGuiKey_G) && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper && !io.WantTextInput;
-        const bool inspector_available = this->inspector_available();
-        if (!inspector_available) {
-            this->controls.inspector_open = false;
-            this->controls.parameter_drafts.clear();
-            this->controls.reset_pending = false;
-        }
+        actions.show_axes                  = ImGui::IsKeyDown(ImGuiKey_G) && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper && !io.WantTextInput;
         const SceneEntityReference* entity = active_entity(*this);
         const bool transform_visible       = entity && entity_transform(this->context.document.content.source, *entity).has_value();
         const bool editable                = entity && transform_editable(*this, *entity);
 
         this->synchronize_transform();
-        this->handle_shortcuts(actions, aspect, inspector_available);
+        this->handle_shortcuts(actions, aspect, true);
         this->draw_viewport(position, size, actions.show_axes, editable);
         this->draw_top_strip(position, size, actions);
         if (transform_visible) {

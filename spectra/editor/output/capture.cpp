@@ -30,14 +30,17 @@ namespace spectra {
         const std::string_view extension                           = image_format == CaptureFormat::Png ? "png" : "exr";
         const std::filesystem::path directory                      = this->output_directory / "captures" / scene_path.stem();
         std::filesystem::create_directories(directory);
-        this->capture.pending = PendingCapture{
+        std::filesystem::path output_path{};
+        do output_path = directory / std::format("{}-{}-{:04}.{}", renderer_name, timestamp, this->capture.sequence++, extension);
+        while (std::filesystem::exists(output_path));
+        this->capture.requests.push_back(PendingCapture{
             image_format,
-            directory / std::format("{}-{}.{}", renderer_name, timestamp, extension),
+            std::move(output_path),
             {},
             image_format == CaptureFormat::GBufferExr,
             film.color_space,
             film.gbuffer_camera_space,
-        };
+        });
     }
 
     std::optional<std::expected<std::filesystem::path, std::string>> FrameCapture::begin_frame(const std::uint32_t frame_slot_index) {
@@ -63,25 +66,27 @@ namespace spectra {
     }
 
     void FrameCapture::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const RenderOutput render_output) {
-        if (!this->capture.pending) return;
-        FrameSlot& slot                  = this->capture.slots[frame_slot_index];
-        const CaptureFormat image_format = this->capture.pending->image_format;
-        if (this->capture.pending->include_gbuffer) {
+        if (this->capture.requests.empty()) return;
+        FrameSlot& slot        = this->capture.slots[frame_slot_index];
+        PendingCapture pending = std::move(this->capture.requests.front());
+        this->capture.requests.pop_front();
+        const CaptureFormat image_format = pending.image_format;
+        if (pending.include_gbuffer) {
             this->context.render_engine.record_gbuffer_readback(command_buffer, slot.gbuffer_snapshot);
-            slot.pending               = std::exchange(this->capture.pending, std::nullopt);
+            slot.pending               = std::move(pending);
             slot.pending->image_extent = render_output.image.extent;
             slot.pending->color_space  = render_output.color_space;
             return;
         }
         if (image_format == CaptureFormat::LinearExr) {
             record_linear_readback(this->context.runtime, command_buffer, render_output, slot.readback_buffer);
-            slot.pending               = std::exchange(this->capture.pending, std::nullopt);
+            slot.pending               = std::move(pending);
             slot.pending->image_extent = render_output.image.extent;
             slot.pending->color_space  = render_output.color_space;
             return;
         }
         record_display_readback(this->context.runtime, command_buffer, this->context.display.image, this->context.display.layout, slot.readback_buffer);
-        slot.pending               = std::exchange(this->capture.pending, std::nullopt);
+        slot.pending               = std::move(pending);
         slot.pending->image_extent = this->context.display.image.extent;
     }
 } // namespace spectra

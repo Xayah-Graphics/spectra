@@ -15,7 +15,6 @@ struct ImGuiPushData {
     uint vertex_offset;
     float2 scale;
     float2 translation;
-    uint2 reserved;
 }
 
 [vk::push_constant]

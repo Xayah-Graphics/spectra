@@ -16,7 +16,7 @@ float3 unpack_float3(PathPackedFloat3 value) {
         value.z);
 }
 
-float3 fallback_tangent(float3 normal) {
+float3 orthogonal_tangent(float3 normal) {
     return abs(normal.z) < 0.999
         ? normalize(
             cross(
@@ -491,7 +491,7 @@ void closest_hit(
         shading_normal;
     if (dot(tangent, tangent) == 0.0)
         tangent =
-            fallback_tangent(
+            orthogonal_tangent(
                 shading_normal);
     else
         tangent =
@@ -505,7 +505,7 @@ void closest_hit(
                 dpdv)) ==
         0.0) {
         dpdu =
-            fallback_tangent(
+            orthogonal_tangent(
                 geometric_normal);
         dpdv =
             cross(

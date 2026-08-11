@@ -24,12 +24,12 @@ namespace spectra {
 
         void initialize_from_scene();
         void camera_changed() noexcept;
-        void orbit_viewport_camera(float x_pixels, float y_pixels) noexcept;
-        void pan_viewport_camera(float x_pixels, float y_pixels, float viewport_height) noexcept;
-        void zoom_viewport_camera(float steps) noexcept;
-        void frame_scene(float aspect) noexcept;
-        void frame_selection(float aspect) noexcept;
-        void view_axis(math::Float3 direction, float aspect) noexcept;
+        void orbit_viewport_camera(float x_pixels, float y_pixels);
+        void pan_viewport_camera(float x_pixels, float y_pixels, float viewport_height);
+        void zoom_viewport_camera(float steps);
+        void frame_scene(float aspect);
+        void frame_selection(float aspect);
+        void view_axis(math::Float3 direction, float aspect);
         void select(SceneEntityReference entity, bool additive);
         void clear_selection() noexcept;
         void clear_hover() noexcept;
@@ -59,7 +59,7 @@ namespace spectra {
         } view;
 
     private:
-        void frame_viewport_camera(math::Bounds3 bounds, float aspect) noexcept;
+        void frame_viewport_camera(math::Bounds3 bounds, float aspect);
         [[nodiscard]] math::Bounds3 navigation_bounds() const noexcept;
         [[nodiscard]] math::Bounds3 effective_scene_bounds() const noexcept;
         [[nodiscard]] bool entity_exists(SceneEntityReference entity) const noexcept;

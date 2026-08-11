@@ -75,6 +75,7 @@ namespace spectra {
         static_assert(std::to_underlying(scene::SpectrumColorSpace::Aces2065_1) == std::to_underlying(SpectraPluginColorSpace::Aces2065_1));
 
         [[nodiscard]] std::string plugin_string(const SpectraPluginString value) {
+            if (value.size != 0 && value.data == nullptr) throw std::runtime_error("Provider returned a null string pointer with nonzero size");
             return value.size == 0 ? std::string{} : std::string{value.data, value.size};
         }
 
@@ -82,8 +83,15 @@ namespace spectra {
             if (result.error.size != 0) throw std::runtime_error(std::format("Provider {} failed: {}", operation, plugin_string(result.error)));
         }
 
-        [[nodiscard]] scene::DynamicParameterValue scene_parameter_value(const SpectraPluginParameterValue value) noexcept {
-            return {static_cast<scene::DynamicParameterKind>(value.kind), value.integer, {value.floating[0], value.floating[1], value.floating[2]}};
+        template <class Destination, class Source>
+        [[nodiscard]] Destination checked_plugin_enum(const Source value, const std::initializer_list<Source> accepted, const std::string_view name) {
+            if (!std::ranges::contains(accepted, value)) throw std::runtime_error(std::format("Provider declared unknown {} value {}", name, std::to_underlying(value)));
+            return static_cast<Destination>(value);
+        }
+
+        [[nodiscard]] scene::DynamicParameterValue scene_parameter_value(const SpectraPluginParameterValue value) {
+            const scene::DynamicParameterKind kind = checked_plugin_enum<scene::DynamicParameterKind>(value.kind, {SpectraPluginParameterKind::Boolean, SpectraPluginParameterKind::Integer, SpectraPluginParameterKind::Float, SpectraPluginParameterKind::Float3, SpectraPluginParameterKind::Enumeration}, "Parameter kind");
+            return {kind, value.integer, {value.floating[0], value.floating[1], value.floating[2]}};
         }
 
         [[nodiscard]] SpectraPluginParameterValue plugin_parameter_value(const scene::DynamicParameterValue& value) noexcept {
@@ -106,13 +114,25 @@ namespace spectra {
             std::uint64_t element_size{};
         };
 
-        [[nodiscard]] std::uint64_t image_element_size(const dynamics::ImageFormat format) noexcept {
-            if (format == dynamics::ImageFormat::Rgba8Unorm) return sizeof(std::uint32_t);
-            if (format == dynamics::ImageFormat::Rgba16Float) return sizeof(std::uint16_t) * 4;
-            return sizeof(float) * 4;
+        [[nodiscard]] std::uint64_t image_element_size(const dynamics::ImageFormat format) {
+            switch (format) {
+            case dynamics::ImageFormat::Rgba8Unorm: return sizeof(std::uint32_t);
+            case dynamics::ImageFormat::Rgba16Float: return sizeof(std::uint16_t) * 4;
+            case dynamics::ImageFormat::Rgba32Float: return sizeof(float) * 4;
+            }
+            throw std::runtime_error("Unknown dynamic Image format");
         }
 
-        [[nodiscard]] std::pair<std::uint64_t, std::uint64_t> dataset_capacities(const dynamics::DatasetDescriptor& dataset) noexcept {
+        [[nodiscard]] std::uint32_t checked_capacity_product(const std::initializer_list<std::uint32_t> factors) {
+            std::uint32_t product = 1;
+            for (const std::uint32_t factor : factors) {
+                if (factor != 0 && product > std::numeric_limits<std::uint32_t>::max() / factor) throw std::runtime_error("Dynamic Dataset capacity exceeds the 32-bit GPU count contract");
+                product *= factor;
+            }
+            return product;
+        }
+
+        [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> dataset_capacities(const dynamics::DatasetDescriptor& dataset) {
             if (const auto* value = std::get_if<dynamics::TriangleMeshDataset>(&dataset.details)) return {value->vertex_capacity, value->index_capacity};
             if (const auto* value = std::get_if<dynamics::SphereSetDataset>(&dataset.details)) return {value->capacity, 0};
             if (const auto* value = std::get_if<dynamics::InstanceTransformDataset>(&dataset.details)) return {value->capacity, 0};
@@ -122,12 +142,12 @@ namespace spectra {
             if (const auto* value = std::get_if<dynamics::VectorDataset>(&dataset.details)) return {value->capacity, 0};
             if (const auto* value = std::get_if<dynamics::CameraObservationDataset>(&dataset.details)) return {value->capacity, 0};
             if (const auto* value = std::get_if<dynamics::TransformDataset>(&dataset.details)) return {value->capacity, 0};
-            if (const auto* value = std::get_if<dynamics::FieldDataset>(&dataset.details)) return {static_cast<std::uint64_t>(value->resolution.x) * value->resolution.y * value->resolution.z, 0};
-            if (const auto* value = std::get_if<dynamics::ImageDataset>(&dataset.details)) return {static_cast<std::uint64_t>(value->extent[0]) * value->extent[1], 0};
-            return {0, 0};
+            if (const auto* value = std::get_if<dynamics::FieldDataset>(&dataset.details)) return {checked_capacity_product({value->resolution.x, value->resolution.y, value->resolution.z}), 0};
+            if (const auto* value = std::get_if<dynamics::ImageDataset>(&dataset.details)) return {checked_capacity_product({value->extent[0], value->extent[1]}), 0};
+            throw std::runtime_error("Unknown dynamic Dataset kind");
         }
 
-        [[nodiscard]] std::vector<DatasetBufferLayout> dataset_buffer_layouts(const dynamics::DatasetDescriptor& dataset, const std::uint64_t capacity, const std::uint64_t secondary_capacity) {
+        [[nodiscard]] std::vector<DatasetBufferLayout> dataset_buffer_layouts(const dynamics::DatasetDescriptor& dataset, const std::uint32_t capacity, const std::uint32_t secondary_capacity) {
             std::vector<DatasetBufferLayout> layouts{};
             if (const auto* value = std::get_if<dynamics::TriangleMeshDataset>(&dataset.details)) {
                 layouts.emplace_back(SpectraPluginBufferSemantic::TrianglePosition, 0, capacity, sizeof(SpectraPluginFloat3));
@@ -155,7 +175,7 @@ namespace spectra {
                 layouts.emplace_back(SpectraPluginBufferSemantic::ImagePixel, 0, static_cast<std::uint64_t>(value->extent[0]) * value->extent[1], image_element_size(value->format));
             else if (const auto* value = std::get_if<dynamics::CameraObservationDataset>(&dataset.details)) {
                 layouts.emplace_back(SpectraPluginBufferSemantic::CameraObservation, 0, capacity, sizeof(SpectraPluginCameraObservation));
-                layouts.emplace_back(SpectraPluginBufferSemantic::ImagePixel, 0, capacity * value->images.extent[0] * value->images.extent[1], image_element_size(value->images.format));
+                layouts.emplace_back(SpectraPluginBufferSemantic::ImagePixel, 0, static_cast<std::uint64_t>(capacity) * value->images.extent[0] * value->images.extent[1], image_element_size(value->images.format));
             } else if (std::holds_alternative<dynamics::TransformDataset>(dataset.details))
                 layouts.emplace_back(SpectraPluginBufferSemantic::Transform, 0, capacity, sizeof(SpectraPluginTransform));
             return layouts;
@@ -173,50 +193,31 @@ namespace spectra {
 #if defined(_WIN32)
         const HMODULE loaded = LoadLibraryW(this->library_path.c_str());
         if (!loaded) throw std::runtime_error(std::format("Windows failed to load Provider Library: {}", this->library_path.string()));
-        const auto entry = reinterpret_cast<const SpectraPluginApi* (*)() noexcept>(GetProcAddress(loaded, SPECTRA_PLUGIN_ENTRY_NAME));
+        const auto entry = reinterpret_cast<const SpectraPluginApi* (*) () noexcept>(GetProcAddress(loaded, SPECTRA_PLUGIN_ENTRY_NAME));
 #else
         void* loaded = dlopen(this->library_path.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!loaded) throw std::runtime_error(std::format("Linux failed to load Provider Library '{}': {}", this->library_path.string(), dlerror()));
-        const auto entry = reinterpret_cast<const SpectraPluginApi* (*)() noexcept>(dlsym(loaded, SPECTRA_PLUGIN_ENTRY_NAME));
+        const auto entry = reinterpret_cast<const SpectraPluginApi* (*) () noexcept>(dlsym(loaded, SPECTRA_PLUGIN_ENTRY_NAME));
 #endif
-        if (!entry) {
+        try {
+            if (!entry) throw std::runtime_error(std::format("Provider Library does not export {}: {}", SPECTRA_PLUGIN_ENTRY_NAME, this->library_path.string()));
+            const SpectraPluginApi* loaded_api = entry();
+            if (!loaded_api || loaded_api->api_version != SPECTRA_PLUGIN_API_VERSION || loaded_api->struct_size != sizeof(SpectraPluginApi) || !loaded_api->describe_provider || !loaded_api->create_provider || !loaded_api->destroy_provider || !loaded_api->configure_dataset || !loaded_api->configure_telemetry || !loaded_api->apply_parameters || !loaded_api->reset || !loaded_api->step || !loaded_api->publish_frame || !loaded_api->tick_presentation) throw std::runtime_error(std::format("Provider Library has an incomplete Plugin API {} entry: {}", SPECTRA_PLUGIN_API_VERSION, this->library_path.string()));
+            const SpectraPluginProviderDescriptionResult description = loaded_api->describe_provider();
+            check_plugin_result(description.result, "description");
+            const std::string reported_provider_id = plugin_string(description.descriptor.id);
+            if (reported_provider_id != expected_provider_id) throw std::runtime_error(std::format("Provider Library '{}' reports Provider '{}' instead of '{}'", this->library_path.string(), reported_provider_id, expected_provider_id));
+            this->plugin_api = loaded_api;
+            this->descriptor = description.descriptor;
+        } catch (...) {
 #if defined(_WIN32)
             FreeLibrary(loaded);
 #else
             dlclose(loaded);
 #endif
-            throw std::runtime_error(std::format("Provider Library does not export {}: {}", SPECTRA_PLUGIN_ENTRY_NAME, this->library_path.string()));
-        }
-        const SpectraPluginApi* loaded_api = entry();
-        if (!loaded_api || loaded_api->api_version != SPECTRA_PLUGIN_API_VERSION || loaded_api->struct_size != sizeof(SpectraPluginApi) || !loaded_api->describe_provider || !loaded_api->create_provider || !loaded_api->destroy_provider || !loaded_api->configure_dataset || !loaded_api->configure_telemetry || !loaded_api->apply_parameters || !loaded_api->reset || !loaded_api->step || !loaded_api->publish_frame || !loaded_api->tick_presentation) {
-#if defined(_WIN32)
-            FreeLibrary(loaded);
-#else
-            dlclose(loaded);
-#endif
-            throw std::runtime_error(std::format("Provider Library has an incomplete Plugin API {} entry: {}", SPECTRA_PLUGIN_API_VERSION, this->library_path.string()));
-        }
-        const SpectraPluginProviderDescriptionResult description = loaded_api->describe_provider();
-        if (description.result.error.size != 0) {
-            const std::string error = plugin_string(description.result.error);
-#if defined(_WIN32)
-            FreeLibrary(loaded);
-#else
-            dlclose(loaded);
-#endif
-            throw std::runtime_error(std::format("Provider description failed: {}", error));
-        }
-        const std::string reported_provider_id = plugin_string(description.descriptor.id);
-        if (reported_provider_id != expected_provider_id) {
-#if defined(_WIN32)
-            FreeLibrary(loaded);
-#else
-            dlclose(loaded);
-#endif
-            throw std::runtime_error(std::format("Provider Library '{}' reports Provider '{}' instead of '{}'", this->library_path.string(), reported_provider_id, expected_provider_id));
+            throw;
         }
         this->library_handle = loaded;
-        this->plugin_api     = loaded_api;
     }
 
     DynamicsRuntime::ProviderLibrary::~ProviderLibrary() {
@@ -302,7 +303,7 @@ namespace spectra {
         }
     }
 
-    SpectraPluginResult DynamicsRuntime::collect_capacity(void* context, const std::uint64_t dataset_index, const std::uint64_t capacity, const std::uint64_t secondary_capacity) noexcept {
+    SpectraPluginResult DynamicsRuntime::collect_capacity(void* context, const std::uint64_t dataset_index, const std::uint32_t capacity, const std::uint32_t secondary_capacity) noexcept {
         DynamicsRuntime& world = *static_cast<DynamicsRuntime*>(context);
         try {
             DynamicDatasetRuntime& dataset       = world.dataset_runtime(*world.publication.publishing_system, dataset_index);
@@ -336,6 +337,7 @@ namespace spectra {
         }
         this->configuration.source_scene = &source_scene;
         this->configuration.setup        = *source_scene.dynamic_setup;
+        if (!(this->configuration.setup.clock.step_seconds > 0.0)) throw std::runtime_error("Scene Dynamics clock step duration must be positive");
         if (this->configuration.setup.clock.end_step && *this->configuration.setup.clock.end_step < this->configuration.setup.clock.start_step) throw std::runtime_error("Scene Dynamics clock end step precedes its start step");
 
         std::vector<std::string> required_providers{};
@@ -344,46 +346,61 @@ namespace spectra {
         std::ranges::sort(required_providers);
 
         for (const std::string& required_provider : required_providers) {
-            const std::filesystem::path path                      = scene_path.parent_path() / scene::provider_library_filename(required_provider);
-            ProviderLibrary& library                              = this->providers.libraries.emplace_back(path, required_provider);
-            const SpectraPluginProviderDescriptionResult description = library.plugin_api->describe_provider();
-            check_plugin_result(description.result, "description");
-            const SpectraPluginProviderDescriptor& source_provider = description.descriptor;
+            const std::filesystem::path path                       = scene_path.parent_path() / dynamics::provider_library_filename(required_provider);
+            ProviderLibrary& library                               = this->providers.libraries.emplace_back(path, required_provider);
+            const SpectraPluginProviderDescriptor& source_provider = library.descriptor;
+            if ((source_provider.dataset_count != 0 && source_provider.datasets == nullptr) || (source_provider.parameter_count != 0 && source_provider.parameters == nullptr) || (source_provider.section_count != 0 && source_provider.sections == nullptr) || (source_provider.telemetry_count != 0 && source_provider.telemetry == nullptr)) throw std::runtime_error(std::format("Provider '{}' returned a null descriptor array", required_provider));
+            if (source_provider.telemetry_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(std::format("Provider '{}' declares more Telemetry values than the 32-bit GPU count contract permits", required_provider));
             dynamics::ProviderDescriptor provider{.id = plugin_string(source_provider.id)};
             provider.datasets.reserve(source_provider.dataset_count);
             for (std::uint64_t dataset_index = 0; dataset_index < source_provider.dataset_count; ++dataset_index) {
                 const SpectraPluginDatasetDescriptor& source = source_provider.datasets[dataset_index];
                 dynamics::DatasetDescriptor dataset{.id = plugin_string(source.id)};
-                if (source.kind == SpectraPluginDatasetKind::TriangleMesh) {
-                    const SpectraPluginTriangleMeshDatasetDescriptor& value = source.details.triangle_mesh;
-                    dataset.details = dynamics::TriangleMeshDataset{value.vertex_capacity, value.index_capacity, static_cast<dynamics::MeshUpdateMode>(value.update_mode), value.attributes};
-                } else if (source.kind == SpectraPluginDatasetKind::SphereSet) {
-                    const SpectraPluginSphereSetDatasetDescriptor& value = source.details.sphere_set;
-                    dataset.details = dynamics::SphereSetDataset{value.capacity};
-                } else if (source.kind == SpectraPluginDatasetKind::InstanceTransformSet)
-                    dataset.details = dynamics::InstanceTransformDataset{source.details.instance_transforms.capacity};
-                else if (source.kind == SpectraPluginDatasetKind::PointSet)
-                    dataset.details = dynamics::PointDataset{source.details.points.capacity};
-                else if (source.kind == SpectraPluginDatasetKind::SegmentSet)
-                    dataset.details = dynamics::SegmentDataset{source.details.segments.capacity};
-                else if (source.kind == SpectraPluginDatasetKind::CurveSet)
-                    dataset.details = dynamics::CurveDataset{source.details.curves.capacity};
-                else if (source.kind == SpectraPluginDatasetKind::VectorSet)
-                    dataset.details = dynamics::VectorDataset{source.details.vectors.capacity};
-                else if (source.kind == SpectraPluginDatasetKind::Field) {
-                    const SpectraPluginFieldDatasetDescriptor& value = source.details.field;
-                    dynamics::FieldDataset field{.resolution = {value.resolution[0], value.resolution[1], value.resolution[2]}, .local_from_grid = plugin_transform(value.local_from_grid)};
-                    field.channels.reserve(value.channel_count);
-                    for (std::uint64_t channel_index = 0; channel_index < value.channel_count; ++channel_index) field.channels.emplace_back(plugin_string(value.channels[channel_index].id), static_cast<dynamics::FieldChannelKind>(value.channels[channel_index].kind));
-                    dataset.details = std::move(field);
-                } else if (source.kind == SpectraPluginDatasetKind::Image) {
-                    const SpectraPluginImageDatasetDescriptor& value = source.details.image;
-                    dataset.details = dynamics::ImageDataset{{value.extent[0], value.extent[1]}, static_cast<dynamics::ImageFormat>(value.format), static_cast<scene::SpectrumColorSpace>(value.color_space), static_cast<dynamics::TransferFunction>(value.transfer_function)};
-                } else if (source.kind == SpectraPluginDatasetKind::CameraObservationSet) {
-                    const SpectraPluginCameraObservationDatasetDescriptor& value = source.details.camera_observations;
-                    dataset.details = dynamics::CameraObservationDataset{value.capacity, {{value.image_extent[0], value.image_extent[1]}, static_cast<dynamics::ImageFormat>(value.image_format), static_cast<scene::SpectrumColorSpace>(value.color_space), static_cast<dynamics::TransferFunction>(value.transfer_function)}};
-                } else
-                    dataset.details = dynamics::TransformDataset{source.details.transforms.capacity};
+                switch (source.kind) {
+                case SpectraPluginDatasetKind::TriangleMesh:
+                    {
+                        const SpectraPluginTriangleMeshDatasetDescriptor& value = source.details.triangle_mesh;
+                        constexpr std::uint32_t known_attributes                = std::to_underlying(SpectraPluginMeshAttribute::Normal) | std::to_underlying(SpectraPluginMeshAttribute::Tangent) | std::to_underlying(SpectraPluginMeshAttribute::TextureCoordinate) | std::to_underlying(SpectraPluginMeshAttribute::Scalar);
+                        if ((value.attributes & ~known_attributes) != 0) throw std::runtime_error(std::format("Provider declared unknown Triangle Mesh attribute flags 0x{:x}", value.attributes));
+                        const dynamics::MeshUpdateMode update_mode = checked_plugin_enum<dynamics::MeshUpdateMode>(value.update_mode, {SpectraPluginMeshUpdateMode::Deformable, SpectraPluginMeshUpdateMode::TopologyChanging}, "Mesh update mode");
+                        dataset.details                            = dynamics::TriangleMeshDataset{value.vertex_capacity, value.index_capacity, update_mode, value.attributes};
+                        break;
+                    }
+                case SpectraPluginDatasetKind::SphereSet: dataset.details = dynamics::SphereSetDataset{source.details.sphere_set.capacity}; break;
+                case SpectraPluginDatasetKind::InstanceTransformSet: dataset.details = dynamics::InstanceTransformDataset{source.details.instance_transforms.capacity}; break;
+                case SpectraPluginDatasetKind::PointSet: dataset.details = dynamics::PointDataset{source.details.points.capacity}; break;
+                case SpectraPluginDatasetKind::SegmentSet: dataset.details = dynamics::SegmentDataset{source.details.segments.capacity}; break;
+                case SpectraPluginDatasetKind::CurveSet: dataset.details = dynamics::CurveDataset{source.details.curves.capacity}; break;
+                case SpectraPluginDatasetKind::VectorSet: dataset.details = dynamics::VectorDataset{source.details.vectors.capacity}; break;
+                case SpectraPluginDatasetKind::Field:
+                    {
+                        const SpectraPluginFieldDatasetDescriptor& value = source.details.field;
+                        if (value.channel_count > std::numeric_limits<std::uint32_t>::max() || (value.channel_count != 0 && value.channels == nullptr)) throw std::runtime_error("Provider Field Dataset has an invalid channel array");
+                        dynamics::FieldDataset field{.resolution = {value.resolution[0], value.resolution[1], value.resolution[2]}, .local_from_grid = plugin_transform(value.local_from_grid)};
+                        field.channels.reserve(value.channel_count);
+                        for (std::uint64_t channel_index = 0; channel_index < value.channel_count; ++channel_index) {
+                            const SpectraPluginFieldChannelDescriptor& channel = value.channels[channel_index];
+                            const dynamics::FieldChannelKind kind              = checked_plugin_enum<dynamics::FieldChannelKind>(channel.kind, {SpectraPluginFieldChannelKind::Float, SpectraPluginFieldChannelKind::Float3}, "Field channel kind");
+                            field.channels.emplace_back(plugin_string(channel.id), kind);
+                        }
+                        dataset.details = std::move(field);
+                        break;
+                    }
+                case SpectraPluginDatasetKind::Image:
+                    {
+                        const SpectraPluginImageDatasetDescriptor& value = source.details.image;
+                        dataset.details                                  = dynamics::ImageDataset{{value.extent[0], value.extent[1]}, checked_plugin_enum<dynamics::ImageFormat>(value.format, {SpectraPluginImageFormat::Rgba8Unorm, SpectraPluginImageFormat::Rgba16Float, SpectraPluginImageFormat::Rgba32Float}, "Image format"), checked_plugin_enum<scene::SpectrumColorSpace>(value.color_space, {SpectraPluginColorSpace::Srgb, SpectraPluginColorSpace::Rec2020, SpectraPluginColorSpace::Aces2065_1}, "Image color space"), checked_plugin_enum<dynamics::TransferFunction>(value.transfer_function, {SpectraPluginTransferFunction::Linear, SpectraPluginTransferFunction::Srgb}, "Image transfer function")};
+                        break;
+                    }
+                case SpectraPluginDatasetKind::CameraObservationSet:
+                    {
+                        const SpectraPluginCameraObservationDatasetDescriptor& value = source.details.camera_observations;
+                        dataset.details                                              = dynamics::CameraObservationDataset{value.capacity, {{value.image_extent[0], value.image_extent[1]}, checked_plugin_enum<dynamics::ImageFormat>(value.image_format, {SpectraPluginImageFormat::Rgba8Unorm, SpectraPluginImageFormat::Rgba16Float, SpectraPluginImageFormat::Rgba32Float}, "Camera image format"), checked_plugin_enum<scene::SpectrumColorSpace>(value.color_space, {SpectraPluginColorSpace::Srgb, SpectraPluginColorSpace::Rec2020, SpectraPluginColorSpace::Aces2065_1}, "Camera image color space"), checked_plugin_enum<dynamics::TransferFunction>(value.transfer_function, {SpectraPluginTransferFunction::Linear, SpectraPluginTransferFunction::Srgb}, "Camera image transfer function")}};
+                        break;
+                    }
+                case SpectraPluginDatasetKind::TransformSet: dataset.details = dynamics::TransformDataset{source.details.transforms.capacity}; break;
+                default: throw std::runtime_error(std::format("Provider declared unknown Dataset kind {}", std::to_underlying(source.kind)));
+                }
                 provider.datasets.emplace_back(std::move(dataset));
             }
             provider.parameters.reserve(source_provider.parameter_count);
@@ -395,7 +412,7 @@ namespace spectra {
                     .unit             = plugin_string(parameter.unit),
                     .section_id       = plugin_string(parameter.section_id),
                     .description      = plugin_string(parameter.description),
-                    .application_mode = static_cast<dynamics::ParameterApplication>(parameter.application_mode),
+                    .application_mode = checked_plugin_enum<dynamics::ParameterApplication>(parameter.application_mode, {SpectraPluginParameterApplication::Live, SpectraPluginParameterApplication::ResetRequired}, "Parameter application mode"),
                     .value            = scene_parameter_value(parameter.default_value),
                     .minimum          = scene_parameter_value(parameter.minimum),
                     .maximum          = scene_parameter_value(parameter.maximum),
@@ -410,7 +427,7 @@ namespace spectra {
             }
             for (std::uint64_t telemetry_index = 0; telemetry_index < source_provider.telemetry_count; ++telemetry_index) {
                 const SpectraPluginTelemetryDescriptor& telemetry = source_provider.telemetry[telemetry_index];
-                provider.telemetry.emplace_back(plugin_string(telemetry.id), plugin_string(telemetry.name), plugin_string(telemetry.unit), plugin_string(telemetry.section_id), static_cast<dynamics::TelemetryKind>(telemetry.kind), telemetry.plot);
+                provider.telemetry.emplace_back(plugin_string(telemetry.id), plugin_string(telemetry.name), plugin_string(telemetry.unit), plugin_string(telemetry.section_id), checked_plugin_enum<dynamics::TelemetryKind>(telemetry.kind, {SpectraPluginTelemetryKind::Boolean, SpectraPluginTelemetryKind::Integer, SpectraPluginTelemetryKind::Float, SpectraPluginTelemetryKind::Float3}, "Telemetry kind"), telemetry.plot != 0);
             }
             if (!this->providers.by_id.emplace(provider.id, &library).second) throw std::runtime_error(std::format("Provider '{}' is loaded more than once", provider.id));
             this->providers.descriptors.emplace_back(std::move(provider));
@@ -421,8 +438,8 @@ namespace spectra {
             const scene::DynamicSystem& declared = this->configuration.setup.systems[system_index];
             if (!declared.enabled) continue;
             const dynamics::ProviderDescriptor& provider = this->provider_descriptor(declared.provider_id);
-            ProviderLibrary& library                       = this->provider_library(provider.id);
-            DynamicSystemRuntime& system = this->systems.runtimes.emplace_back(DynamicSystemRuntime{.scene_system_index = system_index, .provider_descriptor = &provider, .plugin_api = library.plugin_api});
+            ProviderLibrary& library                     = this->provider_library(provider.id);
+            DynamicSystemRuntime& system                 = this->systems.runtimes.emplace_back(DynamicSystemRuntime{.scene_system_index = system_index, .provider_descriptor = &provider, .plugin_api = library.plugin_api});
             system.telemetry.values.resize(provider.telemetry.size());
             const SpectraPluginProviderCreateResult created = system.plugin_api->create_provider();
             check_plugin_result(created.result, "creation");
@@ -461,8 +478,13 @@ namespace spectra {
     void DynamicsRuntime::bind_dataset(DynamicDatasetRuntime& dataset, const scene::DynamicSystem& system) const {
         const auto scene_binding = std::ranges::find(system.scene_bindings, dataset.descriptor.id, &scene::DynamicSceneBinding::dataset_id);
         if (scene_binding != system.scene_bindings.end()) dataset.scene_binding = *scene_binding;
-        for (const scene::DynamicVisualizationView& view : system.visualizations)
-            if (view.dataset_id == dataset.descriptor.id) dataset.visualizations.emplace_back(view);
+        for (const scene::DynamicVisualizationView& view : system.visualizations) {
+            if (view.dataset_id != dataset.descriptor.id) continue;
+            const bool compatible = (std::holds_alternative<dynamics::PointDataset>(dataset.descriptor.details) && std::holds_alternative<scene::PointVisualization>(view.data)) || (std::holds_alternative<dynamics::SegmentDataset>(dataset.descriptor.details) && std::holds_alternative<scene::SegmentVisualization>(view.data)) || (std::holds_alternative<dynamics::CurveDataset>(dataset.descriptor.details) && std::holds_alternative<scene::CurveVisualization>(view.data)) || (std::holds_alternative<dynamics::VectorDataset>(dataset.descriptor.details) && std::holds_alternative<scene::VectorVisualization>(view.data)) || (std::holds_alternative<dynamics::FieldDataset>(dataset.descriptor.details) && (std::holds_alternative<scene::FieldSliceVisualization>(view.data) || std::holds_alternative<scene::FieldVectorVisualization>(view.data))) || (std::holds_alternative<dynamics::ImageDataset>(dataset.descriptor.details) && std::holds_alternative<scene::ImageVisualization>(view.data))
+                                 || (std::holds_alternative<dynamics::CameraObservationDataset>(dataset.descriptor.details) && std::holds_alternative<scene::CameraObservationVisualization>(view.data)) || (std::holds_alternative<dynamics::TransformDataset>(dataset.descriptor.details) && std::holds_alternative<scene::FrameVisualization>(view.data)) || (std::holds_alternative<dynamics::TriangleMeshDataset>(dataset.descriptor.details) && std::holds_alternative<scene::SurfaceVisualization>(view.data));
+            if (!compatible) throw std::runtime_error(std::format("Visualization '{}' kind is incompatible with Dataset '{}'", view.name, dataset.descriptor.id));
+            dataset.visualizations.emplace_back(view);
+        }
         const bool implicit_scene_state = std::holds_alternative<dynamics::InstanceTransformDataset>(dataset.descriptor.details);
         if (!dataset.scene_binding && dataset.visualizations.empty() && !implicit_scene_state) throw std::runtime_error(std::format("GPU Dataset '{}' is neither bound to the Render Scene nor used by a Visualization", dataset.descriptor.id));
     }
@@ -470,8 +492,8 @@ namespace spectra {
     void DynamicsRuntime::declare_scene_output(const DynamicDatasetRuntime& dataset) {
         if (!dataset.scene_binding) return;
         const scene::DynamicSceneBinding& binding = *dataset.scene_binding;
-        if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&dataset.descriptor.details)) this->outputs.mesh_bindings.emplace_back(scene::GeometryId{binding.resource_id}, mesh->update_mode, static_cast<std::uint32_t>(mesh->vertex_capacity), static_cast<std::uint32_t>(mesh->index_capacity));
-        if (const auto* spheres = std::get_if<dynamics::SphereSetDataset>(&dataset.descriptor.details)) this->outputs.sphere_set_bindings.emplace_back(scene::SphereSetId{binding.resource_id}, static_cast<std::uint32_t>(spheres->capacity));
+        if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&dataset.descriptor.details)) this->outputs.mesh_bindings.emplace_back(scene::GeometryId{binding.resource_id}, mesh->update_mode, mesh->vertex_capacity, mesh->index_capacity);
+        if (const auto* spheres = std::get_if<dynamics::SphereSetDataset>(&dataset.descriptor.details)) this->outputs.sphere_set_bindings.emplace_back(scene::SphereSetId{binding.resource_id}, spheres->capacity);
     }
 
     void DynamicsRuntime::configure_dataset(DynamicSystemRuntime& system, const std::size_t dataset_index) {
@@ -482,14 +504,15 @@ namespace spectra {
             dataset.output_pending = false;
         }
         const auto [declared_capacity, declared_secondary_capacity] = dataset_capacities(dataset.descriptor);
-        const std::uint64_t next_capacity           = std::max(declared_capacity, dataset.requested_capacity);
-        const std::uint64_t next_secondary_capacity = std::max(declared_secondary_capacity, dataset.requested_secondary_capacity);
+        const std::uint32_t next_capacity                           = std::max(declared_capacity, dataset.requested_capacity);
+        const std::uint32_t next_secondary_capacity                 = std::max(declared_secondary_capacity, dataset.requested_secondary_capacity);
         std::vector<std::vector<DynamicDatasetBuffer>> next_buffer_slots(VulkanFrames::frames_in_flight);
         GpuExternalTimelineSemaphore next_timeline_semaphore = this->context.runtime.resources.create_external_simulation_timeline();
-        const std::vector<DatasetBufferLayout> layouts = dataset_buffer_layouts(dataset.descriptor, next_capacity, next_secondary_capacity);
+        const std::vector<DatasetBufferLayout> layouts       = dataset_buffer_layouts(dataset.descriptor, next_capacity, next_secondary_capacity);
         for (std::uint32_t slot_index = 0; slot_index < VulkanFrames::frames_in_flight; ++slot_index)
             for (const DatasetBufferLayout& layout : layouts) {
-                DynamicDatasetBuffer buffer{.semantic = layout.semantic, .channel_index = layout.channel_index, .byte_size = layout.element_count * layout.element_size};
+                if (layout.element_count > std::numeric_limits<std::uint64_t>::max() / layout.element_size) throw std::runtime_error("Dynamic Dataset buffer byte size overflows");
+                DynamicDatasetBuffer buffer{.semantic = layout.semantic, .channel_index = layout.channel_index, .byte_size = std::max<std::uint64_t>(layout.element_count * layout.element_size, sizeof(std::uint32_t))};
                 buffer.gpu_buffer = this->context.runtime.resources.create_external_buffer(buffer.byte_size, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress);
                 buffer.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
                 this->context.runtime.resources.write_buffer_descriptor(buffer.descriptor, vk::DescriptorType::eStorageBuffer, buffer.gpu_buffer);
@@ -506,7 +529,7 @@ namespace spectra {
             }
             plugin_slots.emplace_back(slot_index, plugin_slot_buffers[slot_index].data(), plugin_slot_buffers[slot_index].size());
         }
-        ExternalHandle timeline_handle = this->context.runtime.resources.export_timeline_semaphore_handle(next_timeline_semaphore);
+        ExternalHandle timeline_handle        = this->context.runtime.resources.export_timeline_semaphore_handle(next_timeline_semaphore);
         const GpuDeviceIdentity& gpu_identity = this->context.runtime.graphics.identity;
         SpectraPluginDatasetConfiguration configuration{dataset.dataset_index, plugin_slots.data(), plugin_slots.size(), plugin_external_handle(timeline_handle), {}, {}, gpu_identity.node_mask};
         std::ranges::copy(gpu_identity.uuid, configuration.vulkan_device_uuid);
@@ -519,16 +542,12 @@ namespace spectra {
         check_plugin_result(system.plugin_api->configure_dataset(system.provider_instance, &configuration), "Dataset configuration");
 
         std::vector<std::vector<DynamicDatasetBuffer>> previous_buffer_slots = std::exchange(dataset.buffer_slots, std::move(next_buffer_slots));
-        GpuExternalTimelineSemaphore previous_timeline_semaphore            = std::exchange(dataset.timeline_semaphore, std::move(next_timeline_semaphore));
-        dataset.capacity                     = next_capacity;
-        dataset.secondary_capacity           = next_secondary_capacity;
-        dataset.requested_capacity           = 0;
-        dataset.requested_secondary_capacity = 0;
-        dataset.active_count                 = 0;
-        dataset.secondary_count              = 0;
-        dataset.timeline_signal_value        = 0;
-        dataset.current_slot_index           = 0;
-        dataset.dirty_region.reset();
+        GpuExternalTimelineSemaphore previous_timeline_semaphore             = std::exchange(dataset.timeline_semaphore, std::move(next_timeline_semaphore));
+        dataset.capacity                                                     = next_capacity;
+        dataset.secondary_capacity                                           = next_secondary_capacity;
+        dataset.requested_capacity                                           = 0;
+        dataset.requested_secondary_capacity                                 = 0;
+        dataset.timeline_signal_value                                        = 0;
         if (!previous_buffer_slots.empty()) {
             this->context.runtime.frames.defer_destruction([buffer_slots = std::move(previous_buffer_slots), timeline_semaphore = std::move(previous_timeline_semaphore)]() mutable {});
         }
@@ -541,15 +560,15 @@ namespace spectra {
         }
         DynamicTelemetryRuntime next{};
         next.buffer_slots.resize(VulkanFrames::frames_in_flight);
-        next.timeline_semaphore = this->context.runtime.resources.create_external_simulation_timeline();
+        next.timeline_semaphore       = this->context.runtime.resources.create_external_simulation_timeline();
         const std::uint64_t byte_size = system.provider_descriptor->telemetry.size() * sizeof(SpectraPluginTelemetryGpuValue);
         for (std::uint32_t slot_index = 0; slot_index < VulkanFrames::frames_in_flight; ++slot_index) {
-                DynamicDatasetBuffer buffer{.semantic = SpectraPluginBufferSemantic::TelemetryValue, .byte_size = byte_size};
-                buffer.gpu_buffer = this->context.runtime.resources.create_external_buffer(byte_size, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eStorageBuffer);
-                buffer.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
-                this->context.runtime.resources.write_buffer_descriptor(buffer.descriptor, vk::DescriptorType::eStorageBuffer, buffer.gpu_buffer);
-                next.buffer_slots[slot_index].emplace_back(std::move(buffer));
-                next.readback_slots[slot_index].buffer = this->context.runtime.resources.create_buffer(byte_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+            DynamicDatasetBuffer buffer{.semantic = SpectraPluginBufferSemantic::TelemetryValue, .byte_size = byte_size};
+            buffer.gpu_buffer = this->context.runtime.resources.create_external_buffer(byte_size, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eStorageBuffer);
+            buffer.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            this->context.runtime.resources.write_buffer_descriptor(buffer.descriptor, vk::DescriptorType::eStorageBuffer, buffer.gpu_buffer);
+            next.buffer_slots[slot_index].emplace_back(std::move(buffer));
+            next.readback_slots[slot_index].buffer = this->context.runtime.resources.create_buffer(byte_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         }
         next.immediate_readback = this->context.runtime.resources.create_buffer(byte_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
 
@@ -562,7 +581,7 @@ namespace spectra {
             plugin_slot_buffers[slot_index].emplace_back(buffer.semantic, 0, plugin_external_handle(exported_handles[slot_index].back()), buffer.byte_size);
             plugin_slots.emplace_back(slot_index, plugin_slot_buffers[slot_index].data(), plugin_slot_buffers[slot_index].size());
         }
-        ExternalHandle timeline_handle = this->context.runtime.resources.export_timeline_semaphore_handle(next.timeline_semaphore);
+        ExternalHandle timeline_handle        = this->context.runtime.resources.export_timeline_semaphore_handle(next.timeline_semaphore);
         const GpuDeviceIdentity& gpu_identity = this->context.runtime.graphics.identity;
         SpectraPluginTelemetryConfiguration configuration{plugin_slots.data(), plugin_slots.size(), plugin_external_handle(timeline_handle), {}, {}, gpu_identity.node_mask};
         std::ranges::copy(gpu_identity.uuid, configuration.vulkan_device_uuid);
@@ -622,23 +641,24 @@ namespace spectra {
     }
 
     void DynamicsRuntime::append_dataset(const PendingDatasetCommit& pending, dynamics::DynamicFrame& frame) const {
-        const DynamicSystemRuntime& system = *pending.system;
-        const DynamicDatasetRuntime& dataset = *pending.dataset;
-        const SpectraPluginDatasetCommit& commit = pending.commit;
+        const DynamicSystemRuntime& system               = *pending.system;
+        const DynamicDatasetRuntime& dataset             = *pending.dataset;
+        const SpectraPluginDatasetCommit& commit         = pending.commit;
         const std::vector<DynamicDatasetBuffer>& buffers = dataset.buffer_slots[commit.slot_index];
-        const auto gpu_buffer = [&buffers](const SpectraPluginBufferSemantic semantic, const std::uint32_t channel_index = 0) {
+        const auto gpu_buffer                            = [&buffers](const SpectraPluginBufferSemantic semantic, const std::uint32_t channel_index = 0) {
             const auto found = std::ranges::find_if(buffers, [semantic, channel_index](const DynamicDatasetBuffer& buffer) { return buffer.semantic == semantic && buffer.channel_index == channel_index; });
+            if (found == buffers.end()) throw std::runtime_error(std::format("Dynamic Dataset is missing required GPU buffer semantic {} channel {}", std::to_underlying(semantic), channel_index));
             return dynamics::GpuBufferView{&found->gpu_buffer, found->descriptor};
         };
 
         if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&dataset.descriptor.details); mesh && dataset.scene_binding) {
             dynamics::GpuTriangleMeshUpdate update{
-                .geometry_id   = scene::GeometryId{dataset.scene_binding->resource_id},
-                .positions     = gpu_buffer(SpectraPluginBufferSemantic::TrianglePosition),
-                .indices       = dataset.secondary_capacity != 0 ? std::optional{gpu_buffer(SpectraPluginBufferSemantic::TriangleIndex)} : std::nullopt,
-                .vertex_count  = commit.active_count,
-                .index_count   = commit.secondary_count,
-                .update_mode   = mesh->update_mode,
+                .geometry_id  = scene::GeometryId{dataset.scene_binding->resource_id},
+                .positions    = gpu_buffer(SpectraPluginBufferSemantic::TrianglePosition),
+                .indices      = dataset.secondary_capacity != 0 ? std::optional{gpu_buffer(SpectraPluginBufferSemantic::TriangleIndex)} : std::nullopt,
+                .vertex_count = commit.active_count,
+                .index_count  = commit.secondary_count,
+                .update_mode  = mesh->update_mode,
             };
             if ((mesh->attributes & std::to_underlying(SpectraPluginMeshAttribute::Normal)) != 0) update.normals = gpu_buffer(SpectraPluginBufferSemantic::TriangleNormal);
             if ((mesh->attributes & std::to_underlying(SpectraPluginMeshAttribute::Tangent)) != 0) update.tangents = gpu_buffer(SpectraPluginBufferSemantic::TriangleTangent);
@@ -668,7 +688,9 @@ namespace spectra {
             else if (std::holds_alternative<dynamics::VectorDataset>(dataset.descriptor.details))
                 frame.visualizations.emplace_back(dynamics::GpuVisualization{dynamics::GpuVectorVisualization{style, gpu_buffer(SpectraPluginBufferSemantic::Vector), commit.active_count}});
             else if (const auto* field = std::get_if<dynamics::FieldDataset>(&dataset.descriptor.details)) {
-                const auto found = view.channel_id.empty() ? field->channels.begin() : std::ranges::find(field->channels, view.channel_id, &dynamics::FieldChannelDescriptor::id);
+                const std::string& channel_id = std::holds_alternative<scene::FieldSliceVisualization>(view.data) ? std::get<scene::FieldSliceVisualization>(view.data).channel_id : std::get<scene::FieldVectorVisualization>(view.data).channel_id;
+                const auto found              = channel_id.empty() ? field->channels.begin() : std::ranges::find(field->channels, channel_id, &dynamics::FieldChannelDescriptor::id);
+                if (found == field->channels.end()) throw std::runtime_error(std::format("Visualization '{}' references missing field channel '{}'", view.name, channel_id));
                 const std::uint32_t channel_index = static_cast<std::uint32_t>(std::distance(field->channels.begin(), found));
                 frame.visualizations.emplace_back(dynamics::GpuVisualization{dynamics::GpuFieldVisualization{style, field->resolution, field->local_from_grid, {*found, gpu_buffer(SpectraPluginBufferSemantic::FieldChannel, channel_index)}}});
             } else if (const auto* image = std::get_if<dynamics::ImageDataset>(&dataset.descriptor.details))
@@ -677,8 +699,10 @@ namespace spectra {
                 frame.visualizations.emplace_back(dynamics::GpuVisualization{dynamics::GpuCameraObservationVisualization{style, *cameras, gpu_buffer(SpectraPluginBufferSemantic::CameraObservation), gpu_buffer(SpectraPluginBufferSemantic::ImagePixel), commit.active_count}});
             else if (std::holds_alternative<dynamics::TransformDataset>(dataset.descriptor.details))
                 frame.visualizations.emplace_back(dynamics::GpuVisualization{dynamics::GpuTransformVisualization{style, gpu_buffer(SpectraPluginBufferSemantic::Transform), commit.active_count}});
-            else if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&dataset.descriptor.details))
-                frame.visualizations.emplace_back(dynamics::GpuVisualization{dynamics::GpuSurfaceVisualization{style, gpu_buffer(SpectraPluginBufferSemantic::TrianglePosition), gpu_buffer(SpectraPluginBufferSemantic::TriangleIndex), (mesh->attributes & std::to_underlying(SpectraPluginMeshAttribute::Scalar)) != 0 ? gpu_buffer(SpectraPluginBufferSemantic::TriangleScalar) : dynamics::GpuBufferView{}, commit.active_count, commit.secondary_count}});
+            else if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&dataset.descriptor.details)) {
+                if (std::get<scene::SurfaceVisualization>(view.data).color_source == scene::VisualizationColorSource::Scalar && (mesh->attributes & std::to_underlying(SpectraPluginMeshAttribute::Scalar)) == 0) throw std::runtime_error(std::format("Surface Visualization '{}' requires the Triangle Mesh scalar semantic", view.name));
+                frame.visualizations.emplace_back(dynamics::GpuVisualization{dynamics::GpuSurfaceVisualization{style, gpu_buffer(SpectraPluginBufferSemantic::TrianglePosition), dataset.secondary_capacity != 0 ? std::optional{gpu_buffer(SpectraPluginBufferSemantic::TriangleIndex)} : std::nullopt, (mesh->attributes & std::to_underlying(SpectraPluginMeshAttribute::Scalar)) != 0 ? std::optional{gpu_buffer(SpectraPluginBufferSemantic::TriangleScalar)} : std::nullopt, commit.active_count, commit.secondary_count}});
+            }
         }
     }
 
@@ -710,30 +734,25 @@ namespace spectra {
         for (const PendingDatasetCommit& pending : this->publication.dataset_commits) this->append_dataset(pending, frame);
         for (const PendingTelemetryCommit& pending : this->publication.telemetry_commits) {
             const DynamicTelemetryRuntime& telemetry = pending.system->telemetry_gpu;
-            const DynamicDatasetBuffer& values = telemetry.buffer_slots[pending.slot_index].front();
-            frame.telemetry.emplace_back(pending.system->scene_system_index, dynamics::GpuBufferView{&values.gpu_buffer, values.descriptor}, pending.system->provider_descriptor->telemetry.size(), pending.phase, pending.headline, pending.message);
+            const DynamicDatasetBuffer& values       = telemetry.buffer_slots[pending.slot_index].front();
+            frame.telemetry.emplace_back(pending.system->scene_system_index, dynamics::GpuBufferView{&values.gpu_buffer, values.descriptor}, static_cast<std::uint32_t>(pending.system->provider_descriptor->telemetry.size()), pending.phase, pending.headline, pending.message);
         }
         for (const PendingDatasetCommit& pending : this->publication.dataset_commits) {
             DynamicDatasetRuntime& dataset = *pending.dataset;
-            dataset.current_slot_index      = pending.commit.slot_index;
-            dataset.active_count            = pending.commit.active_count;
-            dataset.secondary_count         = pending.commit.secondary_count;
-            dataset.timeline_signal_value   = pending.commit.signal_value;
-            dataset.dirty_region.reset();
-            if (std::holds_alternative<dynamics::FieldDataset>(dataset.descriptor.details)) dataset.dirty_region = scene::VolumeRegion{{pending.commit.region_minimum[0], pending.commit.region_minimum[1], pending.commit.region_minimum[2]}, {pending.commit.region_maximum[0], pending.commit.region_maximum[1], pending.commit.region_maximum[2]}};
-            dataset.output_pending = true;
+            dataset.timeline_signal_value  = pending.commit.signal_value;
+            dataset.output_pending         = true;
         }
         for (PendingTelemetryCommit& pending : this->publication.telemetry_commits) {
-            DynamicTelemetryRuntime& telemetry    = pending.system->telemetry_gpu;
-            telemetry.current_slot_index          = pending.slot_index;
-            telemetry.timeline_signal_value       = pending.signal_value;
-            telemetry.simulation_step             = frame.simulation.step;
-            telemetry.sequence                    = telemetry.next_sequence++;
-            telemetry.simulation_seconds          = frame.simulation.seconds;
-            telemetry.phase                       = std::move(pending.phase);
-            telemetry.headline                    = std::move(pending.headline);
-            telemetry.message                     = std::move(pending.message);
-            telemetry.output_pending              = true;
+            DynamicTelemetryRuntime& telemetry = pending.system->telemetry_gpu;
+            telemetry.current_slot_index       = pending.slot_index;
+            telemetry.timeline_signal_value    = pending.signal_value;
+            telemetry.simulation_step          = frame.simulation.step;
+            telemetry.sequence                 = telemetry.next_sequence++;
+            telemetry.simulation_seconds       = frame.simulation.seconds;
+            telemetry.phase                    = std::move(pending.phase);
+            telemetry.headline                 = std::move(pending.headline);
+            telemetry.message                  = std::move(pending.message);
+            telemetry.output_pending           = true;
         }
         this->publication.dataset_commits.clear();
         this->publication.telemetry_commits.clear();
@@ -768,9 +787,9 @@ namespace spectra {
                         DynamicDatasetRuntime& dataset = system.datasets[dataset_index];
                         if (dataset.requested_capacity > dataset.capacity || dataset.requested_secondary_capacity > dataset.secondary_capacity) this->configure_dataset(system, dataset_index);
                     }
-                    const std::size_t first_dataset_commit = this->publication.dataset_commits.size();
+                    const std::size_t first_dataset_commit   = this->publication.dataset_commits.size();
                     const std::size_t first_telemetry_commit = this->publication.telemetry_commits.size();
-                    this->publication.publishing_system = &system;
+                    this->publication.publishing_system      = &system;
                     this->publication.callback_error.clear();
                     const SpectraPluginFrameSink sink{this, &DynamicsRuntime::collect_dataset, &DynamicsRuntime::collect_capacity, &DynamicsRuntime::collect_telemetry};
                     check_plugin_result(system.plugin_api->publish_frame(system.provider_instance, simulation_step, &sink), "frame publication");
@@ -805,6 +824,8 @@ namespace spectra {
     }
 
     void DynamicsRuntime::evaluate_frame(const std::uint64_t target_step) {
+        if (target_step < this->configuration.setup.clock.start_step) throw std::runtime_error("Requested Dynamics step precedes the configured start step");
+        if (target_step < this->clock.simulation_step) this->reset_systems();
         this->step_to(target_step);
         this->publish_frame(target_step);
     }
@@ -870,7 +891,7 @@ namespace spectra {
     }
 
     const dynamics::DynamicFrame* DynamicsRuntime::pending_frame() noexcept {
-        if (this->publication.frozen_frame_pending) return &this->frozen.gpu_frame;
+        if (this->publication.frozen_frame_pending) return &this->frozen.pending_frame();
         if (!this->publication.frame_pending) return nullptr;
         for (DynamicSystemRuntime& system : this->systems.runtimes)
             for (DynamicDatasetRuntime& dataset : system.datasets) {
@@ -929,13 +950,10 @@ namespace spectra {
             for (const DynamicDatasetRuntime& dataset : system.datasets) {
                 if (!dataset.scene_binding) continue;
                 const scene::DynamicSceneBinding& binding = *dataset.scene_binding;
-                const auto instance = std::ranges::find(this->configuration.source_scene->resources.instances, instance_id, &scene::Instance::id);
+                const auto instance                       = std::ranges::find(this->configuration.source_scene->resources.instances, instance_id, &scene::Instance::id);
                 if (instance == this->configuration.source_scene->resources.instances.end()) continue;
                 const scene::Prototype& prototype = *std::ranges::find(this->configuration.source_scene->resources.prototypes, instance->prototype, &scene::Prototype::id);
-                if (std::ranges::any_of(prototype.primitives, [&binding](const scene::Primitive& primitive) {
-                        return (binding.resource_kind == scene::DynamicSceneResourceKind::Geometry && binding.resource_id == primitive.geometry.value) || (binding.resource_kind == scene::DynamicSceneResourceKind::SphereSet && binding.resource_id == primitive.spheres.value);
-                    }))
-                    return true;
+                if (std::ranges::any_of(prototype.primitives, [&binding](const scene::Primitive& primitive) { return (binding.resource_kind == scene::DynamicSceneResourceKind::Geometry && binding.resource_id == primitive.geometry.value) || (binding.resource_kind == scene::DynamicSceneResourceKind::SphereSet && binding.resource_id == primitive.spheres.value); })) return true;
             }
         return false;
     }
@@ -983,9 +1001,9 @@ namespace spectra {
         this->providers.by_id.clear();
         this->providers.libraries.clear();
         this->providers.descriptors.clear();
-        this->publication = {};
-        this->outputs      = {};
-        this->clock        = {};
+        this->publication   = {};
+        this->outputs       = {};
+        this->clock         = {};
         this->configuration = {};
     }
 
@@ -1021,6 +1039,7 @@ namespace spectra {
     }
 
     void DynamicsRuntime::evaluate_time(const double simulation_seconds) {
+        if (simulation_seconds < 0.0) throw std::runtime_error("Requested Dynamics time cannot be negative");
         this->evaluate(static_cast<std::uint64_t>(std::floor(simulation_seconds / this->configuration.setup.clock.step_seconds)));
     }
 

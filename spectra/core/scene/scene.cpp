@@ -42,7 +42,7 @@ namespace spectra::scene {
             0.007018610009470097,
         };
 
-        template<std::invocable<double> Function>
+        template <std::invocable<double> Function>
         [[nodiscard]] double integrate_gauss_legendre_32(Function&& function, const double minimum, const double maximum) noexcept {
             const double midpoint = std::midpoint(minimum, maximum);
             const double extent   = (maximum - minimum) * 0.5;
@@ -114,31 +114,27 @@ namespace spectra::scene {
         const math::Float3 normal_x = y.cross(z);
         const math::Float3 normal_y = z.cross(x);
         const math::Float3 normal_z = x.cross(y);
-        const auto area_scale       = [&](const math::Float3 normal) {
-            return (normal_x * normal.x + normal_y * normal.y + normal_z * normal.z).length();
-        };
+        const auto area_scale       = [&](const math::Float3 normal) { return (normal_x * normal.x + normal_y * normal.y + normal_z * normal.z).length(); };
         return std::visit(
             [&](const auto& data) -> float {
                 if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, TriangleMeshGeometry>) {
                     float area{};
-                    for (std::size_t index = 0; index < data.indices.size(); index += 3)
-                        area += triangle_area(transform.transform_point(data.positions[data.indices[index]]), transform.transform_point(data.positions[data.indices[index + 1]]), transform.transform_point(data.positions[data.indices[index + 2]]));
+                    for (std::size_t index = 0; index < data.indices.size(); index += 3) area += triangle_area(transform.transform_point(data.positions[data.indices[index]]), transform.transform_point(data.positions[data.indices[index + 1]]), transform.transform_point(data.positions[data.indices[index + 2]]));
                     return area;
                 } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, SphereGeometry>) {
                     const double radius  = data.radius;
                     const double phi_max = radians(data.phi_max);
-                    const double area = radius * integrate_gauss_legendre_32(
-                                                     [&](const double phi) {
-                                                         return integrate_gauss_legendre_32(
-                                                             [&](const double height) {
-                                                                 const double radial = std::sqrt(radius * radius - height * height) / radius;
-                                                                 return area_scale({static_cast<float>(radial * std::cos(phi)), static_cast<float>(radial * std::sin(phi)), static_cast<float>(height / radius)});
-                                                             },
-                                                             data.z_min,
-                                                             data.z_max);
-                                                     },
-                                                     0.0,
-                                                     phi_max);
+                    const double area    = radius
+                                      * integrate_gauss_legendre_32(
+                                          [&](const double phi) {
+                                              return integrate_gauss_legendre_32(
+                                                  [&](const double height) {
+                                                      const double radial = std::sqrt(radius * radius - height * height) / radius;
+                                                      return area_scale({static_cast<float>(radial * std::cos(phi)), static_cast<float>(radial * std::sin(phi)), static_cast<float>(height / radius)});
+                                                  },
+                                                  data.z_min, data.z_max);
+                                          },
+                                          0.0, phi_max);
                     return static_cast<float>(area);
                 } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, BoxGeometry>) {
                     const math::Float3 extent = data.bounds.diagonal();
@@ -148,10 +144,7 @@ namespace spectra::scene {
                 else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DiskGeometry>)
                     return 0.5f * radians(data.phi_max) * (data.radius * data.radius - data.inner_radius * data.inner_radius) * normal_z.length();
                 else {
-                    const double area = data.radius * (data.z_max - data.z_min) * integrate_gauss_legendre_32(
-                                                                                         [&](const double phi) { return area_scale({static_cast<float>(std::cos(phi)), static_cast<float>(std::sin(phi)), 0.0f}); },
-                                                                                         0.0,
-                                                                                         radians(data.phi_max));
+                    const double area = data.radius * (data.z_max - data.z_min) * integrate_gauss_legendre_32([&](const double phi) { return area_scale({static_cast<float>(std::cos(phi)), static_cast<float>(std::sin(phi)), 0.0f}); }, 0.0, radians(data.phi_max));
                     return static_cast<float>(area);
                 }
             },
@@ -162,9 +155,9 @@ namespace spectra::scene {
         const std::array<float, 16>& matrix = this->transform.matrix;
         return {
             {matrix[3], matrix[7], matrix[11]},
-            math::Float3{matrix[0], matrix[4], matrix[8]}.normalized(),
-            math::Float3{matrix[1], matrix[5], matrix[9]}.normalized(),
-            math::Float3{-matrix[2], -matrix[6], -matrix[10]}.normalized(),
+            {matrix[0], matrix[4], matrix[8]},
+            {matrix[1], matrix[5], matrix[9]},
+            {-matrix[2], -matrix[6], -matrix[10]},
         };
     }
 

@@ -115,13 +115,13 @@ namespace spectra {
     }
 
     void EditorApplication::open_scene(const std::filesystem::path& path) {
-        scene::Scene next_scene = scene::load_scene(path);
-        const bool previous_loaded                   = this->document.content.loaded;
-        const bool previous_modified                 = this->document.content.modified;
-        scene::Scene previous_source                 = std::move(this->document.content.source);
-        scene::Scene previous_evaluated              = std::move(this->document.content.evaluated);
-        std::filesystem::path previous_path           = std::move(this->document.content.path);
-        this->document.content.loaded = false;
+        scene::Scene next_scene             = scene::load_scene(path);
+        const bool previous_loaded          = this->document.content.loaded;
+        const bool previous_modified        = this->document.content.modified;
+        scene::Scene previous_source        = std::move(this->document.content.source);
+        scene::Scene previous_evaluated     = std::move(this->document.content.evaluated);
+        std::filesystem::path previous_path = std::move(this->document.content.path);
+        this->document.content.loaded       = false;
         this->destroy_rendering();
         this->dynamics.destroy();
         try {
@@ -138,11 +138,11 @@ namespace spectra {
             const std::exception_ptr open_error = std::current_exception();
             this->destroy_rendering();
             this->dynamics.destroy();
-            this->document.content.source    = std::move(previous_source);
-            this->document.content.evaluated = std::move(previous_evaluated);
-            this->document.content.path      = std::move(previous_path);
-            this->document.content.modified  = previous_modified;
-            this->document.content.loaded    = false;
+            this->document.content.source               = std::move(previous_source);
+            this->document.content.evaluated            = std::move(previous_evaluated);
+            this->document.content.path                 = std::move(previous_path);
+            this->document.content.modified             = previous_modified;
+            this->document.content.loaded               = false;
             this->rendering.synchronized_scene_revision = 0;
             if (previous_loaded) {
                 try {
@@ -153,7 +153,13 @@ namespace spectra {
                 } catch (const std::exception& restore_error) {
                     this->destroy_rendering();
                     this->dynamics.destroy();
-                    throw std::runtime_error(std::format("Opening '{}' failed and restoring the previous scene also failed: {}", path.string(), restore_error.what()));
+                    std::string open_message{"unknown error"};
+                    try {
+                        std::rethrow_exception(open_error);
+                    } catch (const std::exception& open_exception) {
+                        open_message = open_exception.what();
+                    }
+                    throw std::runtime_error(std::format("Opening '{}' failed: {}; restoring the previous scene also failed: {}", path.string(), open_message, restore_error.what()));
                 }
             }
             std::rethrow_exception(open_error);
@@ -318,12 +324,12 @@ namespace spectra {
         };
         this->overlay.record(command_buffer, this->display, this->viewport.view.render_camera,
             ViewportOverlayState{
-                .selected_instances     = selected_instances,
-                .active_instance        = instance_id(this->viewport.view.selection.active),
-                .hovered_instance       = instance_id(this->viewport.view.selection.hovered),
-                .axes_plane             = std::to_underlying(this->viewport.view.source == CameraSource::Scene ? AxesPlane::Xz : this->viewport.view.axes_plane),
-                .axes_visible           = show_axes,
-                .outline_visible        = this->viewport.view.overlays_visible,
+                .selected_instances = selected_instances,
+                .active_instance    = instance_id(this->viewport.view.selection.active),
+                .hovered_instance   = instance_id(this->viewport.view.selection.hovered),
+                .axes_plane         = std::to_underlying(this->viewport.view.source == CameraSource::Scene ? AxesPlane::Xz : this->viewport.view.axes_plane),
+                .axes_visible       = show_axes,
+                .outline_visible    = this->viewport.view.overlays_visible,
             });
     }
 
@@ -374,19 +380,18 @@ namespace spectra {
                     this->render_engine.record(frame->frame.command_buffer, frame->frame.slot_index);
                     const RenderOutput output                  = this->render_engine.output();
                     const std::optional<DepthBufferView> depth = this->render_engine.depth_buffer();
-                    record_render_composition(frame->frame.command_buffer, this->display, this->visualization,
+                    record_render_composition(frame->frame.command_buffer, this->display,
                         RenderCompositionRequest{
-                            .renderer_output       = output,
-                            .depth                 = depth,
-                            .scene                 = this->document.content.evaluated.view(),
-                            .camera                = this->viewport.view.render_camera,
-                            .scene_camera_view     = this->viewport.view.source == CameraSource::Scene ? std::optional{this->viewport.view.render_camera.id} : std::nullopt,
-                            .visualizations        = this->dynamics.visualizations(),
-                            .diagnostics           = this->diagnostic_settings.enabled ? &this->diagnostics : nullptr,
-                            .diagnostic_settings   = &this->diagnostic_settings,
-                            .selection             = &this->viewport.view.selection,
-                            .frame_slot_index      = frame->frame.slot_index,
-                            .exposure              = this->ui.controls.exposure,
+                            .renderer_output        = output,
+                            .depth                  = depth,
+                            .scene                  = this->document.content.evaluated.view(),
+                            .camera                 = this->viewport.view.render_camera,
+                            .scene_camera_view      = this->viewport.view.source == CameraSource::Scene ? std::optional{this->viewport.view.render_camera.id} : std::nullopt,
+                            .visualizations         = this->dynamics.visualizations(),
+                            .visualization          = &this->visualization,
+                            .diagnostics            = this->diagnostic_settings.enabled ? std::optional{SceneDiagnosticsComposition{this->diagnostics, this->diagnostic_settings, this->viewport.view.selection}} : std::nullopt,
+                            .frame_slot_index       = frame->frame.slot_index,
+                            .exposure               = this->ui.controls.exposure,
                             .compose_visualizations = true,
                         });
                     this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->viewport.view.render_camera, *depth, this->diagnostic_settings.enabled ? &this->diagnostics.pick_image() : nullptr);

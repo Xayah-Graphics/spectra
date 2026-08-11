@@ -3,6 +3,7 @@ export module spectra.render.pathtracer;
 import spectra.render.contract;
 import spectra.render.gpu_scene;
 import spectra.render.pathtracer.resources;
+import spectra.render.pathtracer.scene;
 import spectra.runtime;
 import spectra.scene;
 
@@ -10,144 +11,6 @@ import std;
 import vulkan;
 
 namespace spectra {
-    struct PathSceneGpuSnapshot;
-    struct PreparedPathFilter;
-    struct PreparedPathSampler;
-    struct PreparedPathScene;
-    struct PathTracerScenePreparation;
-
-    struct GpuBufferBinding {
-        GpuBuffer buffer{};
-        DescriptorLease descriptor{};
-
-        GpuBufferBinding() = default;
-        explicit GpuBufferBinding(DescriptorLease descriptor) noexcept : descriptor(std::move(descriptor)) {}
-        GpuBufferBinding(GpuBufferBinding&&) noexcept            = default;
-        GpuBufferBinding& operator=(GpuBufferBinding&&) noexcept = default;
-        GpuBufferBinding(const GpuBufferBinding&)                = delete;
-        GpuBufferBinding& operator=(const GpuBufferBinding&)     = delete;
-    };
-
-    struct PathBufferSlice {
-        DescriptorLease descriptor{};
-        vk::DeviceSize offset{};
-        vk::DeviceSize size{};
-    };
-
-    struct RgbSigmoidPolynomial {
-        float c0{};
-        float c1{};
-        float c2{};
-
-        [[nodiscard]] float evaluate(float wavelength) const noexcept;
-
-        friend auto operator<=>(const RgbSigmoidPolynomial&, const RgbSigmoidPolynomial&) = default;
-    };
-
-    struct RgbToSpectrumTable {
-        explicit RgbToSpectrumTable(std::span<const std::uint32_t> data);
-
-        [[nodiscard]] RgbSigmoidPolynomial polynomial(math::Float3 rgb) const noexcept;
-
-    private:
-        std::array<float, 64> scale{};
-        std::span<const std::uint32_t> coefficients{};
-    };
-
-    struct RgbToSpectrumTables {
-        explicit RgbToSpectrumTables(std::span<const std::uint32_t> data);
-
-        [[nodiscard]] const RgbToSpectrumTable& table_for(scene::SpectrumColorSpace color_space) const noexcept;
-
-    private:
-        RgbToSpectrumTable srgb;
-        RgbToSpectrumTable rec2020;
-        RgbToSpectrumTable aces2065_1;
-    };
-
-    enum class CompiledSpectrumKind : std::uint32_t {
-        Rgb,
-        Constant,
-        Blackbody,
-        PiecewiseLinear,
-    };
-
-    enum class CompiledIlluminant : std::uint32_t {
-        None,
-        D65,
-        D60,
-    };
-
-    struct alignas(16) CompiledSpectrum {
-        std::array<float, 4> parameters{};
-        std::array<std::uint32_t, 4> metadata{};
-    };
-
-    [[nodiscard]] CompiledSpectrum compile_spectrum(const scene::SpectrumParameter& spectrum, const RgbToSpectrumTables& tables, std::vector<math::Float2>& piecewise_samples);
-
-    enum class PathMaterialTable : std::size_t {
-        Header,
-        Diffuse,
-        DiffuseTransmission,
-        Conductor,
-        Dielectric,
-        ThinDielectric,
-        CoatedDiffuse,
-        CoatedConductor,
-        Mix,
-        TextureRequest,
-        Count,
-    };
-
-    enum class PathTextureTable : std::size_t {
-        Header,
-        Mapping,
-        Constant,
-        Image,
-        Checkerboard,
-        Scale,
-        Mix,
-        DirectionMix,
-        Bilerp,
-        Count,
-    };
-
-    struct PathVolumeResources {
-        GpuBufferBinding majorant{};
-        scene::VolumeId volume_id{};
-        scene::ResourceRevision revision{};
-        math::UInt3 resolution{};
-    };
-
-    struct PathFilterResources {
-        scene::Film film{};
-        GpuBufferBinding distribution{};
-        GpuBufferBinding sensor_response{};
-        std::array<std::uint32_t, 2> resolution{};
-        float absolute_integral{};
-    };
-
-    struct PathSamplerResources {
-        scene::Sampler sampler{};
-        GpuBufferBinding pixel_samples{};
-        std::uint32_t pixel_tile_size{1};
-    };
-
-    struct PathDynamicAreaLightRange {
-        std::uint32_t scene_primitive_index{};
-        std::uint32_t resource_index{};
-        std::uint32_t first_light{};
-        std::uint32_t capacity{};
-        std::uint32_t kind{};
-        std::uint32_t geometry_kind{};
-        std::uint32_t reverse_orientation{};
-        std::uint32_t alpha_texture{};
-        std::uint32_t attribute_mask{};
-        std::array<float, 4> geometry_parameters{};
-        std::array<float, 4> emission_parameters{};
-        std::array<float, 4> selection_parameters{};
-    };
-
     export struct PathTracer {
         static constexpr RendererDescriptor descriptor = pathtracer_descriptor;
 
@@ -166,12 +29,14 @@ namespace spectra {
         void prepare(scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer);
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         [[nodiscard]] RenderOutput output() const noexcept;
+        [[nodiscard]] DepthBufferView depth_buffer() noexcept;
         [[nodiscard]] RenderProgress progress() const noexcept;
         void set_paused(bool paused) noexcept;
         void reset() noexcept;
         void record_readback(const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot);
         [[nodiscard]] RenderGBufferReadback readback();
 
+    private:
         struct {
             VulkanRuntime& runtime;
             GpuScene& gpu_scene;
@@ -299,18 +164,13 @@ namespace spectra {
             std::uint64_t camera_revision{};
         } control;
 
-        std::unique_ptr<PathTracerScenePreparation> scene_preparation{};
-        std::future<void> scene_preparation_task{};
+        std::shared_ptr<PathTracerScenePreparation> scene_preparation{};
+        std::shared_future<void> scene_preparation_task{};
 
-    private:
         void begin_scene_preparation(scene::SceneView scene);
         void release_scene_preparation() noexcept;
-        [[nodiscard]] PathSceneGpuSnapshot snapshot_gpu_scene(scene::SceneView scene) const;
-        [[nodiscard]] std::unique_ptr<PreparedPathScene> prepare_scene(scene::SceneView scene, const PathSceneGpuSnapshot& gpu, PathTracerPreparationState* progress) const;
         void commit_scene(std::unique_ptr<PreparedPathScene> prepared, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] std::unique_ptr<PreparedPathFilter> prepare_filter(const scene::Film& film) const;
         void commit_filter(std::unique_ptr<PreparedPathFilter> prepared, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] std::unique_ptr<PreparedPathSampler> prepare_sampler(const scene::Sampler& sampler) const;
         void commit_sampler(std::unique_ptr<PreparedPathSampler> prepared, const vk::raii::CommandBuffer& command_buffer);
         void destroy_scene() noexcept;
         void synchronize_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
@@ -324,7 +184,6 @@ namespace spectra {
         void resize_session(vk::Extent2D extent, std::uint32_t texture_evaluation_stack_size, std::uint32_t material_texture_value_count);
         void configure_indirect_commands();
         void record_integrator(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
-        void destroy() noexcept;
     };
 
     static_assert(SceneRenderer<PathTracer>);

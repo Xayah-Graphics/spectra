@@ -1,6 +1,6 @@
 export module spectra.render.composition.visualization;
 
-import spectra.dynamics;
+import spectra.dynamics.gpu;
 import spectra.render.contract;
 import spectra.runtime;
 import spectra.scene;

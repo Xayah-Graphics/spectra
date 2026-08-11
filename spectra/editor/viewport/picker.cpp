@@ -36,33 +36,19 @@ namespace spectra {
     }
 
     void ViewportPicker::initialize(const scene::SceneView source_scene) {
-        this->scene.primitives_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
-        this->scene.initialized           = true;
-        this->upload(source_scene);
-
-        const std::vector<std::uint32_t> code = load_spirv(this->context.shader_directory / "picker.spv");
-        vk::DescriptorMappingSourceDataEXT acceleration_structure_source{};
-        acceleration_structure_source.pushAddressOffset = 0;
-        const vk::DescriptorSetAndBindingMappingEXT acceleration_structure_mapping{
-            0,
-            0,
-            1,
-            vk::SpirvResourceTypeFlagBitsEXT::eAccelerationStructure,
-            vk::DescriptorMappingSourceEXT::ePushAddress,
-            acceleration_structure_source,
-        };
-        const vk::ShaderDescriptorSetAndBindingMappingInfoEXT mapping{acceleration_structure_mapping};
-        vk::ShaderCreateInfoEXT create_info{
-            vk::ShaderCreateFlagBitsEXT::eDescriptorHeap,
-            vk::ShaderStageFlagBits::eCompute,
-            {},
-            vk::ShaderCodeTypeEXT::eSpirv,
-            code.size() * sizeof(std::uint32_t),
-            code.data(),
-            "pick",
-        };
-        create_info.pNext    = &mapping;
-        this->picking.shader = vk::raii::ShaderEXT{this->context.runtime.graphics.device, create_info};
+        this->scene.initialized = true;
+        if (this->context.runtime.graphics.ray_tracing_supported) {
+            this->scene.primitives_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            this->upload(source_scene);
+            const std::vector<std::uint32_t> code = load_spirv(this->context.shader_directory / "picker.spv");
+            vk::DescriptorMappingSourceDataEXT acceleration_structure_source{};
+            acceleration_structure_source.pushAddressOffset = 0;
+            const vk::DescriptorSetAndBindingMappingEXT acceleration_structure_mapping{0, 0, 1, vk::SpirvResourceTypeFlagBitsEXT::eAccelerationStructure, vk::DescriptorMappingSourceEXT::ePushAddress, acceleration_structure_source};
+            const vk::ShaderDescriptorSetAndBindingMappingInfoEXT mapping{acceleration_structure_mapping};
+            vk::ShaderCreateInfoEXT create_info{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, code.size() * sizeof(std::uint32_t), code.data(), "pick"};
+            create_info.pNext    = &mapping;
+            this->picking.shader = vk::raii::ShaderEXT{this->context.runtime.graphics.device, create_info};
+        }
         this->picking.frame_slots.reserve(VulkanFrames::frames_in_flight);
         for (std::uint32_t index = 0; index != VulkanFrames::frames_in_flight; ++index) {
             PickFrameSlot slot{};
@@ -76,6 +62,7 @@ namespace spectra {
     void ViewportPicker::destroy_scene() noexcept {
         this->context.runtime.frames.defer_destruction([slots = std::move(this->picking.frame_slots), shader = std::move(this->picking.shader), primitives = std::move(this->scene.primitives)]() mutable {});
         this->picking.pending_request.reset();
+        this->scene.primitives_descriptor = {};
         if (!this->scene.initialized) return;
         this->scene.initialized = false;
     }
@@ -88,9 +75,9 @@ namespace spectra {
             ViewportPickPrimitive pick{};
             if (gpu_primitive.kind == GpuScenePrimitiveKind::SphereSet) {
                 const GpuSphereSet& spheres = this->context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
-                pick.positions             = spheres.positions_descriptor;
-                pick.radii                 = spheres.radii_descriptor;
-                pick.metadata[0]           = 4;
+                pick.positions              = spheres.positions_descriptor;
+                pick.radii                  = spheres.radii_descriptor;
+                pick.metadata[0]            = 4;
                 primitives.push_back(pick);
                 continue;
             }
@@ -128,7 +115,7 @@ namespace spectra {
     }
 
     void ViewportPicker::synchronize(const scene::SceneView source_scene, const GpuSceneUpdate gpu_update, const vk::raii::CommandBuffer& command_buffer) {
-        if ((source_scene.revision.changes & (scene::SceneChange::Geometry | scene::SceneChange::Transform)) != scene::SceneChange::None || (gpu_update.gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None) this->upload(source_scene, &command_buffer);
+        if (this->context.runtime.graphics.ray_tracing_supported && ((source_scene.revision.changes & scene::SceneChange::Geometry) != scene::SceneChange::None || (gpu_update.gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None)) this->upload(source_scene, &command_buffer);
     }
 
     void ViewportPicker::submit_pick(const float normalized_x, const float normalized_y, const bool select, const bool additive) noexcept {
@@ -161,7 +148,7 @@ namespace spectra {
         PickFrameSlot& slot   = this->picking.frame_slots[frame_slot_index];
         std::uint32_t* result = static_cast<std::uint32_t*>(slot.result_buffer.mapped);
         std::ranges::fill(std::span{result, 8}, std::numeric_limits<std::uint32_t>::max());
-        result[4] = 0;
+        result[4]              = 0;
         slot.submitted_request = std::exchange(this->picking.pending_request, std::nullopt);
 
         struct alignas(16) PickPushData {
@@ -220,15 +207,17 @@ namespace spectra {
             near_plane,
             far_plane,
         };
-        const std::array begin_barriers{
-            vk::MemoryBarrier2{vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR, vk::AccessFlagBits2::eAccelerationStructureWriteKHR, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eAccelerationStructureReadKHR},
-            vk::MemoryBarrier2{vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite},
-        };
-        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, static_cast<std::uint32_t>(begin_barriers.size()), begin_barriers.data()});
-        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->picking.shader);
-        this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
-        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
-        command_buffer.dispatch(1, 1, 1);
+        if (this->context.runtime.graphics.ray_tracing_supported) {
+            const std::array begin_barriers{
+                vk::MemoryBarrier2{vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR, vk::AccessFlagBits2::eAccelerationStructureWriteKHR, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eAccelerationStructureReadKHR},
+                vk::MemoryBarrier2{vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite},
+            };
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, static_cast<std::uint32_t>(begin_barriers.size()), begin_barriers.data()});
+            command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->picking.shader);
+            this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
+            command_buffer.dispatch(1, 1, 1);
+        }
         if (diagnostic_pick_image) {
             const std::uint32_t pixel_x = std::min(static_cast<std::uint32_t>(slot.submitted_request->normalized_x * static_cast<float>(diagnostic_pick_image->extent.width)), diagnostic_pick_image->extent.width - 1u);
             const std::uint32_t pixel_y = std::min(static_cast<std::uint32_t>(slot.submitted_request->normalized_y * static_cast<float>(diagnostic_pick_image->extent.height)), diagnostic_pick_image->extent.height - 1u);

@@ -119,7 +119,7 @@ namespace spectra {
             if (static_cast<bool>(request.properties & vk::MemoryPropertyFlagBits::eHostVisible)) block->mapped = block->memory.mapMemory(0, allocation_size);
             if (!dedicated) block->free_ranges.emplace_back(0, allocation_size);
 
-            const auto empty_slot = std::ranges::find(this->blocks, nullptr);
+            const auto empty_slot           = std::ranges::find(this->blocks, nullptr);
             const std::uint32_t block_index = empty_slot == this->blocks.end() ? static_cast<std::uint32_t>(this->blocks.size()) : static_cast<std::uint32_t>(empty_slot - this->blocks.begin());
             if (empty_slot == this->blocks.end())
                 this->blocks.emplace_back(std::move(block));
@@ -334,6 +334,7 @@ namespace spectra {
         GpuImage result{};
         result.extent     = extent;
         result.format     = format;
+        result.aspect     = aspect;
         result.mip_levels = mip_levels;
         const vk::ImageCreateInfo image_create_info{
             {},
@@ -418,7 +419,7 @@ namespace spectra {
             vk::ImageViewType::e2D,
             image.format,
             {},
-            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            {image.aspect, 0, 1, 0, 1},
         };
         const vk::ImageDescriptorInfoEXT image_info{&view_create_info, layout};
         const vk::ResourceDescriptorInfoEXT descriptor{
@@ -439,7 +440,7 @@ namespace spectra {
             vk::ImageViewType::e2D,
             image.format,
             {},
-            {vk::ImageAspectFlagBits::eColor, 0, image.mip_levels, 0, 1},
+            {image.aspect, 0, image.mip_levels, 0, 1},
         };
         const vk::ImageDescriptorInfoEXT image_info{&view_create_info, layout};
         const vk::ResourceDescriptorInfoEXT descriptor{
@@ -587,13 +588,15 @@ namespace spectra {
         command_buffer.end();
         const vk::CommandBuffer raw_command_buffer = *command_buffer;
         const vk::raii::Fence fence{this->context.graphics.device, vk::FenceCreateInfo{}};
-        this->context.graphics.queue.submit(vk::SubmitInfo{
-            0,
-            nullptr,
-            nullptr,
-            1,
-            &raw_command_buffer,
-        }, *fence);
+        this->context.graphics.queue.submit(
+            vk::SubmitInfo{
+                0,
+                nullptr,
+                nullptr,
+                1,
+                &raw_command_buffer,
+            },
+            *fence);
         if (this->context.graphics.device.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Immediate Vulkan submission failed");
     }
 

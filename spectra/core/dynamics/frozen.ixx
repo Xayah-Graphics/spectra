@@ -1,33 +1,46 @@
 export module spectra.dynamics.frozen;
 
-import spectra.dynamics;
+import spectra.dynamics.gpu;
+import spectra.math;
 import spectra.runtime;
 import std;
 
 namespace spectra::dynamics {
-    export enum class FrozenVisualizationKind : std::uint32_t {
-        Points,
-        Segments,
-        Curves,
-        Vectors,
-        Field,
-        Image,
-        CameraObservations,
-        Transforms,
-        Surface,
+    export struct FrozenElements {
+        std::vector<std::byte> elements{};
+        std::uint32_t count{};
     };
 
-    export struct FrozenVisualization {
-        FrozenVisualizationKind kind{};
-        VisualizationStyle style{};
+    export struct FrozenField {
         math::UInt3 resolution{};
         math::Transform local_from_grid{};
         FieldChannelDescriptor channel{};
+        std::vector<std::byte> values{};
+    };
+
+    export struct FrozenImage {
         ImageDataset image{};
-        CameraObservationDataset camera_observations{};
-        std::uint64_t primary_count{};
-        std::uint64_t secondary_count{};
-        std::vector<std::vector<std::byte>> buffers{};
+        std::vector<std::byte> pixels{};
+    };
+
+    export struct FrozenCameraObservations {
+        CameraObservationDataset dataset{};
+        std::vector<std::byte> observations{};
+        std::vector<std::byte> images{};
+        std::uint32_t count{};
+    };
+
+    export struct FrozenSurface {
+        std::vector<std::byte> positions{};
+        std::optional<std::vector<std::byte>> indices{};
+        std::optional<std::vector<std::byte>> scalars{};
+        std::uint32_t vertex_count{};
+        std::uint32_t index_count{};
+    };
+
+    export struct FrozenVisualization {
+        VisualizationStyle style{};
+        std::variant<FrozenElements, FrozenField, FrozenImage, FrozenCameraObservations, FrozenSurface> data{};
     };
 
     export struct FrozenTelemetrySystem {
@@ -50,11 +63,6 @@ namespace spectra::dynamics {
     export void write_telemetry(const std::filesystem::path& path, const FrozenFrame& frame);
 
     export struct FrozenFrameRuntime {
-        struct Buffer {
-            GpuBuffer gpu{};
-            DescriptorLease descriptor{};
-        };
-
         explicit FrozenFrameRuntime(VulkanRuntime& runtime) noexcept;
         ~FrozenFrameRuntime();
 
@@ -68,7 +76,13 @@ namespace spectra::dynamics {
         [[nodiscard]] bool initialized() const noexcept;
         [[nodiscard]] std::span<const GpuVisualization> visualizations() const noexcept;
         [[nodiscard]] const FrozenFrame& frame() const noexcept;
+        [[nodiscard]] const DynamicFrame& pending_frame() const noexcept;
 
+    private:
+        struct Buffer {
+            GpuBuffer gpu{};
+            DescriptorLease descriptor{};
+        };
         VulkanRuntime& runtime;
         FrozenFrame data{};
         std::deque<Buffer> buffers{};

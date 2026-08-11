@@ -1,9 +1,12 @@
 module spectra.render.pathtracer.resources;
 
+import spectra.render.pathtracer.shader_entries;
 import std;
 import vulkan;
 
 namespace spectra {
+    static_assert(std::to_underlying(PathTracerComputeShader::Count) == path_compute_shader_entries.size());
+
     namespace {
         constexpr std::uint32_t table_resolution    = 64;
         constexpr std::size_t coefficient_count     = 3ull * table_resolution * table_resolution * table_resolution * 3ull;
@@ -11,44 +14,8 @@ namespace spectra {
         constexpr std::uint64_t cie_table_size      = 16ull + 5ull * 471ull * sizeof(float);
         constexpr std::uint64_t sampling_table_size = 6'005'504;
 
-        struct ShaderEntry {
-            const char* file{};
-            const char* entry{};
-        };
-
-        constexpr std::array compute_shader_entries{
-            ShaderEntry{"path_volume_majorant.spv", "build_majorant"},
-            ShaderEntry{"path_dynamic_area_light_shapes.spv", "update_dynamic_area_light_shapes"},
-            ShaderEntry{"path_dynamic_area_light_finalize.spv", "finalize_dynamic_area_light_range"},
-            ShaderEntry{"path_dynamic_light_selection.spv", "rebuild_dynamic_light_selection"},
-            ShaderEntry{"path_dynamic_light_bvh.spv", "rebuild_dynamic_light_bvh"},
-            ShaderEntry{"path_generate_camera_rays.spv", "generate_camera_rays"},
-            ShaderEntry{"path_evaluate_surface_textures.spv", "evaluate_surface_textures"},
-            ShaderEntry{"path_record_surface_gbuffer.spv", "record_surface_gbuffer"},
-            ShaderEntry{"path_sample_direct_lighting.spv", "sample_direct_lighting"},
-            ShaderEntry{"path_shade_surfaces.spv", "shade_surfaces"},
-            ShaderEntry{"path_resolve_visibility.spv", "resolve_visibility"},
-            ShaderEntry{"path_accumulate_film.spv", "accumulate_film"},
-            ShaderEntry{"path_resolve_gbuffer_depth.spv", "resolve_gbuffer_depth"},
-        };
-
-        constexpr std::array ray_shader_entries{
-            ShaderEntry{"path_surface_ray_generation.spv", "surface_ray_generation"},
-            ShaderEntry{"path_shadow_ray_generation.spv", "shadow_ray_generation"},
-            ShaderEntry{"path_radiance_miss.spv", "radiance_miss"},
-            ShaderEntry{"path_shadow_miss.spv", "shadow_miss"},
-            ShaderEntry{"path_closest_hit.spv", "closest_hit"},
-            ShaderEntry{"path_alpha_any_hit_surface.spv", "alpha_any_hit_surface"},
-            ShaderEntry{"path_alpha_any_hit_shadow.spv", "alpha_any_hit_shadow"},
-            ShaderEntry{"path_shadow_closest_hit.spv", "shadow_closest_hit"},
-            ShaderEntry{"path_procedural_closest_hit.spv", "procedural_closest_hit"},
-            ShaderEntry{"path_procedural_intersection.spv", "procedural_intersection"},
-            ShaderEntry{"path_procedural_alpha_any_hit_surface.spv", "procedural_alpha_any_hit_surface"},
-            ShaderEntry{"path_procedural_alpha_any_hit_shadow.spv", "procedural_alpha_any_hit_shadow"},
-            ShaderEntry{"path_procedural_shadow_closest_hit.spv", "procedural_shadow_closest_hit"},
-        };
         struct RayTracingPipelineDescription {
-            explicit RayTracingPipelineDescription(const std::span<const vk::ShaderModule, ray_shader_entries.size()> modules) {
+            explicit RayTracingPipelineDescription(const std::span<const vk::ShaderModule, path_ray_shader_entries.size()> modules) {
                 this->acceleration_structure_source.pushAddressOffset = 0;
                 this->acceleration_structure_mapping                  = vk::DescriptorSetAndBindingMappingEXT{0, 0, 1, vk::SpirvResourceTypeFlagBitsEXT::eAccelerationStructure, vk::DescriptorMappingSourceEXT::ePushAddress, this->acceleration_structure_source};
                 this->mapping                                         = vk::ShaderDescriptorSetAndBindingMappingInfoEXT{this->acceleration_structure_mapping};
@@ -67,7 +34,7 @@ namespace spectra {
                     vk::ShaderStageFlagBits::eAnyHitKHR,
                     vk::ShaderStageFlagBits::eClosestHitKHR,
                 };
-                for (std::size_t index = 0; index != this->stages.size(); ++index) this->stages[index] = vk::PipelineShaderStageCreateInfo{{}, stages[index], modules[index], ray_shader_entries[index].entry};
+                for (std::size_t index = 0; index != this->stages.size(); ++index) this->stages[index] = vk::PipelineShaderStageCreateInfo{{}, stages[index], modules[index], path_ray_shader_entries[index].entry.data()};
                 this->stages[0].pNext = &this->mapping;
                 this->stages[1].pNext = &this->mapping;
                 this->groups          = {
@@ -92,7 +59,7 @@ namespace spectra {
             vk::DescriptorMappingSourceDataEXT acceleration_structure_source{};
             vk::DescriptorSetAndBindingMappingEXT acceleration_structure_mapping{};
             vk::ShaderDescriptorSetAndBindingMappingInfoEXT mapping{};
-            std::array<vk::PipelineShaderStageCreateInfo, ray_shader_entries.size()> stages{};
+            std::array<vk::PipelineShaderStageCreateInfo, path_ray_shader_entries.size()> stages{};
             std::array<vk::RayTracingShaderGroupCreateInfoKHR, 8> groups{};
             std::array<vk::DynamicState, 1> dynamic_states{vk::DynamicState::eRayTracingPipelineStackSizeKHR};
             vk::PipelineDynamicStateCreateInfo dynamic_state{{}, dynamic_states};
@@ -166,14 +133,14 @@ namespace spectra {
             }
         }
 
-        void initialize_ray_tracing_pipeline(PathTracerResources& runtime, std::array<std::vector<std::uint32_t>, ray_shader_entries.size()> shader_code) {
+        void initialize_ray_tracing_pipeline(PathTracerResources& runtime, std::array<std::vector<std::uint32_t>, path_ray_shader_entries.size()> shader_code) {
             std::vector<vk::raii::ShaderModule> shader_modules{};
-            shader_modules.reserve(ray_shader_entries.size());
-            std::array<vk::ShaderModule, ray_shader_entries.size()> raw_modules{};
-            for (std::size_t index = 0; index != ray_shader_entries.size(); ++index) {
+            shader_modules.reserve(path_ray_shader_entries.size());
+            std::array<vk::ShaderModule, path_ray_shader_entries.size()> raw_modules{};
+            for (std::size_t index = 0; index != path_ray_shader_entries.size(); ++index) {
                 shader_modules.emplace_back(runtime.runtime.graphics.device, vk::ShaderModuleCreateInfo{{}, shader_code[index].size() * sizeof(std::uint32_t), shader_code[index].data()});
                 raw_modules[index] = *shader_modules.back();
-                runtime.preparation.report(PathTracerPreparationStage::CreatingRayTracingModules, static_cast<std::uint32_t>(index + 1u), static_cast<std::uint32_t>(ray_shader_entries.size()));
+                runtime.preparation.report(PathTracerPreparationStage::CreatingRayTracingModules, static_cast<std::uint32_t>(index + 1u), static_cast<std::uint32_t>(path_ray_shader_entries.size()));
             }
 
             const RayTracingPipelineDescription description{raw_modules};
@@ -198,33 +165,30 @@ namespace spectra {
         }
 
         void initialize_shaders(PathTracerResources& runtime, const std::filesystem::path& shader_directory) {
-            std::array<std::vector<std::uint32_t>, compute_shader_entries.size()> compute_shader_code{};
-            std::array<std::vector<std::uint32_t>, ray_shader_entries.size()> ray_shader_code{};
-            constexpr std::uint32_t shader_count = static_cast<std::uint32_t>(compute_shader_entries.size() + ray_shader_entries.size());
+            std::array<std::vector<std::uint32_t>, path_compute_shader_entries.size()> compute_shader_code{};
+            std::array<std::vector<std::uint32_t>, path_ray_shader_entries.size()> ray_shader_code{};
+            constexpr std::uint32_t shader_count = static_cast<std::uint32_t>(path_compute_shader_entries.size() + path_ray_shader_entries.size());
             std::uint32_t loaded_shader_count{};
             runtime.preparation.report(PathTracerPreparationStage::LoadingShaders, 0, shader_count);
-            for (std::size_t index = 0; index != compute_shader_entries.size(); ++index) {
-                compute_shader_code[index] = load_spirv(shader_directory / compute_shader_entries[index].file);
+            for (std::size_t index = 0; index != path_compute_shader_entries.size(); ++index) {
+                compute_shader_code[index] = load_spirv(shader_directory / path_compute_shader_entries[index].file);
                 runtime.preparation.report(PathTracerPreparationStage::LoadingShaders, ++loaded_shader_count, shader_count);
             }
-            for (std::size_t index = 0; index != ray_shader_entries.size(); ++index) {
-                ray_shader_code[index] = load_spirv(shader_directory / ray_shader_entries[index].file);
+            for (std::size_t index = 0; index != path_ray_shader_entries.size(); ++index) {
+                ray_shader_code[index] = load_spirv(shader_directory / path_ray_shader_entries[index].file);
                 runtime.preparation.report(PathTracerPreparationStage::LoadingShaders, ++loaded_shader_count, shader_count);
             }
 
             std::atomic_uint32_t completed_compute_shaders{};
             std::future<void> compute_preparation = std::async(std::launch::async, [&runtime, shader_code = std::move(compute_shader_code), &completed_compute_shaders] {
-                runtime.compute_shaders.reserve(compute_shader_entries.size());
-                for (std::size_t index = 0; index != compute_shader_entries.size(); ++index) {
-                    runtime.compute_shaders.push_back(create_compute_shader(runtime.runtime.graphics.device, shader_code[index], compute_shader_entries[index].entry));
+                runtime.compute_shaders.reserve(path_compute_shader_entries.size());
+                for (std::size_t index = 0; index != path_compute_shader_entries.size(); ++index) {
+                    runtime.compute_shaders.push_back(create_compute_shader(runtime.runtime.graphics.device, shader_code[index], path_compute_shader_entries[index].entry.data()));
                     completed_compute_shaders.fetch_add(1u, std::memory_order_relaxed);
                 }
             });
             initialize_ray_tracing_pipeline(runtime, std::move(ray_shader_code));
-            while (compute_preparation.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
-                runtime.preparation.report(PathTracerPreparationStage::CreatingComputeShaders, completed_compute_shaders.load(std::memory_order_relaxed), static_cast<std::uint32_t>(compute_shader_entries.size()));
-                std::this_thread::yield();
-            }
+            while (compute_preparation.wait_for(std::chrono::milliseconds{20}) != std::future_status::ready) runtime.preparation.report(PathTracerPreparationStage::CreatingComputeShaders, completed_compute_shaders.load(std::memory_order_relaxed), static_cast<std::uint32_t>(path_compute_shader_entries.size()));
             compute_preparation.get();
             runtime.preparation.report(PathTracerPreparationStage::CreatingShaderBindingTable);
         }
@@ -299,21 +263,12 @@ namespace spectra {
         runtime.resources.write_buffer_descriptor(this->rgb_to_spectrum_tables_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + rgb_offset, this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t));
         runtime.resources.write_buffer_descriptor(this->sampling_tables_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + sampling_offset, sampling_table_size);
         const std::filesystem::path shader_directory = resource_directory / "shaders";
-        this->shader_preparation = std::async(std::launch::async, [this, shader_directory] { initialize_shaders(*this, shader_directory); }).share();
+        this->shader_preparation                     = std::async(std::launch::async, [this, shader_directory] { initialize_shaders(*this, shader_directory); }).share();
     }
 
     PathTracerResources::~PathTracerResources() {
         if (this->shader_preparation.valid()) this->shader_preparation.wait();
-        this->runtime.frames.defer_destruction([
-            static_data = std::move(this->static_data),
-            zero_volume_field_descriptor = std::move(this->zero_volume_field_descriptor),
-            cie_spectra_descriptor = std::move(this->cie_spectra_descriptor),
-            rgb_to_spectrum_tables_descriptor = std::move(this->rgb_to_spectrum_tables_descriptor),
-            sampling_tables_descriptor = std::move(this->sampling_tables_descriptor),
-            compute_shaders = std::move(this->compute_shaders),
-            pipeline = std::move(this->pipeline),
-            shader_binding_table = std::move(this->shader_binding_table)
-        ]() mutable {});
+        this->runtime.frames.defer_destruction([static_data = std::move(this->static_data), zero_volume_field_descriptor = std::move(this->zero_volume_field_descriptor), cie_spectra_descriptor = std::move(this->cie_spectra_descriptor), rgb_to_spectrum_tables_descriptor = std::move(this->rgb_to_spectrum_tables_descriptor), sampling_tables_descriptor = std::move(this->sampling_tables_descriptor), compute_shaders = std::move(this->compute_shaders), pipeline = std::move(this->pipeline), shader_binding_table = std::move(this->shader_binding_table)]() mutable {});
     }
 
     bool PathTracerResources::complete_preparation() {

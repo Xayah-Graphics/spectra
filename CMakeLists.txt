@@ -44,7 +44,7 @@ endif ()
 function(spectra_verify_module_layout)
     file(GLOB_RECURSE module_interfaces CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/spectra/*.ixx")
     file(GLOB_RECURSE module_implementations CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/spectra/*.cpp")
-    set(interface_only_modules spectra.dynamics)
+    set(interface_only_modules spectra.dynamics spectra.dynamics.gpu)
 
     foreach (source IN LISTS module_interfaces)
         file(READ "${source}" content)
@@ -470,6 +470,7 @@ set(SPECTRA_SHADER_STAMP "${SPECTRA_SHADER_OUTPUT_DIR}/build.stamp")
 set(SPECTRA_PATH_TRACER_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/pathtracer/abi.ixx")
 set(SPECTRA_RASTER_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/rasterizer/abi.ixx")
 set(SPECTRA_PLUGIN_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/plugin/abi.ixx")
+set(SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/pathtracer/shader_entries.ixx")
 set(SPECTRA_SHADER_RUNTIME_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/entries_runtime.txt")
 set(SPECTRA_SHADER_PATH_TRACER_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/entries_pathtracer.txt")
 set(SPECTRA_SHADER_EDITOR_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/entries_editor.txt")
@@ -496,10 +497,12 @@ file(
 set(SPECTRA_SHADER_OUTPUTS)
 set(SPECTRA_RUNTIME_SHADER_OUTPUTS)
 set(SPECTRA_PATH_TRACER_SHADER_OUTPUTS)
+set(SPECTRA_PATH_COMPUTE_ENTRY_CONTENT)
+set(SPECTRA_PATH_RAY_ENTRY_CONTENT)
 foreach (shader_entry IN LISTS SPECTRA_SHADER_ENTRY_LINES)
     string(
             REGEX MATCH
-            "^([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]*$"
+            "^([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+(precise|optimized)[ \t]+(runtime|path-compute|path-ray|editor)[ \t]*$"
             shader_entry_match
             "${shader_entry}"
     )
@@ -508,14 +511,44 @@ foreach (shader_entry IN LISTS SPECTRA_SHADER_ENTRY_LINES)
     endif ()
 
     set(shader_name "${CMAKE_MATCH_1}")
+    set(shader_entry_point "${CMAKE_MATCH_3}")
+    set(shader_category "${CMAKE_MATCH_5}")
     set(shader_output "${SPECTRA_SHADER_OUTPUT_DIR}/${shader_name}.spv")
     list(APPEND SPECTRA_SHADER_OUTPUTS "${shader_output}")
-    if (shader_name MATCHES "^path_")
+    if (shader_category MATCHES "^path-")
         list(APPEND SPECTRA_PATH_TRACER_SHADER_OUTPUTS "${shader_output}")
     else ()
         list(APPEND SPECTRA_RUNTIME_SHADER_OUTPUTS "${shader_output}")
     endif ()
+    if (shader_category STREQUAL "path-compute")
+        string(APPEND SPECTRA_PATH_COMPUTE_ENTRY_CONTENT "        PathTracerShaderEntry{\"${shader_name}.spv\", \"${shader_entry_point}\"},\n")
+    elseif (shader_category STREQUAL "path-ray")
+        string(APPEND SPECTRA_PATH_RAY_ENTRY_CONTENT "        PathTracerShaderEntry{\"${shader_name}.spv\", \"${shader_entry_point}\"},\n")
+    endif ()
 endforeach ()
+
+file(
+        CONFIGURE
+        OUTPUT "${SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE}"
+        CONTENT [[export module spectra.render.pathtracer.shader_entries;
+
+import std;
+
+namespace spectra {
+    export struct PathTracerShaderEntry {
+        std::string_view file;
+        std::string_view entry;
+    };
+
+    export inline constexpr std::array path_compute_shader_entries{
+@SPECTRA_PATH_COMPUTE_ENTRY_CONTENT@    };
+
+    export inline constexpr std::array path_ray_shader_entries{
+@SPECTRA_PATH_RAY_ENTRY_CONTENT@    };
+} // namespace spectra
+]]
+        @ONLY
+)
 
 file(
         GLOB
@@ -523,6 +556,7 @@ file(
         CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/*.slang"
 )
+list(APPEND SPECTRA_SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/shader_semantics.h")
 set(SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders")
 if (SPECTRA_BUILD_UI)
     file(
@@ -601,11 +635,13 @@ target_sources(
         spectra/core/runtime/resources.ixx
         spectra/core/runtime/frames.ixx
         spectra/core/runtime/runtime.ixx
-        spectra/core/math.ixx
+        spectra/core/util/math.ixx
+        spectra/core/headless.ixx
         spectra/core/scene/scene.ixx
         spectra/core/scene/format.ixx
         spectra/core/scene/document.ixx
         spectra/core/dynamics/contract.ixx
+        spectra/core/dynamics/gpu.ixx
         spectra/core/dynamics/frozen.ixx
         spectra/core/dynamics/runtime.ixx
         spectra/core/render/contract.ixx
@@ -613,6 +649,7 @@ target_sources(
         spectra/core/render/capture.ixx
         spectra/core/render/rasterizer.ixx
         spectra/core/render/pathtracer/resources.ixx
+        spectra/core/render/pathtracer/scene.ixx
         spectra/core/render/pathtracer.ixx
         spectra/core/render/render.ixx
         spectra/core/render/display.ixx
@@ -621,31 +658,35 @@ target_sources(
         spectra/core/render/composition/overlay.ixx
         spectra/core/render/composition/composition.ixx
         PUBLIC
-        FILE_SET generated_raster_modules TYPE CXX_MODULES
+        FILE_SET generated_render_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
         FILES
         "${SPECTRA_RASTER_ABI_MODULE}"
+        "${SPECTRA_PATH_TRACER_ABI_MODULE}"
         PRIVATE
         FILE_SET generated_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
         FILES
-        "${SPECTRA_PATH_TRACER_ABI_MODULE}"
         "${SPECTRA_PLUGIN_ABI_MODULE}"
+        "${SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE}"
         PRIVATE
         FILE_SET internal_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
         FILES
         spectra/core/scene/content_hash.ixx
         spectra/core/scene/asset_import.ixx
+        spectra/core/scene/package.ixx
         PRIVATE
         spectra/core/runtime/runtime.cpp
         spectra/core/runtime/graphics.cpp
         spectra/core/runtime/resources.cpp
         spectra/core/runtime/frames.cpp
-        spectra/core/math.cpp
+        spectra/core/util/math.cpp
+        spectra/core/headless.cpp
         spectra/core/scene/scene.cpp
         spectra/core/scene/content_hash.cpp
         spectra/core/scene/asset_import.cpp
+        spectra/core/scene/package.cpp
         spectra/core/scene/format.cpp
         spectra/core/scene/document.cpp
         spectra/core/dynamics/runtime.cpp
@@ -655,6 +696,7 @@ target_sources(
         spectra/core/render/capture.cpp
         spectra/core/render/rasterizer.cpp
         spectra/core/render/pathtracer/resources.cpp
+        spectra/core/render/pathtracer/scene.cpp
         spectra/core/render/pathtracer.cpp
         spectra/core/render/render.cpp
         spectra/core/render/display.cpp
@@ -743,17 +785,7 @@ set_target_properties(
         spectra
         PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${SPECTRA_BUILD_BIN_DIR}>"
 )
-target_sources(
-        spectra
-        PRIVATE
-        FILE_SET cxx_modules TYPE CXX_MODULES
-        BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-        FILES
-        spectra/headless.ixx
-        PRIVATE
-        main.cpp
-        spectra/headless.cpp
-)
+target_sources(spectra PRIVATE main.cpp)
 if (WIN32)
     target_sources(spectra PRIVATE spectra.rc)
 endif ()

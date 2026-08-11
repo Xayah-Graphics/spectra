@@ -1,5 +1,6 @@
 module spectra.scene.document;
 
+import spectra.dynamics;
 import spectra.scene.format;
 import std;
 
@@ -18,6 +19,7 @@ namespace spectra {
             bool installed{};
         };
         std::vector<ProviderReplacement> replacements{};
+        if (!scene_path.parent_path().empty()) std::filesystem::create_directories(scene_path.parent_path());
         try {
             if (this->content.source.dynamic_setup && std::filesystem::absolute(scene_path.parent_path()).lexically_normal() != std::filesystem::absolute(this->content.path.parent_path()).lexically_normal()) {
                 std::vector<std::string> providers{};
@@ -25,8 +27,8 @@ namespace spectra {
                     if (!std::ranges::contains(providers, system.provider_id)) providers.emplace_back(system.provider_id);
                 const auto transaction = std::chrono::steady_clock::now().time_since_epoch().count();
                 for (std::size_t index = 0; index != providers.size(); ++index) {
-                    const std::string& provider           = providers[index];
-                    const std::filesystem::path filename = scene::provider_library_filename(provider);
+                    const std::string& provider          = providers[index];
+                    const std::filesystem::path filename = dynamics::provider_library_filename(provider);
                     ProviderReplacement& replacement     = replacements.emplace_back();
                     replacement.destination              = scene_path.parent_path() / filename;
                     replacement.staged                   = replacement.destination;
@@ -46,17 +48,30 @@ namespace spectra {
             }
             scene::save_scene(this->content.source, scene_path, this->content.path);
         } catch (...) {
+            const std::exception_ptr original_error = std::current_exception();
+            std::vector<std::string> rollback_errors{};
             for (auto replacement = replacements.rbegin(); replacement != replacements.rend(); ++replacement) {
                 std::error_code cleanup_error{};
                 if (replacement->installed) std::filesystem::remove(replacement->destination, cleanup_error);
+                if (cleanup_error) rollback_errors.push_back(std::format("remove {}: {}", replacement->destination.string(), cleanup_error.message()));
+                cleanup_error.clear();
                 if (replacement->previous_moved) std::filesystem::rename(replacement->backup, replacement->destination, cleanup_error);
+                if (cleanup_error) rollback_errors.push_back(std::format("restore {}: {}", replacement->destination.string(), cleanup_error.message()));
+                cleanup_error.clear();
                 std::filesystem::remove(replacement->staged, cleanup_error);
+                if (cleanup_error) rollback_errors.push_back(std::format("remove {}: {}", replacement->staged.string(), cleanup_error.message()));
             }
-            throw;
+            if (rollback_errors.empty()) std::rethrow_exception(original_error);
+            try {
+                std::rethrow_exception(original_error);
+            } catch (const std::exception& error) {
+                throw std::runtime_error(std::format("{}; provider rollback failed: {}", error.what(), std::ranges::fold_left_first(rollback_errors, [](std::string left, const std::string& right) { return std::move(left) + "; " + right; }).value()));
+            }
         }
         for (const ProviderReplacement& replacement : replacements) {
             std::error_code cleanup_error{};
             if (replacement.previous_moved) std::filesystem::remove(replacement.backup, cleanup_error);
+            if (cleanup_error) throw std::runtime_error(std::format("Saved the Scene but failed to remove provider backup {}: {}", replacement.backup.string(), cleanup_error.message()));
         }
         this->content.path     = scene_path;
         this->content.modified = false;
@@ -81,7 +96,7 @@ namespace spectra {
 
     void SceneDocument::update_camera_transform(scene::Scene& target_scene, const scene::CameraId camera_id, math::Transform transform) {
         scene::Camera& resource = *std::ranges::find(target_scene.resources.cameras, camera_id, &scene::Camera::id);
-        resource.transform      = std::move(transform);
+        resource.transform      = transform;
         ++resource.revision.content;
         this->mark_change(target_scene, scene::SceneChange::Camera);
     }

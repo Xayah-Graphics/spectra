@@ -356,12 +356,13 @@ namespace spectra::scene {
             std::free(decoded);
             throw std::runtime_error(std::format("Failed to decode PNG source {}: {}", path.string(), lodepng_error_text(error)));
         }
+        const std::unique_ptr<unsigned char, decltype(&std::free)> decoded_owner{decoded, &std::free};
         image.width       = width;
         image.height      = height;
         image.mip_offsets = {0};
         image.texels.resize(static_cast<std::size_t>(width) * height);
         for (std::size_t index = 0; index != image.texels.size(); ++index) {
-            const auto channel = [&](const std::size_t component) { return static_cast<float>((static_cast<std::uint16_t>(decoded[index * 8u + component * 2u]) << 8u) | decoded[index * 8u + component * 2u + 1u]) / 65535.0f; };
+            const auto channel = [&](const std::size_t component) { return static_cast<float>((static_cast<std::uint16_t>(decoded_owner.get()[index * 8u + component * 2u]) << 8u) | decoded_owner.get()[index * 8u + component * 2u + 1u]) / 65535.0f; };
             math::Float4 value{channel(0), channel(1), channel(2), channel(3)};
             if (color_space == TextureColorSpace::Srgb) {
                 value.x = srgb_to_linear(value.x);
@@ -370,7 +371,6 @@ namespace spectra::scene {
             }
             image.texels[index] = value;
         }
-        std::free(decoded);
         std::uint32_t previous_width  = image.width;
         std::uint32_t previous_height = image.height;
         std::uint64_t previous_offset{};

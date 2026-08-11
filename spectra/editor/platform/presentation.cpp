@@ -18,12 +18,7 @@ namespace spectra {
     }
 
     VulkanPresentation::~VulkanPresentation() {
-        this->context.frames.defer_destruction([
-            swapchain = std::move(this->presentation.swapchain),
-            views = std::move(this->presentation.views),
-            image_available = std::move(this->presentation.image_available),
-            render_finished = std::move(this->presentation.render_finished)
-        ]() mutable { views.clear(); });
+        this->context.frames.defer_destruction([swapchain = std::move(this->presentation.swapchain), views = std::move(this->presentation.views), image_available = std::move(this->presentation.image_available), render_finished = std::move(this->presentation.render_finished)]() mutable { views.clear(); });
     }
 
     void VulkanPresentation::recreate_swapchain() {
@@ -70,14 +65,15 @@ namespace spectra {
         const vk::Extent2D framebuffer_extent{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
         if (this->presentation.extent != framebuffer_extent) this->recreate_swapchain();
 
-        const FrameContext frame = this->context.frames.begin_frame();
+        const std::uint32_t frame_slot_index = this->context.frames.frame.current_slot_index;
         vk::ResultValue<std::uint32_t> acquired{vk::Result::eSuccess, 0};
         try {
-            acquired = this->presentation.swapchain.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->presentation.image_available[frame.slot_index]);
+            acquired = this->presentation.swapchain.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->presentation.image_available[frame_slot_index]);
         } catch (const vk::OutOfDateKHRError&) {
             this->recreate_swapchain();
             return std::nullopt;
         }
+        const FrameContext frame                = this->context.frames.begin_frame();
         this->presentation.acquired_image_index = acquired.value;
         this->presentation.acquired_suboptimal  = acquired.result == vk::Result::eSuboptimalKHR;
         this->context.frames.enqueue_wait(vk::SemaphoreSubmitInfo{*this->presentation.image_available[frame.slot_index], 0, vk::PipelineStageFlagBits2::eColorAttachmentOutput, 0});

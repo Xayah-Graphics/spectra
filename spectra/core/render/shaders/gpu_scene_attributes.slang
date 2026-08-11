@@ -1,8 +1,10 @@
 module gpu_scene_attributes;
 
-static const uint gpu_geometry_attribute_normal = 1u << 0u;
-static const uint gpu_geometry_attribute_tangent = 1u << 1u;
-static const uint gpu_geometry_attribute_texture_coordinate = 1u << 2u;
+#include "shader_semantics.h"
+
+static const uint gpu_geometry_attribute_normal = SPECTRA_GPU_ATTRIBUTE_NORMAL;
+static const uint gpu_geometry_attribute_tangent = SPECTRA_GPU_ATTRIBUTE_TANGENT;
+static const uint gpu_geometry_attribute_texture_coordinate = SPECTRA_GPU_ATTRIBUTE_TEXTURE_COORDINATE;
 
 struct GpuSceneAttributePushData {
     DescriptorHandle<StructuredBuffer<float3>> positions;

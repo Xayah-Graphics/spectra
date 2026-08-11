@@ -50,7 +50,7 @@ RasterTextureCoordinates raster_map_texture(
         float3(0.0),
         float3(0.0),
     };
-    if (mapping.metadata.x == 0) {
+    if (mapping.metadata.x == mapping_uv) {
         result.st =
             context.texture_coordinates *
                 mapping.parameter_0.xy +
@@ -75,7 +75,7 @@ RasterTextureCoordinates raster_map_texture(
         raster_transform_vector(
             mapping,
             context.position_dy);
-    if (mapping.metadata.x == 1) {
+    if (mapping.metadata.x == mapping_planar) {
         result.st = float2(
             dot(result.point, mapping.parameter_0.xyz) +
                 mapping.parameter_0.w,
@@ -89,11 +89,11 @@ RasterTextureCoordinates raster_map_texture(
             dot(result.point_dy, mapping.parameter_1.xyz));
         return result;
     }
-    if (mapping.metadata.x == 4) return result;
+    if (mapping.metadata.x == mapping_checkerboard_3d) return result;
     const float x2_y2 =
         result.point.x * result.point.x +
         result.point.y * result.point.y;
-    if (mapping.metadata.x == 2) {
+    if (mapping.metadata.x == mapping_spherical) {
         const float radial =
             sqrt(max(x2_y2, 1.0e-20));
         const float length_squared =
@@ -231,7 +231,7 @@ float raster_checkerboard_weight(
         raster_map_texture(
             mapping,
             context);
-    if (mapping.metadata.x == 4) {
+    if (mapping.metadata.x == mapping_checkerboard_3d) {
         const float3 radius =
             1.5 *
             max(
@@ -352,7 +352,6 @@ public float4 evaluate_raster_texture(
     StructuredBuffer<RasterBilerpTexture> bilerps =
         bindings.bilerp_textures;
     float4 values[32];
-    uint value_count = 0;
     const RasterTextureHeader root =
         headers[handle];
     [loop]
@@ -364,12 +363,12 @@ public float4 evaluate_raster_texture(
                 root.program.x +
                 program_index];
         float4 value = float4(0.0);
-        if (header.metadata.x == 0)
+        if (header.metadata.x == texture_constant)
             value =
                 constants[
                     header.metadata.y]
                     .value;
-        else if (header.metadata.x == 1) {
+        else if (header.metadata.x == texture_image) {
             const RasterImageTexture texture =
                 images[
                     header.metadata.y];
@@ -430,7 +429,7 @@ public float4 evaluate_raster_texture(
                 value.w = sampled.w;
             }
         }
-        else if (header.metadata.x == 2) {
+        else if (header.metadata.x == texture_checkerboard) {
             const RasterCompositeTexture texture =
                 checkerboards[
                     header.metadata.y];
@@ -440,46 +439,39 @@ public float4 evaluate_raster_texture(
                         texture.data.z],
                     context);
             const float4 second =
-                values[
-                    --value_count];
+                values[header.program.y];
             const float4 first =
-                values[
-                    --value_count];
+                values[header.program.x];
             value =
                 lerp(
                     first,
                     second,
                     amount);
         }
-        else if (header.metadata.x == 3) {
+        else if (header.metadata.x == texture_scale) {
             const float4 second =
-                values[
-                    --value_count];
+                values[header.program.y];
             const float4 first =
-                values[
-                    --value_count];
+                values[header.program.x];
             value =
                 first *
                 second;
         }
-        else if (header.metadata.x == 4) {
+        else if (header.metadata.x == texture_mix) {
             const float amount =
-                values[
-                    --value_count]
+                values[header.reserved.x]
                     .x;
             const float4 second =
-                values[
-                    --value_count];
+                values[header.program.y];
             const float4 first =
-                values[
-                    --value_count];
+                values[header.program.x];
             value =
                 lerp(
                     first,
                     second,
                     amount);
         }
-        else if (header.metadata.x == 5) {
+        else if (header.metadata.x == texture_direction_mix) {
             const RasterDirectionMixTexture texture =
                 direction_mixes[
                     header.metadata.y];
@@ -489,11 +481,9 @@ public float4 evaluate_raster_texture(
                         context.normal,
                         texture.direction.xyz));
             const float4 second =
-                values[
-                    --value_count];
+                values[header.program.y];
             const float4 first =
-                values[
-                    --value_count];
+                values[header.program.x];
             value =
                 amount *
                     first +
@@ -539,10 +529,10 @@ public float4 evaluate_raster_texture(
                     st.y *
                     texture.values[3];
         }
-        values[value_count++] =
+        values[program_index] =
             value;
     }
-    return values[0];
+    return values[root.program.y - 1];
 }
 
 [noinline]

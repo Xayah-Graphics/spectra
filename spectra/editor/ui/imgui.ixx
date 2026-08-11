@@ -54,8 +54,8 @@ namespace spectra {
 
     private:
         void initialize_renderer();
-        void update_texture(ImTextureData& texture);
+        void update_texture(ImTextureData& texture, const vk::raii::CommandBuffer& command_buffer);
         void destroy_texture(ImTextureData& texture);
-        void setup_render_state(const vk::raii::CommandBuffer& command_buffer, const ImDrawData& draw_data, const FrameResources& frame, vk::Extent2D extent);
+        void setup_render_state(const vk::raii::CommandBuffer& command_buffer, vk::Extent2D extent);
     };
 } // namespace spectra

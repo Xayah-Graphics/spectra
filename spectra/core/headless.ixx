@@ -14,10 +14,10 @@ namespace spectra {
         std::optional<std::filesystem::path> gbuffer_output_path{};
         std::optional<std::filesystem::path> telemetry_output_path{};
         std::optional<std::uint64_t> outlined_instance{};
-        std::uint64_t simulation_step{std::numeric_limits<std::uint64_t>::max()};
-        double simulation_seconds{-1.0};
-        std::uint64_t presentation_frame{std::numeric_limits<std::uint64_t>::max()};
-        double presentation_seconds{-1.0};
+        std::optional<std::uint64_t> simulation_step{};
+        std::optional<double> simulation_seconds{};
+        std::optional<std::uint64_t> presentation_frame{};
+        std::optional<double> presentation_seconds{};
         std::uint32_t axes_plane{2};
         bool axes{};
     };

@@ -5,16 +5,10 @@ import vulkan;
 
 namespace spectra {
     namespace {
-        [[nodiscard]] constexpr std::array<const char*, 13> required_device_extensions() noexcept {
+        [[nodiscard]] constexpr std::array<const char*, 7> required_device_extensions() noexcept {
             return {
                 vk::EXTDescriptorHeapExtensionName,
                 vk::KHRShaderUntypedPointersExtensionName,
-                vk::KHRAccelerationStructureExtensionName,
-                vk::KHRDeferredHostOperationsExtensionName,
-                vk::KHRRayTracingPipelineExtensionName,
-                vk::KHRRayTracingMaintenance1ExtensionName,
-                vk::KHRRayTracingPositionFetchExtensionName,
-                vk::KHRRayQueryExtensionName,
                 vk::EXTShaderObjectExtensionName,
                 vk::EXTMeshShaderExtensionName,
                 vk::EXTShaderAtomicFloatExtensionName,
@@ -25,6 +19,17 @@ namespace spectra {
                 vk::KHRExternalMemoryFdExtensionName,
                 vk::KHRExternalSemaphoreFdExtensionName,
 #endif
+            };
+        }
+
+        [[nodiscard]] constexpr std::array<const char*, 6> ray_tracing_device_extensions() noexcept {
+            return {
+                vk::KHRAccelerationStructureExtensionName,
+                vk::KHRDeferredHostOperationsExtensionName,
+                vk::KHRRayTracingPipelineExtensionName,
+                vk::KHRRayTracingMaintenance1ExtensionName,
+                vk::KHRRayTracingPositionFetchExtensionName,
+                vk::KHRRayQueryExtensionName,
             };
         }
     } // namespace
@@ -41,10 +46,12 @@ namespace spectra {
     }
 
     void VulkanGraphics::select_physical_device() {
-        constexpr std::array base_extensions = required_device_extensions();
+        constexpr std::array base_extensions        = required_device_extensions();
+        constexpr std::array ray_tracing_extensions = ray_tracing_device_extensions();
+        std::uint32_t selected_score{};
         for (const vk::raii::PhysicalDevice& candidate : this->context.instance.instance.enumeratePhysicalDevices()) {
             const vk::PhysicalDeviceProperties candidate_properties = candidate.getProperties();
-            if (candidate_properties.apiVersion < vk::ApiVersion14 || candidate_properties.deviceType != vk::PhysicalDeviceType::eDiscreteGpu) continue;
+            if (candidate_properties.apiVersion < vk::ApiVersion14) continue;
             const std::vector<vk::ExtensionProperties> available_extensions = candidate.enumerateDeviceExtensionProperties();
             if (!std::ranges::all_of(base_extensions, [&available_extensions](const char* required) { return std::ranges::contains(available_extensions, std::string_view{required}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); })) continue;
             if (this->context.surface && !std::ranges::contains(available_extensions, std::string_view{vk::KHRSwapchainExtensionName}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; })) continue;
@@ -56,24 +63,21 @@ namespace spectra {
             if (!features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 || !features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) continue;
             if (!features.get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>().descriptorHeap) continue;
             if (!features.get<vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR>().shaderUntypedPointers) continue;
-            if (!features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure) continue;
-            if (!features.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline) continue;
-            if (!features.get<vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR>().rayTracingMaintenance1 || !features.get<vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR>().rayTracingPipelineTraceRaysIndirect2) continue;
-            if (!features.get<vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR>().rayTracingPositionFetch) continue;
-            if (!features.get<vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery) continue;
             if (!features.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject) continue;
             if (!features.get<vk::PhysicalDeviceMeshShaderFeaturesEXT>().meshShader) continue;
             if (!features.get<vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT>().shaderBufferFloat32AtomicAdd) continue;
+            const bool ray_tracing_extensions_available = std::ranges::all_of(ray_tracing_extensions, [&available_extensions](const char* required) { return std::ranges::contains(available_extensions, std::string_view{required}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); });
+            const bool ray_tracing_available            = ray_tracing_extensions_available && features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure && features.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline && features.get<vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR>().rayTracingMaintenance1 && features.get<vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR>().rayTracingPipelineTraceRaysIndirect2 && features.get<vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR>().rayTracingPositionFetch && features.get<vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery;
 
 #if defined(_WIN32)
-            constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+            constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle       = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
             constexpr vk::ExternalSemaphoreHandleTypeFlagBits external_semaphore_handle = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
 #else
-            constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+            constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle       = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
             constexpr vk::ExternalSemaphoreHandleTypeFlagBits external_semaphore_handle = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
 #endif
             constexpr vk::BufferUsageFlags external_buffer_usage = vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress;
-            const vk::ExternalMemoryProperties external_memory = candidate.getExternalBufferProperties(vk::PhysicalDeviceExternalBufferInfo{{}, external_buffer_usage, external_memory_handle}).externalMemoryProperties;
+            const vk::ExternalMemoryProperties external_memory   = candidate.getExternalBufferProperties(vk::PhysicalDeviceExternalBufferInfo{{}, external_buffer_usage, external_memory_handle}).externalMemoryProperties;
             if (!(external_memory.externalMemoryFeatures & vk::ExternalMemoryFeatureFlagBits::eExportable) || !(external_memory.compatibleHandleTypes & external_memory_handle)) continue;
             const vk::SemaphoreTypeCreateInfo timeline_type{vk::SemaphoreType::eTimeline, 0};
             const vk::ExternalSemaphoreProperties external_semaphore = candidate.getExternalSemaphoreProperties(vk::PhysicalDeviceExternalSemaphoreInfo{external_semaphore_handle, &timeline_type});
@@ -88,50 +92,68 @@ namespace spectra {
                 break;
             }
             if (graphics_family_index == queue_families.size()) continue;
-            this->physical_device    = candidate;
-            this->queue_family_index = graphics_family_index;
-            break;
+            const std::uint32_t score = (ray_tracing_available ? 4u : 0u) + (candidate_properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu ? 2u : 1u);
+            if (score <= selected_score) continue;
+            selected_score              = score;
+            this->physical_device       = candidate;
+            this->queue_family_index    = graphics_family_index;
+            this->ray_tracing_supported = ray_tracing_available;
         }
-        if (!*this->physical_device) throw std::runtime_error("Spectra requires a discrete Vulkan 1.4 GPU with Descriptor Heap, Shader Untyped Pointers, Shader Object, Mesh Shader, and the complete KHR ray tracing pipeline profile");
+        if (!*this->physical_device) throw std::runtime_error("Spectra requires a Vulkan 1.4 GPU with Descriptor Heap, Shader Untyped Pointers, Shader Object, Mesh Shader, and shader buffer float atomics");
     }
 
     void VulkanGraphics::create_device() {
-        vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorHeapFeaturesEXT, vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR, vk::PhysicalDeviceAccelerationStructureFeaturesKHR, vk::PhysicalDeviceRayTracingPipelineFeaturesKHR, vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR, vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR, vk::PhysicalDeviceRayQueryFeaturesKHR, vk::PhysicalDeviceShaderObjectFeaturesEXT, vk::PhysicalDeviceMeshShaderFeaturesEXT, vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT> enabled_features{};
-        enabled_features.get<vk::PhysicalDeviceFeatures2>().features.shaderInt64                                         = vk::True;
-        enabled_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy                                  = vk::True;
-        enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters                                  = vk::True;
-        enabled_features.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress                                   = vk::True;
-        enabled_features.get<vk::PhysicalDeviceVulkan12Features>().scalarBlockLayout                                     = vk::True;
-        enabled_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore                                    = vk::True;
-        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2                                      = vk::True;
-        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering                                      = vk::True;
-        enabled_features.get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>().descriptorHeap                               = vk::True;
-        enabled_features.get<vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR>().shaderUntypedPointers                 = vk::True;
-        enabled_features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure                 = vk::True;
-        enabled_features.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline                       = vk::True;
-        enabled_features.get<vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR>().rayTracingMaintenance1               = vk::True;
-        enabled_features.get<vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR>().rayTracingPipelineTraceRaysIndirect2 = vk::True;
-        enabled_features.get<vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR>().rayTracingPositionFetch             = vk::True;
-        enabled_features.get<vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery                                           = vk::True;
-        enabled_features.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject                                   = vk::True;
-        enabled_features.get<vk::PhysicalDeviceMeshShaderFeaturesEXT>().meshShader                                       = vk::True;
-        enabled_features.get<vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT>().shaderBufferFloat32AtomicAdd              = vk::True;
-
         constexpr std::array base_extensions = required_device_extensions();
         std::vector<const char*> enabled_extensions{base_extensions.begin(), base_extensions.end()};
+        if (this->ray_tracing_supported) {
+            constexpr std::array ray_tracing_extensions = ray_tracing_device_extensions();
+            enabled_extensions.insert(enabled_extensions.end(), ray_tracing_extensions.begin(), ray_tracing_extensions.end());
+        }
         if (this->context.surface) enabled_extensions.push_back(vk::KHRSwapchainExtensionName);
         constexpr std::array queue_priorities{1.0f};
         const vk::DeviceQueueCreateInfo queue_create_info{{}, this->queue_family_index, 1, queue_priorities.data()};
-        this->device = vk::raii::Device{this->physical_device, vk::DeviceCreateInfo{{}, 1, &queue_create_info, 0, nullptr, static_cast<std::uint32_t>(enabled_extensions.size()), enabled_extensions.data(), nullptr, &enabled_features.get<vk::PhysicalDeviceFeatures2>()}};
-        this->queue  = vk::raii::Queue{this->device, this->queue_family_index, 0};
+        const auto enable_base = [](auto& features) {
+            features.template get<vk::PhysicalDeviceFeatures2>().features.shaderInt64                            = vk::True;
+            features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy                      = vk::True;
+            features.template get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters                     = vk::True;
+            features.template get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress                      = vk::True;
+            features.template get<vk::PhysicalDeviceVulkan12Features>().scalarBlockLayout                        = vk::True;
+            features.template get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore                        = vk::True;
+            features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2                         = vk::True;
+            features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering                         = vk::True;
+            features.template get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>().descriptorHeap                  = vk::True;
+            features.template get<vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR>().shaderUntypedPointers    = vk::True;
+            features.template get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject                      = vk::True;
+            features.template get<vk::PhysicalDeviceMeshShaderFeaturesEXT>().meshShader                          = vk::True;
+            features.template get<vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT>().shaderBufferFloat32AtomicAdd = vk::True;
+        };
+        if (this->ray_tracing_supported) {
+            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorHeapFeaturesEXT, vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR, vk::PhysicalDeviceAccelerationStructureFeaturesKHR, vk::PhysicalDeviceRayTracingPipelineFeaturesKHR, vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR, vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR, vk::PhysicalDeviceRayQueryFeaturesKHR, vk::PhysicalDeviceShaderObjectFeaturesEXT, vk::PhysicalDeviceMeshShaderFeaturesEXT, vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT> features{};
+            enable_base(features);
+            features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure                 = vk::True;
+            features.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline                       = vk::True;
+            features.get<vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR>().rayTracingMaintenance1               = vk::True;
+            features.get<vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR>().rayTracingPipelineTraceRaysIndirect2 = vk::True;
+            features.get<vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR>().rayTracingPositionFetch             = vk::True;
+            features.get<vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery                                           = vk::True;
+            this->device                                                                                             = vk::raii::Device{this->physical_device, vk::DeviceCreateInfo{{}, 1, &queue_create_info, 0, nullptr, static_cast<std::uint32_t>(enabled_extensions.size()), enabled_extensions.data(), nullptr, &features.get<vk::PhysicalDeviceFeatures2>()}};
+        } else {
+            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorHeapFeaturesEXT, vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR, vk::PhysicalDeviceShaderObjectFeaturesEXT, vk::PhysicalDeviceMeshShaderFeaturesEXT, vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT> features{};
+            enable_base(features);
+            this->device = vk::raii::Device{this->physical_device, vk::DeviceCreateInfo{{}, 1, &queue_create_info, 0, nullptr, static_cast<std::uint32_t>(enabled_extensions.size()), enabled_extensions.data(), nullptr, &features.get<vk::PhysicalDeviceFeatures2>()}};
+        }
+        this->queue = vk::raii::Queue{this->device, this->queue_family_index, 0};
 
-        const auto properties                                 = this->physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties, vk::PhysicalDeviceDescriptorHeapPropertiesEXT, vk::PhysicalDeviceAccelerationStructurePropertiesKHR, vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
+        const auto properties                                 = this->physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties, vk::PhysicalDeviceDescriptorHeapPropertiesEXT>();
         this->descriptor_heap_properties                      = properties.get<vk::PhysicalDeviceDescriptorHeapPropertiesEXT>();
         const vk::PhysicalDeviceIDProperties& device_identity = properties.get<vk::PhysicalDeviceIDProperties>();
         std::ranges::copy(device_identity.deviceUUID, this->identity.uuid.begin());
         std::ranges::copy(device_identity.deviceLUID, this->identity.luid.begin());
-        this->identity.node_mask                = device_identity.deviceNodeMask;
-        this->acceleration_structure_properties = properties.get<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>();
-        this->ray_tracing_properties            = properties.get<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
+        this->identity.node_mask = device_identity.deviceNodeMask;
+        if (this->ray_tracing_supported) {
+            const auto ray_tracing_properties       = this->physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceAccelerationStructurePropertiesKHR, vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
+            this->acceleration_structure_properties = ray_tracing_properties.get<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>();
+            this->ray_tracing_properties            = ray_tracing_properties.get<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
+        }
     }
 } // namespace spectra

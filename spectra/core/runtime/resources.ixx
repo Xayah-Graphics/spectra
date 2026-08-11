@@ -67,6 +67,7 @@ namespace spectra {
         vk::raii::ImageView view{nullptr};
         vk::Extent2D extent{};
         vk::Format format{};
+        vk::ImageAspectFlags aspect{};
         std::uint32_t mip_levels{1};
 
         GpuImage() = default;

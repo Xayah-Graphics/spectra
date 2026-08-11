@@ -31,8 +31,9 @@ namespace spectra {
         if (id == rasterizer_descriptor.id) {
             if (!this->backends.rasterizer) this->backends.rasterizer.emplace(this->context.runtime, this->context.gpu_scene, scene, this->context.shader_directory);
             this->backends.rasterizer->set_display_mode(this->backends.raster_display_mode);
-            this->backends.active                            = std::ref(*this->backends.rasterizer);
+            this->backends.active = std::ref(*this->backends.rasterizer);
         } else if (id == pathtracer_descriptor.id) {
+            if (!this->context.runtime.graphics.ray_tracing_supported) throw std::runtime_error("The Path Tracer requires the complete Vulkan KHR ray-tracing profile");
             if (!this->pathtracer_resources) this->pathtracer_resources.emplace(this->context.runtime, this->context.pathtracer_directory);
             if (!this->backends.pathtracer) this->backends.pathtracer.emplace(this->context.runtime, this->context.gpu_scene, *this->pathtracer_resources, scene);
             this->backends.active.reset();
@@ -83,7 +84,7 @@ namespace spectra {
                 if constexpr (std::same_as<std::remove_cvref_t<decltype(renderer)>, Rasterizer>)
                     return {renderer.renderer.depth_image, renderer.renderer.sampled_depth_descriptor, renderer.renderer.depth_layout};
                 else
-                    return {renderer.session.depth_image, renderer.session.sampled_depth_descriptor, renderer.session.depth_layout};
+                    return renderer.depth_buffer();
             },
             *this->backends.active);
     }

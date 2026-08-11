@@ -10,439 +10,12 @@ module;
 #include <kdlpp.h>
 
 module spectra.scene.format;
-
-import spectra.scene.content_hash;
-import spectra.scene.asset_import;
+import spectra.scene.package;
 import std;
+
 
 namespace spectra::scene {
     namespace {
-        struct GeometryAssetHeader {
-            std::array<char, 8> magic{'S', 'P', 'G', 'E', 'O', 'M', '0', '3'};
-            std::uint32_t version{3};
-            std::uint32_t reserved{};
-            std::uint64_t position_count{};
-            std::uint64_t normal_count{};
-            std::uint64_t tangent_count{};
-            std::uint64_t texture_coordinate_count{};
-            std::uint64_t index_count{};
-        };
-
-        struct SphereSetAssetHeader {
-            std::array<char, 8> magic{'S', 'P', 'S', 'P', 'H', '0', '0', '1'};
-            std::uint32_t version{1};
-            std::uint32_t reserved{};
-            std::uint64_t position_count{};
-            std::uint64_t radius_count{};
-        };
-
-        enum class VolumeAssetKind : std::uint32_t {
-            DensityGrid,
-            RgbGrid,
-            NanoVdb,
-        };
-
-        struct VolumeAssetHeader {
-            std::array<char, 8> magic{'S', 'P', 'V', 'O', 'L', '0', '0', '2'};
-            std::uint32_t version{2};
-            VolumeAssetKind kind{};
-            math::UInt3 resolution{};
-            std::uint32_t reserved{};
-            std::uint64_t primary_element_count{};
-            std::uint64_t secondary_element_count{};
-            std::uint64_t tertiary_element_count{};
-        };
-
-        struct TextureAssetHeader {
-            std::array<char, 8> magic{'S', 'P', 'T', 'E', 'X', '0', '0', '1'};
-            std::uint32_t version{1};
-            std::uint32_t mip_count{};
-            std::uint32_t width{};
-            std::uint32_t height{};
-            std::uint64_t texel_count{};
-        };
-
-        static_assert(sizeof(math::Float2) == sizeof(float) * 2);
-        static_assert(sizeof(math::Float3) == sizeof(float) * 3);
-        static_assert(sizeof(GeometryAssetHeader) == 56);
-        static_assert(sizeof(SphereSetAssetHeader) == 32);
-        static_assert(sizeof(VolumeAssetHeader) == 56);
-        static_assert(sizeof(TextureAssetHeader) == 32);
-
-        [[nodiscard]] std::uint64_t volume_sample_count(const math::UInt3 resolution) {
-            if (resolution.x == 0 || resolution.y == 0 || resolution.z == 0) throw std::runtime_error("Spectra volume resolution must be positive");
-            const std::uint64_t xy = static_cast<std::uint64_t>(resolution.x) * resolution.y;
-            if (xy > std::numeric_limits<std::uint64_t>::max() / resolution.z) throw std::runtime_error("Spectra volume sample count overflows uint64");
-            return xy * resolution.z;
-        }
-
-        [[nodiscard]] std::filesystem::path asset_path(const std::filesystem::path& package_root, const AssetReference& reference, const std::string_view extension) {
-            return package_root / "assets" / std::format("{}{}", reference.content_hash, extension);
-        }
-
-        [[nodiscard]] std::filesystem::path source_path(const std::filesystem::path& package_root, const SourceReference& reference, const std::string_view extension) {
-            const std::filesystem::path relative = std::filesystem::path{reference.path}.lexically_normal();
-            if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") throw std::runtime_error(std::format("Spectra source path must stay inside the scene package: {}", reference.path));
-            if (relative.extension().generic_string() != extension) throw std::runtime_error(std::format("Spectra source {} must use the {} format", reference.path, extension));
-            return package_root / relative;
-        }
-
-        void verify_asset(const std::filesystem::path& package_root, const AssetReference& reference, const std::string_view extension) {
-            const std::filesystem::path path = asset_path(package_root, reference, extension);
-            if (content_hash::sha256_file(path) != reference.content_hash) throw std::runtime_error(std::format("Spectra asset SHA-256 mismatch: {}", path.string()));
-        }
-
-        template <class Value>
-        void write_values(std::ofstream& stream, const std::span<const Value> values) {
-            const std::span<const std::byte> bytes = std::as_bytes(values);
-            stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-        }
-
-        template <class Value>
-        void read_values(std::ifstream& stream, std::vector<Value>& values) {
-            const std::span<std::byte> bytes = std::as_writable_bytes(std::span{values});
-            stream.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-        }
-
-        [[nodiscard]] AssetReference write_geometry_asset(const TriangleMeshGeometry& mesh, const std::filesystem::path& package_root) {
-            const GeometryAssetHeader header{
-                .position_count           = mesh.positions.size(),
-                .normal_count             = mesh.normals.size(),
-                .tangent_count            = mesh.tangents.size(),
-                .texture_coordinate_count = mesh.texture_coordinates.size(),
-                .index_count              = mesh.indices.size(),
-            };
-            const std::array blocks{
-                std::as_bytes(std::span{&header, 1}),
-                std::as_bytes(std::span{mesh.positions}),
-                std::as_bytes(std::span{mesh.normals}),
-                std::as_bytes(std::span{mesh.tangents}),
-                std::as_bytes(std::span{mesh.texture_coordinates}),
-                std::as_bytes(std::span{mesh.indices}),
-            };
-            AssetReference reference{
-                .content_hash = content_hash::sha256_hex(blocks),
-            };
-            const std::filesystem::path path = asset_path(package_root, reference, ".geometry");
-            if (std::filesystem::exists(path)) {
-                verify_asset(package_root, reference, ".geometry");
-                return reference;
-            }
-            std::filesystem::create_directories(path.parent_path());
-            std::ofstream stream{path, std::ios::binary | std::ios::trunc};
-            if (!stream) throw std::runtime_error(std::format("Failed to create Spectra geometry asset: {}", path.string()));
-            write_values(stream, std::span{&header, 1});
-            write_values(stream, std::span{mesh.positions});
-            write_values(stream, std::span{mesh.normals});
-            write_values(stream, std::span{mesh.tangents});
-            write_values(stream, std::span{mesh.texture_coordinates});
-            write_values(stream, std::span{mesh.indices});
-            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra geometry asset: {}", path.string()));
-            return reference;
-        }
-
-        void load_geometry_asset(TriangleMeshGeometry& mesh, const std::filesystem::path& package_root) {
-            verify_asset(package_root, mesh.asset, ".geometry");
-            const std::filesystem::path path = asset_path(package_root, mesh.asset, ".geometry");
-            std::ifstream stream{path, std::ios::binary};
-            GeometryAssetHeader header{};
-            stream.read(reinterpret_cast<char*>(&header), sizeof(header));
-            if (!stream || header.magic != GeometryAssetHeader{}.magic || header.version != 3 || header.reserved != 0) throw std::runtime_error(std::format("Invalid Spectra geometry asset header: {}", path.string()));
-            const std::uint64_t expected_size = sizeof(header) + header.position_count * sizeof(math::Float3) + header.normal_count * sizeof(math::Float3) + header.tangent_count * sizeof(math::Float3) + header.texture_coordinate_count * sizeof(math::Float2) + header.index_count * sizeof(std::uint32_t);
-            if (expected_size != std::filesystem::file_size(path)) throw std::runtime_error(std::format("Invalid Spectra geometry asset payload size: {}", path.string()));
-            mesh.positions.resize(header.position_count);
-            mesh.normals.resize(header.normal_count);
-            mesh.tangents.resize(header.tangent_count);
-            mesh.texture_coordinates.resize(header.texture_coordinate_count);
-            mesh.indices.resize(header.index_count);
-            read_values(stream, mesh.positions);
-            read_values(stream, mesh.normals);
-            read_values(stream, mesh.tangents);
-            read_values(stream, mesh.texture_coordinates);
-            read_values(stream, mesh.indices);
-            if (!stream) throw std::runtime_error(std::format("Failed to read Spectra geometry asset payload: {}", path.string()));
-        }
-
-        [[nodiscard]] AssetReference write_sphere_set_asset(const SphereSet& spheres, const std::filesystem::path& package_root) {
-            if (spheres.radii.size() != spheres.positions.size()) throw std::runtime_error("Spectra SphereSet radii do not match the sphere count");
-            const SphereSetAssetHeader header{
-                .position_count = spheres.positions.size(),
-                .radius_count   = spheres.radii.size(),
-            };
-            const std::array blocks{
-                std::as_bytes(std::span{&header, 1}),
-                std::as_bytes(std::span{spheres.positions}),
-                std::as_bytes(std::span{spheres.radii}),
-            };
-            AssetReference reference{
-                .content_hash = content_hash::sha256_hex(blocks),
-            };
-            const std::filesystem::path path = asset_path(package_root, reference, ".spheres");
-            if (std::filesystem::exists(path)) {
-                verify_asset(package_root, reference, ".spheres");
-                return reference;
-            }
-            std::filesystem::create_directories(path.parent_path());
-            std::ofstream stream{path, std::ios::binary | std::ios::trunc};
-            if (!stream) throw std::runtime_error(std::format("Failed to create Spectra SphereSet asset: {}", path.string()));
-            write_values(stream, std::span{&header, 1});
-            write_values(stream, std::span{spheres.positions});
-            write_values(stream, std::span{spheres.radii});
-            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra SphereSet asset: {}", path.string()));
-            return reference;
-        }
-
-        void load_sphere_set_asset(SphereSet& spheres, const std::filesystem::path& package_root) {
-            verify_asset(package_root, spheres.asset, ".spheres");
-            const std::filesystem::path path = asset_path(package_root, spheres.asset, ".spheres");
-            std::ifstream stream{path, std::ios::binary};
-            SphereSetAssetHeader header{};
-            stream.read(reinterpret_cast<char*>(&header), sizeof(header));
-            if (!stream || header.magic != SphereSetAssetHeader{}.magic || header.version != 1 || header.reserved != 0) throw std::runtime_error(std::format("Invalid Spectra SphereSet asset header: {}", path.string()));
-            if (header.radius_count != header.position_count) throw std::runtime_error(std::format("Invalid Spectra SphereSet attribute counts: {}", path.string()));
-            const std::uint64_t expected_size = sizeof(header) + header.position_count * sizeof(math::Float3) + header.radius_count * sizeof(float);
-            if (expected_size != std::filesystem::file_size(path)) throw std::runtime_error(std::format("Invalid Spectra SphereSet asset payload size: {}", path.string()));
-            spheres.positions.resize(header.position_count);
-            spheres.radii.resize(header.radius_count);
-            read_values(stream, spheres.positions);
-            read_values(stream, spheres.radii);
-            if (!stream) throw std::runtime_error(std::format("Failed to read Spectra SphereSet asset payload: {}", path.string()));
-        }
-
-        template <typename... Element>
-        [[nodiscard]] AssetReference write_volume_asset_payload(const VolumeAssetHeader& header, const std::filesystem::path& package_root, const std::span<const Element>... payload) {
-            const std::array blocks{std::as_bytes(std::span{&header, 1}), std::as_bytes(payload)...};
-            AssetReference reference{
-                .content_hash = content_hash::sha256_hex(blocks),
-            };
-            const std::filesystem::path path = asset_path(package_root, reference, ".volume");
-            if (std::filesystem::exists(path)) {
-                verify_asset(package_root, reference, ".volume");
-                return reference;
-            }
-            std::filesystem::create_directories(path.parent_path());
-            std::ofstream stream{path, std::ios::binary | std::ios::trunc};
-            if (!stream) throw std::runtime_error(std::format("Failed to create Spectra volume asset: {}", path.string()));
-            write_values(stream, std::span{&header, 1});
-            (write_values(stream, payload), ...);
-            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra volume asset: {}", path.string()));
-            return reference;
-        }
-
-        [[nodiscard]] AssetReference write_volume_asset(const DensityGridVolume& volume, const std::filesystem::path& package_root) {
-            const std::uint64_t sample_count = volume_sample_count(volume.resolution);
-            if (volume.density.size() != sample_count || (!volume.temperature.empty() && volume.temperature.size() != sample_count) || (!volume.emission_scale.empty() && volume.emission_scale.size() != sample_count)) throw std::runtime_error("Spectra density-grid payload does not match its resolution");
-            const VolumeAssetHeader header{
-                .kind                    = VolumeAssetKind::DensityGrid,
-                .resolution              = volume.resolution,
-                .primary_element_count   = volume.density.size(),
-                .secondary_element_count = volume.temperature.size(),
-                .tertiary_element_count  = volume.emission_scale.size(),
-            };
-            return write_volume_asset_payload(header, package_root, std::span<const float>{volume.density}, std::span<const float>{volume.temperature}, std::span<const float>{volume.emission_scale});
-        }
-
-        [[nodiscard]] AssetReference write_volume_asset(const RgbGridVolume& volume, const std::filesystem::path& package_root) {
-            const std::uint64_t sample_count = volume_sample_count(volume.resolution);
-            if ((volume.sigma_a.empty() && volume.sigma_s.empty()) || (!volume.sigma_a.empty() && volume.sigma_a.size() != sample_count) || (!volume.sigma_s.empty() && volume.sigma_s.size() != sample_count) || (!volume.emission.empty() && (volume.sigma_a.empty() || volume.emission.size() != sample_count))) throw std::runtime_error("Spectra RGB-grid payload does not match its resolution");
-            const VolumeAssetHeader header{
-                .kind                    = VolumeAssetKind::RgbGrid,
-                .resolution              = volume.resolution,
-                .primary_element_count   = volume.sigma_a.size(),
-                .secondary_element_count = volume.sigma_s.size(),
-                .tertiary_element_count  = volume.emission.size(),
-            };
-            return write_volume_asset_payload(header, package_root, std::span<const math::Float3>{volume.sigma_a}, std::span<const math::Float3>{volume.sigma_s}, std::span<const math::Float3>{volume.emission});
-        }
-
-        [[nodiscard]] AssetReference write_volume_asset(const NanoVdbVolume& volume, const std::filesystem::path& package_root) {
-            const std::uint64_t majorant_count = volume_sample_count(volume.majorant_resolution);
-            if (volume.density_data.empty() || volume.majorant.size() != majorant_count) throw std::runtime_error("Spectra NanoVDB payload and majorant grid are required");
-            const VolumeAssetHeader header{
-                .kind                    = VolumeAssetKind::NanoVdb,
-                .resolution              = volume.majorant_resolution,
-                .primary_element_count   = volume.density_data.size(),
-                .secondary_element_count = volume.temperature_data.size(),
-                .tertiary_element_count  = volume.majorant.size(),
-            };
-            return write_volume_asset_payload(header, package_root, std::span<const std::uint32_t>{volume.density_data}, std::span<const std::uint32_t>{volume.temperature_data}, std::span<const float>{volume.majorant});
-        }
-
-        [[nodiscard]] AssetReference write_texture_asset(const ImageTexture& texture, const std::filesystem::path& package_root) {
-            if (texture.width == 0 || texture.height == 0 || texture.mip_offsets.empty()) throw std::runtime_error("Image Texture dimensions and mip offsets are required");
-            std::uint32_t width  = texture.width;
-            std::uint32_t height = texture.height;
-            std::uint64_t expected_texels{};
-            for (const std::uint64_t offset : texture.mip_offsets) {
-                if (offset != expected_texels) throw std::runtime_error("Image Texture mip offsets must be tightly packed");
-                expected_texels += static_cast<std::uint64_t>(width) * height;
-                width  = std::max(1u, width / 2u);
-                height = std::max(1u, height / 2u);
-            }
-            if (expected_texels != texture.texels.size() || texture.mip_offsets.size() > std::bit_width(std::max(texture.width, texture.height))) throw std::runtime_error("Image Texture mip pyramid is invalid");
-            const TextureAssetHeader header{
-                .mip_count   = static_cast<std::uint32_t>(texture.mip_offsets.size()),
-                .width       = texture.width,
-                .height      = texture.height,
-                .texel_count = texture.texels.size(),
-            };
-            const std::array blocks{
-                std::as_bytes(std::span{&header, 1}),
-                std::as_bytes(std::span{texture.texels}),
-            };
-            AssetReference reference{
-                .content_hash = content_hash::sha256_hex(blocks),
-            };
-            const std::filesystem::path path = asset_path(package_root, reference, ".texture");
-            if (std::filesystem::exists(path)) {
-                verify_asset(package_root, reference, ".texture");
-                return reference;
-            }
-            std::filesystem::create_directories(path.parent_path());
-            std::ofstream stream{path, std::ios::binary | std::ios::trunc};
-            if (!stream) throw std::runtime_error(std::format("Failed to create Spectra texture asset: {}", path.string()));
-            write_values(stream, std::span{&header, 1});
-            write_values(stream, std::span{texture.texels});
-            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra texture asset: {}", path.string()));
-            return reference;
-        }
-
-        [[nodiscard]] VolumeAssetHeader read_volume_asset_header(const AssetReference& reference, const std::filesystem::path& package_root, std::ifstream& stream) {
-            verify_asset(package_root, reference, ".volume");
-            const std::filesystem::path path = asset_path(package_root, reference, ".volume");
-            stream.open(path, std::ios::binary);
-            VolumeAssetHeader header{};
-            stream.read(reinterpret_cast<char*>(&header), sizeof(header));
-            if (!stream || header.magic != VolumeAssetHeader{}.magic || header.version != 2 || header.reserved != 0) throw std::runtime_error(std::format("Invalid Spectra volume asset header: {}", path.string()));
-            return header;
-        }
-
-        void load_volume_asset(DensityGridVolume& volume, const std::filesystem::path& package_root) {
-            std::ifstream stream{};
-            const VolumeAssetHeader header = read_volume_asset_header(volume.asset, package_root, stream);
-            if (header.kind != VolumeAssetKind::DensityGrid || header.resolution != volume.resolution) throw std::runtime_error("Spectra density-grid volume asset metadata is inconsistent");
-            const std::uint64_t sample_count = volume_sample_count(header.resolution);
-            if (header.primary_element_count != sample_count || (header.secondary_element_count != 0 && header.secondary_element_count != sample_count) || (header.tertiary_element_count != 0 && header.tertiary_element_count != sample_count)) throw std::runtime_error("Invalid Spectra density-grid volume asset sample counts");
-            const std::uint64_t expected_size = sizeof(header) + (header.primary_element_count + header.secondary_element_count + header.tertiary_element_count) * sizeof(float);
-            if (expected_size != std::filesystem::file_size(asset_path(package_root, volume.asset, ".volume"))) throw std::runtime_error("Invalid Spectra density-grid volume asset payload size");
-            volume.density.resize(header.primary_element_count);
-            volume.temperature.resize(header.secondary_element_count);
-            volume.emission_scale.resize(header.tertiary_element_count);
-            read_values(stream, volume.density);
-            read_values(stream, volume.temperature);
-            read_values(stream, volume.emission_scale);
-            if (!stream) throw std::runtime_error("Failed to read Spectra density-grid volume asset payload");
-        }
-
-        void load_volume_asset(RgbGridVolume& volume, const std::filesystem::path& package_root) {
-            std::ifstream stream{};
-            const VolumeAssetHeader header = read_volume_asset_header(volume.asset, package_root, stream);
-            if (header.kind != VolumeAssetKind::RgbGrid || header.resolution != volume.resolution) throw std::runtime_error("Spectra RGB-grid volume asset metadata is inconsistent");
-            const std::uint64_t sample_count = volume_sample_count(header.resolution);
-            if ((header.primary_element_count == 0 && header.secondary_element_count == 0) || (header.primary_element_count != 0 && header.primary_element_count != sample_count) || (header.secondary_element_count != 0 && header.secondary_element_count != sample_count) || (header.tertiary_element_count != 0 && (header.primary_element_count == 0 || header.tertiary_element_count != sample_count))) throw std::runtime_error("Invalid Spectra RGB-grid volume asset sample counts");
-            const std::uint64_t expected_size = sizeof(header) + (header.primary_element_count + header.secondary_element_count + header.tertiary_element_count) * sizeof(math::Float3);
-            if (expected_size != std::filesystem::file_size(asset_path(package_root, volume.asset, ".volume"))) throw std::runtime_error("Invalid Spectra RGB-grid volume asset payload size");
-            volume.sigma_a.resize(header.primary_element_count);
-            volume.sigma_s.resize(header.secondary_element_count);
-            volume.emission.resize(header.tertiary_element_count);
-            read_values(stream, volume.sigma_a);
-            read_values(stream, volume.sigma_s);
-            read_values(stream, volume.emission);
-            if (!stream) throw std::runtime_error("Failed to read Spectra RGB-grid volume asset payload");
-        }
-
-        void load_volume_asset(NanoVdbVolume& volume, const std::filesystem::path& package_root) {
-            std::ifstream stream{};
-            const VolumeAssetHeader header = read_volume_asset_header(volume.asset, package_root, stream);
-            if (header.kind != VolumeAssetKind::NanoVdb || header.primary_element_count == 0 || header.tertiary_element_count != volume_sample_count(header.resolution)) throw std::runtime_error("Invalid Spectra NanoVDB volume asset metadata");
-            const std::uint64_t expected_size = sizeof(header) + (header.primary_element_count + header.secondary_element_count + header.tertiary_element_count) * sizeof(std::uint32_t);
-            if (expected_size != std::filesystem::file_size(asset_path(package_root, volume.asset, ".volume"))) throw std::runtime_error("Invalid Spectra NanoVDB volume asset payload size");
-            volume.majorant_resolution = header.resolution;
-            volume.density_data.resize(header.primary_element_count);
-            volume.temperature_data.resize(header.secondary_element_count);
-            volume.majorant.resize(header.tertiary_element_count);
-            read_values(stream, volume.density_data);
-            read_values(stream, volume.temperature_data);
-            read_values(stream, volume.majorant);
-            if (!stream) throw std::runtime_error("Failed to read Spectra NanoVDB volume asset payload");
-        }
-
-        void load_texture_asset(ImageTexture& texture, const std::filesystem::path& package_root) {
-            verify_asset(package_root, texture.asset, ".texture");
-            const std::filesystem::path path = asset_path(package_root, texture.asset, ".texture");
-            std::ifstream stream{path, std::ios::binary};
-            TextureAssetHeader header{};
-            stream.read(reinterpret_cast<char*>(&header), sizeof(header));
-            if (!stream || header.magic != TextureAssetHeader{}.magic || header.version != 1 || header.width == 0 || header.height == 0 || header.mip_count == 0) throw std::runtime_error(std::format("Invalid Spectra texture asset header: {}", path.string()));
-            std::uint32_t width  = header.width;
-            std::uint32_t height = header.height;
-            std::uint64_t expected_texels{};
-            texture.mip_offsets.clear();
-            texture.mip_offsets.reserve(header.mip_count);
-            for (std::uint32_t level = 0; level != header.mip_count; ++level) {
-                texture.mip_offsets.push_back(expected_texels);
-                expected_texels += static_cast<std::uint64_t>(width) * height;
-                width  = std::max(1u, width / 2u);
-                height = std::max(1u, height / 2u);
-            }
-            const std::uint32_t maximum_mips  = std::bit_width(std::max(header.width, header.height));
-            const std::uint64_t expected_size = sizeof(header) + header.texel_count * sizeof(math::Float4);
-            if (header.mip_count > maximum_mips || header.texel_count != expected_texels || expected_size != std::filesystem::file_size(path)) throw std::runtime_error(std::format("Invalid Spectra texture asset payload size: {}", path.string()));
-            texture.width  = header.width;
-            texture.height = header.height;
-            texture.texels.resize(header.texel_count);
-            read_values(stream, texture.texels);
-            if (!stream) throw std::runtime_error(std::format("Failed to read Spectra texture asset payload: {}", path.string()));
-        }
-
-        void copy_asset(AssetReference& reference, const std::string_view extension, const std::filesystem::path& source_root, const std::filesystem::path& target_root) {
-            verify_asset(source_root, reference, extension);
-            const std::filesystem::path source = asset_path(source_root, reference, extension);
-            const std::filesystem::path target = asset_path(target_root, reference, extension);
-            if (source == target) return;
-            std::filesystem::create_directories(target.parent_path());
-            if (std::filesystem::exists(target)) {
-                verify_asset(target_root, reference, extension);
-                return;
-            }
-            std::filesystem::copy_file(source, target, std::filesystem::copy_options::none);
-        }
-
-        void copy_source(const SourceReference& reference, const std::string_view extension, const std::filesystem::path& source_root, const std::filesystem::path& target_root) {
-            if (std::filesystem::absolute(source_root).lexically_normal() == std::filesystem::absolute(target_root).lexically_normal()) return;
-            const std::filesystem::path source = source_path(source_root, reference, extension);
-            const std::filesystem::path target = source_path(target_root, reference, extension);
-            std::filesystem::create_directories(target.parent_path());
-            if (std::filesystem::exists(target)) {
-                if (content_hash::sha256_file(source) != content_hash::sha256_file(target)) throw std::runtime_error(std::format("Spectra source already exists with different content: {}", target.string()));
-                return;
-            }
-            std::filesystem::copy_file(source, target, std::filesystem::copy_options::none);
-        }
-
-        [[nodiscard]] AssetReference write_frozen_dynamic_frame_asset(const std::span<const std::byte> payload, const std::filesystem::path& package_root) {
-            AssetReference reference{.content_hash = content_hash::sha256_hex(std::array{payload})};
-            const std::filesystem::path path = asset_path(package_root, reference, ".dynamic-frame");
-            if (std::filesystem::exists(path)) {
-                verify_asset(package_root, reference, ".dynamic-frame");
-                return reference;
-            }
-            std::filesystem::create_directories(path.parent_path());
-            std::ofstream stream{path, std::ios::binary | std::ios::trunc};
-            stream.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra Frozen Dynamic Frame asset: {}", path.string()));
-            return reference;
-        }
-
-        void load_frozen_dynamic_frame_asset(FrozenDynamicFrame& frame, const std::filesystem::path& package_root) {
-            verify_asset(package_root, frame.asset, ".dynamic-frame");
-            const std::filesystem::path path = asset_path(package_root, frame.asset, ".dynamic-frame");
-            std::ifstream stream{path, std::ios::binary};
-            frame.payload.resize(std::filesystem::file_size(path));
-            stream.read(reinterpret_cast<char*>(frame.payload.data()), static_cast<std::streamsize>(frame.payload.size()));
-            if (!stream) throw std::runtime_error(std::format("Failed to read Spectra Frozen Dynamic Frame asset: {}", path.string()));
-        }
-
         struct KdlWriter {
             std::string content{};
             std::uint32_t indentation{};
@@ -605,15 +178,16 @@ namespace spectra::scene {
             writer.end();
         }
 
-        void write_geometries(KdlWriter& writer, const std::vector<Geometry>& geometries) {
+        void write_geometries(KdlWriter& writer, const std::vector<Geometry>& geometries, const PackageReferences& references) {
             if (geometries.empty()) return;
             writer.begin("geometries");
-            for (const Geometry& geometry : geometries) {
+            for (std::size_t geometry_index = 0; geometry_index != geometries.size(); ++geometry_index) {
+                const Geometry& geometry = geometries[geometry_index];
                 std::visit(
-                    [&writer, &geometry](const auto& data) {
+                    [&writer, &geometry, &reference = references.geometries[geometry_index]](const auto& data) {
                         if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, TriangleMeshGeometry>) {
                             std::string line = std::format("triangle-mesh {} {}", geometry.id.value, kdl_string(geometry.name));
-                            write_resource_reference(line, data.asset, data.source);
+                            write_resource_reference(line, reference->asset, reference->source);
                             writer.line(line);
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, SphereGeometry>) {
                             std::string line = std::format("sphere {} {}", geometry.id.value, kdl_string(geometry.name));
@@ -662,19 +236,20 @@ namespace spectra::scene {
             writer.end();
         }
 
-        void write_sphere_sets(KdlWriter& writer, const std::vector<SphereSet>& sphere_sets) {
+        void write_sphere_sets(KdlWriter& writer, const std::vector<SphereSet>& sphere_sets, const PackageReferences& references) {
             if (sphere_sets.empty()) return;
             writer.begin("sphere-sets");
-            for (const SphereSet& spheres : sphere_sets) writer.line(std::format("sphere-set {} {} asset={}", spheres.id.value, kdl_string(spheres.name), kdl_string(spheres.asset.content_hash)));
+            for (std::size_t index = 0; index != sphere_sets.size(); ++index) writer.line(std::format("sphere-set {} {} asset={}", sphere_sets[index].id.value, kdl_string(sphere_sets[index].name), kdl_string(references.sphere_sets[index].content_hash)));
             writer.end();
         }
 
-        void write_volumes(KdlWriter& writer, const std::vector<Volume>& volumes) {
+        void write_volumes(KdlWriter& writer, const std::vector<Volume>& volumes, const PackageReferences& references) {
             if (volumes.empty()) return;
             writer.begin("volumes");
-            for (const Volume& volume : volumes) {
+            for (std::size_t volume_index = 0; volume_index != volumes.size(); ++volume_index) {
+                const Volume& volume = volumes[volume_index];
                 std::visit(
-                    [&writer, &volume](const auto& data) {
+                    [&writer, &volume, &reference = references.volumes[volume_index]](const auto& data) {
                         std::string kind{};
                         if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DensityGridVolume>)
                             kind = "density-grid";
@@ -685,7 +260,7 @@ namespace spectra::scene {
                         else
                             kind = "procedural-cloud";
                         std::string line = std::format("{} {} {}", kind, volume.id.value, kdl_string(volume.name));
-                        if constexpr (!std::same_as<std::remove_cvref_t<decltype(data)>, ProceduralCloudVolume>) kdl_string_property(line, "asset", data.asset.content_hash);
+                        if constexpr (!std::same_as<std::remove_cvref_t<decltype(data)>, ProceduralCloudVolume>) kdl_string_property(line, "asset", reference->content_hash);
                         writer.begin(line);
                         if (volume.bounds != math::Bounds3{}) write_bounds(writer, volume.bounds);
                         if (volume.transform != math::Transform{}) write_transform(writer, "transform", volume.transform);
@@ -769,12 +344,13 @@ namespace spectra::scene {
             if (texture.color_space != TextureColorSpace::Srgb) kdl_string_property(line, "color-space", texture_color_space_name(texture.color_space));
         }
 
-        void write_textures(KdlWriter& writer, const std::vector<Texture>& textures) {
+        void write_textures(KdlWriter& writer, const std::vector<Texture>& textures, const PackageReferences& references) {
             if (textures.empty()) return;
             writer.begin("textures");
-            for (const Texture& texture : textures) {
+            for (std::size_t texture_index = 0; texture_index != textures.size(); ++texture_index) {
+                const Texture& texture = textures[texture_index];
                 std::visit(
-                    [&writer, &texture](const auto& data) {
+                    [&writer, &texture, &reference = references.textures[texture_index]](const auto& data) {
                         if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, ConstantTexture>) {
                             std::string line = std::format("constant {} {}", texture.id.value, kdl_string(texture.name));
                             add_texture_properties(line, texture);
@@ -786,7 +362,7 @@ namespace spectra::scene {
                             writer.end();
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, ImageTexture>) {
                             std::string line = std::format("image {} {}", texture.id.value, kdl_string(texture.name));
-                            write_resource_reference(line, data.asset, data.source);
+                            write_resource_reference(line, reference->asset, reference->source);
                             add_texture_properties(line, texture);
                             if (data.wrap != TextureWrapMode::Repeat) kdl_string_property(line, "wrap", texture_wrap_name(data.wrap));
                             if (data.channel != TextureChannel::Luminance) kdl_string_property(line, "channel", texture_channel_name(data.channel));
@@ -1335,27 +911,49 @@ namespace spectra::scene {
                 }
                 for (const DynamicSceneBinding& binding : system.scene_bindings) writer.line(std::format("scene-bind {} {} {}", kdl_string(binding.dataset_id), dynamic_scene_resource_kind_name(binding.resource_kind), binding.resource_id));
                 for (const DynamicVisualizationView& view : system.visualizations) {
-                    std::string view_line = std::format("visualize {} {} kind={} depth={}", kdl_string(view.dataset_id), kdl_string(view.name), kdl_string(visualization_view_kind_name(view.kind)), kdl_string(depth_buffer_mode_name(view.depth_mode)));
+                    std::string view_line = std::format("visualize {} {} kind={} depth={}", kdl_string(view.dataset_id), kdl_string(view.name), kdl_string(visualization_view_kind_name(visualization_view_kind(view))), kdl_string(depth_buffer_mode_name(view.depth_mode)));
                     if (view.composition_domain != VisualizationCompositionDomain::DisplayReferred) kdl_string_property(view_line, "domain", visualization_composition_domain_name(view.composition_domain));
                     if (view.anchor.value != 0) kdl_number_property(view_line, "anchor", view.anchor.value);
-                    if (!view.channel_id.empty()) kdl_string_property(view_line, "channel", view.channel_id);
-                    if (view.width != 1.0f) kdl_number_property(view_line, "width", view.width);
-                    if (view.scale != 1.0f) kdl_number_property(view_line, "scale", view.scale);
-                    if (view.slice_position != 0.5f) kdl_number_property(view_line, "slice-position", view.slice_position);
-                    if (view.scalar_minimum != 0.0f) kdl_number_property(view_line, "scalar-min", view.scalar_minimum);
-                    if (view.scalar_maximum != 1.0f) kdl_number_property(view_line, "scalar-max", view.scalar_maximum);
-                    if (view.sampling != 8) kdl_number_property(view_line, "sampling", view.sampling);
-                    if (view.slice_axis != 2) kdl_number_property(view_line, "slice-axis", view.slice_axis);
-                    if (view.distortion_iterations != 8) kdl_number_property(view_line, "distortion-iterations", view.distortion_iterations);
-                    if (view.distortion_tolerance != 1.0e-6f) kdl_number_property(view_line, "distortion-tolerance", view.distortion_tolerance);
-                    if (view.point_glyph != PointGlyph::ScreenDisc) kdl_string_property(view_line, "glyph", point_glyph_name(view.point_glyph));
-                    if (view.point_shading != PointShading::Unlit) kdl_string_property(view_line, "shading", point_shading_name(view.point_shading));
-                    if (view.color_source != VisualizationColorSource::Element) kdl_string_property(view_line, "color-source", visualization_color_source_name(view.color_source));
-                    if (view.color_map != VisualizationColorMap::Viridis) kdl_string_property(view_line, "color-map", visualization_color_map_name(view.color_map));
+                    std::visit(
+                        [&view_line](const auto& data) {
+                            constexpr bool has_width  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CurveVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CameraObservationVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FrameVisualization>;
+                            constexpr bool has_scale  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CameraObservationVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FrameVisualization>;
+                            constexpr bool has_scalar = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CurveVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldSliceVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SurfaceVisualization>;
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, FieldSliceVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>)
+                                if (!data.channel_id.empty()) kdl_string_property(view_line, "channel", data.channel_id);
+                            if constexpr (has_width)
+                                if (data.width != 1.0f) kdl_number_property(view_line, "width", data.width);
+                            if constexpr (has_scale)
+                                if (data.scale != 1.0f) kdl_number_property(view_line, "scale", data.scale);
+                            if constexpr (has_scalar) {
+                                if (data.scalar_minimum != 0.0f) kdl_number_property(view_line, "scalar-min", data.scalar_minimum);
+                                if (data.scalar_maximum != 1.0f) kdl_number_property(view_line, "scalar-max", data.scalar_maximum);
+                                if (data.color_source != VisualizationColorSource::Element) kdl_string_property(view_line, "color-source", visualization_color_source_name(data.color_source));
+                                if (data.color_map != VisualizationColorMap::Viridis) kdl_string_property(view_line, "color-map", visualization_color_map_name(data.color_map));
+                            }
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization>) {
+                                if (data.glyph != PointGlyph::ScreenDisc) kdl_string_property(view_line, "glyph", point_glyph_name(data.glyph));
+                                if (data.shading != PointShading::Unlit) kdl_string_property(view_line, "shading", point_shading_name(data.shading));
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, FieldSliceVisualization>) {
+                                if (data.slice_position != 0.5f) kdl_number_property(view_line, "slice-position", data.slice_position);
+                                if (data.slice_axis != 2) kdl_number_property(view_line, "slice-axis", data.slice_axis);
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>) {
+                                if (data.sampling != 8) kdl_number_property(view_line, "sampling", data.sampling);
+                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, CameraObservationVisualization>) {
+                                if (data.distortion_iterations != 8) kdl_number_property(view_line, "distortion-iterations", data.distortion_iterations);
+                                if (data.distortion_tolerance != 1.0e-6f) kdl_number_property(view_line, "distortion-tolerance", data.distortion_tolerance);
+                            }
+                        },
+                        view.data);
                     if (!view.visible) kdl_bool_property(view_line, "visible", false);
                     writer.begin(view_line);
                     if (view.color != math::Float4{1.0f, 1.0f, 1.0f, 1.0f}) writer.line(std::format("color {} {} {} {}", view.color.x, view.color.y, view.color.z, view.color.w));
-                    if (view.screen_rect != math::Float4{0.02f, 0.02f, 0.32f, 0.32f}) writer.line(std::format("screen-rect {} {} {} {}", view.screen_rect.x, view.screen_rect.y, view.screen_rect.z, view.screen_rect.w));
+                    std::visit(
+                        [&writer](const auto& data) {
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, ImageVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CameraObservationVisualization>)
+                                if (data.screen_rect != math::Float4{0.02f, 0.02f, 0.32f, 0.32f}) writer.line(std::format("screen-rect {} {} {} {}", data.screen_rect.x, data.screen_rect.y, data.screen_rect.z, data.screen_rect.w));
+                        },
+                        view.data);
                     writer.end();
                 }
                 writer.end();
@@ -1363,7 +961,7 @@ namespace spectra::scene {
             writer.end();
         }
 
-        [[nodiscard]] std::string serialize_scene_kdl(const Scene& scene) {
+        [[nodiscard]] std::string serialize_scene_kdl(const Scene& scene, const PackageReferences& references) {
             KdlWriter writer{};
             writer.begin(std::format("spectra {} {}", current_scene_format_version, kdl_string(scene.name)));
             writer.line(std::format("active camera={} film={} sampler={}", scene.active_camera.value, scene.active_film.value, scene.active_sampler.value));
@@ -1372,10 +970,10 @@ namespace spectra::scene {
             if (scene.transport.light_sampler != LightSamplerKind::Bvh) kdl_string_property(transport, "light-sampler", light_sampler_name(scene.transport.light_sampler));
             if (scene.transport.regularize) kdl_bool_property(transport, "regularize", true);
             if (transport != "transport") writer.line(transport);
-            write_geometries(writer, scene.resources.geometries);
-            write_sphere_sets(writer, scene.resources.sphere_sets);
-            write_volumes(writer, scene.resources.volumes);
-            write_textures(writer, scene.resources.textures);
+            write_geometries(writer, scene.resources.geometries, references);
+            write_sphere_sets(writer, scene.resources.sphere_sets, references);
+            write_volumes(writer, scene.resources.volumes, references);
+            write_textures(writer, scene.resources.textures, references);
             write_materials(writer, scene.resources.materials);
             write_media(writer, scene.resources.media);
             write_lights(writer, scene.resources.lights);
@@ -1385,7 +983,7 @@ namespace spectra::scene {
             write_prototypes(writer, scene.resources.prototypes);
             write_instances(writer, scene.resources.instances);
             if (scene.dynamic_setup) write_dynamics(writer, *scene.dynamic_setup);
-            if (scene.frozen_dynamic_frame) writer.line(std::format("frozen-dynamic-frame asset={}", kdl_string(scene.frozen_dynamic_frame->asset.content_hash)));
+            if (scene.frozen_dynamic_frame) writer.line(std::format("frozen-dynamic-frame asset={}", kdl_string(references.frozen_dynamic_frame->content_hash)));
             writer.end();
             return writer.content;
         }
@@ -1414,19 +1012,19 @@ namespace spectra::scene {
         }
 
         template <class Value>
-        [[nodiscard]] Value kdl_number_property(const kdl::Node& node, const std::u8string_view name, const Value fallback) {
+        [[nodiscard]] Value kdl_number_property(const kdl::Node& node, const std::u8string_view name, const Value default_value) {
             const kdl::Value* value = kdl_property(node, name);
-            return value == nullptr ? fallback : kdl_number<Value>(*value);
+            return value == nullptr ? default_value : kdl_number<Value>(*value);
         }
 
-        [[nodiscard]] bool kdl_bool_property(const kdl::Node& node, const std::u8string_view name, const bool fallback) {
+        [[nodiscard]] bool kdl_bool_property(const kdl::Node& node, const std::u8string_view name, const bool default_value) {
             const kdl::Value* value = kdl_property(node, name);
-            return value == nullptr ? fallback : value->as<bool>();
+            return value == nullptr ? default_value : value->as<bool>();
         }
 
-        [[nodiscard]] std::string kdl_string_property(const kdl::Node& node, const std::u8string_view name, const std::string_view fallback = {}) {
+        [[nodiscard]] std::string kdl_string_property(const kdl::Node& node, const std::u8string_view name, const std::string_view default_value = {}) {
             const kdl::Value* value = kdl_property(node, name);
-            return value == nullptr ? std::string{fallback} : kdl_value_text(*value);
+            return value == nullptr ? std::string{default_value} : kdl_value_text(*value);
         }
 
         void read_resource_reference(const kdl::Node& node, AssetReference& asset, SourceReference& source) {
@@ -1461,9 +1059,9 @@ namespace spectra::scene {
             return transform;
         }
 
-        [[nodiscard]] math::Bounds3 read_bounds(const kdl::Node& parent, const math::Bounds3 fallback = {}) {
+        [[nodiscard]] math::Bounds3 read_bounds(const kdl::Node& parent, const math::Bounds3 default_value = {}) {
             const kdl::Node* node = kdl_child(parent, u8"bounds");
-            if (node == nullptr) return fallback;
+            if (node == nullptr) return default_value;
             return {read_float3(*node), read_float3(*node, 3)};
         }
 
@@ -2216,30 +1814,34 @@ namespace spectra::scene {
                         });
                     else if (child.name() == u8"visualize") {
                         DynamicVisualizationView view{
-                            .dataset_id     = kdl_value_text(child.args()[0]),
-                            .name           = kdl_value_text(child.args()[1]),
-                            .kind           = read_visualization_view_kind(kdl_string_property(child, u8"kind")),
-                            .depth_mode     = read_depth_buffer_mode(kdl_string_property(child, u8"depth", "tested")),
+                            .dataset_id         = kdl_value_text(child.args()[0]),
+                            .name               = kdl_value_text(child.args()[1]),
+                            .depth_mode         = read_depth_buffer_mode(kdl_string_property(child, u8"depth", "tested")),
                             .composition_domain = read_visualization_composition_domain(kdl_string_property(child, u8"domain", "display-referred")),
-                            .anchor         = {kdl_number_property<std::uint64_t>(child, u8"anchor", 0)},
-                            .channel_id     = kdl_string_property(child, u8"channel", ""),
-                            .width          = kdl_number_property<float>(child, u8"width", 1.0f),
-                            .scale          = kdl_number_property<float>(child, u8"scale", 1.0f),
-                            .slice_position = kdl_number_property<float>(child, u8"slice-position", 0.5f),
-                            .scalar_minimum  = kdl_number_property<float>(child, u8"scalar-min", 0.0f),
-                            .scalar_maximum  = kdl_number_property<float>(child, u8"scalar-max", 1.0f),
-                            .sampling       = kdl_number_property<std::uint32_t>(child, u8"sampling", 8),
-                            .slice_axis     = kdl_number_property<std::uint32_t>(child, u8"slice-axis", 2),
-                            .distortion_iterations = kdl_number_property<std::uint32_t>(child, u8"distortion-iterations", 8),
-                            .distortion_tolerance = kdl_number_property<float>(child, u8"distortion-tolerance", 1.0e-6f),
-                            .point_glyph     = read_point_glyph(kdl_string_property(child, u8"glyph", "screen-disc")),
-                            .point_shading   = read_point_shading(kdl_string_property(child, u8"shading", "unlit")),
-                            .color_source    = read_visualization_color_source(kdl_string_property(child, u8"color-source", "element")),
-                            .color_map       = read_visualization_color_map(kdl_string_property(child, u8"color-map", "viridis")),
-                            .visible        = kdl_bool_property(child, u8"visible", true),
+                            .anchor             = {kdl_number_property<std::uint64_t>(child, u8"anchor", 0)},
+                            .visible            = kdl_bool_property(child, u8"visible", true),
                         };
+                        const float width                           = kdl_number_property<float>(child, u8"width", 1.0f);
+                        const float scale                           = kdl_number_property<float>(child, u8"scale", 1.0f);
+                        const float scalar_minimum                  = kdl_number_property<float>(child, u8"scalar-min", 0.0f);
+                        const float scalar_maximum                  = kdl_number_property<float>(child, u8"scalar-max", 1.0f);
+                        const VisualizationColorSource color_source = read_visualization_color_source(kdl_string_property(child, u8"color-source", "element"));
+                        const VisualizationColorMap color_map       = read_visualization_color_map(kdl_string_property(child, u8"color-map", "viridis"));
+                        math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
+                        if (const kdl::Node* source = kdl_child(child, u8"screen-rect")) screen_rect = {kdl_number<float>(source->args()[0]), kdl_number<float>(source->args()[1]), kdl_number<float>(source->args()[2]), kdl_number<float>(source->args()[3])};
+                        switch (read_visualization_view_kind(kdl_string_property(child, u8"kind"))) {
+                        case VisualizationViewKind::Points: view.data = PointVisualization{width, scale, scalar_minimum, scalar_maximum, read_point_glyph(kdl_string_property(child, u8"glyph", "screen-disc")), read_point_shading(kdl_string_property(child, u8"shading", "unlit")), color_source, color_map}; break;
+                        case VisualizationViewKind::Segments: view.data = SegmentVisualization{width, scalar_minimum, scalar_maximum, color_source, color_map}; break;
+                        case VisualizationViewKind::Curves: view.data = CurveVisualization{width, scalar_minimum, scalar_maximum, color_source, color_map}; break;
+                        case VisualizationViewKind::Vectors: view.data = VectorVisualization{width, scale, scalar_minimum, scalar_maximum, color_source, color_map}; break;
+                        case VisualizationViewKind::FieldSlice: view.data = FieldSliceVisualization{kdl_string_property(child, u8"channel", ""), kdl_number_property<float>(child, u8"slice-position", 0.5f), scalar_minimum, scalar_maximum, kdl_number_property<std::uint32_t>(child, u8"slice-axis", 2), color_source, color_map}; break;
+                        case VisualizationViewKind::FieldVectors: view.data = FieldVectorVisualization{kdl_string_property(child, u8"channel", ""), width, scale, scalar_minimum, scalar_maximum, kdl_number_property<std::uint32_t>(child, u8"sampling", 8), color_source, color_map}; break;
+                        case VisualizationViewKind::Image: view.data = ImageVisualization{screen_rect}; break;
+                        case VisualizationViewKind::CameraObservations: view.data = CameraObservationVisualization{screen_rect, width, scale, kdl_number_property<std::uint32_t>(child, u8"distortion-iterations", 8), kdl_number_property<float>(child, u8"distortion-tolerance", 1.0e-6f)}; break;
+                        case VisualizationViewKind::Frames: view.data = FrameVisualization{width, scale}; break;
+                        case VisualizationViewKind::Surface: view.data = SurfaceVisualization{scalar_minimum, scalar_maximum, color_source, color_map}; break;
+                        }
                         if (const kdl::Node* color = kdl_child(child, u8"color")) view.color = {kdl_number<float>(color->args()[0]), kdl_number<float>(color->args()[1]), kdl_number<float>(color->args()[2]), kdl_number<float>(color->args()[3])};
-                        if (const kdl::Node* screen_rect = kdl_child(child, u8"screen-rect")) view.screen_rect = {kdl_number<float>(screen_rect->args()[0]), kdl_number<float>(screen_rect->args()[1]), kdl_number<float>(screen_rect->args()[2]), kdl_number<float>(screen_rect->args()[3])};
                         system.visualizations.push_back(std::move(view));
                     }
                 }
@@ -2260,7 +1862,8 @@ namespace spectra::scene {
             if (!stream) throw std::runtime_error(std::format("Failed to open Spectra scene: {}", path.string()));
             const std::string text{std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
             const kdl::Document document = kdl::parse({reinterpret_cast<const char8_t*>(text.data()), text.size()}, kdl::KdlVersion::Kdl_2);
-            const kdl::Node& root        = document.nodes()[0];
+            if (document.nodes().empty()) throw std::runtime_error(std::format("Spectra scene has no root node: {}", path.string()));
+            const kdl::Node& root = document.nodes()[0];
             Scene scene{
                 .format_version = kdl_number<std::uint32_t>(root.args()[0]),
                 .name           = kdl_value_text(root.args()[1]),
@@ -2311,107 +1914,50 @@ namespace spectra::scene {
     } // namespace
 
     Scene load_scene(const std::filesystem::path& path) {
-        Scene scene                              = parse_scene(path);
-        const std::filesystem::path package_root = path.parent_path();
-        for (Geometry& geometry : scene.resources.geometries)
-            if (TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data)) {
-                if (mesh->source.path.empty())
-                    load_geometry_asset(*mesh, package_root);
-                else
-                    load_triangle_mesh_source(*mesh, source_path(package_root, mesh->source, ".ply"));
-            }
-        for (SphereSet& spheres : scene.resources.sphere_sets) load_sphere_set_asset(spheres, package_root);
-        for (Volume& volume : scene.resources.volumes) {
-            if (DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data))
-                load_volume_asset(*density, package_root);
-            else if (RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data))
-                load_volume_asset(*rgb, package_root);
-            else if (NanoVdbVolume* nanovdb = std::get_if<NanoVdbVolume>(&volume.data))
-                load_volume_asset(*nanovdb, package_root);
-        }
-        for (Texture& texture : scene.resources.textures)
-            if (ImageTexture* image = std::get_if<ImageTexture>(&texture.data)) {
-                if (image->source.path.empty())
-                    load_texture_asset(*image, package_root);
-                else
-                    load_image_source(*image, texture.color_space, source_path(package_root, image->source, ".png"));
-            }
-        if (scene.frozen_dynamic_frame) load_frozen_dynamic_frame_asset(*scene.frozen_dynamic_frame, package_root);
+        Scene scene = parse_scene(path);
+        load_package_resources(scene, path.parent_path());
         scene.mark_all_changed();
         scene.acknowledge_changes();
         return scene;
     }
 
-    void save_scene(Scene package, const std::filesystem::path& path, const std::filesystem::path& source_scene_path, const SceneSaveMode mode) {
-        package.format_version                   = current_scene_format_version;
+    void save_scene(const Scene& scene, const std::filesystem::path& path, const std::filesystem::path& source_scene_path, const SceneSaveMode mode) {
         const std::filesystem::path package_root = path.parent_path();
-        const std::filesystem::path source_root  = source_scene_path.empty() ? package_root : source_scene_path.parent_path();
-        for (Geometry& geometry : package.resources.geometries)
-            if (TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data)) {
-                if (!mesh->source.path.empty() && mode == SceneSaveMode::PreserveSources)
-                    copy_source(mesh->source, ".ply", source_root, package_root);
-                else {
-                    mesh->asset  = write_geometry_asset(*mesh, package_root);
-                    mesh->source = {};
-                }
-            }
-        for (SphereSet& spheres : package.resources.sphere_sets) spheres.asset = write_sphere_set_asset(spheres, package_root);
-        for (Volume& volume : package.resources.volumes) {
-            if (DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data))
-                density->asset = write_volume_asset(*density, package_root);
-            else if (RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data))
-                rgb->asset = write_volume_asset(*rgb, package_root);
-            else if (NanoVdbVolume* nanovdb = std::get_if<NanoVdbVolume>(&volume.data))
-                if (!nanovdb->density_data.empty())
-                    nanovdb->asset = write_volume_asset(*nanovdb, package_root);
-                else
-                    copy_asset(nanovdb->asset, ".volume", source_root, package_root);
-        }
-        for (Texture& texture : package.resources.textures)
-            if (ImageTexture* image = std::get_if<ImageTexture>(&texture.data)) {
-                if (!image->source.path.empty() && mode == SceneSaveMode::PreserveSources)
-                    copy_source(image->source, ".png", source_root, package_root);
-                else if (!image->texels.empty()) {
-                    image->asset  = write_texture_asset(*image, package_root);
-                    image->source = {};
-                } else if (std::filesystem::exists(asset_path(package_root, image->asset, ".texture")))
-                    verify_asset(package_root, image->asset, ".texture");
-                else
-                    copy_asset(image->asset, ".texture", source_root, package_root);
-            }
-        if (package.frozen_dynamic_frame) {
-            if (!package.frozen_dynamic_frame->payload.empty())
-                package.frozen_dynamic_frame->asset = write_frozen_dynamic_frame_asset(package.frozen_dynamic_frame->payload, package_root);
-            else
-                copy_asset(package.frozen_dynamic_frame->asset, ".dynamic-frame", source_root, package_root);
-        }
-        const std::string document           = serialize_scene_kdl(package);
+        if (!package_root.empty()) std::filesystem::create_directories(package_root);
+        const std::filesystem::path source_root = source_scene_path.empty() ? package_root : source_scene_path.parent_path();
+        AssetTransaction transaction{};
+        static std::atomic_uint64_t temporary_sequence{};
         std::filesystem::path temporary_path = path;
-        temporary_path += ".tmp";
-        std::ofstream stream{
-            temporary_path,
-            std::ios::binary | std::ios::trunc,
-        };
-        if (!stream) throw std::runtime_error(std::format("Failed to create Spectra scene: {}", temporary_path.string()));
-        stream.write(document.data(), static_cast<std::streamsize>(document.size()));
-        if (!stream) throw std::runtime_error(std::format("Failed to write Spectra scene: {}", temporary_path.string()));
-        stream.close();
-        if (!stream) throw std::runtime_error(std::format("Failed to close Spectra scene: {}", temporary_path.string()));
+        temporary_path += std::format(".spectra-save-{}-{}.tmp", std::chrono::steady_clock::now().time_since_epoch().count(), temporary_sequence.fetch_add(1, std::memory_order_relaxed));
+        try {
+            const PackageReferences references = prepare_package_resources(scene, package_root, source_root, mode == SceneSaveMode::PreserveSources, transaction);
+            const std::string document         = serialize_scene_kdl(scene, references);
+            std::ofstream stream{temporary_path, std::ios::binary | std::ios::trunc};
+            if (!stream) throw std::runtime_error(std::format("Failed to create Spectra scene: {}", temporary_path.string()));
+            stream.write(document.data(), static_cast<std::streamsize>(document.size()));
+            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra scene: {}", temporary_path.string()));
+            stream.close();
+            if (!stream) throw std::runtime_error(std::format("Failed to close Spectra scene: {}", temporary_path.string()));
 #if defined(_WIN32)
-        if (!MoveFileExW(temporary_path.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-            const DWORD error = GetLastError();
-            std::error_code cleanup_error{};
-            std::filesystem::remove(temporary_path, cleanup_error);
-            throw std::runtime_error(std::format("Failed to replace Spectra scene '{}': Windows error {}", path.string(), error));
-        }
+            if (!MoveFileExW(temporary_path.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) throw std::runtime_error(std::format("Failed to replace Spectra scene '{}': Windows error {}", path.string(), GetLastError()));
 #else
-        std::error_code replacement_error{};
-        std::filesystem::rename(temporary_path, path, replacement_error);
-        if (replacement_error) {
-            std::error_code cleanup_error{};
-            std::filesystem::remove(temporary_path, cleanup_error);
-            throw std::runtime_error(std::format("Failed to replace Spectra scene '{}': {}", path.string(), replacement_error.message()));
-        }
+            std::error_code replacement_error{};
+            std::filesystem::rename(temporary_path, path, replacement_error);
+            if (replacement_error) throw std::runtime_error(std::format("Failed to replace Spectra scene '{}': {}", path.string(), replacement_error.message()));
 #endif
+            transaction.commit();
+        } catch (const std::exception& original) {
+            std::vector<std::string> rollback_failures{};
+            std::error_code temporary_error{};
+            std::filesystem::remove(temporary_path, temporary_error);
+            if (temporary_error) rollback_failures.emplace_back(std::format("{}: {}", temporary_path.string(), temporary_error.message()));
+            try {
+                transaction.rollback();
+            } catch (const std::exception& rollback) {
+                rollback_failures.emplace_back(rollback.what());
+            }
+            if (!rollback_failures.empty()) throw std::runtime_error(std::format("{}; rollback also failed: {}", original.what(), std::ranges::fold_left_first(rollback_failures, [](std::string left, const std::string& right) { return std::move(left) + "; " + right; }).value()));
+            throw;
+        }
     }
 } // namespace spectra::scene

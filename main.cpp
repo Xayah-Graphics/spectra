@@ -20,6 +20,17 @@ namespace {
         return std::filesystem::canonical("/proc/self/exe").parent_path();
 #endif
     }
+
+    template <class Number>
+    [[nodiscard]] std::optional<Number> numeric_option(const std::optional<std::string>& text, const std::string_view name) {
+        if (!text) return std::nullopt;
+        Number value{};
+        const std::from_chars_result result = std::from_chars(text->data(), text->data() + text->size(), value);
+        if (result.ec != std::errc{} || result.ptr != text->data() + text->size()) throw std::runtime_error(std::format("Invalid {} value '{}'", name, *text));
+        if constexpr (std::floating_point<Number>)
+            if (!std::isfinite(value)) throw std::runtime_error(std::format("Invalid {} value '{}'", name, *text));
+        return value;
+    }
 } // namespace
 
 int main(int argument_count, char** raw_arguments) {
@@ -35,20 +46,22 @@ int main(int argument_count, char** raw_arguments) {
         std::optional<std::filesystem::path> gbuffer_output_path{};
         std::optional<std::filesystem::path> telemetry_output_path{};
         std::uint64_t outlined_instance{std::numeric_limits<std::uint64_t>::max()};
-        std::string output_layer{"renderer-display"};
-        std::string composition{"all"};
-        std::uint64_t simulation_step{std::numeric_limits<std::uint64_t>::max()};
-        float simulation_seconds{-1.0f};
-        std::uint64_t presentation_frame{std::numeric_limits<std::uint64_t>::max()};
-        float presentation_seconds{-1.0f};
-        std::uint32_t axes_plane{2};
+        std::optional<std::string> output_layer{};
+        std::optional<std::string> composition{};
+        std::optional<std::string> simulation_step_text{};
+        std::optional<std::string> simulation_seconds_text{};
+        std::optional<std::string> presentation_frame_text{};
+        std::optional<std::string> presentation_seconds_text{};
+        std::optional<std::string> axes_plane_text{};
         bool axes{};
 #if defined(SPECTRA_HAS_EDITOR)
         bool gui{};
 #endif
 
         xayah::util::Command command{"Spectra scene visualization and physically based rendering."};
-        command | xayah::util::positional({.name = "scene", .description = "Scene file to open or render.", .required = true}, scene_path) | xayah::util::option({.long_name = "renderer", .value_name = "RENDERER", .description = "Select rasterizer or pathtracer.", .show_default = false}, renderer) | xayah::util::option({.long_name = "raster-mode", .value_name = "MODE", .description = "Select material or wireframe Raster display.", .show_default = false}, raster_display_mode) | xayah::util::option({.long_name = "output-layer", .value_name = "LAYER", .description = "Select renderer-linear, renderer-display, or composed-display."}, output_layer) | xayah::util::option({.long_name = "composition", .value_name = "CONTENT", .description = "Select all, diagnostics, visualizations, overlays, or none for composed output."}, composition) | xayah::util::option({.long_name = "axes", .description = "Include the world axes overlay in composed output."}, axes) | xayah::util::option({.long_name = "axes-plane", .value_name = "PLANE", .description = "Select the axes grid plane."}, axes_plane) | xayah::util::option({.long_name = "outline-instance", .value_name = "ID", .description = "Outline one Scene Instance ID in composed output.", .show_default = false}, outlined_instance) | xayah::util::option({.long_name = "simulation-step", .value_name = "STEP", .description = "Evaluate a dynamic scene at an exact simulation step.", .show_default = false}, simulation_step) | xayah::util::option({.long_name = "simulation-time", .value_name = "SECONDS", .description = "Evaluate a dynamic scene at a simulation time.", .show_default = false}, simulation_seconds) | xayah::util::option({.long_name = "presentation-frame", .value_name = "FRAME", .description = "Advance presentation-only state to a frame.", .show_default = false}, presentation_frame) | xayah::util::option({.long_name = "presentation-time", .value_name = "SECONDS", .description = "Advance presentation-only state by this duration.", .show_default = false}, presentation_seconds) | xayah::util::option({.long_name = "output", .value_name = "BASE", .description = "Override the default renders/<scene>/<renderer> basename.", .show_default = false}, output_base) | xayah::util::option({.long_name = "gbuffer-output", .value_name = "IMAGE", .description = "Optional GBuffer EXR output.", .show_default = false}, gbuffer_output_path) | xayah::util::option({.long_name = "telemetry-output", .value_name = "CSV", .description = "Optional current Telemetry CSV output.", .show_default = false}, telemetry_output_path);
+        command | xayah::util::positional({.name = "scene", .description = "Scene file to open or render.", .required = false}, scene_path) | xayah::util::option({.long_name = "renderer", .value_name = "RENDERER", .description = "Select rasterizer or pathtracer.", .show_default = false}, renderer) | xayah::util::option({.long_name = "raster-mode", .value_name = "MODE", .description = "Select material or wireframe Raster display.", .show_default = false}, raster_display_mode) | xayah::util::option({.long_name = "output-layer", .value_name = "LAYER", .description = "Select renderer-linear, renderer-display, or composed-display."}, output_layer) | xayah::util::option({.long_name = "composition", .value_name = "CONTENT", .description = "Select all, diagnostics, visualizations, overlays, or none for composed output."}, composition) | xayah::util::option({.long_name = "axes", .description = "Include the world axes overlay in composed output."}, axes)
+            | xayah::util::option({.long_name = "axes-plane", .value_name = "PLANE", .description = "Select the axes grid plane."}, axes_plane_text) | xayah::util::option({.long_name = "outline-instance", .value_name = "ID", .description = "Outline one Scene Instance ID in composed output.", .show_default = false}, outlined_instance) | xayah::util::option({.long_name = "simulation-step", .value_name = "STEP", .description = "Evaluate a dynamic scene at an exact simulation step.", .show_default = false}, simulation_step_text) | xayah::util::option({.long_name = "simulation-time", .value_name = "SECONDS", .description = "Evaluate a dynamic scene at an exact simulation time.", .show_default = false}, simulation_seconds_text) | xayah::util::option({.long_name = "presentation-frame", .value_name = "FRAME", .description = "Advance presentation-only state to a frame.", .show_default = false}, presentation_frame_text)
+            | xayah::util::option({.long_name = "presentation-time", .value_name = "SECONDS", .description = "Advance presentation-only state to an exact time.", .show_default = false}, presentation_seconds_text) | xayah::util::option({.long_name = "output", .value_name = "BASE", .description = "Override the default renders/<scene>/<renderer> basename.", .show_default = false}, output_base) | xayah::util::option({.long_name = "gbuffer-output", .value_name = "IMAGE", .description = "Optional GBuffer EXR output.", .show_default = false}, gbuffer_output_path) | xayah::util::option({.long_name = "telemetry-output", .value_name = "CSV", .description = "Optional current Telemetry CSV output.", .show_default = false}, telemetry_output_path);
 #if defined(SPECTRA_HAS_EDITOR)
         command | xayah::util::option({.long_name = "gui", .description = "Open the visualization UI."}, gui);
 #endif
@@ -60,6 +73,12 @@ int main(int argument_count, char** raw_arguments) {
             return 0;
         }
 
+        const std::optional<std::uint64_t> simulation_step    = numeric_option<std::uint64_t>(simulation_step_text, "simulation step");
+        const std::optional<double> simulation_seconds        = numeric_option<double>(simulation_seconds_text, "simulation time");
+        const std::optional<std::uint64_t> presentation_frame = numeric_option<std::uint64_t>(presentation_frame_text, "presentation frame");
+        const std::optional<double> presentation_seconds      = numeric_option<double>(presentation_seconds_text, "presentation time");
+        const std::optional<std::uint32_t> axes_plane         = numeric_option<std::uint32_t>(axes_plane_text, "axes plane");
+
         const std::filesystem::path application_directory = executable_directory();
         const std::filesystem::path resource_directory    = (application_directory / SPECTRA_RESOURCE_DIRECTORY).lexically_normal();
         const std::filesystem::path output_directory      = std::filesystem::current_path();
@@ -68,11 +87,14 @@ int main(int argument_count, char** raw_arguments) {
 
 #if defined(SPECTRA_HAS_EDITOR)
         if (gui) {
+            if (output_layer || composition || axes || axes_plane || outlined_instance != std::numeric_limits<std::uint64_t>::max() || simulation_step || simulation_seconds || presentation_frame || presentation_seconds || !output_base.empty() || gbuffer_output_path || telemetry_output_path) throw std::runtime_error("Headless output, composition, time, and capture options cannot be used with --gui");
             const std::optional<std::filesystem::path> initial_scene = scene_path.empty() ? std::nullopt : std::optional{scene_path};
             spectra::run_editor({.scene_path = initial_scene, .renderer = std::move(renderer), .raster_display_mode = raster_display_mode.value_or("material")}, shader_directory, pathtracer_directory, output_directory);
             return 0;
         }
 #endif
+
+        if (scene_path.empty()) throw std::runtime_error("Headless rendering requires a scene path");
 
         const std::string selected_renderer            = renderer.value_or("rasterizer");
         const std::string selected_raster_display_mode = raster_display_mode.value_or("material");
@@ -89,25 +111,25 @@ int main(int argument_count, char** raw_arguments) {
         linear_output_path += ".exr";
         spectra::render_scene(
             {
-                .scene_path          = scene_path,
-                .png_output_path     = png_output_path,
-                .linear_output_path  = linear_output_path,
-                .renderer            = selected_renderer,
-                .raster_display_mode = selected_raster_display_mode,
-                .output_layer        = output_layer,
-                .composition         = composition,
-                .gbuffer_output_path = gbuffer_output_path,
+                .scene_path            = scene_path,
+                .png_output_path       = png_output_path,
+                .linear_output_path    = linear_output_path,
+                .renderer              = selected_renderer,
+                .raster_display_mode   = selected_raster_display_mode,
+                .output_layer          = output_layer.value_or("renderer-display"),
+                .composition           = composition.value_or("all"),
+                .gbuffer_output_path   = gbuffer_output_path,
                 .telemetry_output_path = telemetry_output_path,
-                .outlined_instance   = outlined_instance == std::numeric_limits<std::uint64_t>::max() ? std::nullopt : std::optional{outlined_instance},
-                .simulation_step     = simulation_step,
-                .simulation_seconds  = simulation_seconds,
-                .presentation_frame  = presentation_frame,
-                .presentation_seconds = presentation_seconds,
-                .axes_plane          = axes_plane,
-                .axes                = axes,
+                .outlined_instance     = outlined_instance == std::numeric_limits<std::uint64_t>::max() ? std::nullopt : std::optional{outlined_instance},
+                .simulation_step       = simulation_step,
+                .simulation_seconds    = simulation_seconds,
+                .presentation_frame    = presentation_frame,
+                .presentation_seconds  = presentation_seconds,
+                .axes_plane            = axes_plane.value_or(2u),
+                .axes                  = axes,
             },
             shader_directory, pathtracer_directory);
-        if (output_layer != "renderer-linear") std::println("{}", png_output_path.string());
+        if (output_layer.value_or("renderer-display") != "renderer-linear") std::println("{}", png_output_path.string());
         std::println("{}", linear_output_path.string());
         if (gbuffer_output_path) std::println("{}", gbuffer_output_path->string());
         if (telemetry_output_path) std::println("{}", telemetry_output_path->string());

@@ -9,7 +9,7 @@ import std;
 import vulkan;
 
 namespace spectra {
-    export enum class FrozenSceneReadbackKind : std::uint8_t {
+    enum class FrozenSceneReadbackKind : std::uint8_t {
         GeometryPosition,
         GeometryNormal,
         GeometryTangent,
@@ -23,16 +23,17 @@ namespace spectra {
         TelemetryValues,
     };
 
-    export struct FrozenSceneReadbackRegion {
+    struct FrozenSceneReadbackRegion {
         FrozenSceneReadbackKind kind{};
         std::uint32_t resource_index{};
-        std::uint32_t primitive_index{};
+        std::uint32_t subresource_index{};
         GpuVolumeField volume_field{};
-        vk::DeviceSize offset{};
+        vk::DeviceSize byte_offset{};
         std::uint64_t element_count{};
+        vk::DeviceSize element_size{};
     };
 
-    export struct FrozenSceneSnapshot {
+    struct FrozenSceneSnapshot {
         scene::Scene frozen_scene{};
         GpuBuffer readback_buffer{};
         std::vector<FrozenSceneReadbackRegion> readback_regions{};
@@ -42,12 +43,14 @@ namespace spectra {
     };
 
     export struct FrozenSceneExporter {
+    private:
         struct FrameSlot {
             std::optional<FrozenSceneSnapshot> snapshot{};
             std::filesystem::path output_path{};
             std::filesystem::path source_scene_path{};
         };
 
+    public:
         FrozenSceneExporter(VulkanRuntime& runtime, GpuScene& gpu_scene, DynamicsRuntime& dynamics) noexcept;
         ~FrozenSceneExporter();
 
@@ -62,6 +65,7 @@ namespace spectra {
         void record_snapshot(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Scene& scene, const scene::Camera& camera, vk::Extent2D extent, float exposure, const std::filesystem::path& source_scene_path);
         void wait();
 
+    private:
         struct {
             VulkanRuntime& runtime;
             GpuScene& gpu_scene;
@@ -75,7 +79,6 @@ namespace spectra {
             std::optional<std::expected<std::filesystem::path, std::string>> completed_result{};
         } export_state;
 
-    private:
         [[nodiscard]] std::optional<std::expected<std::filesystem::path, std::string>> take_result();
     };
 } // namespace spectra

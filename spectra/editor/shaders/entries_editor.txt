@@ -1,4 +1,4 @@
-# output module entry
-imgui_vertex imgui imgui_vertex
-imgui_fragment imgui imgui_fragment
-picker picker pick
+# output module entry optimization category
+imgui_vertex imgui imgui_vertex optimized editor
+imgui_fragment imgui imgui_fragment optimized editor
+picker picker pick optimized editor

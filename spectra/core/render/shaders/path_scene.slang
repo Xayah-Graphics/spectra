@@ -1,8 +1,10 @@
 module path_scene;
 
-public static const uint gpu_geometry_attribute_normal = 1u << 0u;
-public static const uint gpu_geometry_attribute_tangent = 1u << 1u;
-public static const uint gpu_geometry_attribute_texture_coordinate = 1u << 2u;
+#include "shader_semantics.h"
+
+public static const uint gpu_geometry_attribute_normal = SPECTRA_GPU_ATTRIBUTE_NORMAL;
+public static const uint gpu_geometry_attribute_tangent = SPECTRA_GPU_ATTRIBUTE_TANGENT;
+public static const uint gpu_geometry_attribute_texture_coordinate = SPECTRA_GPU_ATTRIBUTE_TEXTURE_COORDINATE;
 
 public struct PathPackedFloat3 {
     public float x;
@@ -27,23 +29,23 @@ public struct PathPrimitive {
     public uint2 reserved;
 }
 
-public static const uint geometry_triangle = 0;
-public static const uint geometry_sphere = 1;
-public static const uint geometry_disk = 2;
-public static const uint geometry_cylinder = 3;
-public static const uint geometry_box = 4;
-public static const uint geometry_rectangle = 5;
-public static const uint geometry_sphere_set = 6;
+public static const uint geometry_triangle = SPECTRA_GEOMETRY_TRIANGLE;
+public static const uint geometry_sphere = SPECTRA_GEOMETRY_SPHERE;
+public static const uint geometry_disk = SPECTRA_GEOMETRY_DISK;
+public static const uint geometry_cylinder = SPECTRA_GEOMETRY_CYLINDER;
+public static const uint geometry_box = SPECTRA_GEOMETRY_BOX;
+public static const uint geometry_rectangle = SPECTRA_GEOMETRY_RECTANGLE;
+public static const uint geometry_sphere_set = SPECTRA_GEOMETRY_SPHERE_SET;
 
-public static const uint material_interface = 0;
-public static const uint material_diffuse = 1;
-public static const uint material_diffuse_transmission = 2;
-public static const uint material_conductor = 3;
-public static const uint material_dielectric = 4;
-public static const uint material_thin_dielectric = 5;
-public static const uint material_coated_diffuse = 6;
-public static const uint material_coated_conductor = 7;
-public static const uint material_mix = 8;
+public static const uint material_interface = SPECTRA_MATERIAL_INTERFACE;
+public static const uint material_diffuse = SPECTRA_MATERIAL_DIFFUSE;
+public static const uint material_diffuse_transmission = SPECTRA_MATERIAL_DIFFUSE_TRANSMISSION;
+public static const uint material_conductor = SPECTRA_MATERIAL_CONDUCTOR;
+public static const uint material_dielectric = SPECTRA_MATERIAL_DIELECTRIC;
+public static const uint material_thin_dielectric = SPECTRA_MATERIAL_THIN_DIELECTRIC;
+public static const uint material_coated_diffuse = SPECTRA_MATERIAL_COATED_DIFFUSE;
+public static const uint material_coated_conductor = SPECTRA_MATERIAL_COATED_CONDUCTOR;
+public static const uint material_mix = SPECTRA_MATERIAL_MIX;
 
 public struct PathMaterialHeader {
     public uint kind;
@@ -149,13 +151,31 @@ public struct PathMixMaterial {
     public uint2 reserved;
 }
 
-public static const uint texture_constant = 0;
-public static const uint texture_image = 1;
-public static const uint texture_checkerboard = 2;
-public static const uint texture_scale = 3;
-public static const uint texture_mix = 4;
-public static const uint texture_direction_mix = 5;
-public static const uint texture_bilerp = 6;
+public static const uint texture_constant = SPECTRA_TEXTURE_CONSTANT;
+public static const uint texture_image = SPECTRA_TEXTURE_IMAGE;
+public static const uint texture_checkerboard = SPECTRA_TEXTURE_CHECKERBOARD;
+public static const uint texture_scale = SPECTRA_TEXTURE_SCALE;
+public static const uint texture_mix = SPECTRA_TEXTURE_MIX;
+public static const uint texture_direction_mix = SPECTRA_TEXTURE_DIRECTION_MIX;
+public static const uint texture_bilerp = SPECTRA_TEXTURE_BILERP;
+
+public static const uint mapping_uv = SPECTRA_MAPPING_UV;
+public static const uint mapping_planar = SPECTRA_MAPPING_PLANAR;
+public static const uint mapping_spherical = SPECTRA_MAPPING_SPHERICAL;
+public static const uint mapping_cylindrical = SPECTRA_MAPPING_CYLINDRICAL;
+public static const uint mapping_checkerboard_3d = SPECTRA_MAPPING_CHECKERBOARD_3D;
+
+public static const uint area_source_triangle = SPECTRA_AREA_SOURCE_TRIANGLE;
+public static const uint area_source_sphere_set = SPECTRA_AREA_SOURCE_SPHERE_SET;
+public static const uint area_source_analytic = SPECTRA_AREA_SOURCE_ANALYTIC;
+
+public static const uint spectrum_rgb = SPECTRA_SPECTRUM_RGB;
+public static const uint spectrum_constant = SPECTRA_SPECTRUM_CONSTANT;
+public static const uint spectrum_blackbody = SPECTRA_SPECTRUM_BLACKBODY;
+public static const uint spectrum_piecewise_linear = SPECTRA_SPECTRUM_PIECEWISE_LINEAR;
+public static const uint illuminant_none = SPECTRA_ILLUMINANT_NONE;
+public static const uint illuminant_d65 = SPECTRA_ILLUMINANT_D65;
+public static const uint illuminant_d60 = SPECTRA_ILLUMINANT_D60;
 
 public struct PathTextureHeader {
     public uint kind;
@@ -212,12 +232,12 @@ public struct PathBilerpTexture {
     public uint4 data;
 }
 
-public static const uint light_point = 0;
-public static const uint light_spot = 1;
-public static const uint light_distant = 2;
-public static const uint light_diffuse_area = 3;
-public static const uint light_infinite = 4;
-public static const uint light_portal_infinite = 5;
+public static const uint light_point = SPECTRA_LIGHT_POINT;
+public static const uint light_spot = SPECTRA_LIGHT_SPOT;
+public static const uint light_distant = SPECTRA_LIGHT_DISTANT;
+public static const uint light_diffuse_area = SPECTRA_LIGHT_DIFFUSE_AREA;
+public static const uint light_infinite = SPECTRA_LIGHT_INFINITE;
+public static const uint light_portal_infinite = SPECTRA_LIGHT_PORTAL_INFINITE;
 
 public static const uint light_delta_position = 1;
 public static const uint light_delta_direction = 2;
@@ -265,13 +285,13 @@ public struct PathSpectrum {
     public uint4 metadata;
 }
 
-public static const uint medium_homogeneous = 0;
-public static const uint medium_volume = 1;
+public static const uint medium_homogeneous = SPECTRA_MEDIUM_HOMOGENEOUS;
+public static const uint medium_volume = SPECTRA_MEDIUM_VOLUME;
 
-public static const uint volume_density_grid = 0;
-public static const uint volume_rgb_grid = 1;
-public static const uint volume_nanovdb = 2;
-public static const uint volume_procedural_cloud = 3;
+public static const uint volume_density_grid = SPECTRA_VOLUME_DENSITY_GRID;
+public static const uint volume_rgb_grid = SPECTRA_VOLUME_RGB_GRID;
+public static const uint volume_nanovdb = SPECTRA_VOLUME_NANOVDB;
+public static const uint volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
 
 public struct PathMedium {
     public uint4 spectra;

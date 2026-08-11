@@ -4,11 +4,18 @@ module;
 
 export module spectra.dynamics;
 
-import spectra.runtime;
 import spectra.scene;
 import std;
 
 namespace spectra::dynamics {
+    export [[nodiscard]] inline std::filesystem::path provider_library_filename(const std::string_view provider_id) {
+#if defined(_WIN32)
+        return std::filesystem::path{std::string{provider_id} + ".spectra-plugin.dll"};
+#else
+        return std::filesystem::path{std::string{provider_id} + ".spectra-plugin.so"};
+#endif
+    }
+
     export enum class ParameterApplication : std::uint32_t {
         Live          = static_cast<std::uint32_t>(SpectraPluginParameterApplication::Live),
         ResetRequired = static_cast<std::uint32_t>(SpectraPluginParameterApplication::ResetRequired),
@@ -74,34 +81,34 @@ namespace spectra::dynamics {
     };
 
     export struct TriangleMeshDataset {
-        std::uint64_t vertex_capacity{};
-        std::uint64_t index_capacity{};
+        std::uint32_t vertex_capacity{};
+        std::uint32_t index_capacity{};
         MeshUpdateMode update_mode{MeshUpdateMode::Deformable};
         std::uint32_t attributes{};
     };
 
     export struct SphereSetDataset {
-        std::uint64_t capacity{};
+        std::uint32_t capacity{};
     };
 
     export struct InstanceTransformDataset {
-        std::uint64_t capacity{};
+        std::uint32_t capacity{};
     };
 
     export struct PointDataset {
-        std::uint64_t capacity{};
+        std::uint32_t capacity{};
     };
 
     export struct SegmentDataset {
-        std::uint64_t capacity{};
+        std::uint32_t capacity{};
     };
 
     export struct CurveDataset {
-        std::uint64_t capacity{};
+        std::uint32_t capacity{};
     };
 
     export struct VectorDataset {
-        std::uint64_t capacity{};
+        std::uint32_t capacity{};
     };
 
     export struct FieldDataset {
@@ -118,12 +125,12 @@ namespace spectra::dynamics {
     };
 
     export struct CameraObservationDataset {
-        std::uint64_t capacity{};
+        std::uint32_t capacity{};
         ImageDataset images{};
     };
 
     export struct TransformDataset {
-        std::uint64_t capacity{};
+        std::uint32_t capacity{};
     };
 
     export struct DatasetDescriptor {
@@ -204,146 +211,4 @@ namespace spectra::dynamics {
         double seconds{};
     };
 
-    export struct GpuBufferView {
-        const GpuBuffer* buffer{};
-        DescriptorHandle descriptor{};
-    };
-
-    export struct GpuFieldChannelView {
-        FieldChannelDescriptor channel{};
-        GpuBufferView values{};
-    };
-
-    export struct GpuTriangleMeshUpdate {
-        scene::GeometryId geometry_id{};
-        GpuBufferView positions{};
-        std::optional<GpuBufferView> normals{};
-        std::optional<GpuBufferView> tangents{};
-        std::optional<GpuBufferView> texture_coordinates{};
-        std::optional<GpuBufferView> indices{};
-        std::uint64_t vertex_count{};
-        std::uint64_t index_count{};
-        MeshUpdateMode update_mode{MeshUpdateMode::Deformable};
-    };
-
-    export struct GpuSphereSetUpdate {
-        scene::SphereSetId sphere_set_id{};
-        GpuBufferView spheres{};
-        std::uint64_t count{};
-    };
-
-    export struct GpuInstanceTransformUpdate {
-        GpuBufferView instances{};
-        std::uint64_t count{};
-    };
-
-    export struct GpuFieldUpdate {
-        scene::VolumeId volume_id{};
-        math::UInt3 resolution{};
-        math::Transform local_from_grid{};
-        std::vector<GpuFieldChannelView> channels{};
-        std::optional<scene::VolumeRegion> dirty_region{};
-    };
-
-    export struct GpuSceneUpdate {
-        std::variant<GpuTriangleMeshUpdate, GpuSphereSetUpdate, GpuInstanceTransformUpdate, GpuFieldUpdate> data{};
-    };
-
-    export struct VisualizationStyle {
-        scene::DynamicVisualizationView view{};
-        math::Transform transform{};
-    };
-
-    export struct GpuPointVisualization {
-        VisualizationStyle style{};
-        GpuBufferView points{};
-        std::uint64_t count{};
-    };
-
-    export struct GpuSegmentVisualization {
-        VisualizationStyle style{};
-        GpuBufferView segments{};
-        std::uint64_t count{};
-    };
-
-    export struct GpuCurveVisualization {
-        VisualizationStyle style{};
-        GpuBufferView curves{};
-        std::uint64_t count{};
-    };
-
-    export struct GpuVectorVisualization {
-        VisualizationStyle style{};
-        GpuBufferView vectors{};
-        std::uint64_t count{};
-    };
-
-    export struct GpuFieldVisualization {
-        VisualizationStyle style{};
-        math::UInt3 resolution{};
-        math::Transform local_from_grid{};
-        GpuFieldChannelView channel{};
-    };
-
-    export struct GpuImageVisualization {
-        VisualizationStyle style{};
-        ImageDataset image{};
-        GpuBufferView pixels{};
-    };
-
-    export struct GpuCameraObservationVisualization {
-        VisualizationStyle style{};
-        CameraObservationDataset dataset{};
-        GpuBufferView observations{};
-        GpuBufferView images{};
-        std::uint64_t count{};
-    };
-
-    export struct GpuTransformVisualization {
-        VisualizationStyle style{};
-        GpuBufferView transforms{};
-        std::uint64_t count{};
-    };
-
-    export struct GpuSurfaceVisualization {
-        VisualizationStyle style{};
-        GpuBufferView positions{};
-        GpuBufferView indices{};
-        GpuBufferView scalars{};
-        std::uint64_t vertex_count{};
-        std::uint64_t index_count{};
-    };
-
-    export struct GpuVisualization {
-        std::variant<GpuPointVisualization, GpuSegmentVisualization, GpuCurveVisualization, GpuVectorVisualization, GpuFieldVisualization, GpuImageVisualization, GpuCameraObservationVisualization, GpuTransformVisualization, GpuSurfaceVisualization> data{};
-    };
-
-    export struct GpuTelemetryUpdate {
-        std::size_t system_index{};
-        GpuBufferView values{};
-        std::uint64_t value_count{};
-        std::string phase{};
-        std::string headline{};
-        std::string message{};
-    };
-
-    export struct MeshOutputBinding {
-        scene::GeometryId geometry_id{};
-        MeshUpdateMode update_mode{MeshUpdateMode::Deformable};
-        std::uint32_t vertex_capacity{};
-        std::uint32_t index_capacity{};
-    };
-
-    export struct SphereSetOutputBinding {
-        scene::SphereSetId sphere_set_id{};
-        std::uint32_t capacity{};
-    };
-
-    export struct DynamicFrame {
-        SimulationTimeline simulation{};
-        PresentationTimeline presentation{};
-        std::vector<GpuSceneUpdate> scene_updates{};
-        std::vector<GpuVisualization> visualizations{};
-        std::vector<GpuTelemetryUpdate> telemetry{};
-    };
 } // namespace spectra::dynamics

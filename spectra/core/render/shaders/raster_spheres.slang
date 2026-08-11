@@ -19,9 +19,9 @@ struct RasterVertex {
 struct RasterSpherePushData {
     DescriptorHandle<StructuredBuffer<float3>> positions;
     DescriptorHandle<StructuredBuffer<float>> radii;
-    DescriptorHandle<StructuredBuffer<uint>> unused_0;
-    DescriptorHandle<StructuredBuffer<uint>> unused_1;
-    DescriptorHandle<StructuredBuffer<uint>> unused_2;
+    DescriptorHandle<StructuredBuffer<uint>> reserved_0;
+    DescriptorHandle<StructuredBuffer<uint>> reserved_1;
+    DescriptorHandle<StructuredBuffer<uint>> reserved_2;
     DescriptorHandle<StructuredBuffer<RasterSceneBindings>> bindings;
     uint scene_primitive_index;
     uint element_count;

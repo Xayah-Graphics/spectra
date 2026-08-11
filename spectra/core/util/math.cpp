@@ -8,7 +8,8 @@ namespace spectra::math {
     }
 
     Float3 Float3::normalized() const noexcept {
-        return *this / this->length();
+        const float magnitude = this->length();
+        return magnitude == 0.0f ? Float3{} : *this / magnitude;
     }
 
     Float3 Transform::transform_point(const Float3 point) const noexcept {
@@ -112,15 +113,15 @@ namespace spectra::math {
     }
 
     Float3 Bounds3::center() const noexcept {
-        return (this->minimum + this->maximum) * 0.5f;
+        return this->valid() ? (this->minimum + this->maximum) * 0.5f : Float3{};
     }
 
     Float3 Bounds3::diagonal() const noexcept {
-        return this->maximum - this->minimum;
+        return this->valid() ? this->maximum - this->minimum : Float3{};
     }
 
     float Bounds3::radius() const noexcept {
-        return std::max(this->diagonal().length() * 0.5f, 0.01f);
+        return this->valid() ? std::max(this->diagonal().length() * 0.5f, 0.01f) : 0.01f;
     }
 
     Bounds3 Bounds3::transformed(const Transform& transform) const noexcept {

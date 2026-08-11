@@ -54,7 +54,7 @@ void update_raster_area_emission(uint3 group_thread_id : SV_GroupThreadID) {
     const RasterTransform transform = push_data.transforms[push_data.range.x];
     float area = 0.0;
 
-    if (source_kind == 0) {
+    if (source_kind == area_source_triangle) {
         StructuredBuffer<float3> positions = push_data.positions;
         StructuredBuffer<uint> indices = push_data.indices;
         for (uint element = thread; element < push_data.range.y; element += raster_preview_area_threads) {
@@ -63,7 +63,7 @@ void update_raster_area_emission(uint3 group_thread_id : SV_GroupThreadID) {
             const float3 position_2 = transform_point(transform, positions[indices[element * 3 + 2]]);
             area += 0.5 * length(cross(position_1 - position_0, position_2 - position_0));
         }
-    } else if (source_kind == 1) {
+    } else if (source_kind == area_source_sphere_set) {
         StructuredBuffer<float> radii = push_data.radii;
         const float3 axis_x = transform_vector(transform, float3(1.0, 0.0, 0.0));
         const float3 axis_y = transform_vector(transform, float3(0.0, 1.0, 0.0));
@@ -76,7 +76,7 @@ void update_raster_area_emission(uint3 group_thread_id : SV_GroupThreadID) {
             const float axis_c = radius * length(axis_z);
             area += 4.0 * raster_preview_pi * pow((pow(axis_a * axis_b, ellipsoid_power) + pow(axis_a * axis_c, ellipsoid_power) + pow(axis_b * axis_c, ellipsoid_power)) / 3.0, 1.0 / ellipsoid_power);
         }
-    } else if (geometry_kind == 1) {
+    } else if (geometry_kind == geometry_sphere) {
         const uint height_index = thread & 7;
         const uint angular_index = thread >> 3;
         const float radius = push_data.geometry_parameters.x;
@@ -85,7 +85,7 @@ void update_raster_area_emission(uint3 group_thread_id : SV_GroupThreadID) {
         const float radial = sqrt(max(0.0, radius * radius - z * z));
         const float3 normal = normalize(float3(radial * cos(phi), radial * sin(phi), z));
         area = radius * push_data.geometry_parameters.w * (push_data.geometry_parameters.z - push_data.geometry_parameters.y) * area_scale(transform, normal) / float(raster_preview_area_threads);
-    } else if (geometry_kind == 2) {
+    } else if (geometry_kind == geometry_disk) {
         const uint radial_index = thread & 7;
         const uint angular_index = thread >> 3;
         const float radius_squared = lerp(push_data.geometry_parameters.z * push_data.geometry_parameters.z, push_data.geometry_parameters.y * push_data.geometry_parameters.y, (float(radial_index) + 0.5) / 8.0);

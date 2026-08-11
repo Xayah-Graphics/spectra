@@ -59,7 +59,7 @@ PathTextureCoordinates map_texture(
         float3(0.0),
         float3(0.0),
     };
-    if (mapping.metadata.x == 0) {
+    if (mapping.metadata.x == mapping_uv) {
         result.st =
             context.texture_coordinates *
                 mapping.parameter_0.xy +
@@ -84,7 +84,7 @@ PathTextureCoordinates map_texture(
         transform_vector(
             mapping,
             context.position_dy);
-    if (mapping.metadata.x == 1) {
+    if (mapping.metadata.x == mapping_planar) {
         result.st = float2(
             dot(
                 result.point,
@@ -110,11 +110,11 @@ PathTextureCoordinates map_texture(
                 mapping.parameter_1.xyz));
         return result;
     }
-    if (mapping.metadata.x == 4) return result;
+    if (mapping.metadata.x == mapping_checkerboard_3d) return result;
     const float x2_y2 =
         result.point.x * result.point.x +
         result.point.y * result.point.y;
-    if (mapping.metadata.x == 2) {
+    if (mapping.metadata.x == mapping_spherical) {
         const float radial =
             sqrt(
                 max(
@@ -271,7 +271,7 @@ float checkerboard_weight(
         map_texture(
             mapping,
             context);
-    if (mapping.metadata.x == 4) {
+    if (mapping.metadata.x == mapping_checkerboard_3d) {
         const float3 radius =
             1.5 *
             max(

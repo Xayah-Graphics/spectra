@@ -76,7 +76,6 @@ namespace spectra {
 
     private:
         void apply_dynamic_parameters(std::vector<scene::DynamicParameterSetting> parameters, bool reset);
-        [[nodiscard]] bool inspector_available() noexcept;
         [[nodiscard]] bool pointer_over_interface(ImVec2 position, ImVec2 size, bool show_axes) const noexcept;
         void synchronize_transform();
         void apply_transform(SceneEntityReference entity, math::Transform transform);

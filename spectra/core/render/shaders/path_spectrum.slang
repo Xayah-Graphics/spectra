@@ -195,7 +195,7 @@ float evaluate_spectrum_component(
     ByteAddressBuffer cie_spectra,
     float wavelength) {
     float value = 0.0;
-    if (spectrum.metadata.x == 0) {
+    if (spectrum.metadata.x == spectrum_rgb) {
         value =
             spectrum.parameters.w *
             evaluate_polynomial(
@@ -205,14 +205,14 @@ float evaluate_spectrum_component(
             value *=
                 spectral_table_value(
                     cie_spectra,
-                    spectrum.metadata.y == 1
+                    spectrum.metadata.y == illuminant_d65
                         ? 3
                         : 4,
                     wavelength);
     }
-    else if (spectrum.metadata.x == 1)
+    else if (spectrum.metadata.x == spectrum_constant)
         value = spectrum.parameters.x;
-    else if (spectrum.metadata.x == 2)
+    else if (spectrum.metadata.x == spectrum_blackbody)
         value =
             blackbody_radiance(
                 wavelength,

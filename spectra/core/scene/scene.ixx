@@ -5,14 +5,6 @@ export import spectra.math;
 import std;
 
 namespace spectra::scene {
-    export [[nodiscard]] inline std::filesystem::path provider_library_filename(const std::string_view provider_id) {
-#if defined(_WIN32)
-        return std::filesystem::path{std::string{provider_id} + ".spectra-plugin.dll"};
-#else
-        return std::filesystem::path{std::string{provider_id} + ".spectra-plugin.so"};
-#endif
-    }
-
     export struct CameraFrame {
         math::Float3 position{};
         math::Float3 right{1.0f, 0.0f, 0.0f};
@@ -725,7 +717,7 @@ namespace spectra::scene {
     };
 
 
-    export inline constexpr std::uint32_t current_scene_format_version = 28;
+    export inline constexpr std::uint32_t current_scene_format_version = 29;
 
     export struct DynamicSystemId {
         std::string value{};
@@ -815,32 +807,114 @@ namespace spectra::scene {
         friend auto operator<=>(const DynamicSceneBinding&, const DynamicSceneBinding&) = default;
     };
 
-    export struct DynamicVisualizationView {
-        std::string dataset_id{};
-        std::string name{};
-        VisualizationViewKind kind{VisualizationViewKind::Segments};
-        VisualizationDepthMode depth_mode{VisualizationDepthMode::Tested};
-        VisualizationCompositionDomain composition_domain{VisualizationCompositionDomain::DisplayReferred};
-        InstanceId anchor{};
-        std::string channel_id{};
-        math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
-        math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
+    export struct PointVisualization {
         float width{1.0f};
         float scale{1.0f};
+        float scalar_minimum{};
+        float scalar_maximum{1.0f};
+        PointGlyph glyph{PointGlyph::ScreenDisc};
+        PointShading shading{PointShading::Unlit};
+        VisualizationColorSource color_source{VisualizationColorSource::Element};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        friend auto operator<=>(const PointVisualization&, const PointVisualization&) = default;
+    };
+
+    export struct SegmentVisualization {
+        float width{1.0f};
+        float scalar_minimum{};
+        float scalar_maximum{1.0f};
+        VisualizationColorSource color_source{VisualizationColorSource::Element};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        friend auto operator<=>(const SegmentVisualization&, const SegmentVisualization&) = default;
+    };
+
+    export struct CurveVisualization {
+        float width{1.0f};
+        float scalar_minimum{};
+        float scalar_maximum{1.0f};
+        VisualizationColorSource color_source{VisualizationColorSource::Element};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        friend auto operator<=>(const CurveVisualization&, const CurveVisualization&) = default;
+    };
+
+    export struct VectorVisualization {
+        float width{1.0f};
+        float scale{1.0f};
+        float scalar_minimum{};
+        float scalar_maximum{1.0f};
+        VisualizationColorSource color_source{VisualizationColorSource::Element};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        friend auto operator<=>(const VectorVisualization&, const VectorVisualization&) = default;
+    };
+
+    export struct FieldSliceVisualization {
+        std::string channel_id{};
         float slice_position{0.5f};
         float scalar_minimum{};
         float scalar_maximum{1.0f};
-        std::uint32_t sampling{8};
         std::uint32_t slice_axis{2};
-        std::uint32_t distortion_iterations{8};
-        float distortion_tolerance{1.0e-6f};
-        PointGlyph point_glyph{PointGlyph::ScreenDisc};
-        PointShading point_shading{PointShading::Unlit};
         VisualizationColorSource color_source{VisualizationColorSource::Element};
         VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        friend auto operator<=>(const FieldSliceVisualization&, const FieldSliceVisualization&) = default;
+    };
+
+    export struct FieldVectorVisualization {
+        std::string channel_id{};
+        float width{1.0f};
+        float scale{1.0f};
+        float scalar_minimum{};
+        float scalar_maximum{1.0f};
+        std::uint32_t sampling{8};
+        VisualizationColorSource color_source{VisualizationColorSource::Element};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        friend auto operator<=>(const FieldVectorVisualization&, const FieldVectorVisualization&) = default;
+    };
+
+    export struct ImageVisualization {
+        math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
+        friend auto operator<=>(const ImageVisualization&, const ImageVisualization&) = default;
+    };
+
+    export struct CameraObservationVisualization {
+        math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
+        float width{1.0f};
+        float scale{1.0f};
+        std::uint32_t distortion_iterations{8};
+        float distortion_tolerance{1.0e-6f};
+        friend auto operator<=>(const CameraObservationVisualization&, const CameraObservationVisualization&) = default;
+    };
+
+    export struct FrameVisualization {
+        float width{1.0f};
+        float scale{1.0f};
+        friend auto operator<=>(const FrameVisualization&, const FrameVisualization&) = default;
+    };
+
+    export struct SurfaceVisualization {
+        float scalar_minimum{};
+        float scalar_maximum{1.0f};
+        VisualizationColorSource color_source{VisualizationColorSource::Element};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        friend auto operator<=>(const SurfaceVisualization&, const SurfaceVisualization&) = default;
+    };
+
+    export struct DynamicVisualizationView {
+        std::string dataset_id{};
+        std::string name{};
+        VisualizationDepthMode depth_mode{VisualizationDepthMode::Tested};
+        VisualizationCompositionDomain composition_domain{VisualizationCompositionDomain::DisplayReferred};
+        InstanceId anchor{};
+        math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
         bool visible{true};
+        std::variant<PointVisualization, SegmentVisualization, CurveVisualization, VectorVisualization, FieldSliceVisualization, FieldVectorVisualization, ImageVisualization, CameraObservationVisualization, FrameVisualization, SurfaceVisualization> data{SegmentVisualization{}};
         friend auto operator<=>(const DynamicVisualizationView&, const DynamicVisualizationView&) = default;
     };
+
+    export [[nodiscard]] constexpr VisualizationViewKind visualization_view_kind(const DynamicVisualizationView& view) noexcept {
+        return static_cast<VisualizationViewKind>(view.data.index());
+    }
+
+    static_assert(std::variant_size_v<decltype(DynamicVisualizationView::data)> == static_cast<std::size_t>(VisualizationViewKind::Surface) + 1);
 
     export struct DynamicSystem {
         DynamicSystemId id{};
@@ -891,20 +965,21 @@ namespace spectra::scene {
     };
 
     export enum class SceneChange : std::uint16_t {
-        None          = 0,
-        Geometry      = 1 << 0,
-        Transform     = 1 << 1,
-        Texture       = 1 << 2,
-        Material      = 1 << 3,
-        Light         = 1 << 4,
-        Medium        = 1 << 5,
-        Volume        = 1 << 6,
-        Camera        = 1 << 7,
-        Film          = 1 << 8,
-        Sampler       = 1 << 9,
-        Metadata      = 1 << 10,
-        Transport     = 1 << 11,
-        All           = 0x0fff,
+        None      = 0,
+        Geometry  = 1 << 0,
+        Transform = 1 << 1,
+        Texture   = 1 << 2,
+        Material  = 1 << 3,
+        Light     = 1 << 4,
+        Medium    = 1 << 5,
+        Volume    = 1 << 6,
+        Camera    = 1 << 7,
+        Film      = 1 << 8,
+        Sampler   = 1 << 9,
+        Metadata  = 1 << 10,
+        Transport = 1 << 11,
+        Structure = 1 << 12,
+        All       = 0x1fff,
     };
 
     export [[nodiscard]] constexpr SceneChange operator|(const SceneChange left, const SceneChange right) noexcept {

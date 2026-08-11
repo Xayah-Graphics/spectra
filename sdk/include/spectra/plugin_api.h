@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
-inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 20;
-inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_20";
+inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 21;
+inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_21";
 
 #if defined(_WIN32)
 #define SPECTRA_PLUGIN_EXPORT __declspec(dllexport)
@@ -235,34 +235,34 @@ struct SpectraPluginFieldChannelDescriptor {
 };
 
 struct SpectraPluginTriangleMeshDatasetDescriptor {
-    std::uint64_t vertex_capacity;
-    std::uint64_t index_capacity;
+    std::uint32_t vertex_capacity;
+    std::uint32_t index_capacity;
     SpectraPluginMeshUpdateMode update_mode;
     std::uint32_t attributes;
 };
 
 struct SpectraPluginSphereSetDatasetDescriptor {
-    std::uint64_t capacity;
+    std::uint32_t capacity;
 };
 
 struct SpectraPluginInstanceTransformDatasetDescriptor {
-    std::uint64_t capacity;
+    std::uint32_t capacity;
 };
 
 struct SpectraPluginPointDatasetDescriptor {
-    std::uint64_t capacity;
+    std::uint32_t capacity;
 };
 
 struct SpectraPluginSegmentDatasetDescriptor {
-    std::uint64_t capacity;
+    std::uint32_t capacity;
 };
 
 struct SpectraPluginCurveDatasetDescriptor {
-    std::uint64_t capacity;
+    std::uint32_t capacity;
 };
 
 struct SpectraPluginVectorDatasetDescriptor {
-    std::uint64_t capacity;
+    std::uint32_t capacity;
 };
 
 struct SpectraPluginFieldDatasetDescriptor {
@@ -280,7 +280,7 @@ struct SpectraPluginImageDatasetDescriptor {
 };
 
 struct SpectraPluginCameraObservationDatasetDescriptor {
-    std::uint64_t capacity;
+    std::uint32_t capacity;
     std::uint32_t image_extent[2];
     SpectraPluginImageFormat image_format;
     SpectraPluginColorSpace color_space;
@@ -288,7 +288,7 @@ struct SpectraPluginCameraObservationDatasetDescriptor {
 };
 
 struct SpectraPluginTransformDatasetDescriptor {
-    std::uint64_t capacity;
+    std::uint32_t capacity;
 };
 
 union SpectraPluginDatasetDetails {
@@ -344,7 +344,7 @@ struct SpectraPluginTelemetryDescriptor {
     SpectraPluginString unit;
     SpectraPluginString section_id;
     SpectraPluginTelemetryKind kind;
-    bool plot;
+    std::uint8_t plot;
 };
 
 struct SpectraPluginProviderDescriptor {
@@ -371,7 +371,7 @@ struct SpectraPluginProviderCreateResult {
 
 struct SpectraPluginPresentationTickResult {
     SpectraPluginResult result;
-    bool dirty;
+    std::uint8_t dirty;
 };
 
 struct SpectraPluginGpuBuffer {
@@ -416,8 +416,8 @@ struct SpectraPluginTelemetryConfiguration {
 
 struct SpectraPluginDatasetCommit {
     std::uint32_t slot_index;
-    std::uint64_t active_count;
-    std::uint64_t secondary_count;
+    std::uint32_t active_count;
+    std::uint32_t secondary_count;
     std::uint64_t signal_value;
     std::uint32_t region_minimum[3];
     std::uint32_t region_maximum[3];
@@ -436,7 +436,7 @@ struct SpectraPluginFrameSink {
     // copies commit values and strings before each sink callback returns.
     void* context;
     SpectraPluginResult (*commit_dataset)(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept;
-    SpectraPluginResult (*request_dataset_capacity)(void* context, std::uint64_t dataset_index, std::uint64_t capacity, std::uint64_t secondary_capacity) noexcept;
+    SpectraPluginResult (*request_dataset_capacity)(void* context, std::uint64_t dataset_index, std::uint32_t capacity, std::uint32_t secondary_capacity) noexcept;
     SpectraPluginResult (*commit_telemetry)(void* context, const SpectraPluginTelemetryCommit* commit) noexcept;
 };
 
@@ -459,6 +459,17 @@ struct SpectraPluginApi {
     SpectraPluginPresentationTickResult (*tick_presentation)(void* provider, double elapsed_seconds) noexcept;
 };
 
+static_assert(sizeof(SpectraPluginTriangleMeshDatasetDescriptor) == 16);
+static_assert(sizeof(SpectraPluginSphereSetDatasetDescriptor) == 4);
+static_assert(sizeof(SpectraPluginTelemetryDescriptor) == 72);
+static_assert(offsetof(SpectraPluginTelemetryDescriptor, plot) == 68);
+static_assert(sizeof(SpectraPluginPresentationTickResult) == 24);
+static_assert(offsetof(SpectraPluginPresentationTickResult, dirty) == 16);
+static_assert(sizeof(SpectraPluginDatasetCommit) == 48);
+static_assert(offsetof(SpectraPluginDatasetCommit, signal_value) == 16);
+static_assert(sizeof(SpectraPluginFrameSink) == 32);
+static_assert(sizeof(SpectraPluginApi) == 88);
+
 extern "C" {
-SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_20() noexcept;
+SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_21() noexcept;
 }

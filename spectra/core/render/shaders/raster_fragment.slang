@@ -23,7 +23,6 @@ struct RasterFragmentOutput {
 }
 
 static const float raster_preview_pi = 3.14159265358979323846;
-static const uint raster_preview_material_budget = 32;
 static const float3 raster_preview_light_direction = normalize(float3(-0.35, 0.8, 0.45));
 static const float3 raster_wire_light_color = float3(0.55, 0.65, 0.72);
 
@@ -157,24 +156,24 @@ float3 raster_preview_leaf(RasterMaterial material, RasterSceneBindings bindings
     const float alpha_y = raster_alpha(raster_float_parameter(material.scalar_values_0.y, material.scalar_textures_0.y, bindings, context), remap);
     const float microfacet = microfacet_scale(outgoing, incoming, half_vector, tangent, bitangent, normal, alpha_x, alpha_y);
 
-    if (material.metadata.x == 1) {
+    if (material.metadata.x == raster_material_diffuse) {
         const float3 reflectance = raster_spectrum_parameter(material.spectrum_value_0, material.spectrum_data_0.x, bindings, context);
         return 0.08 * reflectance + 3.0 * no_l * reflectance / raster_preview_pi;
     }
-    if (material.metadata.x == 2) {
+    if (material.metadata.x == raster_material_diffuse_transmission) {
         const float3 reflectance = raster_spectrum_parameter(material.spectrum_value_0, material.spectrum_data_0.x, bindings, context);
         const float3 transmittance = raster_spectrum_parameter(material.spectrum_value_1, material.spectrum_data_1.x, bindings, context);
         const float3 preview = (reflectance + transmittance) * material.scalar_values_0.z;
         return 0.08 * preview + 3.0 * no_l * preview / raster_preview_pi;
     }
-    if (material.metadata.x == 3 || material.metadata.x == 6) {
+    if (material.metadata.x == raster_material_conductor || material.metadata.x == raster_material_coated_conductor) {
         const float3 fresnel = raster_preview_conductor_fresnel(material, bindings, context, dot(outgoing, half_vector));
         return 0.025 * raster_preview_conductor_fresnel(material, bindings, context, no_v) + 3.0 * no_l * microfacet * fresnel;
     }
     const float eta = max(raster_spectrum_parameter(material.spectrum_value_1, material.spectrum_data_1.x, bindings, context).x, 1.0e-3);
     const float fresnel_v = dielectric_fresnel(no_v, eta);
     const float specular = microfacet * dielectric_fresnel(dot(outgoing, half_vector), eta);
-    if (material.metadata.x == 5) {
+    if (material.metadata.x == raster_material_coated_diffuse) {
         const float3 reflectance = raster_spectrum_parameter(material.spectrum_value_0, material.spectrum_data_0.x, bindings, context);
         const float fresnel_l = dielectric_fresnel(no_l, eta);
         const float3 diffuse = reflectance * (1.0 - fresnel_v) * (1.0 - fresnel_l) / raster_preview_pi;
@@ -247,7 +246,11 @@ RasterFragmentOutput raster_fragment(RasterVertex input) {
     }
 
     const float3 outgoing = push_data.camera_position.w != 0.0 ? normalize(push_data.camera_position.xyz - input.world_position) : -push_data.camera_forward.xyz;
-    if (materials[input.material].metadata.x == 0) {
+    StructuredBuffer<RasterMaterialRange> material_ranges = bindings.material_ranges;
+    StructuredBuffer<RasterMaterialTerm> material_terms = bindings.material_terms;
+    StructuredBuffer<RasterMaterialFactor> material_factors = bindings.material_factors;
+    const RasterMaterialRange material_range = material_ranges[input.material];
+    if (material_range.range.y == 0) {
         if (wire_coverage <= 0.0) discard;
         return raster_wireframe_output(fragment_depth, 1.0);
     }
@@ -263,26 +266,17 @@ RasterFragmentOutput raster_fragment(RasterVertex input) {
         } else color = float3(0.0);
     }
 
-    uint material_stack[64];
-    float weight_stack[64];
-    uint stack_size = 1;
-    material_stack[0] = input.material;
-    weight_stack[0] = 1.0;
-    for (uint iteration = 0; iteration != raster_preview_material_budget; ++iteration) {
-        if (stack_size == 0) break;
-        --stack_size;
-        const uint material_index = material_stack[stack_size];
-        const float weight = weight_stack[stack_size];
-        const RasterMaterial material = materials[material_index];
-        if (material.metadata.x == 7) {
-            const float amount = clamp(raster_float_parameter(material.scalar_values_0.x, material.scalar_textures_0.x, bindings, texture_context), 0.0, 1.0);
-            material_stack[stack_size] = material.materials.x;
-            weight_stack[stack_size] = weight * (1.0 - amount);
-            material_stack[stack_size + 1] = material.materials.y;
-            weight_stack[stack_size + 1] = weight * amount;
-            stack_size += 2;
-        } else if (material.metadata.x != 0)
-            color += weight * raster_preview_leaf(material, bindings, texture_context, input.world_tangent, outgoing);
+    for (uint term_index = 0; term_index != material_range.range.y; ++term_index) {
+        const RasterMaterialTerm term = material_terms[material_range.range.x + term_index];
+        float weight = 1.0;
+        for (uint factor_index = 0; factor_index != term.data.z; ++factor_index) {
+            const RasterMaterialFactor factor = material_factors[term.data.y + factor_index];
+            float amount = clamp(raster_float_parameter(factor.parameters.x, factor.metadata.x, bindings, texture_context), 0.0, 1.0);
+            if (factor.metadata.y != 0) amount = 1.0 - amount;
+            weight *= amount;
+        }
+        const RasterMaterial material = materials[term.data.x];
+        if (material.metadata.x != raster_material_interface) color += weight * raster_preview_leaf(material, bindings, texture_context, input.world_tangent, outgoing);
     }
 
     return {float4(max(color, float3(0.0)), 1.0), fragment_depth};

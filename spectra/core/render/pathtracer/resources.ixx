@@ -29,6 +29,7 @@ namespace spectra {
         ResolveVisibility,
         AccumulateFilm,
         ResolveGBufferDepth,
+        Count,
     };
 
     export struct PathTracerResources {

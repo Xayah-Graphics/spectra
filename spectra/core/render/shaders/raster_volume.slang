@@ -504,7 +504,7 @@ float volume_density(
         emission = float3(0.0);
         return 0.0;
     }
-    if (volume.metadata.x == 0) {
+    if (volume.metadata.x == volume_density_grid) {
         StructuredBuffer<float> density_field =
             volume.density;
         const float density =
@@ -565,7 +565,7 @@ float volume_density(
                 emission_multiplier;
         return density;
     }
-    if (volume.metadata.x == 1) {
+    if (volume.metadata.x == volume_rgb_grid) {
         StructuredBuffer<float3> sigma_a_field =
             volume.sigma_a_field;
         StructuredBuffer<float3> sigma_s_field =

@@ -1,7 +1,45 @@
 module raster_scene;
 
-public static const uint gpu_geometry_attribute_tangent = 1u << 1u;
-public static const uint gpu_geometry_attribute_texture_coordinate = 1u << 2u;
+#include "shader_semantics.h"
+
+public static const uint gpu_geometry_attribute_tangent = SPECTRA_GPU_ATTRIBUTE_TANGENT;
+public static const uint gpu_geometry_attribute_texture_coordinate = SPECTRA_GPU_ATTRIBUTE_TEXTURE_COORDINATE;
+
+public static const uint geometry_triangle = SPECTRA_GEOMETRY_TRIANGLE;
+public static const uint geometry_sphere = SPECTRA_GEOMETRY_SPHERE;
+public static const uint geometry_disk = SPECTRA_GEOMETRY_DISK;
+public static const uint geometry_cylinder = SPECTRA_GEOMETRY_CYLINDER;
+
+public static const uint raster_material_interface = SPECTRA_RASTER_MATERIAL_INTERFACE;
+public static const uint raster_material_diffuse = SPECTRA_RASTER_MATERIAL_DIFFUSE;
+public static const uint raster_material_diffuse_transmission = SPECTRA_RASTER_MATERIAL_DIFFUSE_TRANSMISSION;
+public static const uint raster_material_conductor = SPECTRA_RASTER_MATERIAL_CONDUCTOR;
+public static const uint raster_material_dielectric = SPECTRA_RASTER_MATERIAL_DIELECTRIC;
+public static const uint raster_material_coated_diffuse = SPECTRA_RASTER_MATERIAL_COATED_DIFFUSE;
+public static const uint raster_material_coated_conductor = SPECTRA_RASTER_MATERIAL_COATED_CONDUCTOR;
+
+public static const uint texture_constant = SPECTRA_TEXTURE_CONSTANT;
+public static const uint texture_image = SPECTRA_TEXTURE_IMAGE;
+public static const uint texture_checkerboard = SPECTRA_TEXTURE_CHECKERBOARD;
+public static const uint texture_scale = SPECTRA_TEXTURE_SCALE;
+public static const uint texture_mix = SPECTRA_TEXTURE_MIX;
+public static const uint texture_direction_mix = SPECTRA_TEXTURE_DIRECTION_MIX;
+public static const uint texture_bilerp = SPECTRA_TEXTURE_BILERP;
+
+public static const uint mapping_uv = SPECTRA_MAPPING_UV;
+public static const uint mapping_planar = SPECTRA_MAPPING_PLANAR;
+public static const uint mapping_spherical = SPECTRA_MAPPING_SPHERICAL;
+public static const uint mapping_cylindrical = SPECTRA_MAPPING_CYLINDRICAL;
+public static const uint mapping_checkerboard_3d = SPECTRA_MAPPING_CHECKERBOARD_3D;
+
+public static const uint area_source_triangle = SPECTRA_AREA_SOURCE_TRIANGLE;
+public static const uint area_source_sphere_set = SPECTRA_AREA_SOURCE_SPHERE_SET;
+public static const uint area_source_analytic = SPECTRA_AREA_SOURCE_ANALYTIC;
+
+public static const uint volume_density_grid = SPECTRA_VOLUME_DENSITY_GRID;
+public static const uint volume_rgb_grid = SPECTRA_VOLUME_RGB_GRID;
+public static const uint volume_nanovdb = SPECTRA_VOLUME_NANOVDB;
+public static const uint volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
 
 public static const uint raster_display_wireframe = 1;
 
@@ -133,13 +171,26 @@ public float3 raster_inverse_transform_vector(
 
 public struct RasterMaterial {
     public uint4 metadata;
-    public uint4 materials;
     public float4 spectrum_value_0;
     public uint4 spectrum_data_0;
     public float4 spectrum_value_1;
     public uint4 spectrum_data_1;
     public float4 scalar_values_0;
     public uint4 scalar_textures_0;
+}
+
+public struct RasterMaterialRange {
+    public uint2 range;
+    public uint2 reserved;
+}
+
+public struct RasterMaterialTerm {
+    public uint4 data;
+}
+
+public struct RasterMaterialFactor {
+    public float4 parameters;
+    public uint4 metadata;
 }
 
 public struct RasterTextureHeader {
@@ -192,6 +243,9 @@ public struct RasterSceneBindings {
     public DescriptorHandle<StructuredBuffer<RasterPrimitive>> primitives;
     public DescriptorHandle<StructuredBuffer<RasterTransform>> transforms;
     public DescriptorHandle<StructuredBuffer<RasterMaterial>> materials;
+    public DescriptorHandle<StructuredBuffer<RasterMaterialRange>> material_ranges;
+    public DescriptorHandle<StructuredBuffer<RasterMaterialTerm>> material_terms;
+    public DescriptorHandle<StructuredBuffer<RasterMaterialFactor>> material_factors;
     public DescriptorHandle<StructuredBuffer<uint>> face_materials;
     public DescriptorHandle<StructuredBuffer<RasterAreaLight>> area_lights;
     public DescriptorHandle<StructuredBuffer<RasterTextureHeader>> texture_headers;

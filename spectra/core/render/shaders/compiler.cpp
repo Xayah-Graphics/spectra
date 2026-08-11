@@ -34,6 +34,8 @@ namespace {
         std::string output_name{};
         std::string module_name{};
         std::string entry_point{};
+        bool optimized{};
+        std::string category{};
     };
 
     [[nodiscard]] std::string diagnostic_text(slang::IBlob* blob) {
@@ -94,8 +96,10 @@ namespace {
             if (line.empty() || line.front() == '#') continue;
             std::istringstream tokens{line};
             ShaderEntry entry{};
+            std::string optimization{};
             std::string trailing{};
-            if (!(tokens >> entry.output_name >> entry.module_name >> entry.entry_point) || tokens >> trailing) throw std::runtime_error(std::format("Invalid shader entry: {}", line));
+            if (!(tokens >> entry.output_name >> entry.module_name >> entry.entry_point >> optimization >> entry.category) || tokens >> trailing || (optimization != "precise" && optimization != "optimized") || (entry.category != "runtime" && entry.category != "path-compute" && entry.category != "path-ray" && entry.category != "editor")) throw std::runtime_error(std::format("Invalid shader entry: {}", line));
+            entry.optimized = optimization == "optimized";
             entries.push_back(std::move(entry));
         }
         return entries;
@@ -145,7 +149,7 @@ namespace {
         output << "module;\n"
                << "#include <cstddef>\n\n"
                << "export module " << module_name << ";\n\n"
-               << "export import spectra.runtime;\n"
+               << "export import spectra.runtime.resources;\n"
                << "import std;\n\n"
                << "namespace " << namespace_name << " {\n";
         for (const ReflectedType& type : types) {
@@ -288,7 +292,7 @@ int main(const int argument_count, const char* const* arguments) {
         write_if_different(arguments[6], plugin_abi_module.data(), plugin_abi_module.size(), "generated Plugin shader ABI module");
 
         const std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[7]);
-        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.output_name == "path_evaluate_surface_textures" ? *default_session : *optimized_session, entry, arguments[8], arguments[9]);
+        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.optimized ? *optimized_session : *default_session, entry, arguments[8], arguments[9]);
     } catch (const std::exception& error) {
         std::println(std::cerr, "{}", error.what());
         return 1;

@@ -46,6 +46,9 @@ namespace spectra {
         struct {
             GpuBuffer primitive_buffer{};
             GpuBuffer material_buffer{};
+            GpuBuffer material_range_buffer{};
+            GpuBuffer material_term_buffer{};
+            GpuBuffer material_factor_buffer{};
             GpuBuffer face_material_buffer{};
             GpuBuffer area_light_buffer{};
             GpuBuffer volume_buffer{};
@@ -53,6 +56,9 @@ namespace spectra {
             std::array<GpuBuffer, 9> texture_buffers{};
             GpuBuffer scene_binding_buffer{};
             DescriptorLease material_descriptor{};
+            DescriptorLease material_range_descriptor{};
+            DescriptorLease material_term_descriptor{};
+            DescriptorLease material_factor_descriptor{};
             DescriptorLease face_material_descriptor{};
             DescriptorLease area_light_descriptor{};
             DescriptorLease zero_volume_field_descriptor{};

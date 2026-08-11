@@ -17,13 +17,13 @@ namespace spectra {
                 if (std::filesystem::exists(destination)) throw std::runtime_error(std::format("Frozen Scene destination '{}' already exists", destination.string()));
                 std::filesystem::create_directory(temporary);
                 const std::filesystem::path scene_path = temporary / std::format("{}.spectra", name);
-                scene::save_scene(std::move(scene), scene_path, source_scene_path, scene::SceneSaveMode::MaterializeAssets);
+                scene::save_scene(scene, scene_path, source_scene_path, scene::SceneSaveMode::MaterializeAssets);
                 std::filesystem::rename(temporary, destination);
                 return destination / scene_path.filename();
             } catch (const std::exception& error) {
                 std::error_code cleanup_error{};
                 std::filesystem::remove_all(temporary, cleanup_error);
-                return std::unexpected{std::string{error.what()}};
+                return std::unexpected{cleanup_error ? std::format("{}; removing temporary export '{}' also failed: {}", error.what(), temporary.string(), cleanup_error.message()) : std::string{error.what()}};
             }
         }
 
@@ -55,20 +55,33 @@ namespace spectra {
                 vk::BufferCopy region{};
             };
             std::vector<ReadbackCopy> readback_copies{};
-            const auto add_dynamic_readback = [&snapshot, &readback_copies, &size](const FrozenSceneReadbackKind kind, const std::uint32_t resource_index, const std::uint32_t buffer_index, const dynamics::GpuBufferView source, const vk::DeviceSize bytes) {
+            const auto add_dynamic_readback = [&snapshot, &readback_copies, &size](const FrozenSceneReadbackKind kind, const std::uint32_t resource_index, const std::uint32_t buffer_index, const dynamics::GpuBufferView source, const std::uint64_t element_count, const vk::DeviceSize element_size) {
+                if (element_count > std::numeric_limits<vk::DeviceSize>::max() / element_size) throw std::runtime_error("Frozen Scene readback size overflows");
+                const vk::DeviceSize bytes = element_count * element_size;
+                if (size > std::numeric_limits<vk::DeviceSize>::max() - 15u - bytes) throw std::runtime_error("Frozen Scene readback size overflows");
                 size = size + 15u & ~vk::DeviceSize{15u};
-                snapshot.readback_regions.emplace_back(kind, resource_index, buffer_index, GpuVolumeField::Density, size, bytes);
+                snapshot.readback_regions.emplace_back(kind, resource_index, buffer_index, GpuVolumeField::Density, size, element_count, element_size);
                 if (bytes != 0) readback_copies.emplace_back(source.buffer, vk::BufferCopy{0, size, bytes});
                 size += bytes;
             };
+            std::unordered_map<std::uint64_t, std::uint32_t> geometry_indices{};
+            std::unordered_map<std::uint64_t, std::uint32_t> sphere_set_indices{};
+            std::unordered_map<std::uint64_t, std::uint32_t> volume_indices{};
+            std::unordered_map<std::uint64_t, std::uint32_t> instance_indices{};
+            for (std::uint32_t index = 0; index != current_scene.resources.geometries.size(); ++index) geometry_indices.emplace(current_scene.resources.geometries[index].id.value, index);
+            for (std::uint32_t index = 0; index != current_scene.resources.sphere_sets.size(); ++index) sphere_set_indices.emplace(current_scene.resources.sphere_sets[index].id.value, index);
+            for (std::uint32_t index = 0; index != current_scene.resources.volumes.size(); ++index) volume_indices.emplace(current_scene.resources.volumes[index].id.value, index);
+            for (std::uint32_t index = 0; index != current_scene.resources.instances.size(); ++index) instance_indices.emplace(current_scene.resources.instances[index].id.value, index);
             for (const GpuGeometry& geometry : gpu_scene.geometries) {
                 if (!geometry.cpu_data_stale) continue;
-                const std::uint32_t resource   = static_cast<std::uint32_t>(std::ranges::find(current_scene.resources.geometries, geometry.geometry_id, &scene::Geometry::id) - current_scene.resources.geometries.begin());
+                const std::uint32_t resource   = geometry_indices.at(geometry.geometry_id.value);
                 const auto add_readback_region = [&snapshot, &readback_copies, &size, resource](const FrozenSceneReadbackKind kind, const GpuBuffer& source, const std::uint64_t count, const vk::DeviceSize element_size) {
                     if (count == 0) return;
-                    size                       = (size + 15u) & ~vk::DeviceSize{15u};
+                    if (count > std::numeric_limits<vk::DeviceSize>::max() / element_size) throw std::runtime_error("Frozen Scene readback size overflows");
                     const vk::DeviceSize bytes = count * element_size;
-                    snapshot.readback_regions.emplace_back(kind, resource, 0, GpuVolumeField::Density, size, count);
+                    if (size > std::numeric_limits<vk::DeviceSize>::max() - 15u - bytes) throw std::runtime_error("Frozen Scene readback size overflows");
+                    size = (size + 15u) & ~vk::DeviceSize{15u};
+                    snapshot.readback_regions.emplace_back(kind, resource, 0, GpuVolumeField::Density, size, count, element_size);
                     readback_copies.emplace_back(&source, vk::BufferCopy{0, size, bytes});
                     size += bytes;
                 };
@@ -80,12 +93,14 @@ namespace spectra {
             }
             for (const GpuSphereSet& spheres : gpu_scene.sphere_sets) {
                 if (!spheres.cpu_data_stale) continue;
-                const std::uint32_t resource   = static_cast<std::uint32_t>(std::ranges::find(current_scene.resources.sphere_sets, spheres.sphere_set_id, &scene::SphereSet::id) - current_scene.resources.sphere_sets.begin());
+                const std::uint32_t resource   = sphere_set_indices.at(spheres.sphere_set_id.value);
                 const auto add_readback_region = [&snapshot, &readback_copies, &size, resource](const FrozenSceneReadbackKind kind, const GpuBuffer& source, const std::uint64_t count, const vk::DeviceSize element_size) {
                     if (count == 0) return;
-                    size                       = (size + 15u) & ~vk::DeviceSize{15u};
+                    if (count > std::numeric_limits<vk::DeviceSize>::max() / element_size) throw std::runtime_error("Frozen Scene readback size overflows");
                     const vk::DeviceSize bytes = count * element_size;
-                    snapshot.readback_regions.emplace_back(kind, resource, 0, GpuVolumeField::Density, size, count);
+                    if (size > std::numeric_limits<vk::DeviceSize>::max() - 15u - bytes) throw std::runtime_error("Frozen Scene readback size overflows");
+                    size = (size + 15u) & ~vk::DeviceSize{15u};
+                    snapshot.readback_regions.emplace_back(kind, resource, 0, GpuVolumeField::Density, size, count, element_size);
                     readback_copies.emplace_back(&source, vk::BufferCopy{0, size, bytes});
                     size += bytes;
                 };
@@ -94,28 +109,30 @@ namespace spectra {
             }
             for (const GpuVolume& volume : gpu_scene.volumes) {
                 if (!volume.cpu_data_stale) continue;
-                const std::uint32_t resource = static_cast<std::uint32_t>(std::ranges::find(current_scene.resources.volumes, volume.volume_id, &scene::Volume::id) - current_scene.resources.volumes.begin());
+                const std::uint32_t resource = volume_indices.at(volume.volume_id.value);
                 for (std::size_t field = 0; field != volume.fields.size(); ++field) {
                     if (!volume.field_present[field]) continue;
                     const GpuVolumeField kind         = static_cast<GpuVolumeField>(field);
                     const vk::DeviceSize element_size = kind == GpuVolumeField::SigmaA || kind == GpuVolumeField::SigmaS || kind == GpuVolumeField::Emission ? sizeof(math::Float3) : kind == GpuVolumeField::NanoVdbDensity || kind == GpuVolumeField::NanoVdbTemperature ? sizeof(std::uint32_t) : sizeof(float);
                     const std::uint64_t count         = volume.fields[field].size / element_size;
-                    size                              = (size + 15u) & ~vk::DeviceSize{15u};
-                    const vk::DeviceSize bytes        = count * element_size;
-                    snapshot.readback_regions.emplace_back(FrozenSceneReadbackKind::VolumeField, resource, 0, kind, size, count);
+                    if (count > std::numeric_limits<vk::DeviceSize>::max() / element_size) throw std::runtime_error("Frozen Scene readback size overflows");
+                    const vk::DeviceSize bytes = count * element_size;
+                    if (size > std::numeric_limits<vk::DeviceSize>::max() - 15u - bytes) throw std::runtime_error("Frozen Scene readback size overflows");
+                    size = (size + 15u) & ~vk::DeviceSize{15u};
+                    snapshot.readback_regions.emplace_back(FrozenSceneReadbackKind::VolumeField, resource, 0, kind, size, count, element_size);
                     readback_copies.emplace_back(&volume.fields[field], vk::BufferCopy{0, size, bytes});
                     size += bytes;
                 }
             }
-            std::vector<scene::InstanceId> captured_instances{};
+            std::unordered_set<std::uint64_t> captured_instances{};
             captured_instances.reserve(gpu_scene.primitives.size());
             for (const GpuScenePrimitive& primitive : gpu_scene.primitives) {
                 const scene::InstanceId instance_id = gpu_scene.primitive_instance_ids[primitive.scene_primitive_index];
-                if (std::ranges::contains(captured_instances, instance_id)) continue;
-                captured_instances.push_back(instance_id);
-                const std::uint32_t resource = static_cast<std::uint32_t>(std::ranges::find(current_scene.resources.instances, instance_id, &scene::Instance::id) - current_scene.resources.instances.begin());
+                if (!captured_instances.insert(instance_id.value).second) continue;
+                const std::uint32_t resource = instance_indices.at(instance_id.value);
+                if (size > std::numeric_limits<vk::DeviceSize>::max() - 15u - sizeof(math::Transform)) throw std::runtime_error("Frozen Scene readback size overflows");
                 size = (size + 15u) & ~vk::DeviceSize{15u};
-                snapshot.readback_regions.emplace_back(FrozenSceneReadbackKind::InstanceTransform, resource, primitive.prototype_primitive_index, GpuVolumeField::Density, size, 1);
+                snapshot.readback_regions.emplace_back(FrozenSceneReadbackKind::InstanceTransform, resource, primitive.prototype_primitive_index, GpuVolumeField::Density, size, 1, sizeof(math::Transform));
                 readback_copies.emplace_back(gpu_scene.primitive_transform_buffer, vk::BufferCopy{static_cast<vk::DeviceSize>(primitive.scene_primitive_index) * sizeof(math::Transform), size, sizeof(math::Transform)});
                 size += sizeof(math::Transform);
             }
@@ -126,65 +143,51 @@ namespace spectra {
                 const dynamics::DynamicFrame& published = dynamics.published_frame();
                 snapshot.frozen_frame.emplace(dynamics::FrozenFrame{published.simulation, published.presentation});
                 const auto image_element_size = [](const dynamics::ImageFormat format) -> std::uint64_t {
-                    if (format == dynamics::ImageFormat::Rgba8Unorm) return sizeof(std::uint32_t);
-                    if (format == dynamics::ImageFormat::Rgba16Float) return sizeof(std::uint16_t) * 4u;
-                    return sizeof(float) * 4u;
+                    switch (format) {
+                    case dynamics::ImageFormat::Rgba8Unorm: return sizeof(std::uint32_t);
+                    case dynamics::ImageFormat::Rgba16Float: return sizeof(std::uint16_t) * 4u;
+                    case dynamics::ImageFormat::Rgba32Float: return sizeof(float) * 4u;
+                    }
+                    throw std::runtime_error("Unknown frozen Visualization image format");
                 };
                 for (const dynamics::GpuVisualization& source : dynamics.visualizations()) {
                     const std::uint32_t visualization_index = static_cast<std::uint32_t>(snapshot.frozen_frame->visualizations.size());
                     dynamics::FrozenVisualization destination{};
                     std::visit(
                         [&](const auto& visualization) {
-                            destination.style   = visualization.style;
-                            const auto buffer = [&](const dynamics::GpuBufferView view, const vk::DeviceSize bytes) {
-                                const std::uint32_t buffer_index = static_cast<std::uint32_t>(destination.buffers.size());
-                                destination.buffers.emplace_back();
-                                add_dynamic_readback(FrozenSceneReadbackKind::VisualizationBuffer, visualization_index, buffer_index, view, view.buffer == nullptr ? 0 : bytes);
-                            };
+                            destination.style = visualization.style;
+                            const auto buffer = [&](const std::uint32_t buffer_index, const dynamics::GpuBufferView view, const std::uint64_t count, const vk::DeviceSize element_size) { add_dynamic_readback(FrozenSceneReadbackKind::VisualizationBuffer, visualization_index, buffer_index, view, count, element_size); };
                             if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuPointVisualization>) {
-                                destination.kind          = dynamics::FrozenVisualizationKind::Points;
-                                destination.primary_count = visualization.count;
-                                buffer(visualization.points, visualization.count * sizeof(SpectraPluginPoint));
+                                destination.data = dynamics::FrozenElements{{}, visualization.count};
+                                buffer(0, visualization.points, visualization.count, sizeof(SpectraPluginPoint));
                             } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuSegmentVisualization>) {
-                                destination.kind          = dynamics::FrozenVisualizationKind::Segments;
-                                destination.primary_count = visualization.count;
-                                buffer(visualization.segments, visualization.count * sizeof(SpectraPluginSegment));
+                                destination.data = dynamics::FrozenElements{{}, visualization.count};
+                                buffer(0, visualization.segments, visualization.count, sizeof(SpectraPluginSegment));
                             } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuCurveVisualization>) {
-                                destination.kind          = dynamics::FrozenVisualizationKind::Curves;
-                                destination.primary_count = visualization.count;
-                                buffer(visualization.curves, visualization.count * sizeof(SpectraPluginCurve));
+                                destination.data = dynamics::FrozenElements{{}, visualization.count};
+                                buffer(0, visualization.curves, visualization.count, sizeof(SpectraPluginCurve));
                             } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuVectorVisualization>) {
-                                destination.kind          = dynamics::FrozenVisualizationKind::Vectors;
-                                destination.primary_count = visualization.count;
-                                buffer(visualization.vectors, visualization.count * sizeof(SpectraPluginVector));
+                                destination.data = dynamics::FrozenElements{{}, visualization.count};
+                                buffer(0, visualization.vectors, visualization.count, sizeof(SpectraPluginVector));
                             } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuFieldVisualization>) {
-                                destination.kind            = dynamics::FrozenVisualizationKind::Field;
-                                destination.resolution      = visualization.resolution;
-                                destination.local_from_grid = visualization.local_from_grid;
-                                destination.channel         = visualization.channel.channel;
-                                const std::uint64_t count    = static_cast<std::uint64_t>(visualization.resolution.x) * visualization.resolution.y * visualization.resolution.z;
-                                buffer(visualization.channel.values, count * (visualization.channel.channel.kind == dynamics::FieldChannelKind::Float ? sizeof(float) : sizeof(SpectraPluginFloat3)));
+                                destination.data          = dynamics::FrozenField{visualization.resolution, visualization.local_from_grid, visualization.channel.channel, {}};
+                                const std::uint64_t count = static_cast<std::uint64_t>(visualization.resolution.x) * visualization.resolution.y * visualization.resolution.z;
+                                buffer(0, visualization.channel.values, count, visualization.channel.channel.kind == dynamics::FieldChannelKind::Float ? sizeof(float) : sizeof(SpectraPluginFloat3));
                             } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuImageVisualization>) {
-                                destination.kind  = dynamics::FrozenVisualizationKind::Image;
-                                destination.image = visualization.image;
-                                buffer(visualization.pixels, static_cast<std::uint64_t>(visualization.image.extent[0]) * visualization.image.extent[1] * image_element_size(visualization.image.format));
+                                destination.data = dynamics::FrozenImage{visualization.image, {}};
+                                buffer(0, visualization.pixels, static_cast<std::uint64_t>(visualization.image.extent[0]) * visualization.image.extent[1], image_element_size(visualization.image.format));
                             } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuCameraObservationVisualization>) {
-                                destination.kind                = dynamics::FrozenVisualizationKind::CameraObservations;
-                                destination.camera_observations = visualization.dataset;
-                                destination.primary_count       = visualization.count;
-                                buffer(visualization.observations, visualization.count * sizeof(SpectraPluginCameraObservation));
-                                buffer(visualization.images, visualization.count * visualization.dataset.images.extent[0] * visualization.dataset.images.extent[1] * image_element_size(visualization.dataset.images.format));
+                                destination.data = dynamics::FrozenCameraObservations{visualization.dataset, {}, {}, visualization.count};
+                                buffer(0, visualization.observations, visualization.count, sizeof(SpectraPluginCameraObservation));
+                                buffer(1, visualization.images, static_cast<std::uint64_t>(visualization.count) * visualization.dataset.images.extent[0] * visualization.dataset.images.extent[1], image_element_size(visualization.dataset.images.format));
                             } else if constexpr (std::same_as<std::remove_cvref_t<decltype(visualization)>, dynamics::GpuTransformVisualization>) {
-                                destination.kind          = dynamics::FrozenVisualizationKind::Transforms;
-                                destination.primary_count = visualization.count;
-                                buffer(visualization.transforms, visualization.count * sizeof(SpectraPluginTransform));
+                                destination.data = dynamics::FrozenElements{{}, visualization.count};
+                                buffer(0, visualization.transforms, visualization.count, sizeof(SpectraPluginTransform));
                             } else {
-                                destination.kind            = dynamics::FrozenVisualizationKind::Surface;
-                                destination.primary_count   = visualization.vertex_count;
-                                destination.secondary_count = visualization.index_count;
-                                buffer(visualization.positions, visualization.vertex_count * sizeof(SpectraPluginFloat3));
-                                buffer(visualization.indices, visualization.index_count * sizeof(std::uint32_t));
-                                buffer(visualization.scalars, visualization.vertex_count * sizeof(float));
+                                destination.data = dynamics::FrozenSurface{{}, visualization.indices ? std::optional{std::vector<std::byte>{}} : std::nullopt, visualization.scalars ? std::optional{std::vector<std::byte>{}} : std::nullopt, visualization.vertex_count, visualization.index_count};
+                                buffer(0, visualization.positions, visualization.vertex_count, sizeof(SpectraPluginFloat3));
+                                if (visualization.indices) buffer(1, *visualization.indices, visualization.index_count, sizeof(std::uint32_t));
+                                if (visualization.scalars) buffer(2, *visualization.scalars, visualization.vertex_count, sizeof(float));
                             }
                         },
                         source.data);
@@ -204,7 +207,7 @@ namespace spectra {
                     }
                     const std::uint32_t frozen_system_index = static_cast<std::uint32_t>(snapshot.frozen_frame->telemetry.size());
                     snapshot.frozen_frame->telemetry.push_back(std::move(system));
-                    if (update != published.telemetry.end()) add_dynamic_readback(FrozenSceneReadbackKind::TelemetryValues, frozen_system_index, 0, update->values, update->value_count * sizeof(SpectraPluginTelemetryGpuValue));
+                    if (update != published.telemetry.end()) add_dynamic_readback(FrozenSceneReadbackKind::TelemetryValues, frozen_system_index, 0, update->values, update->value_count, sizeof(SpectraPluginTelemetryGpuValue));
                 }
             }
             if (size != 0) {
@@ -223,7 +226,7 @@ namespace spectra {
     void FrozenSceneSnapshot::materialize() {
         const auto copy = [this]<class Element>(std::vector<Element>& destination, const FrozenSceneReadbackRegion& source) {
             destination.resize(source.element_count);
-            std::memcpy(destination.data(), static_cast<const std::byte*>(this->readback_buffer.mapped) + source.offset, source.element_count * sizeof(Element));
+            std::memcpy(destination.data(), static_cast<const std::byte*>(this->readback_buffer.mapped) + source.byte_offset, source.element_count * sizeof(Element));
         };
         for (const FrozenSceneReadbackRegion& source : this->readback_regions) switch (source.kind) {
             case FrozenSceneReadbackKind::GeometryPosition: copy(std::get<scene::TriangleMeshGeometry>(this->frozen_scene.resources.geometries[source.resource_index].data).positions, source); break;
@@ -235,11 +238,11 @@ namespace spectra {
             case FrozenSceneReadbackKind::SphereRadius: copy(this->frozen_scene.resources.sphere_sets[source.resource_index].radii, source); break;
             case FrozenSceneReadbackKind::InstanceTransform:
                 {
-                    scene::Instance& instance = this->frozen_scene.resources.instances[source.resource_index];
+                    scene::Instance& instance         = this->frozen_scene.resources.instances[source.resource_index];
                     const scene::Prototype& prototype = *std::ranges::find(this->frozen_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
                     math::Transform world_from_primitive{};
-                    std::memcpy(&world_from_primitive, static_cast<const std::byte*>(this->readback_buffer.mapped) + source.offset, sizeof(world_from_primitive));
-                    instance.transform = world_from_primitive * prototype.primitives[source.primitive_index].transform.inverse();
+                    std::memcpy(&world_from_primitive, static_cast<const std::byte*>(this->readback_buffer.mapped) + source.byte_offset, sizeof(world_from_primitive));
+                    instance.transform = world_from_primitive * prototype.primitives[source.subresource_index].transform.inverse();
                 }
                 break;
             case FrozenSceneReadbackKind::VolumeField:
@@ -273,15 +276,36 @@ namespace spectra {
                 break;
             case FrozenSceneReadbackKind::VisualizationBuffer:
                 {
-                    std::vector<std::byte>& destination = this->frozen_frame->visualizations[source.resource_index].buffers[source.primitive_index];
-                    destination.resize(source.element_count);
-                    std::memcpy(destination.data(), static_cast<const std::byte*>(this->readback_buffer.mapped) + source.offset, source.element_count);
+                    dynamics::FrozenVisualization& visualization = this->frozen_frame->visualizations[source.resource_index];
+                    std::vector<std::byte>* destination{};
+                    std::visit(
+                        [&destination, &source](auto& data) {
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, dynamics::FrozenElements>)
+                                destination = &data.elements;
+                            else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, dynamics::FrozenField>)
+                                destination = &data.values;
+                            else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, dynamics::FrozenImage>)
+                                destination = &data.pixels;
+                            else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, dynamics::FrozenCameraObservations>)
+                                destination = source.subresource_index == 0 ? &data.observations : &data.images;
+                            else if (source.subresource_index == 0)
+                                destination = &data.positions;
+                            else if (source.subresource_index == 1)
+                                destination = &*data.indices;
+                            else
+                                destination = &*data.scalars;
+                        },
+                        visualization.data);
+                    if (source.element_count > std::numeric_limits<std::size_t>::max() / source.element_size) throw std::runtime_error("Frozen Scene materialization size overflows");
+                    const std::size_t byte_count = static_cast<std::size_t>(source.element_count * source.element_size);
+                    destination->resize(byte_count);
+                    std::memcpy(destination->data(), static_cast<const std::byte*>(this->readback_buffer.mapped) + source.byte_offset, byte_count);
                 }
                 break;
             case FrozenSceneReadbackKind::TelemetryValues:
                 {
                     dynamics::FrozenTelemetrySystem& system = this->frozen_frame->telemetry[source.resource_index];
-                    const auto* values                       = reinterpret_cast<const SpectraPluginTelemetryGpuValue*>(static_cast<const std::byte*>(this->readback_buffer.mapped) + source.offset);
+                    const auto* values                      = reinterpret_cast<const SpectraPluginTelemetryGpuValue*>(static_cast<const std::byte*>(this->readback_buffer.mapped) + source.byte_offset);
                     dynamics::TelemetrySample sample{this->frozen_frame->simulation.step, this->frozen_frame->simulation.seconds};
                     sample.values.reserve(system.descriptors.size());
                     for (std::size_t index = 0; index != system.descriptors.size(); ++index) {

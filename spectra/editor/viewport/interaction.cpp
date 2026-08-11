@@ -6,16 +6,16 @@ namespace spectra {
     ViewportInteraction::ViewportInteraction(SceneDocument& document, DynamicsRuntime& dynamics, GpuScene& gpu_scene) noexcept : context{document, dynamics, gpu_scene} {}
 
     void ViewportInteraction::initialize_from_scene() {
-        this->view.camera          = this->context.document.content.source.camera();
+        this->view.camera                     = this->context.document.content.source.camera();
         const scene::CameraFrame camera_frame = this->view.camera.frame();
-        const math::Float3 bounds_center       = this->navigation_bounds().center();
-        this->view.focus                       = camera_frame.position + camera_frame.forward * (bounds_center - camera_frame.position).dot(camera_frame.forward);
-        this->view.navigation_up   = {0.0f, 1.0f, 0.0f};
-        this->view.camera_revision = 1;
-        const scene::Film& film    = this->context.document.content.source.film();
-        this->view.aspect          = static_cast<float>(film.resolution[0]) / static_cast<float>(film.resolution[1]);
-        this->view.axes_plane      = AxesPlane::Xz;
-        this->view.source          = CameraSource::Viewport;
+        const math::Float3 bounds_center      = this->navigation_bounds().center();
+        this->view.focus                      = camera_frame.position + camera_frame.forward * (bounds_center - camera_frame.position).dot(camera_frame.forward);
+        this->view.navigation_up              = {0.0f, 1.0f, 0.0f};
+        this->view.camera_revision            = 1;
+        const scene::Film& film               = this->context.document.content.source.film();
+        this->view.aspect                     = static_cast<float>(film.resolution[0]) / static_cast<float>(film.resolution[1]);
+        this->view.axes_plane                 = AxesPlane::Xz;
+        this->view.source                     = CameraSource::Viewport;
         this->camera_changed();
         this->view.selection = {};
     }
@@ -37,27 +37,29 @@ namespace spectra {
         this->view.synchronized_scene_camera_revision = this->context.document.content.source.camera().revision;
     }
 
-    void ViewportInteraction::orbit_viewport_camera(const float x_pixels, const float y_pixels) noexcept {
+    void ViewportInteraction::orbit_viewport_camera(const float x_pixels, const float y_pixels) {
         constexpr float radians_per_pixel = 0.006f;
         math::Float3 offset               = this->view.camera.frame().position - this->view.focus;
         const float distance              = offset.length();
-        const math::Float3 up             = this->view.navigation_up.normalized();
-        math::Float3 horizontal           = (offset - up * offset.dot(up)).normalized();
-        const float yaw                   = -x_pixels * radians_per_pixel;
-        horizontal                        = horizontal * std::cos(yaw) + up.cross(horizontal) * std::sin(yaw);
-        const float pitch                 = std::clamp(std::asin(std::clamp(offset.normalized().dot(up), -1.0f, 1.0f)) + y_pixels * radians_per_pixel, -std::numbers::pi_v<float> * 0.49f, std::numbers::pi_v<float> * 0.49f);
-        const math::Float3 direction      = horizontal.normalized() * std::cos(pitch) + up * std::sin(pitch);
-        this->view.camera.transform       = math::Transform::look_at(this->view.focus + direction * distance, this->view.focus, this->view.navigation_up);
+        if (distance == 0.0f) return;
+        const math::Float3 up        = this->view.navigation_up.normalized();
+        math::Float3 horizontal      = (offset - up * offset.dot(up)).normalized();
+        const float yaw              = -x_pixels * radians_per_pixel;
+        horizontal                   = horizontal * std::cos(yaw) + up.cross(horizontal) * std::sin(yaw);
+        const float pitch            = std::clamp(std::asin(std::clamp(offset.normalized().dot(up), -1.0f, 1.0f)) + y_pixels * radians_per_pixel, -std::numbers::pi_v<float> * 0.49f, std::numbers::pi_v<float> * 0.49f);
+        const math::Float3 direction = horizontal.normalized() * std::cos(pitch) + up * std::sin(pitch);
+        this->view.camera.transform  = math::Transform::look_at(this->view.focus + direction * distance, this->view.focus, this->view.navigation_up);
         ++this->view.camera_revision;
         this->view.axes_plane = AxesPlane::Xz;
         this->view.source     = CameraSource::Viewport;
         this->camera_changed();
     }
 
-    void ViewportInteraction::pan_viewport_camera(const float x_pixels, const float y_pixels, const float viewport_height) noexcept {
+    void ViewportInteraction::pan_viewport_camera(const float x_pixels, const float y_pixels, const float viewport_height) {
         const scene::CameraFrame frame = this->view.camera.frame();
         const float distance           = (frame.position - this->view.focus).length();
-        const float world_per_pixel    = std::visit(
+        if (distance == 0.0f) return;
+        const float world_per_pixel = std::visit(
             [distance, viewport_height](const auto& data) {
                 if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>)
                     return 2.0f * distance * std::tan(data.vertical_fov * std::numbers::pi_v<float> / 360.0f) / viewport_height;
@@ -73,7 +75,7 @@ namespace spectra {
         this->camera_changed();
     }
 
-    void ViewportInteraction::zoom_viewport_camera(const float steps) noexcept {
+    void ViewportInteraction::zoom_viewport_camera(const float steps) {
         if (scene::OrthographicCameraData* orthographic = std::get_if<scene::OrthographicCameraData>(&this->view.camera.data)) {
             const float scale = std::pow(0.88f, steps);
             const math::Float2 center{
@@ -91,18 +93,20 @@ namespace spectra {
         } else {
             const scene::CameraFrame frame = this->view.camera.frame();
             const math::Float3 offset      = frame.position - this->view.focus;
-            const float distance           = std::clamp(offset.length() * std::pow(0.88f, steps), 0.01f, 1000000.0f);
-            this->view.camera.transform    = math::Transform::look_at(this->view.focus + offset.normalized() * distance, this->view.focus, this->view.navigation_up);
+            if (offset == math::Float3{}) return;
+            const float distance        = std::clamp(offset.length() * std::pow(0.88f, steps), 0.01f, 1000000.0f);
+            this->view.camera.transform = math::Transform::look_at(this->view.focus + offset.normalized() * distance, this->view.focus, this->view.navigation_up);
         }
         ++this->view.camera_revision;
         this->view.source = CameraSource::Viewport;
         this->camera_changed();
     }
 
-    void ViewportInteraction::frame_viewport_camera(const math::Bounds3 bounds, const float aspect) noexcept {
+    void ViewportInteraction::frame_viewport_camera(const math::Bounds3 bounds, const float aspect) {
         const scene::CameraFrame camera_frame = this->view.camera.frame();
         const math::Float3 target             = bounds.center();
-        const math::Float3 direction          = (camera_frame.position - this->view.focus).normalized();
+        const math::Float3 offset             = camera_frame.position - this->view.focus;
+        const math::Float3 direction          = offset == math::Float3{} ? -camera_frame.forward : offset.normalized();
         if (scene::OrthographicCameraData* orthographic = std::get_if<scene::OrthographicCameraData>(&this->view.camera.data)) {
             const float half_height     = bounds.radius() * 1.1f * std::max(1.0f, 1.0f / aspect);
             const float half_width      = half_height * aspect;
@@ -124,13 +128,13 @@ namespace spectra {
         ++this->view.camera_revision;
     }
 
-    void ViewportInteraction::frame_scene(const float aspect) noexcept {
+    void ViewportInteraction::frame_scene(const float aspect) {
         this->frame_viewport_camera(this->navigation_bounds(), aspect);
         this->view.source = CameraSource::Viewport;
         this->camera_changed();
     }
 
-    void ViewportInteraction::frame_selection(const float aspect) noexcept {
+    void ViewportInteraction::frame_selection(const float aspect) {
         math::Bounds3 selected = math::Bounds3::empty();
         bool found{};
         for (const SceneEntityReference entity : this->view.selection.selected)
@@ -146,7 +150,7 @@ namespace spectra {
         this->camera_changed();
     }
 
-    void ViewportInteraction::view_axis(const math::Float3 direction, const float aspect) noexcept {
+    void ViewportInteraction::view_axis(const math::Float3 direction, const float aspect) {
         math::Bounds3 selected = math::Bounds3::empty();
         bool found{};
         for (const SceneEntityReference entity : this->view.selection.selected)
@@ -154,10 +158,10 @@ namespace spectra {
                 selected.include(*entity_bound);
                 found = true;
             }
-        const math::Bounds3 bounds                  = found ? selected : this->navigation_bounds();
-        this->view.focus                            = bounds.center();
-        this->view.navigation_up                    = std::abs(direction.y) > 0.9f ? math::Float3{0.0f, 0.0f, -1.0f} : math::Float3{0.0f, 1.0f, 0.0f};
-        this->view.camera.transform                 = math::Transform::look_at(this->view.focus + direction.normalized() * bounds.radius() * 3.0f, this->view.focus, this->view.navigation_up);
+        const math::Bounds3 bounds  = found ? selected : this->navigation_bounds();
+        this->view.focus            = bounds.center();
+        this->view.navigation_up    = std::abs(direction.y) > 0.9f ? math::Float3{0.0f, 0.0f, -1.0f} : math::Float3{0.0f, 1.0f, 0.0f};
+        this->view.camera.transform = math::Transform::look_at(this->view.focus + direction.normalized() * bounds.radius() * 3.0f, this->view.focus, this->view.navigation_up);
         this->frame_viewport_camera(bounds, aspect);
         if (std::abs(direction.x) > 0.5f)
             this->view.axes_plane = AxesPlane::Yz;
@@ -212,15 +216,16 @@ namespace spectra {
     }
 
     math::Bounds3 ViewportInteraction::navigation_bounds() const noexcept {
-        const scene::Scene& source = this->context.document.content.evaluated;
+        const scene::Scene& source                      = this->context.document.content.evaluated;
         const std::span<const math::Bounds3> gpu_bounds = this->context.gpu_scene.view().resolved_instance_bounds;
-        math::Bounds3 bounds = math::Bounds3::empty();
+        math::Bounds3 bounds                            = math::Bounds3::empty();
         for (std::size_t index = 0; index != source.resources.instances.size(); ++index) {
             const scene::Instance& instance = source.resources.instances[index];
             if (!instance.visible) continue;
-            const scene::Prototype& prototype = *std::ranges::find(source.resources.prototypes, instance.prototype, &scene::Prototype::id);
-            if (std::ranges::all_of(prototype.primitives, [](const scene::Primitive& primitive) { return primitive.area_light.value != 0; })) continue;
-            bounds.include(gpu_bounds[index]);
+            if (index < gpu_bounds.size())
+                bounds.include(gpu_bounds[index]);
+            else if (const std::optional<math::Bounds3> instance_bounds = source.view().bounds(std::array{instance.id}))
+                bounds.include(*instance_bounds);
         }
         for (const scene::Volume& volume : source.resources.volumes) bounds.include(volume.bounds.transformed(volume.transform));
         return bounds;
@@ -236,8 +241,8 @@ namespace spectra {
         const scene::Scene& source = this->context.document.content.evaluated;
         if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) {
             const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
-            const auto instance = std::ranges::find(source.resources.instances, instance_id, &scene::Instance::id);
-            const std::size_t index = static_cast<std::size_t>(instance - source.resources.instances.begin());
+            const auto instance                             = std::ranges::find(source.resources.instances, instance_id, &scene::Instance::id);
+            const std::size_t index                         = static_cast<std::size_t>(instance - source.resources.instances.begin());
             const std::span<const math::Bounds3> gpu_bounds = this->context.gpu_scene.view().resolved_instance_bounds;
             if (index < gpu_bounds.size() && gpu_bounds[index].valid()) return gpu_bounds[index];
             return source.view().bounds(std::array{instance_id});

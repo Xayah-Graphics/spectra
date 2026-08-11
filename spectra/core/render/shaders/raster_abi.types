@@ -1,6 +1,9 @@
 raster_scene RasterPrimitive
 raster_scene RasterTransform
 raster_scene RasterMaterial
+raster_scene RasterMaterialRange
+raster_scene RasterMaterialTerm
+raster_scene RasterMaterialFactor
 raster_scene RasterTextureHeader
 raster_scene RasterTextureMapping
 raster_scene RasterConstantTexture

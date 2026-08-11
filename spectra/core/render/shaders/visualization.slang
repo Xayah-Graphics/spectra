@@ -337,7 +337,7 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
     }
     ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
     ByteAddressBuffer indices = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
-    const uint position_index = asuint(indices.Load<float>(vertex_id * 4));
+    const uint position_index = push_data.metadata.z == 0 ? vertex_id : asuint(indices.Load<float>(vertex_id * 4));
     float4 surface_color = push_data.color;
     if (push_data.detail.z == 2) {
         StructuredBuffer<float> scalars = DescriptorHandle<StructuredBuffer<float>>(uint2(push_data.color_space, push_data.reserved));

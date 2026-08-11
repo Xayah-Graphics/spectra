@@ -1,6 +1,10 @@
+module;
+
+#include "shaders/shader_semantics.h"
+
 export module spectra.render.gpu_scene;
 
-import spectra.dynamics;
+import spectra.dynamics.gpu;
 import spectra.runtime;
 import spectra.scene;
 
@@ -8,9 +12,9 @@ import std;
 import vulkan;
 
 namespace spectra {
-    export inline constexpr std::uint32_t gpu_geometry_attribute_normal             = 1u << 0u;
-    export inline constexpr std::uint32_t gpu_geometry_attribute_tangent            = 1u << 1u;
-    export inline constexpr std::uint32_t gpu_geometry_attribute_texture_coordinate = 1u << 2u;
+    export inline constexpr std::uint32_t gpu_geometry_attribute_normal             = shader_semantics::gpu_attribute_normal;
+    export inline constexpr std::uint32_t gpu_geometry_attribute_tangent            = shader_semantics::gpu_attribute_tangent;
+    export inline constexpr std::uint32_t gpu_geometry_attribute_texture_coordinate = shader_semantics::gpu_attribute_texture_coordinate;
 
     export enum class GpuMeshUpdateMode : std::uint8_t {
         Immutable,
@@ -159,8 +163,6 @@ namespace spectra {
         std::uint32_t prototype_primitive_index{};
     };
 
-    export [[nodiscard]] scene::TriangleMeshGeometry tessellate_geometry(const scene::Geometry& geometry);
-
     export struct GpuSceneView {
         std::span<const GpuGeometry> geometries{};
         std::span<const GpuSphereSet> sphere_sets{};
@@ -245,10 +247,9 @@ namespace spectra {
             std::vector<scene::InstanceId> acceleration_instance_ids{};
             GpuAccelerationStructure top_level_acceleration_structure{};
             bool instance_bounds_dirty{};
-            bool initialized{};
         } resources;
 
-        void initialize_resources(const scene::Scene& source_scene, std::span<const GpuGeometryBinding> geometry_bindings, std::span<const std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities);
+        void initialize_resources(scene::SceneView scene, std::span<const GpuGeometryBinding> geometry_bindings, std::span<const std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities, const vk::raii::CommandBuffer* command_buffer);
         void begin_external_updates(std::span<const scene::GeometryId> geometry_ids, std::span<const scene::SphereSetId> sphere_set_ids, std::span<const scene::VolumeId> volume_ids);
         void end_external_updates(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_geometry(scene::GeometryId geometry_id, const GpuBuffer* positions, const GpuBuffer* normals, const GpuBuffer* tangents, const GpuBuffer* texture_coordinates, const GpuBuffer* indices, std::uint32_t vertex_count, std::uint32_t index_count, const vk::raii::CommandBuffer& command_buffer);

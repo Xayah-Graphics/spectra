@@ -46,7 +46,8 @@ namespace spectra {
 
         struct {
             std::vector<FrameSlot> slots{};
-            std::optional<PendingCapture> pending{};
+            std::deque<PendingCapture> requests{};
+            std::uint64_t sequence{};
         } capture;
         std::filesystem::path output_directory{};
     };
