@@ -5,8 +5,7 @@ export import spectra.render.contract;
 import spectra.render.pathtracer;
 import spectra.render.pathtracer.resources;
 import spectra.render.rasterizer;
-import spectra.render.sampling;
-import spectra.render.scene;
+import spectra.render.gpu_scene;
 import spectra.runtime;
 import spectra.scene;
 
@@ -27,6 +26,7 @@ namespace spectra {
         void destroy() noexcept;
         void activate(std::string_view id, scene::SceneView scene);
         void set_raster_display_mode(RasterDisplayMode mode) noexcept;
+        [[nodiscard]] RasterDisplayMode raster_display_mode() const noexcept;
         void wait_for_pathtracer();
         [[nodiscard]] RendererDescriptor active_descriptor() const;
         [[nodiscard]] RendererDescriptor selected_descriptor() const noexcept;
@@ -52,7 +52,6 @@ namespace spectra {
             std::filesystem::path pathtracer_directory{};
         } context;
 
-        SamplingResources sampling_resources;
         std::optional<PathTracerResources> pathtracer_resources{};
 
         struct {

@@ -1,4 +1,4 @@
-export module spectra.editor:output.capture;
+export module spectra.editor.output.capture;
 
 import spectra.render.display;
 import spectra.render;

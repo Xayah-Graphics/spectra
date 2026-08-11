@@ -1,12 +1,11 @@
-export module spectra.runtime:resources;
+export module spectra.runtime.resources;
 
-import :graphics;
+import spectra.runtime.graphics;
 import std;
 import vulkan;
 
 namespace spectra {
     struct GpuAllocator;
-    struct VulkanFrames;
     export struct GpuResources;
 
     struct GpuAllocation {
@@ -35,43 +34,6 @@ namespace spectra {
         }
 
         auto operator<=>(const DescriptorHandle&) const = default;
-    };
-
-    export enum class DescriptorKind : std::uint8_t {
-        Resource,
-        Sampler,
-    };
-
-    export struct DescriptorLease {
-        DescriptorLease() = default;
-        ~DescriptorLease();
-        DescriptorLease(DescriptorLease&& other) noexcept;
-        DescriptorLease& operator=(DescriptorLease&& other) noexcept;
-        DescriptorLease(const DescriptorLease&)            = delete;
-        DescriptorLease& operator=(const DescriptorLease&) = delete;
-
-        [[nodiscard]] operator DescriptorHandle() const noexcept {
-            return this->value;
-        }
-
-        [[nodiscard]] explicit operator bool() const noexcept {
-            return static_cast<bool>(this->value);
-        }
-
-        [[nodiscard]] DescriptorHandle handle() const noexcept {
-            return this->value;
-        }
-
-        void reset() noexcept;
-
-    private:
-        friend GpuResources;
-
-        DescriptorLease(VulkanFrames& frames, DescriptorHandle value, DescriptorKind kind) noexcept;
-
-        VulkanFrames* frames{};
-        DescriptorHandle value{};
-        DescriptorKind kind{DescriptorKind::Resource};
     };
 
     export struct GpuBuffer {
@@ -157,8 +119,8 @@ namespace spectra {
         [[nodiscard]] GpuBuffer create_buffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags memory_properties, bool mapped);
         [[nodiscard]] GpuImage create_image_2d(vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor, std::uint32_t mip_levels = 1);
 
-        [[nodiscard]] DescriptorLease allocate_resource_descriptor();
-        [[nodiscard]] DescriptorLease allocate_sampler_descriptor();
+        [[nodiscard]] DescriptorHandle acquire_resource_descriptor();
+        [[nodiscard]] DescriptorHandle acquire_sampler_descriptor();
         void reclaim_resource_descriptor(std::uint32_t slot_index) noexcept;
         void reclaim_sampler_descriptor(std::uint32_t slot_index) noexcept;
         void write_storage_image_descriptor(DescriptorHandle handle, const GpuImage& image, vk::ImageLayout layout);
@@ -179,18 +141,13 @@ namespace spectra {
         void bind_descriptor_heaps(const vk::raii::CommandBuffer& command_buffer) const noexcept;
         void push_data(const vk::raii::CommandBuffer& command_buffer, std::span<const std::byte> data, std::uint32_t offset = 0) const noexcept;
 
+    private:
+        void create_descriptor_heaps();
+
         struct {
             VulkanGraphics& graphics;
         } context;
-
-    private:
-        friend VulkanFrames;
-
-        void attach_frames(VulkanFrames& frames) noexcept;
         std::unique_ptr<GpuAllocator> allocator{};
-        VulkanFrames* frames{};
-
-    public:
         struct {
             GpuBuffer resource_heap{};
             GpuBuffer sampler_heap{};
@@ -202,10 +159,6 @@ namespace spectra {
             std::vector<std::uint32_t> free_resource_indices{};
             std::vector<std::uint32_t> free_sampler_indices{};
         } descriptors;
-
-    private:
-        void create_descriptor_heaps();
-
         vk::raii::CommandPool immediate_command_pool{nullptr};
     };
 } // namespace spectra

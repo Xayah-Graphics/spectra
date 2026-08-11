@@ -8,8 +8,6 @@ struct RasterVertex {
     float3 world_normal : NORMAL;
     float3 world_tangent : TANGENT;
     float2 texture_coordinates : TEXCOORD;
-    float3 emission : COLOR0;
-    float3 color_modifier : COLOR1;
     nointerpolation uint material : MATERIAL;
     nointerpolation uint area_light : AREA_LIGHT;
     nointerpolation uint sphere : SPHERE;
@@ -112,15 +110,35 @@ void raster_mesh(
             raster_transform_normal(
                 transform,
                 normals[source_index]);
-        const float3 world_tangent =
+        const float3 transformed_tangent =
             (
                 push_data.attributes.x &
-                2
+                gpu_geometry_attribute_tangent
             ) != 0
-                ? raster_transform_normal(
-                      transform,
-                      tangents[source_index])
+                ? float3(
+                      dot(
+                          transform
+                              .transform_row_0
+                              .xyz,
+                          tangents[source_index]),
+                      dot(
+                          transform
+                              .transform_row_1
+                              .xyz,
+                          tangents[source_index]),
+                      dot(
+                          transform
+                              .transform_row_2
+                              .xyz,
+                          tangents[source_index]))
                 : orthogonal(world_normal);
+        const float3 world_tangent =
+            normalize(
+                transformed_tangent -
+                dot(
+                    transformed_tangent,
+                    world_normal) *
+                    world_normal);
         const float4 homogeneous =
             float4(
                 world_position,
@@ -152,15 +170,11 @@ void raster_mesh(
         output.texture_coordinates =
             (
                 push_data.attributes.x &
-                4
+                gpu_geometry_attribute_texture_coordinate
             ) != 0
                 ? texture_coordinates[
                       source_index]
                 : float2(0.0);
-        output.emission =
-            float3(0.0);
-        output.color_modifier =
-            float3(1.0);
         output.material =
             material;
         output.area_light =

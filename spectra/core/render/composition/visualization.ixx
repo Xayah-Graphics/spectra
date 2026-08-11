@@ -1,4 +1,4 @@
-export module spectra.visualization;
+export module spectra.render.composition.visualization;
 
 import spectra.dynamics;
 import spectra.render.contract;

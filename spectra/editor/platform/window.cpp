@@ -8,9 +8,7 @@ module;
 #include <dwmapi.h>
 #include <windowsx.h>
 
-module spectra.editor;
-
-import :platform.window;
+module spectra.editor.platform.window;
 
 import std;
 import vulkan;
@@ -38,7 +36,6 @@ namespace spectra {
         const auto large_icon    = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR | LR_SHARED));
         SendMessageW(this->native_window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small_icon));
         SendMessageW(this->native_window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(large_icon));
-        glfwSetWindowSizeLimits(this->window, 960, 600, GLFW_DONT_CARE, GLFW_DONT_CARE);
         glfwSetWindowUserPointer(this->window, this);
         glfwSetDropCallback(this->window, [](GLFWwindow* window, const int count, const char** paths) {
             WindowPlatform& platform = *static_cast<WindowPlatform*>(glfwGetWindowUserPointer(window));
@@ -116,6 +113,9 @@ namespace spectra {
                 SetWindowPos(window, nullptr, suggested.left, suggested.top, suggested.right - suggested.left, suggested.bottom - suggested.top, SWP_NOZORDER | SWP_NOACTIVATE);
                 return 0;
             }
+        case WM_SIZING:
+            platform->state.resize_completed = true;
+            break;
         }
         return CallWindowProcW(platform->state.original_window_proc, window, message, wparam, lparam);
     }
@@ -140,6 +140,10 @@ namespace spectra {
 
     bool WindowPlatform::take_close_request() noexcept {
         return std::exchange(this->state.close_requested, false);
+    }
+
+    bool WindowPlatform::take_resize_completion() noexcept {
+        return std::exchange(this->state.resize_completed, false);
     }
 
     std::vector<std::filesystem::path> WindowPlatform::take_dropped_paths() noexcept {

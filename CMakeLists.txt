@@ -41,6 +41,62 @@ if (MSVC)
     add_link_options("$<$<LINK_LANGUAGE:CXX>:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib>")
 endif ()
 
+function(spectra_verify_module_layout)
+    file(GLOB_RECURSE module_interfaces CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/spectra/*.ixx")
+    file(GLOB_RECURSE module_implementations CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/spectra/*.cpp")
+    set(interface_only_modules spectra.dynamics)
+
+    foreach (source IN LISTS module_interfaces)
+        file(READ "${source}" content)
+        string(REGEX MATCH "(^|[\r\n])[ \t]*export[ \t]+module[ \t]+(spectra(\.[A-Za-z0-9_]+)+)[ \t]*;" declaration "${content}")
+        if (NOT declaration)
+            message(FATAL_ERROR "Spectra module interface has no standalone named-module declaration: ${source}")
+        endif ()
+        set(module_name "${CMAKE_MATCH_2}")
+        string(MAKE_C_IDENTIFIER "${module_name}" module_id)
+        if (DEFINED module_interface_${module_id})
+            message(FATAL_ERROR "Spectra module ${module_name} has multiple interfaces: ${module_interface_${module_id}};${source}")
+        endif ()
+        set(module_interface_${module_id} "${source}")
+        set(module_name_${module_id} "${module_name}")
+        list(APPEND module_ids "${module_id}")
+    endforeach ()
+
+    foreach (source IN LISTS module_implementations)
+        file(READ "${source}" content)
+        string(REGEX MATCH "(^|[\r\n])[ \t]*module[ \t]+(spectra(\.[A-Za-z0-9_]+)+)[ \t]*;" declaration "${content}")
+        if (NOT declaration)
+            continue()
+        endif ()
+        set(module_name "${CMAKE_MATCH_2}")
+        string(MAKE_C_IDENTIFIER "${module_name}" module_id)
+        if (NOT DEFINED module_interface_${module_id})
+            message(FATAL_ERROR "Spectra module implementation has no interface: ${source}")
+        endif ()
+        if (DEFINED module_implementation_${module_id})
+            message(FATAL_ERROR "Spectra module ${module_name} has multiple implementations: ${module_implementation_${module_id}};${source}")
+        endif ()
+        cmake_path(GET source STEM implementation_stem)
+        cmake_path(GET module_interface_${module_id} STEM interface_stem)
+        if (NOT implementation_stem STREQUAL interface_stem)
+            message(FATAL_ERROR "Spectra module ${module_name} interface and implementation filenames differ: ${module_interface_${module_id}};${source}")
+        endif ()
+        set(module_implementation_${module_id} "${source}")
+    endforeach ()
+
+    foreach (module_id IN LISTS module_ids)
+        if (DEFINED module_implementation_${module_id})
+            continue()
+        endif ()
+        list(FIND interface_only_modules "${module_name_${module_id}}" interface_only_index)
+        if (interface_only_index EQUAL -1)
+            message(FATAL_ERROR "Spectra module ${module_name_${module_id}} has no implementation unit")
+        endif ()
+    endforeach ()
+endfunction()
+
+spectra_verify_module_layout()
+
 
 # ============================================================================
 # Dependency Acquisition
@@ -412,13 +468,17 @@ target_link_libraries(spectra_shader_compiler PRIVATE spectra::slang)
 set(SPECTRA_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
 set(SPECTRA_SHADER_STAMP "${SPECTRA_SHADER_OUTPUT_DIR}/build.stamp")
 set(SPECTRA_PATH_TRACER_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/pathtracer/abi.ixx")
+set(SPECTRA_RASTER_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/rasterizer/abi.ixx")
 set(SPECTRA_PLUGIN_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/plugin/abi.ixx")
-set(SPECTRA_SHADER_CORE_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/entries_core.txt")
+set(SPECTRA_SHADER_RUNTIME_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/entries_runtime.txt")
+set(SPECTRA_SHADER_PATH_TRACER_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/entries_pathtracer.txt")
 set(SPECTRA_SHADER_EDITOR_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/entries_editor.txt")
 set(SPECTRA_SHADER_ENTRIES "${CMAKE_CURRENT_BINARY_DIR}/generated/shader_entries.txt")
 
-file(READ "${SPECTRA_SHADER_CORE_ENTRIES}" SPECTRA_SHADER_ENTRY_CONTENT)
-set(SPECTRA_SHADER_ENTRY_FILES "${SPECTRA_SHADER_CORE_ENTRIES}")
+file(READ "${SPECTRA_SHADER_RUNTIME_ENTRIES}" SPECTRA_SHADER_RUNTIME_ENTRY_CONTENT)
+file(READ "${SPECTRA_SHADER_PATH_TRACER_ENTRIES}" SPECTRA_SHADER_PATH_TRACER_ENTRY_CONTENT)
+set(SPECTRA_SHADER_ENTRY_CONTENT "${SPECTRA_SHADER_RUNTIME_ENTRY_CONTENT}\n${SPECTRA_SHADER_PATH_TRACER_ENTRY_CONTENT}")
+set(SPECTRA_SHADER_ENTRY_FILES "${SPECTRA_SHADER_RUNTIME_ENTRIES}" "${SPECTRA_SHADER_PATH_TRACER_ENTRIES}")
 if (SPECTRA_BUILD_UI)
     file(READ "${SPECTRA_SHADER_EDITOR_ENTRIES}" SPECTRA_SHADER_EDITOR_ENTRY_CONTENT)
     string(APPEND SPECTRA_SHADER_ENTRY_CONTENT "\n${SPECTRA_SHADER_EDITOR_ENTRY_CONTENT}")
@@ -455,9 +515,6 @@ foreach (shader_entry IN LISTS SPECTRA_SHADER_ENTRY_LINES)
     else ()
         list(APPEND SPECTRA_RUNTIME_SHADER_OUTPUTS "${shader_output}")
     endif ()
-    if (shader_name STREQUAL "volume_majorant")
-        list(APPEND SPECTRA_PATH_TRACER_SHADER_OUTPUTS "${shader_output}")
-    endif ()
 endforeach ()
 
 file(
@@ -466,15 +523,7 @@ file(
         CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/*.slang"
 )
-list(APPEND SPECTRA_SHADER_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/visualization.slang"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/scene_diagnostic.slang"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/overlay_mask.slang"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/overlay_mesh.slang"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/overlay_axes.slang"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/overlay_outline.slang"
-)
-set(SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders" "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders")
+set(SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders")
 if (SPECTRA_BUILD_UI)
     file(
             GLOB
@@ -490,6 +539,7 @@ add_custom_command(
         OUTPUT "${SPECTRA_SHADER_STAMP}"
         BYPRODUCTS
         "${SPECTRA_PATH_TRACER_ABI_MODULE}"
+        "${SPECTRA_RASTER_ABI_MODULE}"
         "${SPECTRA_PLUGIN_ABI_MODULE}"
         ${SPECTRA_SHADER_OUTPUTS}
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_SHADER_OUTPUT_DIR}"
@@ -498,6 +548,8 @@ add_custom_command(
         "$<TARGET_FILE:spectra_shader_compiler>"
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/abi.types"
         "${SPECTRA_PATH_TRACER_ABI_MODULE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/raster_abi.types"
+        "${SPECTRA_RASTER_ABI_MODULE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/plugin_abi.types"
         "${SPECTRA_PLUGIN_ABI_MODULE}"
         "${SPECTRA_SHADER_ENTRIES}"
@@ -510,6 +562,7 @@ add_custom_command(
         spectra_shader_compiler
         "$<TARGET_FILE:${SPECTRA_SLANG_TARGET}>"
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/abi.types"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/raster_abi.types"
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/plugin_abi.types"
         "${SPECTRA_SHADER_ENTRIES}"
         "${SPECTRA_PNANOVDB_HEADER}"
@@ -544,33 +597,34 @@ target_sources(
         FILE_SET cxx_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
         FILES
-        spectra/core/runtime/runtime.ixx
         spectra/core/runtime/graphics.ixx
         spectra/core/runtime/resources.ixx
         spectra/core/runtime/frames.ixx
-        spectra/core/runtime/shaders.ixx
-        spectra/core/util/math.ixx
-        spectra/core/util/hash.ixx
+        spectra/core/runtime/runtime.ixx
+        spectra/core/math.ixx
         spectra/core/scene/scene.ixx
-        spectra/core/scene/source.ixx
         spectra/core/scene/format.ixx
         spectra/core/scene/document.ixx
         spectra/core/dynamics/contract.ixx
         spectra/core/dynamics/frozen.ixx
         spectra/core/dynamics/runtime.ixx
         spectra/core/render/contract.ixx
-        spectra/core/render/sampling.ixx
-        spectra/core/render/scene.ixx
+        spectra/core/render/gpu_scene.ixx
         spectra/core/render/capture.ixx
         spectra/core/render/rasterizer.ixx
         spectra/core/render/pathtracer/resources.ixx
         spectra/core/render/pathtracer.ixx
         spectra/core/render/render.ixx
         spectra/core/render/display.ixx
-        spectra/core/render/diagnostics.ixx
-        spectra/editor/visualization/renderer.ixx
-        spectra/editor/diagnostics/renderer.ixx
-        spectra/editor/viewport/overlay.ixx
+        spectra/core/render/composition/diagnostics.ixx
+        spectra/core/render/composition/visualization.ixx
+        spectra/core/render/composition/overlay.ixx
+        spectra/core/render/composition/composition.ixx
+        PUBLIC
+        FILE_SET generated_raster_modules TYPE CXX_MODULES
+        BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
+        FILES
+        "${SPECTRA_RASTER_ABI_MODULE}"
         PRIVATE
         FILE_SET generated_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
@@ -578,31 +632,36 @@ target_sources(
         "${SPECTRA_PATH_TRACER_ABI_MODULE}"
         "${SPECTRA_PLUGIN_ABI_MODULE}"
         PRIVATE
+        FILE_SET internal_modules TYPE CXX_MODULES
+        BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+        FILES
+        spectra/core/scene/content_hash.ixx
+        spectra/core/scene/asset_import.ixx
+        PRIVATE
         spectra/core/runtime/runtime.cpp
         spectra/core/runtime/graphics.cpp
         spectra/core/runtime/resources.cpp
         spectra/core/runtime/frames.cpp
-        spectra/core/runtime/shaders.cpp
-        spectra/core/util/math.cpp
-        spectra/core/util/hash.cpp
+        spectra/core/math.cpp
         spectra/core/scene/scene.cpp
-        spectra/core/scene/source.cpp
+        spectra/core/scene/content_hash.cpp
+        spectra/core/scene/asset_import.cpp
         spectra/core/scene/format.cpp
         spectra/core/scene/document.cpp
         spectra/core/dynamics/runtime.cpp
         spectra/core/dynamics/frozen.cpp
         spectra/core/render/contract.cpp
-        spectra/core/render/sampling.cpp
-        spectra/core/render/scene.cpp
+        spectra/core/render/gpu_scene.cpp
         spectra/core/render/capture.cpp
         spectra/core/render/rasterizer.cpp
         spectra/core/render/pathtracer/resources.cpp
         spectra/core/render/pathtracer.cpp
         spectra/core/render/render.cpp
         spectra/core/render/display.cpp
-        spectra/editor/visualization/renderer.cpp
-        spectra/editor/diagnostics/renderer.cpp
-        spectra/editor/viewport/overlay.cpp
+        spectra/core/render/composition/visualization.cpp
+        spectra/core/render/composition/diagnostics.cpp
+        spectra/core/render/composition/overlay.cpp
+        spectra/core/render/composition/composition.cpp
 )
 target_link_libraries(
         spectra_core
@@ -633,13 +692,12 @@ if (SPECTRA_BUILD_UI)
             FILES
             spectra/editor/editor.ixx
             PRIVATE
-            FILE_SET editor_partitions TYPE CXX_MODULES
+            FILE_SET editor_modules TYPE CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES
             spectra/editor/platform/window.ixx
             spectra/editor/platform/presentation.ixx
             spectra/editor/platform/dialogs.ixx
-            spectra/editor/diagnostics/settings.ixx
             spectra/editor/viewport/interaction.ixx
             spectra/editor/viewport/picker.ixx
             spectra/editor/ui/imgui.ixx
@@ -651,7 +709,6 @@ if (SPECTRA_BUILD_UI)
             spectra/editor/platform/window.cpp
             spectra/editor/platform/presentation.cpp
             spectra/editor/platform/dialogs.cpp
-            spectra/editor/diagnostics/settings.cpp
             spectra/editor/viewport/interaction.cpp
             spectra/editor/viewport/picker.cpp
             spectra/editor/ui/imgui.cpp
@@ -692,7 +749,6 @@ target_sources(
         FILE_SET cxx_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
         FILES
-        spectra/spectra.ixx
         spectra/headless.ixx
         PRIVATE
         main.cpp
@@ -726,11 +782,10 @@ add_custom_command(
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/shaders"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/sampling"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_RUNTIME_SHADER_OUTPUTS} "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_PATH_TRACER_SHADER_OUTPUTS} "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/shaders"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_SPECTRAL_ASSETS} "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SPECTRA_SAMPLING_ASSET}" "${SPECTRA_BUILD_RESOURCE_DIR}/sampling"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SPECTRA_SAMPLING_ASSET}" "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer"
         COMMAND "${CMAKE_COMMAND}" -E touch "${SPECTRA_RUNTIME_RESOURCE_STAMP}"
         DEPENDS
         ${SPECTRA_RUNTIME_SHADER_OUTPUTS}
@@ -775,6 +830,6 @@ install(
 )
 install(
         FILES "${SPECTRA_SAMPLING_ASSET}"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/spectra/sampling"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/spectra/pathtracer"
         COMPONENT Spectra
 )

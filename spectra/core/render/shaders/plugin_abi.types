@@ -1,7 +1,6 @@
 plugin_dataset SpectraPluginTransform
 plugin_dataset SpectraPluginSphere
 plugin_dataset SpectraPluginInstanceTransform
-plugin_dataset SpectraPluginSceneBounds
 plugin_dataset SpectraPluginPoint
 plugin_dataset SpectraPluginSegment
 plugin_dataset SpectraPluginCurve

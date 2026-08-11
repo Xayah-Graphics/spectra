@@ -1,5 +1,9 @@
 module path_scene;
 
+public static const uint gpu_geometry_attribute_normal = 1u << 0u;
+public static const uint gpu_geometry_attribute_tangent = 1u << 1u;
+public static const uint gpu_geometry_attribute_texture_coordinate = 1u << 2u;
+
 public struct PathPackedFloat3 {
     public float x;
     public float y;

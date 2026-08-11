@@ -1,26 +1,17 @@
 module raster_volume;
 
 import raster_scene;
-import raster_light;
 import raster_texture;
-import path_sampler;
-import path_queue;
 
 static const float cie_y_integral = 106.856895;
 
 struct RasterVolumePushData {
-    uint64_t acceleration_structure_address;
     DescriptorHandle<RWTexture2D<float4>> output;
     DescriptorHandle<Texture2D<float>> depth;
     DescriptorHandle<StructuredBuffer<RasterVolume>> volumes;
-    DescriptorHandle<StructuredBuffer<RasterSceneBindings>> bindings;
-    DescriptorHandle<StructuredBuffer<uint>> sampling_tables;
+    uint2 reserved;
     uint4 metadata;
-    uint4 sampler_metadata;
-    uint4 sampler_parameters;
     uint4 film_bounds;
-    uint sample_index;
-    uint3 reserved;
     float4 inverse_view_projection_row_0;
     float4 inverse_view_projection_row_1;
     float4 inverse_view_projection_row_2;
@@ -525,7 +516,7 @@ float volume_density(
         temperature = 0.0;
         if (
             (
-                volume.majorant_metadata.w &
+                asuint(volume.procedural_parameters.w) &
                 1
             ) != 0) {
             StructuredBuffer<float> temperature_field =
@@ -547,7 +538,7 @@ float volume_density(
         float emission_multiplier = 1.0;
         if (
             (
-                volume.majorant_metadata.w &
+                asuint(volume.procedural_parameters.w) &
                 2
             ) != 0) {
             StructuredBuffer<float> emission_scale_field =
@@ -581,7 +572,7 @@ float volume_density(
             volume.sigma_s_field;
         StructuredBuffer<float3> emission_field =
             volume.emission_field;
-        const uint flags = volume.majorant_metadata.w;
+        const uint flags = asuint(volume.procedural_parameters.w);
         const uint color_space = flags >> 8;
         sigma_a = raster_to_linear_srgb(
             (flags & 1) != 0
@@ -626,192 +617,6 @@ float volume_density(
     return density;
 }
 
-float empty_volume_interval(
-    RasterVolume volume,
-    float3 world_position,
-    float3 world_direction,
-    out bool occupied) {
-    const float3 local_position =
-        transform_point(
-            volume,
-            world_position);
-    const float3 local_direction =
-        transform_direction(
-            volume,
-            world_direction);
-    const float3 coordinate =
-        (
-            local_position -
-            volume.bounds_minimum.xyz
-        ) /
-        (
-            volume.bounds_maximum.xyz -
-            volume.bounds_minimum.xyz
-        );
-    occupied = false;
-    if (
-        all(coordinate >= 0.0) &&
-        all(coordinate <= 1.0)) {
-        const uint3 resolution =
-            volume.majorant_metadata.xyz;
-        const uint3 cell =
-            min(
-                uint3(
-                    saturate(coordinate) *
-                    float3(resolution)),
-                resolution - 1);
-        StructuredBuffer<float> majorant =
-            volume.majorant;
-        const uint index =
-            (
-                cell.z * resolution.y +
-                cell.y
-            ) *
-                resolution.x +
-            cell.x;
-        if (majorant[index] > 0.0) {
-            occupied = true;
-            return 0.0;
-        }
-        const float3 bounds_size =
-            volume.bounds_maximum.xyz -
-            volume.bounds_minimum.xyz;
-        const float3 next_coordinate =
-            float3(
-                local_direction.x >= 0.0
-                    ? float(cell.x + 1u) /
-                          float(resolution.x)
-                    : float(cell.x) /
-                          float(resolution.x),
-                local_direction.y >= 0.0
-                    ? float(cell.y + 1u) /
-                          float(resolution.y)
-                    : float(cell.y) /
-                          float(resolution.y),
-                local_direction.z >= 0.0
-                    ? float(cell.z + 1u) /
-                          float(resolution.z)
-                    : float(cell.z) /
-                          float(resolution.z));
-        const float3 boundary =
-            volume.bounds_minimum.xyz +
-            next_coordinate *
-                bounds_size;
-        const float3 interval =
-            (
-                boundary -
-                local_position
-            ) /
-            local_direction;
-        float result = 1.0e20;
-        if (
-            isfinite(interval.x) &&
-            interval.x > 1.0e-6)
-            result =
-                min(result, interval.x);
-        if (
-            isfinite(interval.y) &&
-            interval.y > 1.0e-6)
-            result =
-                min(result, interval.y);
-        if (
-            isfinite(interval.z) &&
-            interval.z > 1.0e-6)
-            result =
-                min(result, interval.z);
-        return result;
-    }
-    float entry;
-    float exit;
-    if (
-        intersect_bounds(
-            volume,
-            world_position,
-            world_direction,
-            entry,
-            exit) &&
-        exit > 0.0)
-        return max(entry, 1.0e-5);
-    return 1.0e20;
-}
-
-float empty_space_skip(
-    float3 world_position,
-    float3 world_direction) {
-    StructuredBuffer<RasterVolume> volumes =
-        push_data.volumes;
-    float result = 1.0e20;
-    for (
-        uint volume_index = 0;
-        volume_index != push_data.metadata.z;
-        ++volume_index) {
-        bool occupied;
-        const float interval =
-            empty_volume_interval(
-                volumes[volume_index],
-                world_position,
-                world_direction,
-                occupied);
-        if (occupied) return 0.0;
-        result = min(result, interval);
-    }
-    return result;
-}
-
-float volume_step_size(
-    RasterVolume volume) {
-    const float3 local_size =
-        volume.bounds_maximum.xyz -
-        volume.bounds_minimum.xyz;
-    const uint3 resolution =
-        volume.metadata.x < 2
-            ? volume.metadata.yzw
-            : uint3(128);
-    const float local_step =
-        min(
-            local_size.x /
-                float(resolution.x),
-            min(
-                local_size.y /
-                    float(resolution.y),
-                local_size.z /
-                    float(resolution.z)));
-    const float inverse_scale =
-        max(
-            length(volume.inverse_transform_row_0.xyz),
-            max(
-                length(volume.inverse_transform_row_1.xyz),
-                length(volume.inverse_transform_row_2.xyz)));
-    return
-        0.5 *
-        local_step /
-        inverse_scale;
-}
-
-float3 light_scattering(
-    RasterLight light,
-    RasterSceneBindings bindings,
-    float3 position,
-    float3 view_direction,
-    float anisotropy,
-    float2 random_sample) {
-    const RasterLightSample sample =
-        sample_raster_light(
-            light,
-            bindings,
-            position,
-            random_sample);
-    if (sample.valid == 0) return float3(0.0);
-    if (!raster_surface_visible(bindings, position, sample.direction, sample.distance - 2.0e-3)) return float3(0.0);
-    return
-        sample.weight *
-        phase_henyey_greenstein(
-            dot(
-                view_direction,
-                sample.direction),
-            anisotropy);
-}
-
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void raster_volume(
@@ -829,31 +634,6 @@ void raster_volume(
         push_data.depth;
     StructuredBuffer<RasterVolume> volumes =
         push_data.volumes;
-    StructuredBuffer<RasterSceneBindings> binding_table =
-        push_data.bindings;
-    const RasterSceneBindings bindings =
-        binding_table[0];
-    StructuredBuffer<RasterLight> lights =
-        bindings.lights;
-    const WavefrontParameters sampling_parameters = {
-        float4(0.0), float4(0.0), float4(0.0),
-        float4(0.0), float4(0.0), float4(0.0),
-        float4(0.0), float4(0.0), uint4(0), float4(0.0),
-        float4(0.0), float4(0.0), uint4(0),
-        DescriptorHandle<StructuredBuffer<float>>(uint64_t(0)),
-        push_data.sampling_tables,
-        push_data.sampler_metadata,
-        push_data.sampler_parameters,
-        uint4(0),
-        DescriptorHandle<StructuredBuffer<float2>>(uint64_t(0)),
-        DescriptorHandle<StructuredBuffer<float>>(uint64_t(0)),
-        float4(0.0), float4(0.0), float4(0.0), float4(0.0), uint4(0),
-        push_data.metadata.xy,
-        push_data.sample_index,
-        0,
-        0,
-        0,
-    };
     const float2 coordinate =
         (
             float2(pixel) +
@@ -950,7 +730,6 @@ void raster_volume(
     float minimum = surface_distance;
     float maximum = 0.0;
     bool intersects = false;
-    float step = 1.0e20;
     for (uint volume_index = 0;
          volume_index != push_data.metadata.z;
          ++volume_index) {
@@ -976,44 +755,20 @@ void raster_volume(
                 min(
                     volume_maximum,
                     surface_distance));
-        step =
-            min(
-                step,
-                volume_step_size(
-                    volumes[volume_index]));
         intersects = true;
     }
     if (!intersects || maximum <= minimum) return;
-    const float jitter =
-        path_sample_1d(
-            sampling_parameters,
-            pixel,
-            5);
-    float distance =
-        minimum +
-        jitter *
-            step;
+    static const uint preview_step_count = 64;
+    const float step = (maximum - minimum) / float(preview_step_count);
     float3 radiance = float3(0.0);
     float3 transmittance = float3(1.0);
-    for (uint sample_index = 0;
-         distance < maximum;
-         ++sample_index) {
+    const float3 incoming_direction = normalize(float3(-0.35, 0.8, 0.45));
+    for (uint sample_index = 0; sample_index != preview_step_count; ++sample_index) {
+        const float distance = minimum + (float(sample_index) + 0.5) * step;
         const float3 position =
             ray_origin +
             distance *
                 ray_direction;
-        const float empty_interval =
-            empty_space_skip(
-                position,
-                ray_direction);
-        if (empty_interval > step) {
-            distance +=
-                min(
-                    empty_interval +
-                        1.0e-5,
-                    maximum - distance);
-            continue;
-        }
         float3 sigma_a =
             float3(0.0);
         float3 sigma_s =
@@ -1050,41 +805,10 @@ void raster_volume(
             weight += density;
         }
         if (weight == 0.0) {
-            distance += step;
             continue;
         }
         anisotropy /= weight;
-        float3 direct = float3(0.0);
-        for (uint selected_light = 0;
-             selected_light != min(push_data.metadata.w, 1);
-             ++selected_light) {
-            float light_probability;
-            const uint light_index =
-                sample_raster_light_index(
-                    lights,
-                    push_data.metadata.w,
-                    path_sample_1d(
-                        sampling_parameters,
-                        pixel,
-                        6 +
-                            sample_index *
-                                3),
-                    light_probability);
-            direct +=
-                (1.0 / light_probability) *
-                light_scattering(
-                    lights[light_index],
-                    bindings,
-                    position,
-                    -ray_direction,
-                    anisotropy,
-                    path_sample_2d(
-                        sampling_parameters,
-                        pixel,
-                        7 +
-                            sample_index *
-                                3));
-        }
+        const float direct = 0.12 + 2.5 * phase_henyey_greenstein(dot(-ray_direction, incoming_direction), anisotropy);
         const float3 source =
             emission +
             sigma_s *
@@ -1116,7 +840,6 @@ void raster_volume(
                     transmittance.z)) <
             1.0e-3)
             break;
-        distance += step;
     }
     const float4 surface =
         output[pixel];

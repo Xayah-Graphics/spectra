@@ -1,8 +1,4 @@
-module spectra.editor;
-
-import spectra.runtime.shaders;
-
-import :viewport.picker;
+module spectra.editor.viewport.picker;
 
 import std;
 import vulkan;
@@ -40,7 +36,7 @@ namespace spectra {
     }
 
     void ViewportPicker::initialize(const scene::SceneView source_scene) {
-        this->scene.primitives_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        this->scene.primitives_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         this->scene.initialized           = true;
         this->upload(source_scene);
 
@@ -71,7 +67,7 @@ namespace spectra {
         for (std::uint32_t index = 0; index != VulkanFrames::frames_in_flight; ++index) {
             PickFrameSlot slot{};
             slot.result_buffer     = this->context.runtime.resources.create_buffer(32, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-            slot.result_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            slot.result_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(slot.result_descriptor, vk::DescriptorType::eStorageBuffer, slot.result_buffer);
             this->picking.frame_slots.emplace_back(std::move(slot));
         }
@@ -121,7 +117,7 @@ namespace spectra {
         if (primitives.empty()) primitives.emplace_back();
         GpuBuffer new_primitives = upload_pick_primitives(this->context.runtime, primitives, command_buffer);
         if (command_buffer) {
-            DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
             this->context.runtime.frames.defer_destruction([primitives = std::move(this->scene.primitives)]() mutable {});
             this->scene.primitives_descriptor = std::move(descriptor);
@@ -138,6 +134,12 @@ namespace spectra {
     void ViewportPicker::submit_pick(const float normalized_x, const float normalized_y, const bool select, const bool additive) noexcept {
         const PickRequest request{normalized_x, normalized_y, select, additive};
         if (!this->picking.pending_request || request.select || !this->picking.pending_request->select) this->picking.pending_request = request;
+    }
+
+    void ViewportPicker::cancel_selection_requests() noexcept {
+        if (this->picking.pending_request && this->picking.pending_request->select) this->picking.pending_request.reset();
+        for (PickFrameSlot& slot : this->picking.frame_slots)
+            if (slot.submitted_request && slot.submitted_request->select) slot.submitted_request.reset();
     }
 
     ViewportPicker::PickResult ViewportPicker::take_pick_result(const std::uint32_t frame_slot_index) noexcept {

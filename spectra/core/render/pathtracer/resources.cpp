@@ -1,6 +1,5 @@
 module spectra.render.pathtracer.resources;
 
-import spectra.runtime.shaders;
 import std;
 import vulkan;
 
@@ -10,6 +9,7 @@ namespace spectra {
         constexpr std::size_t coefficient_count     = 3ull * table_resolution * table_resolution * table_resolution * 3ull;
         constexpr std::uint64_t rgb_table_size      = 16ull + table_resolution * sizeof(float) + coefficient_count * sizeof(float);
         constexpr std::uint64_t cie_table_size      = 16ull + 5ull * 471ull * sizeof(float);
+        constexpr std::uint64_t sampling_table_size = 6'005'504;
 
         struct ShaderEntry {
             const char* file{};
@@ -17,7 +17,7 @@ namespace spectra {
         };
 
         constexpr std::array compute_shader_entries{
-            ShaderEntry{"volume_majorant.spv", "build_majorant"},
+            ShaderEntry{"path_volume_majorant.spv", "build_majorant"},
             ShaderEntry{"path_dynamic_area_light_shapes.spv", "update_dynamic_area_light_shapes"},
             ShaderEntry{"path_dynamic_area_light_finalize.spv", "finalize_dynamic_area_light_range"},
             ShaderEntry{"path_dynamic_light_selection.spv", "rebuild_dynamic_light_selection"},
@@ -265,32 +265,39 @@ namespace spectra {
         return this->compute_shaders[std::to_underlying(shader)];
     }
 
-    PathTracerResources::PathTracerResources(VulkanRuntime& runtime, SamplingResources& sampling, const std::filesystem::path& resource_directory) : runtime(runtime), sampling(sampling) {
+    PathTracerResources::PathTracerResources(VulkanRuntime& runtime, const std::filesystem::path& resource_directory) : runtime(runtime) {
         const std::filesystem::path spectral_directory = resource_directory / "spectral";
         this->rgb_to_spectrum_table_data               = load_rgb_tables(spectral_directory);
         const std::vector<std::byte> cie_table         = load_binary_asset(spectral_directory / "cie1931.spectrum", cie_table_size);
+        const std::vector<std::byte> sampling_table    = load_binary_asset(resource_directory / "sampling.tables", sampling_table_size);
+        this->sampling_table_data.resize(sampling_table_size / sizeof(std::uint32_t));
+        std::memcpy(this->sampling_table_data.data(), sampling_table.data(), sampling_table_size);
         this->cie_samples.resize(5u * 471u);
         std::memcpy(this->cie_samples.data(), cie_table.data() + 16, this->cie_samples.size() * sizeof(float));
-        const vk::DeviceSize rgb_offset  = 0;
-        const vk::DeviceSize cie_offset  = align_up(this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t), 16);
-        const vk::DeviceSize zero_offset = align_up(cie_offset + cie_table.size(), 16);
-        const vk::DeviceSize total_size  = zero_offset + sizeof(std::uint32_t) * 4u;
+        const vk::DeviceSize rgb_offset      = 0;
+        const vk::DeviceSize cie_offset      = align_up(this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t), 16);
+        const vk::DeviceSize zero_offset     = align_up(cie_offset + cie_table.size(), 16);
+        const vk::DeviceSize sampling_offset = align_up(zero_offset + sizeof(std::uint32_t) * 4u, 16);
+        const vk::DeviceSize total_size      = sampling_offset + sampling_table_size;
         GpuBuffer staging                    = runtime.resources.create_buffer(total_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         std::memcpy(static_cast<std::byte*>(staging.mapped) + rgb_offset, this->rgb_to_spectrum_table_data.data(), this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t));
         std::memcpy(static_cast<std::byte*>(staging.mapped) + cie_offset, cie_table.data(), cie_table.size());
         std::memset(static_cast<std::byte*>(staging.mapped) + zero_offset, 0, sizeof(std::uint32_t) * 4u);
+        std::memcpy(static_cast<std::byte*>(staging.mapped) + sampling_offset, sampling_table.data(), sampling_table_size);
         this->static_data = runtime.resources.create_buffer(total_size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
         runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
             command_buffer.copyBuffer(*staging.buffer, *this->static_data.buffer, vk::BufferCopy{0, 0, total_size});
             const vk::BufferMemoryBarrier2 barrier{vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eRayTracingShaderKHR, vk::AccessFlagBits2::eShaderStorageRead, {}, {}, *this->static_data.buffer, 0, total_size};
             command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, barrier, {}});
         });
-        this->zero_volume_field_descriptor      = runtime.resources.allocate_resource_descriptor();
-        this->cie_spectra_descriptor            = runtime.resources.allocate_resource_descriptor();
-        this->rgb_to_spectrum_tables_descriptor = runtime.resources.allocate_resource_descriptor();
+        this->zero_volume_field_descriptor      = runtime.frames.allocate_resource_descriptor();
+        this->cie_spectra_descriptor            = runtime.frames.allocate_resource_descriptor();
+        this->rgb_to_spectrum_tables_descriptor = runtime.frames.allocate_resource_descriptor();
+        this->sampling_tables_descriptor        = runtime.frames.allocate_resource_descriptor();
         runtime.resources.write_buffer_descriptor(this->zero_volume_field_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + zero_offset, sizeof(std::uint32_t) * 4u);
         runtime.resources.write_buffer_descriptor(this->cie_spectra_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + cie_offset, cie_table.size());
         runtime.resources.write_buffer_descriptor(this->rgb_to_spectrum_tables_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + rgb_offset, this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t));
+        runtime.resources.write_buffer_descriptor(this->sampling_tables_descriptor, vk::DescriptorType::eStorageBuffer, this->static_data.address + sampling_offset, sampling_table_size);
         const std::filesystem::path shader_directory = resource_directory / "shaders";
         this->shader_preparation = std::async(std::launch::async, [this, shader_directory] { initialize_shaders(*this, shader_directory); }).share();
     }
@@ -302,6 +309,7 @@ namespace spectra {
             zero_volume_field_descriptor = std::move(this->zero_volume_field_descriptor),
             cie_spectra_descriptor = std::move(this->cie_spectra_descriptor),
             rgb_to_spectrum_tables_descriptor = std::move(this->rgb_to_spectrum_tables_descriptor),
+            sampling_tables_descriptor = std::move(this->sampling_tables_descriptor),
             compute_shaders = std::move(this->compute_shaders),
             pipeline = std::move(this->pipeline),
             shader_binding_table = std::move(this->shader_binding_table)

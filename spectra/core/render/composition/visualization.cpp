@@ -1,6 +1,4 @@
-module spectra.visualization;
-
-import spectra.runtime.shaders;
+module spectra.render.composition.visualization;
 
 import std;
 import vulkan;

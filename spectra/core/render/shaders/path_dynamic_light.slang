@@ -108,7 +108,7 @@ void update_dynamic_area_light_shapes(uint3 dispatch_thread_id : SV_DispatchThre
         shape.transform_row_0 = float4(1.0, 0.0, 0.0, 0.0);
         shape.transform_row_1 = float4(0.0, 1.0, 0.0, 0.0);
         shape.transform_row_2 = float4(0.0, 0.0, 1.0, 0.0);
-        if ((area_push.metadata.z & 8) != 0) {
+        if ((area_push.metadata.z & gpu_geometry_attribute_texture_coordinate) != 0) {
             StructuredBuffer<float2> texture_coordinates = area_push.texture_coordinates;
             const float2 uv_0 = texture_coordinates[index_0];
             const float2 uv_1 = texture_coordinates[index_1];
@@ -120,7 +120,7 @@ void update_dynamic_area_light_shapes(uint3 dispatch_thread_id : SV_DispatchThre
             shape.texture_coordinates_0_1 = float4(0.0, 0.0, 1.0, 0.0);
             shape.texture_coordinates_2 = float4(1.0, 1.0, 0.0, 0.0);
         }
-        if ((area_push.metadata.z & 2) != 0) {
+        if ((area_push.metadata.z & gpu_geometry_attribute_normal) != 0) {
             StructuredBuffer<PathPackedFloat3> normals = area_push.normals;
             const PathPackedFloat3 packed_normal_0 = normals[index_0];
             const PathPackedFloat3 packed_normal_1 = normals[index_1];

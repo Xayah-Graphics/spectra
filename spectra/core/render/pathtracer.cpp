@@ -2,7 +2,6 @@ module spectra.render.pathtracer;
 
 import spectra.render.pathtracer.abi;
 import spectra.render.capture;
-import spectra.runtime.shaders;
 import std;
 import vulkan;
 
@@ -583,28 +582,28 @@ namespace spectra {
     }
 
     void PathTracer::begin_scene_preparation(const scene::SceneView scene) {
-        this->scene.primitives.descriptor              = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.light_table.descriptor             = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.light_shapes.descriptor            = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.light_distribution.descriptor      = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.light_distribution_data.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.portals.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.light_bvh_nodes.descriptor         = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.light_bvh_bit_trails.descriptor    = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.light_bvh_counters_descriptor      = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.face_materials.descriptor          = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.media.descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.volumes.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.spectra.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.piecewise_spectra.descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.bindings.descriptor                = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.filter.distribution.descriptor     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.filter.sensor_response.descriptor  = this->context.runtime.resources.allocate_resource_descriptor();
-        this->scene.sampler.pixel_samples.descriptor   = this->context.runtime.resources.allocate_resource_descriptor();
+        this->scene.primitives.descriptor              = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.light_table.descriptor             = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.light_shapes.descriptor            = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.light_distribution.descriptor      = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.light_distribution_data.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.portals.descriptor                 = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.light_bvh_nodes.descriptor         = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.light_bvh_bit_trails.descriptor    = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.light_bvh_counters_descriptor      = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.face_materials.descriptor          = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.media.descriptor                   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.volumes.descriptor                 = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.spectra.descriptor                 = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.piecewise_spectra.descriptor       = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.bindings.descriptor                = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.filter.distribution.descriptor     = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.filter.sensor_response.descriptor  = this->context.runtime.frames.allocate_resource_descriptor();
+        this->scene.sampler.pixel_samples.descriptor   = this->context.runtime.frames.allocate_resource_descriptor();
         this->scene.camera                             = scene.camera;
         this->scene.transport_settings                 = scene.transport;
-        for (PathBufferSlice& slice : this->scene.materials) slice.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        for (PathBufferSlice& slice : this->scene.textures) slice.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        for (PathBufferSlice& slice : this->scene.materials) slice.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+        for (PathBufferSlice& slice : this->scene.textures) slice.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         this->scene.initialized = true;
 
         std::unique_ptr<PathTracerScenePreparation> preparation = std::make_unique<PathTracerScenePreparation>();
@@ -729,8 +728,8 @@ namespace spectra {
         GpuBuffer new_distribution    = upload_path_buffer(this->context.runtime, std::span<const float>{prepared->distribution}, command_buffer);
         GpuBuffer new_sensor_response = upload_path_buffer(this->context.runtime, std::span<const float>{prepared->sensor_response}, command_buffer);
         if (*this->scene.filter.distribution.buffer.buffer) {
-            DescriptorLease distribution_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            DescriptorLease sensor_descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease distribution_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            DescriptorLease sensor_descriptor       = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(distribution_descriptor, vk::DescriptorType::eStorageBuffer, new_distribution);
             this->context.runtime.resources.write_buffer_descriptor(sensor_descriptor, vk::DescriptorType::eStorageBuffer, new_sensor_response);
             this->context.runtime.frames.defer_destruction([distribution_buffer = std::move(this->scene.filter.distribution.buffer), sensor_buffer = std::move(this->scene.filter.sensor_response.buffer)]() mutable {});
@@ -770,10 +769,10 @@ namespace spectra {
             pixel_tile_size = 1u << (8u - log_4_samples);
             pixel_samples.assign(static_cast<std::size_t>(pixel_tile_size) * pixel_tile_size * sampler.samples_per_pixel, {});
             std::vector<std::uint32_t> stored(static_cast<std::size_t>(pixel_tile_size) * pixel_tile_size);
-            const std::uint32_t pmj_offset = this->context.pathtracer.sampling.table_data[12];
+            const std::uint32_t pmj_offset = this->context.pathtracer.sampling_table_data[12];
             for (std::uint32_t index = 0; index != 65'536; ++index) {
-                const double x                 = static_cast<double>(this->context.pathtracer.sampling.table_data[pmj_offset + index * 2]) * 0x1p-32 * pixel_tile_size;
-                const double y                 = static_cast<double>(this->context.pathtracer.sampling.table_data[pmj_offset + index * 2 + 1]) * 0x1p-32 * pixel_tile_size;
+                const double x                 = static_cast<double>(this->context.pathtracer.sampling_table_data[pmj_offset + index * 2]) * 0x1p-32 * pixel_tile_size;
+                const double y                 = static_cast<double>(this->context.pathtracer.sampling_table_data[pmj_offset + index * 2 + 1]) * 0x1p-32 * pixel_tile_size;
                 const std::uint32_t pixel_x    = static_cast<std::uint32_t>(x);
                 const std::uint32_t pixel_y    = static_cast<std::uint32_t>(y);
                 const std::size_t pixel_offset = pixel_x + static_cast<std::size_t>(pixel_y) * pixel_tile_size;
@@ -795,7 +794,7 @@ namespace spectra {
     void PathTracer::commit_sampler(std::unique_ptr<PreparedPathSampler> prepared, const vk::raii::CommandBuffer& command_buffer) {
         GpuBuffer new_pixel_samples = upload_path_buffer(this->context.runtime, std::span<const math::Float2>{prepared->pixel_samples}, command_buffer);
         if (*this->scene.sampler.pixel_samples.buffer.buffer) {
-            DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_pixel_samples);
             this->context.runtime.frames.defer_destruction([buffer = std::move(this->scene.sampler.pixel_samples.buffer)]() mutable {});
             this->scene.sampler.pixel_samples.descriptor = std::move(descriptor);
@@ -2032,7 +2031,7 @@ namespace spectra {
         for (std::size_t index = 0; index != prepared->volume_resources.size(); ++index) {
             PreparedPathVolume& source        = prepared->volume_resources[index];
             GpuBuffer majorant                = upload_path_buffer(this->context.runtime, std::span<const float>{source.majorant}, command_buffer);
-            DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, majorant);
             prepared->compiled_volumes[index].majorant = descriptor;
             PathVolumeResources destination{};
@@ -2049,7 +2048,7 @@ namespace spectra {
         GpuBuffer new_light_bvh_counters = create_storage_buffer(this->context.runtime, std::max<vk::DeviceSize>(prepared->light_bvh_node_count * sizeof(std::uint32_t), sizeof(std::uint32_t)), vk::BufferUsageFlagBits::eTransferDst);
         DescriptorLease new_light_bvh_counters_descriptor{};
         if (*this->scene.light_bvh_counters.buffer) {
-            new_light_bvh_counters_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            new_light_bvh_counters_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.frames.defer_destruction([buffer = std::move(this->scene.light_bvh_counters)]() mutable {});
         } else
             new_light_bvh_counters_descriptor = std::move(this->scene.light_bvh_counters_descriptor);
@@ -2070,21 +2069,21 @@ namespace spectra {
         PathBufferSlice new_spectra                                                                   = std::move(prepared->spectra);
         PathBufferSlice new_piecewise_spectra                                                         = std::move(prepared->piecewise_spectra);
         if (*this->scene.arena.buffer) {
-            new_primitives.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            for (PathBufferSlice& slice : new_materials) slice.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            for (PathBufferSlice& slice : new_textures) slice.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            new_lights.descriptor                  = this->context.runtime.resources.allocate_resource_descriptor();
-            new_light_shapes.descriptor            = this->context.runtime.resources.allocate_resource_descriptor();
-            new_light_distributions.descriptor     = this->context.runtime.resources.allocate_resource_descriptor();
-            new_light_distribution_data.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-            new_portals.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
-            new_light_bvh_nodes.descriptor         = this->context.runtime.resources.allocate_resource_descriptor();
-            new_light_bvh_bit_trails.descriptor    = this->context.runtime.resources.allocate_resource_descriptor();
-            new_face_materials.descriptor          = this->context.runtime.resources.allocate_resource_descriptor();
-            new_media.descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
-            new_volumes.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
-            new_spectra.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
-            new_piecewise_spectra.descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
+            new_primitives.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            for (PathBufferSlice& slice : new_materials) slice.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            for (PathBufferSlice& slice : new_textures) slice.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            new_lights.descriptor                  = this->context.runtime.frames.allocate_resource_descriptor();
+            new_light_shapes.descriptor            = this->context.runtime.frames.allocate_resource_descriptor();
+            new_light_distributions.descriptor     = this->context.runtime.frames.allocate_resource_descriptor();
+            new_light_distribution_data.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            new_portals.descriptor                 = this->context.runtime.frames.allocate_resource_descriptor();
+            new_light_bvh_nodes.descriptor         = this->context.runtime.frames.allocate_resource_descriptor();
+            new_light_bvh_bit_trails.descriptor    = this->context.runtime.frames.allocate_resource_descriptor();
+            new_face_materials.descriptor          = this->context.runtime.frames.allocate_resource_descriptor();
+            new_media.descriptor                   = this->context.runtime.frames.allocate_resource_descriptor();
+            new_volumes.descriptor                 = this->context.runtime.frames.allocate_resource_descriptor();
+            new_spectra.descriptor                 = this->context.runtime.frames.allocate_resource_descriptor();
+            new_piecewise_spectra.descriptor       = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.frames.defer_destruction([arena = std::move(this->scene.arena), volumes = std::move(this->scene.volume_resources)]() mutable {});
         } else {
             new_primitives.descriptor = std::move(this->scene.primitives.descriptor);
@@ -2179,7 +2178,7 @@ namespace spectra {
         };
         std::memcpy(new_bindings.mapped, &bindings, sizeof(bindings));
         if (*this->scene.bindings.buffer.buffer) {
-            DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_bindings);
             this->context.runtime.frames.defer_destruction([buffer = std::move(this->scene.bindings.buffer)]() mutable {});
             this->scene.bindings.descriptor = std::move(descriptor);
@@ -2424,67 +2423,67 @@ namespace spectra {
     }
 
     void PathTracer::initialize_session() {
-        this->session.output_descriptor                          = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.sampled_output_descriptor                  = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.storage_depth_descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.sampled_depth_descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.queue_counts.descriptor                    = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.ray_queue_0.descriptor                     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.ray_queue_1.descriptor                     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.ray_origins.descriptor                     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.ray_directions.descriptor                  = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.ray_origin_dx.descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.ray_origin_dy.descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.ray_direction_dx.descriptor                = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.ray_direction_dy.descriptor                = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.throughputs.descriptor                     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.radiances.descriptor                       = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.wavelengths.descriptor                     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.wavelength_pdfs.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.r_u.descriptor                             = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.r_l.descriptor                             = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.current_media.descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.light_context_normals.descriptor           = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.flags.descriptor                           = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.eta_scales.descriptor                      = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.hit_normal_distances.descriptor            = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.hit_geometric_normal_u.descriptor          = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.hit_tangent_v.descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.hit_dpdu.descriptor                        = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.hit_dpdv.descriptor                        = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.hit_dndu.descriptor                        = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.hit_dndv.descriptor                        = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.hit_identifiers.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.shadow_path_ids.descriptor                 = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.shadow_origins.descriptor                  = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.shadow_directions.descriptor               = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.shadow_contributions.descriptor            = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.shadow_r_p.descriptor                      = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.shadow_pdfs.descriptor                     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.shadow_media.descriptor                    = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.texture_evaluation_stack.descriptor        = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.evaluated_texture_values.descriptor        = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.filter_weights.descriptor                  = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.film_rgb_sums.descriptor                   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.film_weight_sums.descriptor                = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_sample_albedo.descriptor           = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_sample_shading_normal.descriptor   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_sample_geometric_normal.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_sample_position_depth.descriptor   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_sample_uv.descriptor               = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_sample_identity_0.descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_sample_identity_1.descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_albedo_sums.descriptor             = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_shading_normal_sums.descriptor     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_geometric_normal_sums.descriptor   = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_position_depth_sums.descriptor     = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_uv_weight_sums.descriptor          = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_identity_0.descriptor              = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.gbuffer_identity_1.descriptor              = this->context.runtime.resources.allocate_resource_descriptor();
-        this->session.bindings.descriptor                        = this->context.runtime.resources.allocate_resource_descriptor();
+        this->session.output_descriptor                          = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.sampled_output_descriptor                  = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.storage_depth_descriptor                   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.sampled_depth_descriptor                   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.queue_counts.descriptor                    = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.ray_queue_0.descriptor                     = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.ray_queue_1.descriptor                     = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.ray_origins.descriptor                     = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.ray_directions.descriptor                  = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.ray_origin_dx.descriptor                   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.ray_origin_dy.descriptor                   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.ray_direction_dx.descriptor                = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.ray_direction_dy.descriptor                = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.throughputs.descriptor                     = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.radiances.descriptor                       = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.wavelengths.descriptor                     = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.wavelength_pdfs.descriptor                 = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.r_u.descriptor                             = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.r_l.descriptor                             = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.current_media.descriptor                   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.light_context_normals.descriptor           = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.flags.descriptor                           = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.eta_scales.descriptor                      = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.hit_normal_distances.descriptor            = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.hit_geometric_normal_u.descriptor          = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.hit_tangent_v.descriptor                   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.hit_dpdu.descriptor                        = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.hit_dpdv.descriptor                        = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.hit_dndu.descriptor                        = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.hit_dndv.descriptor                        = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.hit_identifiers.descriptor                 = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.shadow_path_ids.descriptor                 = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.shadow_origins.descriptor                  = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.shadow_directions.descriptor               = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.shadow_contributions.descriptor            = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.shadow_r_p.descriptor                      = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.shadow_pdfs.descriptor                     = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.shadow_media.descriptor                    = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.texture_evaluation_stack.descriptor        = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.evaluated_texture_values.descriptor        = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.filter_weights.descriptor                  = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.film_rgb_sums.descriptor                   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.film_weight_sums.descriptor                = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_sample_albedo.descriptor           = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_sample_shading_normal.descriptor   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_sample_geometric_normal.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_sample_position_depth.descriptor   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_sample_uv.descriptor               = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_sample_identity_0.descriptor       = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_sample_identity_1.descriptor       = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_albedo_sums.descriptor             = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_shading_normal_sums.descriptor     = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_geometric_normal_sums.descriptor   = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_position_depth_sums.descriptor     = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_uv_weight_sums.descriptor          = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_identity_0.descriptor              = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.gbuffer_identity_1.descriptor              = this->context.runtime.frames.allocate_resource_descriptor();
+        this->session.bindings.descriptor                        = this->context.runtime.frames.allocate_resource_descriptor();
         this->session.parameters.reserve(VulkanFrames::frames_in_flight);
         for (std::uint32_t index = 0; index != VulkanFrames::frames_in_flight; ++index) {
-            this->session.parameters.emplace_back(this->context.runtime.resources.allocate_resource_descriptor());
+            this->session.parameters.emplace_back(this->context.runtime.frames.allocate_resource_descriptor());
             this->session.parameters.back().buffer = this->context.runtime.resources.create_buffer(sizeof(pathtracer::WavefrontParameters), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
             this->context.runtime.resources.write_buffer_descriptor(this->session.parameters.back().descriptor, vk::DescriptorType::eStorageBuffer, this->session.parameters.back().buffer);
         }
@@ -2755,7 +2754,7 @@ namespace spectra {
         parameters.filter_metadata             = {std::to_underlying(film.filter.kind), this->scene.filter.resolution[0], this->scene.filter.resolution[1], 0};
         parameters.filter_distribution         = this->scene.filter.distribution.descriptor;
         const scene::Sampler& sampler          = this->scene.sampler.sampler;
-        parameters.sampling_tables             = this->context.pathtracer.sampling.tables_descriptor;
+        parameters.sampling_tables             = this->context.pathtracer.sampling_tables_descriptor;
         parameters.pmj_pixel_samples           = this->scene.sampler.pixel_samples.descriptor;
         parameters.sampler_metadata            = {std::to_underlying(sampler.kind), std::to_underlying(sampler.randomization), sampler.samples_per_pixel, sampler.seed};
         parameters.sampler_parameters          = {sampler.x_strata, sampler.y_strata, sampler.jitter ? 1u : 0u, this->scene.sampler.pixel_tile_size};

@@ -1,6 +1,6 @@
-export module spectra.editor:viewport.picker;
+export module spectra.editor.viewport.picker;
 
-import spectra.render.scene;
+import spectra.render.gpu_scene;
 import spectra.render.contract;
 import spectra.runtime;
 import spectra.scene;
@@ -42,6 +42,7 @@ namespace spectra {
         void destroy_scene() noexcept;
         void synchronize(scene::SceneView scene, GpuSceneUpdate gpu_update, const vk::raii::CommandBuffer& command_buffer);
         void submit_pick(float normalized_x, float normalized_y, bool select, bool additive) noexcept;
+        void cancel_selection_requests() noexcept;
         [[nodiscard]] PickResult take_pick_result(std::uint32_t frame_slot_index) noexcept;
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Camera& camera, DepthBufferView depth, const GpuImage* diagnostic_pick_image);
 

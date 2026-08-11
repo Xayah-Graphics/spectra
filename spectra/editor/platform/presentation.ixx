@@ -1,6 +1,6 @@
-export module spectra.editor:platform.presentation;
+export module spectra.editor.platform.presentation;
 
-import :platform.window;
+import spectra.editor.platform.window;
 import spectra.runtime;
 import std;
 import vulkan;

@@ -1,8 +1,8 @@
-module spectra.util.hash;
+module spectra.scene.content_hash;
 
 import std;
 
-namespace spectra {
+namespace spectra::scene::content_hash {
     namespace {
         struct Sha256 {
             Sha256() = default;
@@ -162,4 +162,4 @@ namespace spectra {
         if (!stream.eof()) throw std::runtime_error(std::format("Failed to read file for SHA-256: {}", path.string()));
         return hexadecimal(hash.finish());
     }
-} // namespace spectra
+} // namespace spectra::scene::content_hash

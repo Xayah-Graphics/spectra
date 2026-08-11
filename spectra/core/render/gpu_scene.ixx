@@ -1,4 +1,4 @@
-export module spectra.render.scene;
+export module spectra.render.gpu_scene;
 
 import spectra.dynamics;
 import spectra.runtime;
@@ -8,6 +8,10 @@ import std;
 import vulkan;
 
 namespace spectra {
+    export inline constexpr std::uint32_t gpu_geometry_attribute_normal             = 1u << 0u;
+    export inline constexpr std::uint32_t gpu_geometry_attribute_tangent            = 1u << 1u;
+    export inline constexpr std::uint32_t gpu_geometry_attribute_texture_coordinate = 1u << 2u;
+
     export enum class GpuMeshUpdateMode : std::uint8_t {
         Immutable,
         Deformable,
@@ -37,7 +41,6 @@ namespace spectra {
         Volume    = 1 << 1,
         Structure = 1 << 2,
         Transform = 1 << 3,
-        Bounds    = 1 << 4,
     };
 
     export [[nodiscard]] constexpr GpuSceneChange operator|(const GpuSceneChange left, const GpuSceneChange right) noexcept {
@@ -169,14 +172,9 @@ namespace spectra {
         vk::DeviceAddress acceleration_structure{};
         DescriptorHandle primitive_transforms{};
         const GpuBuffer* primitive_transform_buffer{};
-        struct DynamicBoundsView {
-            DescriptorHandle descriptor{};
-            std::uint32_t count{};
-            dynamics::BoundsDomain domain{dynamics::BoundsDomain::World};
-        };
-        std::span<const DynamicBoundsView> dynamic_bounds{};
-        math::Bounds3 resolved_dynamic_bounds{math::Bounds3::empty()};
-        std::span<const dynamics::SceneBound> resolved_dynamic_bound_records{};
+        DescriptorHandle instance_bounds{};
+        std::span<const math::Bounds3> resolved_instance_bounds{};
+        math::Bounds3 resolved_scene_bounds{math::Bounds3::empty()};
         std::uint64_t revision{};
         std::uint64_t structure_revision{};
     };
@@ -207,6 +205,8 @@ namespace spectra {
             vk::raii::ShaderEXT attribute_clear_shader{nullptr};
             vk::raii::ShaderEXT attribute_accumulation_shader{nullptr};
             vk::raii::ShaderEXT attribute_normalization_shader{nullptr};
+            vk::raii::ShaderEXT bounds_clear_shader{nullptr};
+            vk::raii::ShaderEXT bounds_accumulation_shader{nullptr};
             vk::raii::ShaderEXT sphere_unpack_shader{nullptr};
             vk::raii::ShaderEXT instance_apply_shader{nullptr};
             std::map<std::pair<scene::TextureId, vk::Format>, std::size_t> texture_image_indices{};
@@ -217,11 +217,12 @@ namespace spectra {
             DescriptorLease primitive_transforms_descriptor{};
             GpuBuffer dynamic_instance_bindings{};
             DescriptorLease dynamic_instance_bindings_descriptor{};
-            std::array<GpuBuffer, VulkanFrames::frames_in_flight> dynamic_bounds_readbacks{};
-            std::array<std::uint32_t, VulkanFrames::frames_in_flight> dynamic_bounds_readback_counts{};
-            std::vector<GpuSceneView::DynamicBoundsView> dynamic_bounds{};
-            math::Bounds3 resolved_dynamic_bounds{math::Bounds3::empty()};
-            std::vector<dynamics::SceneBound> resolved_dynamic_bound_records{};
+            GpuBuffer instance_bounds{};
+            DescriptorLease instance_bounds_descriptor{};
+            std::array<GpuBuffer, VulkanFrames::frames_in_flight> instance_bounds_readbacks{};
+            std::array<std::uint32_t, VulkanFrames::frames_in_flight> instance_bounds_readback_counts{};
+            std::vector<math::Bounds3> resolved_instance_bounds{};
+            math::Bounds3 resolved_scene_bounds{math::Bounds3::empty()};
             GpuBuffer immediate_scratch{};
             std::array<GpuBuffer, VulkanFrames::frames_in_flight> frame_scratch{};
             std::array<vk::DeviceSize, VulkanFrames::frames_in_flight> scratch_offsets{};
@@ -243,6 +244,7 @@ namespace spectra {
             std::vector<scene::InstanceId> primitive_instance_ids{};
             std::vector<scene::InstanceId> acceleration_instance_ids{};
             GpuAccelerationStructure top_level_acceleration_structure{};
+            bool instance_bounds_dirty{};
             bool initialized{};
         } resources;
 
@@ -253,11 +255,13 @@ namespace spectra {
         void synchronize_external_sphere_set(scene::SphereSetId sphere_set_id, DescriptorHandle spheres_descriptor, std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_instance_transforms(const dynamics::GpuInstanceTransformUpdate& update, const vk::raii::CommandBuffer& command_buffer);
         void update_instance_state(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void update_instance_bounds(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
+        void resolve_instance_bounds(std::uint32_t frame_slot_index);
         void update_top_level_from_gpu(std::uint32_t instance_count, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_volume(scene::VolumeId volume_id, const GpuBuffer* density, const GpuBuffer* temperature, const GpuBuffer* emission_scale, const GpuBuffer* sigma_a, const GpuBuffer* sigma_s, const GpuBuffer* emission, std::uint64_t voxel_count, scene::VolumeRegion dirty_region, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void cache_texture_images(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        void generate_dynamic_attributes(GpuGeometry& geometry, bool generate_normals, bool generate_tangents, const vk::raii::CommandBuffer& command_buffer);
+        void generate_missing_attributes(GpuGeometry& geometry, bool generate_normals, bool generate_tangents, const vk::raii::CommandBuffer& command_buffer);
         [[nodiscard]] GpuGeometry create_geometry(const scene::Geometry& geometry, const vk::raii::CommandBuffer& command_buffer);
         [[nodiscard]] GpuSphereSet create_sphere_set(const scene::SphereSet& spheres, const vk::raii::CommandBuffer& command_buffer, std::uint32_t capacity = 0);
         [[nodiscard]] GpuVolume create_volume(const scene::Volume& volume, const vk::raii::CommandBuffer& command_buffer);

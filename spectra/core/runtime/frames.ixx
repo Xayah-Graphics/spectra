@@ -1,11 +1,50 @@
-export module spectra.runtime:frames;
+export module spectra.runtime.frames;
 
-import :graphics;
-import :resources;
+import spectra.runtime.graphics;
+import spectra.runtime.resources;
 import std;
 import vulkan;
 
 namespace spectra {
+    enum class DescriptorKind : std::uint8_t {
+        Resource,
+        Sampler,
+    };
+
+    export struct VulkanFrames;
+
+    export struct DescriptorLease {
+        DescriptorLease() = default;
+        ~DescriptorLease();
+        DescriptorLease(DescriptorLease&& other) noexcept;
+        DescriptorLease& operator=(DescriptorLease&& other) noexcept;
+        DescriptorLease(const DescriptorLease&)            = delete;
+        DescriptorLease& operator=(const DescriptorLease&) = delete;
+
+        [[nodiscard]] operator DescriptorHandle() const noexcept {
+            return this->value;
+        }
+
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return static_cast<bool>(this->value);
+        }
+
+        [[nodiscard]] DescriptorHandle handle() const noexcept {
+            return this->value;
+        }
+
+        void reset() noexcept;
+
+    private:
+        friend VulkanFrames;
+
+        DescriptorLease(VulkanFrames& frames, DescriptorHandle value, DescriptorKind kind) noexcept;
+
+        VulkanFrames* frames{};
+        DescriptorHandle value{};
+        DescriptorKind kind{DescriptorKind::Resource};
+    };
+
     export struct GpuUploadSlice {
         vk::Buffer buffer{};
         vk::DeviceSize offset{};
@@ -32,6 +71,8 @@ namespace spectra {
         [[nodiscard]] std::uint32_t submit_frame();
         void wait_frame(std::uint32_t frame_slot_index) const;
         [[nodiscard]] GpuUploadSlice stage_upload(std::span<const std::byte> data, vk::DeviceSize alignment = 16);
+        [[nodiscard]] DescriptorLease allocate_resource_descriptor();
+        [[nodiscard]] DescriptorLease allocate_sampler_descriptor();
         void defer_destruction(std::move_only_function<void()> destruction);
         void retire_resource_descriptor(DescriptorHandle handle) noexcept;
         void retire_sampler_descriptor(DescriptorHandle handle) noexcept;
@@ -78,5 +119,4 @@ namespace spectra {
             std::vector<Descriptor> sampler_indices{};
         } deferred;
     };
-
 } // namespace spectra

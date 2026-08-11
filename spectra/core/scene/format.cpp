@@ -11,8 +11,8 @@ module;
 
 module spectra.scene.format;
 
-import spectra.util.hash;
-import spectra.scene.source;
+import spectra.scene.content_hash;
+import spectra.scene.asset_import;
 import std;
 
 namespace spectra::scene {
@@ -89,7 +89,7 @@ namespace spectra::scene {
 
         void verify_asset(const std::filesystem::path& package_root, const AssetReference& reference, const std::string_view extension) {
             const std::filesystem::path path = asset_path(package_root, reference, extension);
-            if (sha256_file(path) != reference.content_hash) throw std::runtime_error(std::format("Spectra asset SHA-256 mismatch: {}", path.string()));
+            if (content_hash::sha256_file(path) != reference.content_hash) throw std::runtime_error(std::format("Spectra asset SHA-256 mismatch: {}", path.string()));
         }
 
         template <class Value>
@@ -121,7 +121,7 @@ namespace spectra::scene {
                 std::as_bytes(std::span{mesh.indices}),
             };
             AssetReference reference{
-                .content_hash = sha256_hex(blocks),
+                .content_hash = content_hash::sha256_hex(blocks),
             };
             const std::filesystem::path path = asset_path(package_root, reference, ".geometry");
             if (std::filesystem::exists(path)) {
@@ -175,7 +175,7 @@ namespace spectra::scene {
                 std::as_bytes(std::span{spheres.radii}),
             };
             AssetReference reference{
-                .content_hash = sha256_hex(blocks),
+                .content_hash = content_hash::sha256_hex(blocks),
             };
             const std::filesystem::path path = asset_path(package_root, reference, ".spheres");
             if (std::filesystem::exists(path)) {
@@ -213,7 +213,7 @@ namespace spectra::scene {
         [[nodiscard]] AssetReference write_volume_asset_payload(const VolumeAssetHeader& header, const std::filesystem::path& package_root, const std::span<const Element>... payload) {
             const std::array blocks{std::as_bytes(std::span{&header, 1}), std::as_bytes(payload)...};
             AssetReference reference{
-                .content_hash = sha256_hex(blocks),
+                .content_hash = content_hash::sha256_hex(blocks),
             };
             const std::filesystem::path path = asset_path(package_root, reference, ".volume");
             if (std::filesystem::exists(path)) {
@@ -291,7 +291,7 @@ namespace spectra::scene {
                 std::as_bytes(std::span{texture.texels}),
             };
             AssetReference reference{
-                .content_hash = sha256_hex(blocks),
+                .content_hash = content_hash::sha256_hex(blocks),
             };
             const std::filesystem::path path = asset_path(package_root, reference, ".texture");
             if (std::filesystem::exists(path)) {
@@ -414,14 +414,14 @@ namespace spectra::scene {
             const std::filesystem::path target = source_path(target_root, reference, extension);
             std::filesystem::create_directories(target.parent_path());
             if (std::filesystem::exists(target)) {
-                if (sha256_file(source) != sha256_file(target)) throw std::runtime_error(std::format("Spectra source already exists with different content: {}", target.string()));
+                if (content_hash::sha256_file(source) != content_hash::sha256_file(target)) throw std::runtime_error(std::format("Spectra source already exists with different content: {}", target.string()));
                 return;
             }
             std::filesystem::copy_file(source, target, std::filesystem::copy_options::none);
         }
 
         [[nodiscard]] AssetReference write_frozen_dynamic_frame_asset(const std::span<const std::byte> payload, const std::filesystem::path& package_root) {
-            AssetReference reference{.content_hash = sha256_hex(std::array{payload})};
+            AssetReference reference{.content_hash = content_hash::sha256_hex(std::array{payload})};
             const std::filesystem::path path = asset_path(package_root, reference, ".dynamic-frame");
             if (std::filesystem::exists(path)) {
                 verify_asset(package_root, reference, ".dynamic-frame");

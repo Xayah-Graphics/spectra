@@ -1,7 +1,7 @@
 module;
 #include <lodepng.h>
 
-module spectra.scene.source;
+module spectra.scene.asset_import;
 
 import std;
 

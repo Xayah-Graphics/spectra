@@ -1,4 +1,4 @@
-export module spectra.util.math;
+export module spectra.math;
 
 import std;
 

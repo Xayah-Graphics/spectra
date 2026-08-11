@@ -1,4 +1,4 @@
-export module spectra.scene.source;
+export module spectra.scene.asset_import;
 
 import spectra.scene;
 import std;

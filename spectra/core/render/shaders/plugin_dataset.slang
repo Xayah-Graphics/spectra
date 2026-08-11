@@ -14,16 +14,6 @@ public struct SpectraPluginInstanceTransform {
     public SpectraPluginTransform transform;
 }
 
-public struct SpectraPluginSceneBounds {
-    public float3 minimum;
-    public uint resource_kind;
-    public float3 maximum;
-    public uint domain;
-    public uint64_t resource_id;
-    public uint64_t reserved;
-    public SpectraPluginTransform world_from_local;
-}
-
 public struct SpectraPluginPoint {
     public float3 position;
     public float radius;

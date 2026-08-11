@@ -7,9 +7,7 @@ module;
 
 #undef interface
 
-module spectra.editor;
-
-import :platform.dialogs;
+module spectra.editor.platform.dialogs;
 import std;
 
 namespace spectra {

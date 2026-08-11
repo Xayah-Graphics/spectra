@@ -1,6 +1,4 @@
-module spectra.editor;
-
-import :output.capture;
+module spectra.editor.output.capture;
 import std;
 import vulkan;
 

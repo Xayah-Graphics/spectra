@@ -1,9 +1,9 @@
-export module spectra.overlay;
+export module spectra.render.composition.overlay;
 
 import spectra.render.display;
+import spectra.render.gpu_scene;
 import spectra.runtime;
 import spectra.scene;
-import spectra.render.scene;
 import std;
 import vulkan;
 

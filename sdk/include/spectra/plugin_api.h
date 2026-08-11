@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
-inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 19;
-inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_19";
+inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 20;
+inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_20";
 
 #if defined(_WIN32)
 #define SPECTRA_PLUGIN_EXPORT __declspec(dllexport)
@@ -51,7 +51,6 @@ enum class SpectraPluginDatasetKind : std::uint32_t {
     TriangleMesh,
     SphereSet,
     InstanceTransformSet,
-    SceneBoundsSet,
     PointSet,
     SegmentSet,
     CurveSet,
@@ -71,7 +70,6 @@ enum class SpectraPluginBufferSemantic : std::uint32_t {
     TriangleIndex,
     Sphere,
     InstanceTransform,
-    SceneBounds,
     Point,
     Segment,
     Curve,
@@ -117,19 +115,6 @@ enum class SpectraPluginMeshAttribute : std::uint32_t {
     Scalar            = 1u << 3u,
 };
 
-enum class SpectraPluginBoundsDomain : std::uint32_t {
-    Local,
-    World,
-};
-
-enum class SpectraPluginBoundResourceKind : std::uint32_t {
-    System,
-    Geometry,
-    SphereSet,
-    Instance,
-    Volume,
-};
-
 enum class SpectraPluginParameterKind : std::uint32_t {
     Boolean,
     Integer,
@@ -169,16 +154,6 @@ struct SpectraPluginSphere {
 struct SpectraPluginInstanceTransform {
     std::uint64_t instance_id;
     SpectraPluginTransform transform;
-};
-
-struct SpectraPluginSceneBounds {
-    SpectraPluginFloat3 minimum;
-    SpectraPluginBoundResourceKind resource_kind;
-    SpectraPluginFloat3 maximum;
-    SpectraPluginBoundsDomain domain;
-    std::uint64_t resource_id;
-    std::uint64_t reserved;
-    SpectraPluginTransform world_from_local;
 };
 
 struct SpectraPluginPoint {
@@ -240,10 +215,6 @@ static_assert(sizeof(SpectraPluginTransform) == 64);
 static_assert(sizeof(SpectraPluginSphere) == 16);
 static_assert(sizeof(SpectraPluginInstanceTransform) == 72);
 static_assert(offsetof(SpectraPluginInstanceTransform, transform) == 8);
-static_assert(sizeof(SpectraPluginSceneBounds) == 112);
-static_assert(offsetof(SpectraPluginSceneBounds, maximum) == 16);
-static_assert(offsetof(SpectraPluginSceneBounds, resource_id) == 32);
-static_assert(offsetof(SpectraPluginSceneBounds, world_from_local) == 48);
 static_assert(sizeof(SpectraPluginPoint) == 36);
 static_assert(offsetof(SpectraPluginPoint, scalar) == 32);
 static_assert(sizeof(SpectraPluginSegment) == 48);
@@ -276,11 +247,6 @@ struct SpectraPluginSphereSetDatasetDescriptor {
 
 struct SpectraPluginInstanceTransformDatasetDescriptor {
     std::uint64_t capacity;
-};
-
-struct SpectraPluginSceneBoundsDatasetDescriptor {
-    std::uint64_t capacity;
-    SpectraPluginBoundsDomain domain;
 };
 
 struct SpectraPluginPointDatasetDescriptor {
@@ -329,7 +295,6 @@ union SpectraPluginDatasetDetails {
     SpectraPluginTriangleMeshDatasetDescriptor triangle_mesh;
     SpectraPluginSphereSetDatasetDescriptor sphere_set;
     SpectraPluginInstanceTransformDatasetDescriptor instance_transforms;
-    SpectraPluginSceneBoundsDatasetDescriptor scene_bounds;
     SpectraPluginPointDatasetDescriptor points;
     SpectraPluginSegmentDatasetDescriptor segments;
     SpectraPluginCurveDatasetDescriptor curves;
@@ -495,5 +460,5 @@ struct SpectraPluginApi {
 };
 
 extern "C" {
-SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_19() noexcept;
+SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_20() noexcept;
 }

@@ -1,8 +1,8 @@
 export module spectra.render.pathtracer;
 
 import spectra.render.contract;
+import spectra.render.gpu_scene;
 import spectra.render.pathtracer.resources;
-import spectra.render.scene;
 import spectra.runtime;
 import spectra.scene;
 

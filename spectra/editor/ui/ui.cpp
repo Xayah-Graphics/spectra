@@ -5,13 +5,11 @@ module;
 
 #include <ImGuizmo.h>
 
-module spectra.editor;
-
-import :ui;
+module spectra.editor.ui;
 import std;
 
 namespace spectra {
-    EditorUi::EditorUi(SceneDocument& document, EditorSettings& settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, FrozenSceneExporter& frozen_export, ImGuiBackend& imgui) noexcept : context{document, settings, dynamics, render_engine, viewport, picker, frozen_export, imgui} {}
+    EditorUi::EditorUi(SceneDocument& document, SceneDiagnosticSettings& diagnostic_settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, FrozenSceneExporter& frozen_export, ImGuiBackend& imgui) noexcept : context{document, diagnostic_settings, dynamics, render_engine, viewport, picker, frozen_export, imgui} {}
 
     void EditorUi::notify(std::string message, const bool error) {
         this->controls.status       = std::move(message);
@@ -149,10 +147,6 @@ namespace spectra {
             interaction.color           = ImGui::GetColorU32(color);
             interaction.shadow          = ImGui::GetColorU32(ImVec4{0.0f, 0.0f, 0.0f, disabled ? color.w : std::min(color.w, 0.78f)});
             interaction.vertical_offset = interaction.active && !disabled ? 1.0f : 0.0f;
-            if (ImGui::IsItemFocused()) {
-                const float center = (interaction.minimum.x + interaction.maximum.x) * 0.5f;
-                ImGui::GetWindowDrawList()->AddLine(ImVec2{center - 6.0f, interaction.maximum.y - 1.0f}, ImVec2{center + 6.0f, interaction.maximum.y - 1.0f}, ImGui::GetColorU32(ImVec4{0.88f, 0.91f, 0.95f, 0.85f}), 1.0f);
-            }
             return interaction;
         }
 
@@ -360,9 +354,13 @@ namespace spectra {
         ImGui::PopID();
     }
 
-    void EditorUi::handle_shortcuts(EditorActions& actions, const float aspect, const bool inspector_available, const bool transform_editable) {
+    void EditorUi::handle_shortcuts(EditorActions& actions, const float aspect, const bool inspector_available) {
         ImGuiIO& io = ImGui::GetIO();
         if (inspector_available && ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !io.WantTextInput) this->controls.inspector_open = !this->controls.inspector_open;
+        if (this->controls.wireframe_restore_mode && !ImGui::IsKeyDown(ImGuiKey_W)) {
+            actions.raster_display_mode = *this->controls.wireframe_restore_mode;
+            this->controls.wireframe_restore_mode.reset();
+        }
 
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             actions.exit_application = true;
@@ -380,51 +378,26 @@ namespace spectra {
         const bool no_modifiers = !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper;
         if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_1, false)) actions.renderer = std::string{rasterizer_descriptor.id};
         if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_2, false)) actions.renderer = std::string{pathtracer_descriptor.id};
-        if (this->context.render_engine.selected_descriptor() == rasterizer_descriptor && io.KeyAlt && !io.KeyCtrl && !io.KeyShift && !io.KeySuper) {
-            if (ImGui::IsKeyPressed(ImGuiKey_M, false)) actions.raster_display_mode = RasterDisplayMode::Material;
-            if (ImGui::IsKeyPressed(ImGuiKey_W, false)) actions.raster_display_mode = RasterDisplayMode::Wireframe;
-            if (ImGui::IsKeyPressed(ImGuiKey_O, false)) actions.raster_display_mode = RasterDisplayMode::MaterialWireframe;
+        if (this->context.render_engine.selected_descriptor() == rasterizer_descriptor && no_modifiers && ImGui::IsKeyDown(ImGuiKey_W) && !this->controls.wireframe_restore_mode) {
+            this->controls.wireframe_restore_mode = this->context.render_engine.raster_display_mode();
+            actions.raster_display_mode           = RasterDisplayMode::Wireframe;
         }
-        if (transform_editable && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_W, false)) this->controls.gizmo_operation = ImGuizmo::TRANSLATE;
-        if (transform_editable && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_E, false)) this->controls.gizmo_operation = ImGuizmo::ROTATE;
-        if (transform_editable && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_R, false)) this->controls.gizmo_operation = ImGuizmo::SCALE;
         if (ImGui::IsKeyPressed(ImGuiKey_F, false)) this->context.viewport.frame_selection(aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) this->context.viewport.frame_scene(aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) this->context.viewport.view_axis({0.0f, 0.0f, 1.0f}, aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) this->context.viewport.view_axis({1.0f, 0.0f, 0.0f}, aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) this->context.viewport.view_axis({0.0f, 1.0f, 0.0f}, aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) this->context.viewport.view.source = this->context.viewport.view.source == CameraSource::Scene ? CameraSource::Viewport : CameraSource::Scene;
-        bool settings_changed{};
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-            this->context.settings.diagnostics.selected_bounds = !this->context.settings.diagnostics.selected_bounds;
-            settings_changed = true;
-        }
-        if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-            this->context.settings.diagnostics.all_bounds = !this->context.settings.diagnostics.all_bounds;
-            settings_changed = true;
-        }
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_C, false)) {
-            this->context.settings.diagnostics.cameras = !this->context.settings.diagnostics.cameras;
-            settings_changed = true;
-        }
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_L, false)) {
-            this->context.settings.diagnostics.lights = !this->context.settings.diagnostics.lights;
-            settings_changed = true;
-        }
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
-            this->context.settings.diagnostics.normals = !this->context.settings.diagnostics.normals;
-            settings_changed = true;
-        }
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_T, false)) {
-            this->context.settings.diagnostics.tangents = !this->context.settings.diagnostics.tangents;
-            settings_changed = true;
-        }
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_B, false)) this->context.diagnostic_settings.selected_bounds = !this->context.diagnostic_settings.selected_bounds;
+        if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_B, false)) this->context.diagnostic_settings.all_bounds = !this->context.diagnostic_settings.all_bounds;
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_C, false)) this->context.diagnostic_settings.cameras = !this->context.diagnostic_settings.cameras;
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_L, false)) this->context.diagnostic_settings.lights = !this->context.diagnostic_settings.lights;
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_N, false)) this->context.diagnostic_settings.normals = !this->context.diagnostic_settings.normals;
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_T, false)) this->context.diagnostic_settings.tangents = !this->context.diagnostic_settings.tangents;
         if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
             this->context.viewport.view.overlays_visible = !this->context.viewport.view.overlays_visible;
-            this->context.settings.diagnostics.enabled   = this->context.viewport.view.overlays_visible;
-            settings_changed = true;
+            this->context.diagnostic_settings.enabled    = this->context.viewport.view.overlays_visible;
         }
-        if (settings_changed) this->context.settings.save();
         if (this->context.dynamics.initialized() && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
             if (this->context.dynamics.running())
                 this->context.dynamics.pause();
@@ -511,6 +484,11 @@ namespace spectra {
         const bool hovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(minimum, maximum);
         if (!hovered || blocked || io.WantTextInput) {
             this->context.viewport.clear_hover();
+            return;
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right, false)) {
+            this->context.picker.cancel_selection_requests();
+            this->context.viewport.clear_selection();
             return;
         }
         if (this->context.viewport.view.source == CameraSource::Viewport && !ImGuizmo::IsUsing()) {
@@ -791,11 +769,11 @@ namespace spectra {
         const bool rotating    = this->controls.gizmo_operation == ImGuizmo::ROTATE;
         const bool scaling     = this->controls.gizmo_operation == ImGuizmo::SCALE;
         if (icon_button("##Translate", ImVec2{36.0f, 38.0f}, Icon::Translate, nullptr, translating ? ImVec4{0.16f, 0.72f, 0.84f, 1.0f} : ImVec4{}, translating, false, 0.55f)) this->controls.gizmo_operation = ImGuizmo::TRANSLATE;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate  W");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
         if (icon_button("##Rotate", ImVec2{36.0f, 38.0f}, Icon::Rotate, nullptr, rotating ? ImVec4{0.16f, 0.72f, 0.84f, 1.0f} : ImVec4{}, rotating, false, 0.55f)) this->controls.gizmo_operation = ImGuizmo::ROTATE;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate  E");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
         if (icon_button("##Scale", ImVec2{36.0f, 38.0f}, Icon::Scale, nullptr, scaling ? ImVec4{0.16f, 0.72f, 0.84f, 1.0f} : ImVec4{}, scaling, false, 0.55f)) this->controls.gizmo_operation = ImGuizmo::SCALE;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale  R");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
         ImGui::EndDisabled();
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -906,40 +884,41 @@ namespace spectra {
             ImGui::Spacing();
         }
 
-        ImGui::TextDisabled("RASTER DIAGNOSTICS");
-        SceneDiagnosticSettings& diagnostics = this->context.settings.diagnostics;
-        bool settings_changed{};
-        settings_changed |= ImGui::Checkbox("Enabled", &diagnostics.enabled);
-        settings_changed |= ImGui::Checkbox("Selected bounds  B", &diagnostics.selected_bounds);
-        settings_changed |= ImGui::Checkbox("All bounds  Shift+B", &diagnostics.all_bounds);
-        settings_changed |= ImGui::Checkbox("Pivots", &diagnostics.pivots);
-        settings_changed |= ImGui::Checkbox("Wireframe", &diagnostics.wireframe);
-        settings_changed |= ImGui::Checkbox("Vertices", &diagnostics.vertices);
-        settings_changed |= ImGui::Checkbox("Normals  N", &diagnostics.normals);
-        settings_changed |= ImGui::Checkbox("Tangents  T", &diagnostics.tangents);
-        settings_changed |= ImGui::Checkbox("Orientation", &diagnostics.orientation);
-        settings_changed |= ImGui::Checkbox("Cameras  C", &diagnostics.cameras);
-        settings_changed |= ImGui::Checkbox("Camera focal planes", &diagnostics.camera_focal_plane);
-        settings_changed |= ImGui::Checkbox("Camera lenses", &diagnostics.camera_lens);
-        settings_changed |= ImGui::Checkbox("Lights  L", &diagnostics.lights);
-        settings_changed |= ImGui::Checkbox("Area emitters", &diagnostics.area_emitters);
-        settings_changed |= ImGui::Checkbox("Volume bounds", &diagnostics.volume_bounds);
-        settings_changed |= ImGui::Checkbox("Volume grid", &diagnostics.volume_grid);
-        settings_changed |= ImGui::Checkbox("Medium boundaries", &diagnostics.medium_boundaries);
+        ImGui::TextDisabled("SCENE DIAGNOSTICS");
+        SceneDiagnosticSettings& diagnostics = this->context.diagnostic_settings;
+        ImGui::Checkbox("Enabled", &diagnostics.enabled);
+        ImGui::Checkbox("Selected bounds  B", &diagnostics.selected_bounds);
+        ImGui::Checkbox("All bounds  Shift+B", &diagnostics.all_bounds);
+        ImGui::Checkbox("Pivots", &diagnostics.pivots);
+        ImGui::Checkbox("Geometry edges", &diagnostics.geometry_edges);
+        ImGui::Checkbox("Vertices", &diagnostics.vertices);
+        ImGui::Checkbox("Normals  N", &diagnostics.normals);
+        ImGui::Checkbox("Tangents  T", &diagnostics.tangents);
+        ImGui::Checkbox("Orientation", &diagnostics.orientation);
+        ImGui::Checkbox("Cameras  C", &diagnostics.cameras);
+        ImGui::Indent();
+        ImGui::BeginDisabled(!diagnostics.cameras);
+        ImGui::Checkbox("Focal planes", &diagnostics.camera_focal_plane);
+        ImGui::Checkbox("Lenses", &diagnostics.camera_lens);
+        ImGui::EndDisabled();
+        ImGui::Unindent();
+        ImGui::Checkbox("Lights  L", &diagnostics.lights);
+        ImGui::Checkbox("Area emitters", &diagnostics.area_emitters);
+        ImGui::Checkbox("Volume bounds", &diagnostics.volume_bounds);
+        ImGui::Checkbox("Volume grid", &diagnostics.volume_grid);
+        ImGui::Checkbox("Medium boundaries", &diagnostics.medium_boundaries);
         const char* depth_modes[] = {"Tested", "X-Ray", "Overlay"};
         int depth_mode = static_cast<int>(std::to_underlying(diagnostics.depth_mode));
         if (ImGui::Combo("Depth", &depth_mode, depth_modes, 3)) {
             diagnostics.depth_mode = static_cast<scene::VisualizationDepthMode>(depth_mode);
-            settings_changed = true;
         }
-        settings_changed |= ImGui::DragFloat("Line width", &diagnostics.line_width, 0.1f, 0.25f, 8.0f, "%.2f px");
-        settings_changed |= ImGui::DragFloat("Point size", &diagnostics.point_size, 0.25f, 1.0f, 32.0f, "%.2f px");
-        settings_changed |= ImGui::DragFloat("Normal scale", &diagnostics.normal_scale, 0.01f, 0.001f, 100.0f, "%.4g");
+        ImGui::DragFloat("Line width", &diagnostics.line_width, 0.1f, 0.25f, 8.0f, "%.2f px");
+        ImGui::DragFloat("Point size", &diagnostics.point_size, 0.25f, 1.0f, 32.0f, "%.2f px");
+        ImGui::DragFloat("Normal scale", &diagnostics.normal_scale, 0.01f, 0.001f, 100.0f, "%.4g");
         constexpr std::uint32_t minimum_sampling = 1;
         constexpr std::uint32_t maximum_sampling = 1024;
-        settings_changed |= ImGui::DragScalar("Attribute sampling", ImGuiDataType_U32, &diagnostics.attribute_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
-        settings_changed |= ImGui::DragScalar("Volume grid sampling", ImGuiDataType_U32, &diagnostics.volume_grid_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
-        if (settings_changed) this->context.settings.save();
+        ImGui::DragScalar("Attribute sampling", ImGuiDataType_U32, &diagnostics.attribute_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
+        ImGui::DragScalar("Volume grid sampling", ImGuiDataType_U32, &diagnostics.volume_grid_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
 
         if (parameter_systems.empty()) {
             ImGui::End();
@@ -1148,7 +1127,7 @@ namespace spectra {
             this->controls.inspector_open = false;
             this->controls.parameter_drafts.clear();
             this->controls.reset_pending = false;
-            this->handle_shortcuts(actions, aspect, false, false);
+            this->handle_shortcuts(actions, aspect, false);
             this->draw_top_strip(position, size, actions);
             this->draw_status_toast(position, size);
             return actions;
@@ -1165,7 +1144,7 @@ namespace spectra {
         const bool editable                = entity && transform_editable(*this, *entity);
 
         this->synchronize_transform();
-        this->handle_shortcuts(actions, aspect, inspector_available, editable);
+        this->handle_shortcuts(actions, aspect, inspector_available);
         this->draw_viewport(position, size, actions.show_axes, editable);
         this->draw_top_strip(position, size, actions);
         if (transform_visible) {

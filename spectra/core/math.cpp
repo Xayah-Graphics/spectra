@@ -1,4 +1,4 @@
-module spectra.util.math;
+module spectra.math;
 
 import std;
 

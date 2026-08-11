@@ -133,15 +133,10 @@ namespace spectra::dynamics {
 
     std::vector<std::byte> serialize_frozen_frame(const FrozenFrame& frame) {
         Writer writer{};
-        writer.value(std::array<char, 8>{'S', 'P', 'D', 'Y', 'N', '0', '0', '1'});
-        writer.value(std::uint32_t{1});
+        writer.value(std::array<char, 8>{'S', 'P', 'D', 'Y', 'N', '0', '0', '2'});
+        writer.value(std::uint32_t{2});
         writer.value(frame.simulation);
         writer.value(frame.presentation);
-        writer.value(static_cast<std::uint64_t>(frame.bounds.size()));
-        for (const FrozenBounds& bounds : frame.bounds) {
-            writer.value(bounds.domain);
-            writer.bytes(std::as_bytes(std::span{bounds.values}));
-        }
         writer.value(static_cast<std::uint64_t>(frame.visualizations.size()));
         for (const FrozenVisualization& visualization : frame.visualizations) {
             writer.value(visualization.kind);
@@ -194,15 +189,8 @@ namespace spectra::dynamics {
 
     FrozenFrame deserialize_frozen_frame(const std::span<const std::byte> payload) {
         Reader reader{payload};
-        if (reader.value<std::array<char, 8>>() != std::array<char, 8>{'S', 'P', 'D', 'Y', 'N', '0', '0', '1'} || reader.value<std::uint32_t>() != 1) throw std::runtime_error("Invalid Spectra Frozen Dynamic Frame header");
+        if (reader.value<std::array<char, 8>>() != std::array<char, 8>{'S', 'P', 'D', 'Y', 'N', '0', '0', '2'} || reader.value<std::uint32_t>() != 2) throw std::runtime_error("Invalid Spectra Frozen Dynamic Frame header");
         FrozenFrame frame{reader.value<SimulationTimeline>(), reader.value<PresentationTimeline>()};
-        frame.bounds.resize(reader.value<std::uint64_t>());
-        for (FrozenBounds& bounds : frame.bounds) {
-            bounds.domain = reader.value<BoundsDomain>();
-            const std::vector<std::byte> values = reader.bytes();
-            bounds.values.resize(values.size() / sizeof(SceneBound));
-            std::memcpy(bounds.values.data(), values.data(), values.size());
-        }
         frame.visualizations.resize(reader.value<std::uint64_t>());
         for (FrozenVisualization& visualization : frame.visualizations) {
             visualization.kind                      = reader.value<FrozenVisualizationKind>();
@@ -284,7 +272,6 @@ namespace spectra::dynamics {
         DynamicFrame next_gpu_frame{};
         std::vector<GpuVisualization> next_gpu_visualizations{};
         std::uint64_t total_size{};
-        for (const FrozenBounds& bounds : next_data.bounds) total_size = (total_size + 15u & ~std::uint64_t{15u}) + std::max<std::size_t>(bounds.values.size() * sizeof(SceneBound), 4u);
         for (const FrozenVisualization& visualization : next_data.visualizations)
             for (const std::vector<std::byte>& buffer : visualization.buffers) total_size = (total_size + 15u & ~std::uint64_t{15u}) + std::max<std::size_t>(buffer.size(), 4u);
         GpuBuffer staging = this->runtime.resources.create_buffer(std::max<std::uint64_t>(total_size, 4u), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
@@ -299,7 +286,7 @@ namespace spectra::dynamics {
             const std::size_t size    = std::max<std::size_t>(source.size(), 4u);
             Buffer& destination       = next_buffers.emplace_back();
             destination.gpu          = this->runtime.resources.create_buffer(size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            destination.descriptor   = this->runtime.resources.allocate_resource_descriptor();
+            destination.descriptor   = this->runtime.frames.allocate_resource_descriptor();
             std::memset(static_cast<std::byte*>(staging.mapped) + offset, 0, size);
             std::memcpy(static_cast<std::byte*>(staging.mapped) + offset, source.data(), source.size());
             copies.push_back({*destination.gpu.buffer, {offset, 0, size}});
@@ -309,7 +296,6 @@ namespace spectra::dynamics {
         };
         next_gpu_frame.simulation   = next_data.simulation;
         next_gpu_frame.presentation = next_data.presentation;
-        for (const FrozenBounds& bounds : next_data.bounds) next_gpu_frame.scene_updates.push_back({GpuSceneBoundsUpdate{upload(std::as_bytes(std::span{bounds.values})), bounds.values.size(), bounds.domain}});
         for (const FrozenVisualization& visualization : next_data.visualizations) {
             std::vector<GpuBufferView> views{};
             views.reserve(visualization.buffers.size());

@@ -1,6 +1,5 @@
-module spectra.render.scene;
+module spectra.render.gpu_scene;
 
-import spectra.runtime.shaders;
 import std;
 import vulkan;
 
@@ -18,6 +17,18 @@ namespace spectra {
         };
 
         static_assert(sizeof(DynamicInstanceBinding) == 80);
+
+        struct GpuDerivedBounds {
+            std::array<std::uint32_t, 4> minimum{};
+            std::array<std::uint32_t, 4> maximum{};
+        };
+
+        static_assert(sizeof(GpuDerivedBounds) == 32);
+
+        [[nodiscard]] float ordered_float(const std::uint32_t value) noexcept {
+            const std::uint32_t bits = (value & 0x80000000u) != 0 ? value ^ 0x80000000u : ~value;
+            return std::bit_cast<float>(bits);
+        }
 
         [[nodiscard]] std::uint16_t float_to_half(const float value) noexcept {
             const std::uint32_t bits = std::bit_cast<std::uint32_t>(value);
@@ -42,7 +53,7 @@ namespace spectra {
     } // namespace
 
     GpuTextureImage upload_texture_image(VulkanRuntime& runtime, const scene::ImageTexture& data, const vk::Format format, const vk::PipelineStageFlags2 destination_stages, const vk::raii::CommandBuffer& command_buffer) {
-        GpuTextureImage result{runtime.resources.create_image_2d({data.width, data.height}, format, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageAspectFlagBits::eColor, static_cast<std::uint32_t>(data.mip_offsets.size())), runtime.resources.allocate_resource_descriptor(), runtime.resources.allocate_sampler_descriptor()};
+        GpuTextureImage result{runtime.resources.create_image_2d({data.width, data.height}, format, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageAspectFlagBits::eColor, static_cast<std::uint32_t>(data.mip_offsets.size())), runtime.frames.allocate_resource_descriptor(), runtime.frames.allocate_sampler_descriptor()};
         runtime.resources.write_sampled_image_descriptor(result.image_descriptor, result.image, vk::ImageLayout::eShaderReadOnlyOptimal);
         const vk::SamplerAddressMode address_mode = data.wrap == scene::TextureWrapMode::Repeat ? vk::SamplerAddressMode::eRepeat : data.wrap == scene::TextureWrapMode::Clamp ? vk::SamplerAddressMode::eClampToEdge : vk::SamplerAddressMode::eClampToBorder;
         const bool linear                         = data.filter != scene::TextureFilter::Point;
@@ -247,15 +258,17 @@ namespace spectra {
         this->resources.dynamic_changes            = GpuSceneChange::None;
         this->resources.dynamic_revision           = 0;
         this->resources.dynamic_structure_revision = 0;
-        this->resources.geometry_bindings = {geometry_bindings.begin(), geometry_bindings.end()};
+        this->resources.geometry_bindings            = {geometry_bindings.begin(), geometry_bindings.end()};
         const scene::SceneView scene = source_scene.view();
         const auto create_shader     = [this](const std::string_view file, const char* entry) {
             const std::vector<std::uint32_t> code = load_spirv(this->context.shader_directory / file);
             return vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, code.size() * sizeof(std::uint32_t), code.data(), entry}};
         };
-        this->resources.attribute_clear_shader         = create_shader("dynamic_mesh_attribute_clear.spv", "clear_dynamic_attributes");
-        this->resources.attribute_accumulation_shader  = create_shader("dynamic_mesh_attribute_accumulation.spv", "accumulate_dynamic_attributes");
-        this->resources.attribute_normalization_shader = create_shader("dynamic_mesh_attribute_normalization.spv", "normalize_dynamic_attributes");
+        this->resources.attribute_clear_shader         = create_shader("gpu_scene_attribute_clear.spv", "clear_missing_attributes");
+        this->resources.attribute_accumulation_shader  = create_shader("gpu_scene_attribute_accumulation.spv", "accumulate_missing_attributes");
+        this->resources.attribute_normalization_shader = create_shader("gpu_scene_attribute_normalization.spv", "normalize_missing_attributes");
+        this->resources.bounds_clear_shader             = create_shader("gpu_scene_bounds_clear.spv", "clear_instance_bounds");
+        this->resources.bounds_accumulation_shader      = create_shader("gpu_scene_bounds_accumulation.spv", "accumulate_instance_bounds");
         this->resources.sphere_unpack_shader            = create_shader("dataset_sphere_unpack.spv", "unpack_dataset_spheres");
         this->resources.instance_apply_shader            = create_shader("dataset_instance_apply.spv", "apply_instance_transforms");
         this->context.runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
@@ -272,9 +285,9 @@ namespace spectra {
 
             const std::vector<vk::AccelerationStructureInstanceKHR> instances = this->acceleration_structure_instance_data(scene);
             const std::array<vk::AccelerationStructureInstanceKHR, 1> empty_instance_storage{};
-            const std::uint32_t instance_capacity            = static_cast<std::uint32_t>(std::max<std::size_t>(this->resources.primitives.size(), 1));
-            this->resources.acceleration_structure_instances = upload_buffer(this->context.runtime, command_buffer, instances.empty() ? std::span<const vk::AccelerationStructureInstanceKHR>{empty_instance_storage} : std::span<const vk::AccelerationStructureInstanceKHR>{instances}, vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer, instance_capacity);
-            this->resources.acceleration_structure_instances_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            const std::uint32_t instance_capacity                = static_cast<std::uint32_t>(std::max<std::size_t>(this->resources.primitives.size(), 1));
+            this->resources.acceleration_structure_instances     = upload_buffer(this->context.runtime, command_buffer, instances.empty() ? std::span<const vk::AccelerationStructureInstanceKHR>{empty_instance_storage} : std::span<const vk::AccelerationStructureInstanceKHR>{instances}, vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer, instance_capacity);
+            this->resources.acceleration_structure_instances_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(this->resources.acceleration_structure_instances_descriptor, vk::DescriptorType::eStorageBuffer, this->resources.acceleration_structure_instances);
             this->resources.top_level_acceleration_structure = this->build_top_level(instances, instance_capacity, command_buffer);
             std::vector<math::Transform> primitive_transforms{};
@@ -292,15 +305,23 @@ namespace spectra {
             }
             if (primitive_transforms.empty()) primitive_transforms.emplace_back();
             if (instance_bindings.empty()) instance_bindings.emplace_back();
-            this->resources.primitive_transforms        = upload_buffer(this->context.runtime, command_buffer, std::span<const math::Transform>{primitive_transforms}, vk::BufferUsageFlagBits::eStorageBuffer, primitive_transforms.size());
-            this->resources.dynamic_instance_bindings  = upload_buffer(this->context.runtime, command_buffer, std::span<const DynamicInstanceBinding>{instance_bindings}, vk::BufferUsageFlagBits::eStorageBuffer, instance_bindings.size());
-            this->resources.primitive_transforms_descriptor       = this->context.runtime.resources.allocate_resource_descriptor();
-            this->resources.dynamic_instance_bindings_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            this->resources.primitive_transforms               = upload_buffer(this->context.runtime, command_buffer, std::span<const math::Transform>{primitive_transforms}, vk::BufferUsageFlagBits::eStorageBuffer, primitive_transforms.size());
+            this->resources.dynamic_instance_bindings          = upload_buffer(this->context.runtime, command_buffer, std::span<const DynamicInstanceBinding>{instance_bindings}, vk::BufferUsageFlagBits::eStorageBuffer, instance_bindings.size());
+            this->resources.primitive_transforms_descriptor       = this->context.runtime.frames.allocate_resource_descriptor();
+            this->resources.dynamic_instance_bindings_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(this->resources.primitive_transforms_descriptor, vk::DescriptorType::eStorageBuffer, this->resources.primitive_transforms);
             this->context.runtime.resources.write_buffer_descriptor(this->resources.dynamic_instance_bindings_descriptor, vk::DescriptorType::eStorageBuffer, this->resources.dynamic_instance_bindings);
+            const vk::DeviceSize instance_bounds_size = std::max<std::size_t>(scene.resources.instances.size(), 1u) * 32u;
+            this->resources.instance_bounds            = this->context.runtime.resources.create_buffer(instance_bounds_size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
+            this->resources.instance_bounds_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            this->context.runtime.resources.write_buffer_descriptor(this->resources.instance_bounds_descriptor, vk::DescriptorType::eStorageBuffer, this->resources.instance_bounds);
+            for (GpuBuffer& readback : this->resources.instance_bounds_readbacks) readback = this->context.runtime.resources.create_buffer(instance_bounds_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+            this->update_instance_bounds(scene, command_buffer, 0);
         });
-        this->resources.synchronized_revision            = scene.revision;
-        this->resources.initialized                      = true;
+        this->resolve_instance_bounds(0);
+        this->resources.instance_bounds_dirty = false;
+        this->resources.synchronized_revision  = scene.revision;
+        this->resources.initialized            = true;
     }
 
     void GpuScene::destroy() noexcept {
@@ -308,13 +329,16 @@ namespace spectra {
             attribute_clear_shader = std::move(this->resources.attribute_clear_shader),
             attribute_accumulation_shader = std::move(this->resources.attribute_accumulation_shader),
             attribute_normalization_shader = std::move(this->resources.attribute_normalization_shader),
+            bounds_clear_shader = std::move(this->resources.bounds_clear_shader),
+            bounds_accumulation_shader = std::move(this->resources.bounds_accumulation_shader),
             sphere_unpack_shader = std::move(this->resources.sphere_unpack_shader),
             instance_apply_shader = std::move(this->resources.instance_apply_shader),
             texture_images = std::move(this->resources.texture_images),
             acceleration_instances = std::move(this->resources.acceleration_structure_instances),
             primitive_transforms = std::move(this->resources.primitive_transforms),
             instance_bindings = std::move(this->resources.dynamic_instance_bindings),
-            bounds_readbacks = std::move(this->resources.dynamic_bounds_readbacks),
+            instance_bounds = std::move(this->resources.instance_bounds),
+            bounds_readbacks = std::move(this->resources.instance_bounds_readbacks),
             immediate_scratch = std::move(this->resources.immediate_scratch),
             frame_scratch = std::move(this->resources.frame_scratch),
             geometries = std::move(this->resources.geometries),
@@ -324,13 +348,13 @@ namespace spectra {
         ]() mutable {});
         this->resources.texture_image_indices.clear();
         this->resources.acceleration_structure_instances_descriptor = {};
-        this->resources.primitive_transforms_descriptor   = {};
+        this->resources.primitive_transforms_descriptor      = {};
         this->resources.dynamic_instance_bindings_descriptor = {};
-        this->resources.dynamic_bounds_readback_counts    = {};
-        this->resources.dynamic_bounds.clear();
-        this->resources.resolved_dynamic_bounds           = math::Bounds3::empty();
-        this->resources.resolved_dynamic_bound_records.clear();
-        this->resources.scratch_offsets                  = {};
+        this->resources.instance_bounds_descriptor        = {};
+        this->resources.instance_bounds_readback_counts   = {};
+        this->resources.resolved_instance_bounds.clear();
+        this->resources.resolved_scene_bounds             = math::Bounds3::empty();
+        this->resources.scratch_offsets                   = {};
         this->resources.external_geometries.clear();
         this->resources.external_sphere_sets.clear();
         this->resources.external_volumes.clear();
@@ -344,6 +368,7 @@ namespace spectra {
         this->resources.dynamic_revision                 = 0;
         this->resources.dynamic_structure_revision       = 0;
         this->resources.external_bottom_level_rebuilt    = false;
+        this->resources.instance_bounds_dirty            = false;
         this->resources.initialized                      = false;
     }
 
@@ -387,9 +412,9 @@ namespace spectra {
             this->resources.top_level_acceleration_structure.address,
             this->resources.primitive_transforms_descriptor,
             &this->resources.primitive_transforms,
-            this->resources.dynamic_bounds,
-            this->resources.resolved_dynamic_bounds,
-            this->resources.resolved_dynamic_bound_records,
+            this->resources.instance_bounds_descriptor,
+            this->resources.resolved_instance_bounds,
+            this->resources.resolved_scene_bounds,
             this->resources.dynamic_revision,
             this->resources.dynamic_structure_revision,
         };
@@ -407,7 +432,7 @@ namespace spectra {
         result.vertex_capacity              = std::max({result.vertex_count, binding == this->resources.geometry_bindings.end() ? 0u : binding->vertex_capacity, 1u});
         result.index_capacity               = std::max({result.index_count, binding == this->resources.geometry_bindings.end() ? 0u : binding->index_capacity, 3u});
         result.acceleration_primitive_count = result.acceleration_kind == AccelerationGeometryKind::Triangle ? result.index_count / 3u : 1u;
-        result.attribute_mask               = (mesh.normals.empty() ? 0u : 1u) | (mesh.tangents.empty() ? 0u : 2u) | (mesh.texture_coordinates.empty() ? 0u : 4u);
+        result.attribute_mask               = (mesh.normals.empty() ? 0u : gpu_geometry_attribute_normal) | (mesh.tangents.empty() ? 0u : gpu_geometry_attribute_tangent) | (mesh.texture_coordinates.empty() ? 0u : gpu_geometry_attribute_texture_coordinate);
         const std::array<math::Float3, 1> missing_float3{};
         const std::array<math::Float2, 1> missing_float2{};
         const std::array<std::uint32_t, 3> missing_indices{};
@@ -416,30 +441,30 @@ namespace spectra {
         const std::span<const math::Float3> tangents            = mesh.tangents.empty() ? std::span<const math::Float3>{missing_float3} : std::span<const math::Float3>{mesh.tangents};
         const std::span<const math::Float2> texture_coordinates = mesh.texture_coordinates.empty() ? std::span<const math::Float2>{missing_float2} : std::span<const math::Float2>{mesh.texture_coordinates};
         const std::span<const std::uint32_t> indices            = mesh.indices.empty() ? std::span<const std::uint32_t>{missing_indices} : std::span<const std::uint32_t>{mesh.indices};
-        const vk::BufferUsageFlags position_usage  = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer;
-        const vk::BufferUsageFlags attribute_usage = vk::BufferUsageFlagBits::eStorageBuffer;
-        const std::uint32_t attribute_capacity     = result.update_mode == GpuMeshUpdateMode::Immutable ? 1u : result.vertex_capacity;
+        const vk::BufferUsageFlags position_usage         = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer;
+        const vk::BufferUsageFlags attribute_usage        = vk::BufferUsageFlagBits::eStorageBuffer;
+        const std::uint32_t optional_attribute_capacity = result.update_mode == GpuMeshUpdateMode::Immutable ? 1u : result.vertex_capacity;
         result.positions                           = upload_buffer(this->context.runtime, command_buffer, positions, position_usage, result.vertex_capacity);
-        result.normals                             = upload_buffer(this->context.runtime, command_buffer, normals, attribute_usage, mesh.normals.empty() ? attribute_capacity : result.vertex_capacity);
-        result.tangents                            = upload_buffer(this->context.runtime, command_buffer, tangents, attribute_usage, mesh.tangents.empty() ? attribute_capacity : result.vertex_capacity);
-        result.texture_coordinates                 = upload_buffer(this->context.runtime, command_buffer, texture_coordinates, attribute_usage, mesh.texture_coordinates.empty() ? attribute_capacity : result.vertex_capacity);
+        result.normals                             = upload_buffer(this->context.runtime, command_buffer, normals, attribute_usage, result.vertex_capacity);
+        result.tangents                            = upload_buffer(this->context.runtime, command_buffer, tangents, attribute_usage, result.vertex_capacity);
+        result.texture_coordinates                 = upload_buffer(this->context.runtime, command_buffer, texture_coordinates, attribute_usage, mesh.texture_coordinates.empty() ? optional_attribute_capacity : result.vertex_capacity);
         result.indices                             = upload_buffer(this->context.runtime, command_buffer, indices, position_usage, result.index_capacity);
         if (result.acceleration_kind == AccelerationGeometryKind::Procedural) {
             const math::Bounds3 bounds = scene::geometry_bounds(geometry);
             const std::array aabbs{vk::AabbPositionsKHR{bounds.minimum.x, bounds.minimum.y, bounds.minimum.z, bounds.maximum.x, bounds.maximum.y, bounds.maximum.z}};
             result.axis_aligned_boxes = upload_buffer(this->context.runtime, command_buffer, std::span<const vk::AabbPositionsKHR>{aabbs}, vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
         }
-        result.positions_descriptor           = this->context.runtime.resources.allocate_resource_descriptor();
-        result.normals_descriptor             = this->context.runtime.resources.allocate_resource_descriptor();
-        result.tangents_descriptor            = this->context.runtime.resources.allocate_resource_descriptor();
-        result.texture_coordinates_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-        result.indices_descriptor             = this->context.runtime.resources.allocate_resource_descriptor();
+        result.positions_descriptor           = this->context.runtime.frames.allocate_resource_descriptor();
+        result.normals_descriptor             = this->context.runtime.frames.allocate_resource_descriptor();
+        result.tangents_descriptor            = this->context.runtime.frames.allocate_resource_descriptor();
+        result.texture_coordinates_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+        result.indices_descriptor             = this->context.runtime.frames.allocate_resource_descriptor();
         this->context.runtime.resources.write_buffer_descriptor(result.positions_descriptor, vk::DescriptorType::eStorageBuffer, result.positions);
         this->context.runtime.resources.write_buffer_descriptor(result.normals_descriptor, vk::DescriptorType::eStorageBuffer, result.normals);
         this->context.runtime.resources.write_buffer_descriptor(result.tangents_descriptor, vk::DescriptorType::eStorageBuffer, result.tangents);
         this->context.runtime.resources.write_buffer_descriptor(result.texture_coordinates_descriptor, vk::DescriptorType::eStorageBuffer, result.texture_coordinates);
         this->context.runtime.resources.write_buffer_descriptor(result.indices_descriptor, vk::DescriptorType::eStorageBuffer, result.indices);
-        if (result.update_mode != GpuMeshUpdateMode::Immutable && (mesh.normals.empty() || mesh.tangents.empty())) this->generate_dynamic_attributes(result, mesh.normals.empty(), mesh.tangents.empty(), command_buffer);
+        if (result.vertex_count != 0 && (mesh.normals.empty() || mesh.tangents.empty())) this->generate_missing_attributes(result, mesh.normals.empty(), mesh.tangents.empty(), command_buffer);
         result.bottom_level_acceleration_structure = this->build_bottom_level(result.acceleration_kind == AccelerationGeometryKind::Triangle ? triangle_geometry(result) : procedural_geometry(result), result.acceleration_primitive_count, result.update_mode, command_buffer, result.acceleration_kind == AccelerationGeometryKind::Triangle ? std::max(result.index_capacity / 3u, 1u) : 1u);
         result.cpu_data_stale                      = result.update_mode != GpuMeshUpdateMode::Immutable;
         return result;
@@ -464,9 +489,9 @@ namespace spectra {
         result.radii                               = upload_buffer(this->context.runtime, command_buffer, std::span<const float>{spheres.radii}, attribute_usage, result.sphere_capacity);
         const vk::BufferUsageFlags aabb_usage       = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
         result.axis_aligned_boxes                   = upload_buffer(this->context.runtime, command_buffer, std::span<const vk::AabbPositionsKHR>{axis_aligned_boxes}, aabb_usage, result.sphere_capacity);
-        result.positions_descriptor                = this->context.runtime.resources.allocate_resource_descriptor();
-        result.radii_descriptor                    = this->context.runtime.resources.allocate_resource_descriptor();
-        result.axis_aligned_boxes_descriptor        = this->context.runtime.resources.allocate_resource_descriptor();
+        result.positions_descriptor                = this->context.runtime.frames.allocate_resource_descriptor();
+        result.radii_descriptor                    = this->context.runtime.frames.allocate_resource_descriptor();
+        result.axis_aligned_boxes_descriptor        = this->context.runtime.frames.allocate_resource_descriptor();
         this->context.runtime.resources.write_buffer_descriptor(result.positions_descriptor, vk::DescriptorType::eStorageBuffer, result.positions);
         this->context.runtime.resources.write_buffer_descriptor(result.radii_descriptor, vk::DescriptorType::eStorageBuffer, result.radii);
         this->context.runtime.resources.write_buffer_descriptor(result.axis_aligned_boxes_descriptor, vk::DescriptorType::eStorageBuffer, result.axis_aligned_boxes);
@@ -482,7 +507,7 @@ namespace spectra {
             if (values.empty()) return;
             const std::size_t index   = std::to_underlying(field);
             result.fields[index]      = upload_buffer(this->context.runtime, command_buffer, values, vk::BufferUsageFlagBits::eStorageBuffer);
-            result.descriptors[index] = this->context.runtime.resources.allocate_resource_descriptor();
+            result.descriptors[index] = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(result.descriptors[index], vk::DescriptorType::eStorageBuffer, result.fields[index]);
             result.field_present[index] = true;
         };
@@ -681,13 +706,13 @@ namespace spectra {
             0,
             nullptr,
         });
-        if (triangle_mesh.normals.empty() || triangle_mesh.tangents.empty()) this->generate_dynamic_attributes(gpu_geometry, triangle_mesh.normals.empty(), triangle_mesh.tangents.empty(), command_buffer);
+        if (triangle_mesh.normals.empty() || triangle_mesh.tangents.empty()) this->generate_missing_attributes(gpu_geometry, triangle_mesh.normals.empty(), triangle_mesh.tangents.empty(), command_buffer);
         command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
         gpu_geometry.cpu_data_stale = true;
     }
 
-    void GpuScene::generate_dynamic_attributes(GpuGeometry& geometry, const bool generate_normals, const bool generate_tangents, const vk::raii::CommandBuffer& command_buffer) {
-        struct alignas(16) DynamicMeshPushData {
+    void GpuScene::generate_missing_attributes(GpuGeometry& geometry, const bool generate_normals, const bool generate_tangents, const vk::raii::CommandBuffer& command_buffer) {
+        struct alignas(16) GpuSceneAttributePushData {
             DescriptorHandle positions{};
             DescriptorHandle normals{};
             DescriptorHandle tangents{};
@@ -699,8 +724,8 @@ namespace spectra {
             std::uint32_t attribute_flags{};
             std::uint32_t reserved_metadata{};
         };
-        static_assert(sizeof(DynamicMeshPushData) == 64);
-        const DynamicMeshPushData push_data{
+        static_assert(sizeof(GpuSceneAttributePushData) == 64);
+        const GpuSceneAttributePushData push_data{
             geometry.positions_descriptor,
             geometry.normals_descriptor,
             geometry.tangents_descriptor,
@@ -709,7 +734,7 @@ namespace spectra {
             {},
             geometry.vertex_count,
             geometry.index_count,
-            (generate_normals ? 1u : 0u) | (generate_tangents ? 2u : 0u) | ((geometry.attribute_mask & 4u) != 0 ? 4u : 0u),
+            (generate_normals ? gpu_geometry_attribute_normal : 0u) | (generate_tangents ? gpu_geometry_attribute_tangent : 0u) | (geometry.attribute_mask & gpu_geometry_attribute_texture_coordinate),
             0,
         };
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
@@ -725,8 +750,8 @@ namespace spectra {
         command_buffer.dispatch((geometry.vertex_count + 255u) / 256u, 1, 1);
         const vk::MemoryBarrier2 output_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR | vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eAccelerationStructureReadKHR | vk::AccessFlagBits2::eShaderStorageRead};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &output_dependency});
-        if (generate_normals) geometry.attribute_mask |= 1u;
-        if (generate_tangents) geometry.attribute_mask |= 2u;
+        if (generate_normals) geometry.attribute_mask |= gpu_geometry_attribute_normal;
+        if (generate_tangents) geometry.attribute_mask |= gpu_geometry_attribute_tangent;
     }
 
     void GpuScene::synchronize_external_geometry(const scene::GeometryId geometry_id, const GpuBuffer* positions, const GpuBuffer* normals, const GpuBuffer* tangents, const GpuBuffer* texture_coordinates, const GpuBuffer* indices, const std::uint32_t vertex_count, const std::uint32_t index_count, const vk::raii::CommandBuffer& command_buffer) {
@@ -741,7 +766,7 @@ namespace spectra {
         if (mesh.update_mode == GpuMeshUpdateMode::Deformable && (updated_vertex_count != mesh.vertex_count || indices)) throw std::runtime_error("CUDA External deformable Geometry changed topology");
         if (mesh.update_mode == GpuMeshUpdateMode::TopologyChanging) {
             const bool reallocate = updated_vertex_count > mesh.vertex_capacity || updated_index_count > mesh.index_capacity;
-            if (updated_vertex_count > mesh.vertex_count && !texture_coordinates && (mesh.attribute_mask & 4u) != 0) throw std::runtime_error("CUDA External topology-changing Geometry must publish texture coordinates when adding textured vertices");
+            if (updated_vertex_count > mesh.vertex_count && !texture_coordinates && (mesh.attribute_mask & gpu_geometry_attribute_texture_coordinate) != 0) throw std::runtime_error("CUDA External topology-changing Geometry must publish texture coordinates when adding textured vertices");
             if (reallocate) {
                 GpuGeometry replacement{};
                 replacement.geometry_id                    = mesh.geometry_id;
@@ -760,11 +785,11 @@ namespace spectra {
                 replacement.tangents                       = this->context.runtime.resources.create_buffer(static_cast<vk::DeviceSize>(replacement.vertex_capacity) * sizeof(math::Float3), attribute_usage, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
                 replacement.texture_coordinates            = this->context.runtime.resources.create_buffer(static_cast<vk::DeviceSize>(replacement.vertex_capacity) * sizeof(math::Float2), attribute_usage, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
                 replacement.indices                        = this->context.runtime.resources.create_buffer(static_cast<vk::DeviceSize>(replacement.index_capacity) * sizeof(std::uint32_t), geometry_usage, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-                replacement.positions_descriptor           = this->context.runtime.resources.allocate_resource_descriptor();
-                replacement.normals_descriptor             = this->context.runtime.resources.allocate_resource_descriptor();
-                replacement.tangents_descriptor            = this->context.runtime.resources.allocate_resource_descriptor();
-                replacement.texture_coordinates_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
-                replacement.indices_descriptor             = this->context.runtime.resources.allocate_resource_descriptor();
+                replacement.positions_descriptor           = this->context.runtime.frames.allocate_resource_descriptor();
+                replacement.normals_descriptor             = this->context.runtime.frames.allocate_resource_descriptor();
+                replacement.tangents_descriptor            = this->context.runtime.frames.allocate_resource_descriptor();
+                replacement.texture_coordinates_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+                replacement.indices_descriptor             = this->context.runtime.frames.allocate_resource_descriptor();
                 this->context.runtime.resources.write_buffer_descriptor(replacement.positions_descriptor, vk::DescriptorType::eStorageBuffer, replacement.positions);
                 this->context.runtime.resources.write_buffer_descriptor(replacement.normals_descriptor, vk::DescriptorType::eStorageBuffer, replacement.normals);
                 this->context.runtime.resources.write_buffer_descriptor(replacement.tangents_descriptor, vk::DescriptorType::eStorageBuffer, replacement.tangents);
@@ -772,9 +797,9 @@ namespace spectra {
                 this->context.runtime.resources.write_buffer_descriptor(replacement.indices_descriptor, vk::DescriptorType::eStorageBuffer, replacement.indices);
                 const std::uint32_t preserved_vertices = std::min(mesh.vertex_count, updated_vertex_count);
                 if (preserved_vertices != 0 && !positions) command_buffer.copyBuffer(*mesh.positions.buffer, *replacement.positions.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(math::Float3)});
-                if (preserved_vertices != 0 && !normals && (mesh.attribute_mask & 1u) != 0) command_buffer.copyBuffer(*mesh.normals.buffer, *replacement.normals.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(math::Float3)});
-                if (preserved_vertices != 0 && !tangents && (mesh.attribute_mask & 2u) != 0) command_buffer.copyBuffer(*mesh.tangents.buffer, *replacement.tangents.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(math::Float3)});
-                if (preserved_vertices != 0 && !texture_coordinates && (mesh.attribute_mask & 4u) != 0) command_buffer.copyBuffer(*mesh.texture_coordinates.buffer, *replacement.texture_coordinates.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(math::Float2)});
+                if (preserved_vertices != 0 && !normals && (mesh.attribute_mask & gpu_geometry_attribute_normal) != 0) command_buffer.copyBuffer(*mesh.normals.buffer, *replacement.normals.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(math::Float3)});
+                if (preserved_vertices != 0 && !tangents && (mesh.attribute_mask & gpu_geometry_attribute_tangent) != 0) command_buffer.copyBuffer(*mesh.tangents.buffer, *replacement.tangents.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(math::Float3)});
+                if (preserved_vertices != 0 && !texture_coordinates && (mesh.attribute_mask & gpu_geometry_attribute_texture_coordinate) != 0) command_buffer.copyBuffer(*mesh.texture_coordinates.buffer, *replacement.texture_coordinates.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_vertices) * sizeof(math::Float2)});
                 const std::uint32_t preserved_indices = std::min(mesh.index_count, updated_index_count);
                 if (preserved_indices != 0 && !indices) command_buffer.copyBuffer(*mesh.indices.buffer, *replacement.indices.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(preserved_indices) * sizeof(std::uint32_t)});
                 this->context.runtime.frames.defer_destruction([previous = std::move(mesh)]() mutable {});
@@ -796,17 +821,18 @@ namespace spectra {
 
         const vk::MemoryBarrier2 upload_dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR | vk::PipelineStageFlagBits2::eAllCommands | vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eAccelerationStructureReadKHR | vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &upload_dependency});
-        if (normals) mesh.attribute_mask |= 1u;
-        if (tangents) mesh.attribute_mask |= 2u;
-        if (texture_coordinates) mesh.attribute_mask |= 4u;
+        if (normals) mesh.attribute_mask |= gpu_geometry_attribute_normal;
+        if (tangents) mesh.attribute_mask |= gpu_geometry_attribute_tangent;
+        if (texture_coordinates) mesh.attribute_mask |= gpu_geometry_attribute_texture_coordinate;
         const bool geometry_changed  = positions || indices;
         const bool generate_normals  = geometry_changed && !normals;
         const bool generate_tangents = (geometry_changed || normals || texture_coordinates) && !tangents;
-        if (generate_normals || generate_tangents) this->generate_dynamic_attributes(mesh, generate_normals, generate_tangents, command_buffer);
+        if (generate_normals || generate_tangents) this->generate_missing_attributes(mesh, generate_normals, generate_tangents, command_buffer);
         if (mesh.attribute_mask != previous_attribute_mask) this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Structure;
 
         if (!std::ranges::contains(this->resources.external_geometries, geometry_id)) this->resources.external_geometries.push_back(geometry_id);
         mesh.cpu_data_stale = true;
+        if (positions) this->resources.instance_bounds_dirty = true;
         if (!geometry_changed) return;
 
         const vk::AccelerationStructureGeometryKHR geometry = triangle_geometry(mesh);
@@ -887,9 +913,9 @@ namespace spectra {
             replacement.positions                      = this->context.runtime.resources.create_buffer(capacity * sizeof(math::Float3), attribute_usage, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
             replacement.radii                          = this->context.runtime.resources.create_buffer(capacity * sizeof(float), attribute_usage, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
             replacement.axis_aligned_boxes             = this->context.runtime.resources.create_buffer(capacity * sizeof(vk::AabbPositionsKHR), attribute_usage | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            replacement.positions_descriptor           = this->context.runtime.resources.allocate_resource_descriptor();
-            replacement.radii_descriptor               = this->context.runtime.resources.allocate_resource_descriptor();
-            replacement.axis_aligned_boxes_descriptor   = this->context.runtime.resources.allocate_resource_descriptor();
+            replacement.positions_descriptor           = this->context.runtime.frames.allocate_resource_descriptor();
+            replacement.radii_descriptor               = this->context.runtime.frames.allocate_resource_descriptor();
+            replacement.axis_aligned_boxes_descriptor   = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(replacement.positions_descriptor, vk::DescriptorType::eStorageBuffer, replacement.positions);
             this->context.runtime.resources.write_buffer_descriptor(replacement.radii_descriptor, vk::DescriptorType::eStorageBuffer, replacement.radii);
             this->context.runtime.resources.write_buffer_descriptor(replacement.axis_aligned_boxes_descriptor, vk::DescriptorType::eStorageBuffer, replacement.axis_aligned_boxes);
@@ -927,6 +953,7 @@ namespace spectra {
         if (acceleration_presence_changed) this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Structure;
         if (!std::ranges::contains(this->resources.external_sphere_sets, sphere_set_id)) this->resources.external_sphere_sets.push_back(sphere_set_id);
         spheres.cpu_data_stale = true;
+        this->resources.instance_bounds_dirty = true;
     }
 
     void GpuScene::synchronize_external_instance_transforms(const dynamics::GpuInstanceTransformUpdate& update, const vk::raii::CommandBuffer& command_buffer) {
@@ -945,9 +972,10 @@ namespace spectra {
         this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
         command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->resources.instance_apply_shader);
         command_buffer.dispatch((push_data.primitive_count + 63u) / 64u, 1, 1);
-        const vk::MemoryBarrier2 transform_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eMeshShaderEXT | vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eRayTracingShaderKHR, vk::AccessFlagBits2::eShaderStorageRead};
+        const vk::MemoryBarrier2 transform_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eMeshShaderEXT | vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eRayTracingShaderKHR, vk::AccessFlagBits2::eShaderStorageRead};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &transform_dependency});
         this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Transform;
+        this->resources.instance_bounds_dirty = true;
     }
 
     void GpuScene::synchronize_external_volume(const scene::VolumeId volume_id, const GpuBuffer* density, const GpuBuffer* temperature, const GpuBuffer* emission_scale, const GpuBuffer* sigma_a, const GpuBuffer* sigma_s, const GpuBuffer* emission, const std::uint64_t voxel_count, const scene::VolumeRegion dirty_region, const vk::raii::CommandBuffer& command_buffer) {
@@ -1030,6 +1058,69 @@ namespace spectra {
         command_buffer.copyBuffer(uploads[1].buffer, *this->resources.dynamic_instance_bindings.buffer, vk::BufferCopy{uploads[1].offset, 0, uploads[1].size});
         const vk::MemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eMeshShaderEXT | vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderStorageRead};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &dependency});
+        this->resources.instance_bounds_dirty = true;
+    }
+
+    void GpuScene::update_instance_bounds(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index) {
+        const std::uint32_t instance_count = static_cast<std::uint32_t>(scene.resources.instances.size());
+        if (instance_count == 0) {
+            this->resources.instance_bounds_readback_counts[frame_slot_index] = 0;
+            return;
+        }
+        struct alignas(16) GpuSceneBoundsPushData {
+            DescriptorHandle positions{};
+            DescriptorHandle radii{};
+            DescriptorHandle bounds{};
+            DescriptorHandle transforms{};
+            std::array<std::uint32_t, 4> metadata{};
+        };
+        static_assert(sizeof(GpuSceneBoundsPushData) == 48);
+        const GpuSceneBoundsPushData clear_push{{}, {}, this->resources.instance_bounds_descriptor, this->resources.primitive_transforms_descriptor, {instance_count, 0, 0, 0}};
+        this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
+        this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&clear_push, 1}));
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->resources.bounds_clear_shader);
+        command_buffer.dispatch((instance_count + 63u) / 64u, 1, 1);
+        const vk::MemoryBarrier2 clear_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &clear_dependency});
+        command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->resources.bounds_accumulation_shader);
+        for (const GpuScenePrimitive& primitive : this->resources.primitives) {
+            if (!scene.resources.instances[primitive.scene_instance_index].visible) continue;
+            GpuSceneBoundsPushData push{{}, {}, this->resources.instance_bounds_descriptor, this->resources.primitive_transforms_descriptor, {0, primitive.scene_instance_index, static_cast<std::uint32_t>(primitive.kind), primitive.scene_primitive_index}};
+            if (primitive.kind == GpuScenePrimitiveKind::Geometry) {
+                const GpuGeometry& geometry = this->resources.geometries[primitive.resource_index];
+                push.positions              = geometry.positions_descriptor;
+                push.radii                  = geometry.positions_descriptor;
+                push.metadata[0]            = geometry.vertex_count;
+            } else {
+                const GpuSphereSet& spheres = this->resources.sphere_sets[primitive.resource_index];
+                push.positions              = spheres.positions_descriptor;
+                push.radii                  = spheres.radii_descriptor;
+                push.metadata[0]            = spheres.sphere_count;
+            }
+            if (push.metadata[0] == 0) continue;
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+            command_buffer.dispatch((push.metadata[0] + 255u) / 256u, 1, 1);
+        }
+        const vk::MemoryBarrier2 output_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy | vk::PipelineStageFlagBits2::eVertexShader, vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eShaderStorageRead};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &output_dependency});
+        GpuBuffer& readback = this->resources.instance_bounds_readbacks[frame_slot_index];
+        command_buffer.copyBuffer(*this->resources.instance_bounds.buffer, *readback.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(instance_count) * sizeof(GpuDerivedBounds)});
+        this->resources.instance_bounds_readback_counts[frame_slot_index] = instance_count;
+    }
+
+    void GpuScene::resolve_instance_bounds(const std::uint32_t frame_slot_index) {
+        const std::uint32_t instance_count = std::exchange(this->resources.instance_bounds_readback_counts[frame_slot_index], 0);
+        if (instance_count == 0) return;
+        const auto* source = static_cast<const GpuDerivedBounds*>(this->resources.instance_bounds_readbacks[frame_slot_index].mapped);
+        this->resources.resolved_instance_bounds.assign(instance_count, math::Bounds3::empty());
+        this->resources.resolved_scene_bounds = math::Bounds3::empty();
+        for (std::uint32_t index = 0; index != instance_count; ++index) {
+            if (source[index].minimum[0] == 0xffffffffu) continue;
+            math::Bounds3& bounds = this->resources.resolved_instance_bounds[index];
+            bounds.minimum = {ordered_float(source[index].minimum[0]), ordered_float(source[index].minimum[1]), ordered_float(source[index].minimum[2])};
+            bounds.maximum = {ordered_float(source[index].maximum[0]), ordered_float(source[index].maximum[1]), ordered_float(source[index].maximum[2])};
+            this->resources.resolved_scene_bounds.include(bounds);
+        }
     }
 
     void GpuScene::update_top_level_from_gpu(const std::uint32_t instance_count, const vk::raii::CommandBuffer& command_buffer) {
@@ -1089,19 +1180,7 @@ namespace spectra {
         this->resources.resource_binding_changes = scene::SceneChange::None;
         this->resources.dynamic_changes          = GpuSceneChange::None;
         const std::uint32_t frame_slot_index = this->context.runtime.frames.frame.current_slot_index;
-        GpuBuffer& bounds_readback            = this->resources.dynamic_bounds_readbacks[frame_slot_index];
-        const std::uint32_t completed_bound_count = std::exchange(this->resources.dynamic_bounds_readback_counts[frame_slot_index], 0);
-        if (completed_bound_count != 0) {
-            const auto* bounds = static_cast<const dynamics::SceneBound*>(bounds_readback.mapped);
-            math::Bounds3 resolved = math::Bounds3::empty();
-            this->resources.resolved_dynamic_bound_records.assign(bounds, bounds + completed_bound_count);
-            for (std::uint32_t index = 0; index < completed_bound_count; ++index)
-                if (bounds[index].domain == dynamics::BoundsDomain::World)
-                    resolved.include({bounds[index].minimum, bounds[index].maximum});
-                else
-                    resolved.include(math::Bounds3{bounds[index].minimum, bounds[index].maximum}.transformed(bounds[index].world_from_local));
-            this->resources.resolved_dynamic_bounds = resolved;
-        }
+        this->resolve_instance_bounds(frame_slot_index);
         std::vector<scene::GeometryId> external_geometries{};
         std::vector<scene::SphereSetId> external_sphere_sets{};
         std::vector<scene::VolumeId> external_volumes{};
@@ -1161,23 +1240,7 @@ namespace spectra {
             this->update_top_level_from_gpu(static_cast<std::uint32_t>(this->resources.acceleration_primitive_indices.size()), command_buffer);
             this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Transform;
         }
-
-        std::uint64_t total_bound_count{};
-        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates)
-            if (const auto* bounds = std::get_if<dynamics::GpuSceneBoundsUpdate>(&update.data)) total_bound_count += bounds->count;
-        const vk::DeviceSize bounds_byte_size = total_bound_count * sizeof(dynamics::SceneBound);
-        if (bounds_readback.size < bounds_byte_size) bounds_readback = this->context.runtime.resources.create_buffer(bounds_byte_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-        this->resources.dynamic_bounds.clear();
-        vk::DeviceSize bounds_offset{};
-        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates)
-            if (const auto* bounds = std::get_if<dynamics::GpuSceneBoundsUpdate>(&update.data)) {
-                const vk::DeviceSize byte_size = bounds->count * sizeof(dynamics::SceneBound);
-                if (byte_size != 0) command_buffer.copyBuffer(*bounds->bounds.buffer->buffer, *bounds_readback.buffer, vk::BufferCopy{0, bounds_offset, byte_size});
-                bounds_offset += byte_size;
-                this->resources.dynamic_bounds.emplace_back(bounds->bounds.descriptor, static_cast<std::uint32_t>(bounds->count), bounds->domain);
-            }
-        this->resources.dynamic_bounds_readback_counts[frame_slot_index] = static_cast<std::uint32_t>(total_bound_count);
-        if (total_bound_count != 0) this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Bounds;
+        if (std::exchange(this->resources.instance_bounds_dirty, false)) this->update_instance_bounds(scene, command_buffer, frame_slot_index);
         if (this->resources.dynamic_changes != GpuSceneChange::None) ++this->resources.dynamic_revision;
         if ((this->resources.dynamic_changes & GpuSceneChange::Structure) != GpuSceneChange::None) ++this->resources.dynamic_structure_revision;
         return {
@@ -1190,7 +1253,10 @@ namespace spectra {
 
     GpuSceneUpdate GpuScene::synchronize(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         this->resources.resource_binding_changes = scene::SceneChange::None;
+        const std::uint32_t frame_slot_index = this->context.runtime.frames.frame.current_slot_index;
+        this->resolve_instance_bounds(frame_slot_index);
         this->synchronize_scene(scene, command_buffer);
+        if (std::exchange(this->resources.instance_bounds_dirty, false)) this->update_instance_bounds(scene, command_buffer, frame_slot_index);
         return {
             std::exchange(this->resources.resource_binding_changes, scene::SceneChange::None),
             GpuSceneChange::None,
@@ -1205,6 +1271,7 @@ namespace spectra {
         if (this->resources.external_geometries.empty()) this->resources.scratch_offsets[this->context.runtime.frames.frame.current_slot_index] = 0;
         bool rebuilt_bottom_level = std::exchange(this->resources.external_bottom_level_rebuilt, false);
         if ((scene.revision.changes & scene::SceneChange::Geometry) != scene::SceneChange::None) {
+            this->resources.instance_bounds_dirty = true;
             for (GpuGeometry& mesh : this->resources.geometries) {
                 const scene::Geometry& geometry = *std::ranges::find(scene.resources.geometries, mesh.geometry_id, &scene::Geometry::id);
                 if (std::ranges::contains(this->resources.external_geometries, mesh.geometry_id)) continue;

@@ -2,18 +2,18 @@ module spectra.headless;
 
 import spectra.dynamics.runtime;
 import spectra.dynamics.frozen;
-import spectra.diagnostics;
-import spectra.diagnostics.renderer;
+import spectra.render.composition.diagnostics;
+import spectra.render.composition.overlay;
+import spectra.render.composition.visualization;
 import spectra.render;
+import spectra.render.composition;
 import spectra.render.capture;
 import spectra.render.display;
-import spectra.render.scene;
+import spectra.render.gpu_scene;
 import spectra.runtime;
 import spectra.scene;
 import spectra.scene.document;
 import spectra.scene.format;
-import spectra.visualization;
-import spectra.overlay;
 import std;
 import vulkan;
 
@@ -133,22 +133,25 @@ namespace spectra {
                 next_progress_report = progress->completed + std::max(progress->target / 100u, 1u);
             }
             if (complete) {
-                const RenderOutput renderer_output = render_engine.output();
-                std::optional<RenderOutput> renderer_composition{};
+                const RenderOutput renderer_output          = render_engine.output();
                 const std::optional<DepthBufferView> depth = render_engine.depth_buffer();
-                if (output_layer == RenderOutputLayer::ComposedDisplay && compose_visualizations && !depth && visualization.has_visible(dynamics.visualizations(), scene::VisualizationCompositionDomain::SceneLinear)) throw std::runtime_error("Scene-linear Visualization composition requires Renderer depth");
-                if (output_layer == RenderOutputLayer::ComposedDisplay && compose_visualizations && depth && visualization.has_visible(dynamics.visualizations(), scene::VisualizationCompositionDomain::SceneLinear)) {
-                    display.prepare_linear_composition(frame.command_buffer, renderer_output);
-                    visualization.record(frame.command_buffer, display.linear_target(), *depth, camera, dynamics.visualizations(), scene::VisualizationCompositionDomain::SceneLinear);
-                    renderer_composition.emplace(display.linear_output(renderer_output));
-                }
                 if (output_layer != RenderOutputLayer::RendererLinear) {
-                    display.record(frame.command_buffer, renderer_composition ? *renderer_composition : renderer_output, 0.0f);
-                    if (output_layer == RenderOutputLayer::ComposedDisplay && !depth && (compose_diagnostics || (compose_visualizations && visualization.has_visible(dynamics.visualizations(), scene::VisualizationCompositionDomain::DisplayReferred)))) throw std::runtime_error("Composed Diagnostics and Visualization require Renderer depth");
-                    if (output_layer == RenderOutputLayer::ComposedDisplay && depth) {
-                        if (compose_diagnostics) diagnostics.record(frame.command_buffer, frame.slot_index, display, *depth, document.content.evaluated.view(), camera, SceneDiagnosticSettings{}, SelectionState{});
-                        if (compose_visualizations) visualization.record(frame.command_buffer, display.target(), *depth, camera, dynamics.visualizations(), scene::VisualizationCompositionDomain::DisplayReferred);
-                    }
+                    const SceneDiagnosticSettings diagnostic_settings{};
+                    const SelectionState selection{};
+                    record_render_composition(frame.command_buffer, display, visualization,
+                        RenderCompositionRequest{
+                            .renderer_output        = renderer_output,
+                            .depth                  = depth,
+                            .scene                  = document.content.evaluated.view(),
+                            .camera                 = camera,
+                            .scene_camera_view      = camera.id,
+                            .visualizations         = dynamics.visualizations(),
+                            .diagnostics            = output_layer == RenderOutputLayer::ComposedDisplay && compose_diagnostics ? &diagnostics : nullptr,
+                            .diagnostic_settings    = &diagnostic_settings,
+                            .selection              = &selection,
+                            .frame_slot_index       = frame.slot_index,
+                            .compose_visualizations = output_layer == RenderOutputLayer::ComposedDisplay && compose_visualizations,
+                        });
                     if (output_layer == RenderOutputLayer::ComposedDisplay && overlay) {
                         std::array<scene::InstanceId, 1> outlined{};
                         std::span<const scene::InstanceId> selected{};

@@ -1,0 +1,13 @@
+raster_scene RasterPrimitive
+raster_scene RasterTransform
+raster_scene RasterMaterial
+raster_scene RasterTextureHeader
+raster_scene RasterTextureMapping
+raster_scene RasterConstantTexture
+raster_scene RasterImageTexture
+raster_scene RasterCompositeTexture
+raster_scene RasterDirectionMixTexture
+raster_scene RasterBilerpTexture
+raster_scene RasterAreaLight
+raster_scene RasterSceneBindings
+raster_scene RasterVolume

@@ -1,9 +1,7 @@
 export module spectra.render.pathtracer.resources;
 
-import spectra.runtime;
 import spectra.render.contract;
-import spectra.render.sampling;
-
+import spectra.runtime;
 import std;
 import vulkan;
 
@@ -34,7 +32,7 @@ namespace spectra {
     };
 
     export struct PathTracerResources {
-        PathTracerResources(VulkanRuntime& runtime, SamplingResources& sampling, const std::filesystem::path& resource_directory);
+        PathTracerResources(VulkanRuntime& runtime, const std::filesystem::path& resource_directory);
         ~PathTracerResources();
 
         PathTracerResources(const PathTracerResources&)            = delete;
@@ -48,10 +46,11 @@ namespace spectra {
         [[nodiscard]] PathTracerPreparationProgress preparation_progress() const;
 
         VulkanRuntime& runtime;
-        SamplingResources& sampling;
+        std::vector<std::uint32_t> sampling_table_data{};
         std::vector<std::uint32_t> rgb_to_spectrum_table_data{};
         std::vector<float> cie_samples{};
         GpuBuffer static_data{};
+        DescriptorLease sampling_tables_descriptor{};
         DescriptorLease zero_volume_field_descriptor{};
         DescriptorLease cie_spectra_descriptor{};
         DescriptorLease rgb_to_spectrum_tables_descriptor{};

@@ -95,7 +95,7 @@ bool triangle_alpha_killed(
     if (
         (
             primitive.attributes.x &
-            4
+            gpu_geometry_attribute_texture_coordinate
         ) != 0) {
         StructuredBuffer<float2> coordinates =
             primitive.texture_coordinates;
@@ -278,7 +278,7 @@ void closest_hit(
     if (
         (
             primitive.attributes.x &
-            1
+            gpu_geometry_attribute_normal
         ) != 0) {
         StructuredBuffer<PathPackedFloat3> normals =
             primitive.normals;
@@ -326,7 +326,7 @@ void closest_hit(
     if (
         (
             primitive.attributes.x &
-            4
+            gpu_geometry_attribute_texture_coordinate
         ) != 0) {
         StructuredBuffer<float2> coordinates =
             primitive.texture_coordinates;
@@ -340,134 +340,128 @@ void closest_hit(
             barycentric.x * coordinate_0 +
             barycentric.y * coordinate_1 +
             barycentric.z * coordinate_2;
-        if (
-            (
-                primitive.attributes.x &
-                2
-            ) == 0) {
-            const float2 delta_0 =
-                coordinate_1 -
-                coordinate_0;
-            const float2 delta_1 =
-                coordinate_2 -
-                coordinate_0;
-            const float determinant =
-                delta_0.x *
-                    delta_1.y -
-                delta_0.y *
-                    delta_1.x;
-            if (determinant != 0.0) {
-                const float inverse_determinant =
-                    1.0 /
-                    determinant;
-                const float3 object_dpdu =
+        const float2 delta_0 =
+            coordinate_1 -
+            coordinate_0;
+        const float2 delta_1 =
+            coordinate_2 -
+            coordinate_0;
+        const float determinant =
+            delta_0.x *
+                delta_1.y -
+            delta_0.y *
+                delta_1.x;
+        if (determinant != 0.0) {
+            const float inverse_determinant =
+                1.0 /
+                determinant;
+            const float3 object_dpdu =
+                (
+                    delta_1.y *
+                        (
+                            object_position_1 -
+                            object_position_0
+                        ) -
+                    delta_0.y *
+                        (
+                            object_position_2 -
+                            object_position_0
+                        )
+                ) *
+                inverse_determinant;
+            const float3 object_dpdv =
+                (
+                    -delta_1.x *
+                        (
+                            object_position_1 -
+                            object_position_0
+                        ) +
+                    delta_0.x *
+                        (
+                            object_position_2 -
+                            object_position_0
+                        )
+                ) *
+                inverse_determinant;
+            dpdu =
+                mul(
+                    (float3x3)
+                        object_to_world,
+                    object_dpdu);
+            dpdv =
+                mul(
+                    (float3x3)
+                        object_to_world,
+                    object_dpdv);
+            tangent =
+                dpdu;
+            if (
+                (
+                    primitive.attributes.x &
+                    gpu_geometry_attribute_normal
+                ) != 0) {
+                StructuredBuffer<
+                    PathPackedFloat3> normals =
+                        primitive.normals;
+                const float3 normal_0 =
+                    unpack_float3(
+                        normals[
+                            vertex_indices.x]);
+                const float3 normal_1 =
+                    unpack_float3(
+                        normals[
+                            vertex_indices.y]);
+                const float3 normal_2 =
+                    unpack_float3(
+                        normals[
+                            vertex_indices.z]);
+                const float3 object_dndu =
                     (
                         delta_1.y *
                             (
-                                object_position_1 -
-                                object_position_0
+                                normal_1 -
+                                normal_0
                             ) -
                         delta_0.y *
                             (
-                                object_position_2 -
-                                object_position_0
+                                normal_2 -
+                                normal_0
                             )
                     ) *
                     inverse_determinant;
-                const float3 object_dpdv =
+                const float3 object_dndv =
                     (
                         -delta_1.x *
                             (
-                                object_position_1 -
-                                object_position_0
+                                normal_1 -
+                                normal_0
                             ) +
                         delta_0.x *
                             (
-                                object_position_2 -
-                                object_position_0
+                                normal_2 -
+                                normal_0
                             )
                     ) *
                     inverse_determinant;
-                dpdu =
-                    mul(
+                const float3x3 normal_transform =
+                    transpose(
                         (float3x3)
-                            object_to_world,
-                        object_dpdu);
-                dpdv =
+                            WorldToObject3x4());
+                dndu =
                     mul(
-                        (float3x3)
-                            object_to_world,
-                        object_dpdv);
-                tangent =
-                    dpdu;
-                if (
-                    (
-                        primitive.attributes.x &
-                        1
-                    ) != 0) {
-                    StructuredBuffer<
-                        PathPackedFloat3> normals =
-                            primitive.normals;
-                    const float3 normal_0 =
-                        unpack_float3(
-                            normals[
-                                vertex_indices.x]);
-                    const float3 normal_1 =
-                        unpack_float3(
-                            normals[
-                                vertex_indices.y]);
-                    const float3 normal_2 =
-                        unpack_float3(
-                            normals[
-                                vertex_indices.z]);
-                    const float3 object_dndu =
-                        (
-                            delta_1.y *
-                                (
-                                    normal_1 -
-                                    normal_0
-                                ) -
-                            delta_0.y *
-                                (
-                                    normal_2 -
-                                    normal_0
-                                )
-                        ) *
-                        inverse_determinant;
-                    const float3 object_dndv =
-                        (
-                            -delta_1.x *
-                                (
-                                    normal_1 -
-                                    normal_0
-                                ) +
-                            delta_0.x *
-                                (
-                                    normal_2 -
-                                    normal_0
-                                )
-                        ) *
-                        inverse_determinant;
-                    const float3x3 normal_transform =
-                        transpose(
-                            (float3x3)
-                                WorldToObject3x4());
-                    dndu =
-                        mul(
-                            normal_transform,
-                            object_dndu);
-                    dndv =
-                        mul(
-                            normal_transform,
-                            object_dndv);
-                }
+                        normal_transform,
+                        object_dndu);
+                dndv =
+                    mul(
+                        normal_transform,
+                        object_dndv);
             }
         }
     }
     if (
         (
             primitive.attributes.x &
-            2
+            gpu_geometry_attribute_tangent
         ) != 0) {
         StructuredBuffer<PathPackedFloat3> tangents =
             primitive.tangents;

@@ -1,6 +1,10 @@
-module dynamic_mesh_attributes;
+module gpu_scene_attributes;
 
-struct DynamicMeshPushData {
+static const uint gpu_geometry_attribute_normal = 1u << 0u;
+static const uint gpu_geometry_attribute_tangent = 1u << 1u;
+static const uint gpu_geometry_attribute_texture_coordinate = 1u << 2u;
+
+struct GpuSceneAttributePushData {
     DescriptorHandle<StructuredBuffer<float3>> positions;
     DescriptorHandle<RWStructuredBuffer<float3>> normals;
     DescriptorHandle<RWStructuredBuffer<float3>> tangents;
@@ -14,11 +18,11 @@ struct DynamicMeshPushData {
 }
 
 [vk::push_constant]
-uniform DynamicMeshPushData push_data;
+uniform GpuSceneAttributePushData push_data;
 
 [shader("compute")]
 [numthreads(256, 1, 1)]
-void clear_dynamic_attributes(
+void clear_missing_attributes(
     uint3 dispatch_thread_id : SV_DispatchThreadID) {
     const uint vertex = dispatch_thread_id.x;
     if (vertex >= push_data.vertex_count) return;
@@ -26,15 +30,15 @@ void clear_dynamic_attributes(
         push_data.normals;
     RWStructuredBuffer<float3> tangents =
         push_data.tangents;
-    if ((push_data.attribute_flags & 1u) != 0)
+    if ((push_data.attribute_flags & gpu_geometry_attribute_normal) != 0)
         normals[vertex] = float3(0.0);
-    if ((push_data.attribute_flags & 2u) != 0)
+    if ((push_data.attribute_flags & gpu_geometry_attribute_tangent) != 0)
         tangents[vertex] = float3(0.0);
 }
 
 [shader("compute")]
 [numthreads(256, 1, 1)]
-void accumulate_dynamic_attributes(
+void accumulate_missing_attributes(
     uint3 dispatch_thread_id : SV_DispatchThreadID) {
     const uint triangle = dispatch_thread_id.x;
     if (triangle * 3u >= push_data.index_count) return;
@@ -57,7 +61,7 @@ void accumulate_dynamic_attributes(
         positions[vertices.y] - first_position;
     const float3 edge_2 =
         positions[vertices.z] - first_position;
-    if ((push_data.attribute_flags & 1u) != 0) {
+    if ((push_data.attribute_flags & gpu_geometry_attribute_normal) != 0) {
         const float3 normal = cross(edge_1, edge_2);
         InterlockedAdd(normals[vertices.x].x, normal.x);
         InterlockedAdd(normals[vertices.x].y, normal.y);
@@ -70,8 +74,8 @@ void accumulate_dynamic_attributes(
         InterlockedAdd(normals[vertices.z].z, normal.z);
     }
     if (
-        (push_data.attribute_flags & 2u) != 0 &&
-        (push_data.attribute_flags & 4u) != 0) {
+        (push_data.attribute_flags & gpu_geometry_attribute_tangent) != 0 &&
+        (push_data.attribute_flags & gpu_geometry_attribute_texture_coordinate) != 0) {
         const float2 first_uv =
             texture_coordinates[vertices.x];
         const float2 uv_1 =
@@ -121,7 +125,7 @@ void accumulate_dynamic_attributes(
 
 [shader("compute")]
 [numthreads(256, 1, 1)]
-void normalize_dynamic_attributes(
+void normalize_missing_attributes(
     uint3 dispatch_thread_id : SV_DispatchThreadID) {
     const uint vertex = dispatch_thread_id.x;
     if (vertex >= push_data.vertex_count) return;
@@ -130,7 +134,7 @@ void normalize_dynamic_attributes(
     RWStructuredBuffer<float3> tangents =
         push_data.tangents;
     float3 normal = normals[vertex];
-    if ((push_data.attribute_flags & 1u) != 0) {
+    if ((push_data.attribute_flags & gpu_geometry_attribute_normal) != 0) {
         const float length_squared = dot(normal, normal);
         normal =
             length_squared > 1.0e-20
@@ -138,7 +142,7 @@ void normalize_dynamic_attributes(
                 : float3(0.0, 1.0, 0.0);
         normals[vertex] = normal;
     }
-    if ((push_data.attribute_flags & 2u) != 0) {
+    if ((push_data.attribute_flags & gpu_geometry_attribute_tangent) != 0) {
         float3 tangent = tangents[vertex];
         tangent -= normal * dot(normal, tangent);
         if (dot(tangent, tangent) <= 1.0e-20)

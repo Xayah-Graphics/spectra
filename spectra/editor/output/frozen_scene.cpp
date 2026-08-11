@@ -2,9 +2,7 @@ module;
 
 #include <spectra/plugin_api.h>
 
-module spectra.editor;
-
-import :output.frozen_scene;
+module spectra.editor.output.frozen_scene;
 import spectra.scene.format;
 import std;
 
@@ -75,9 +73,9 @@ namespace spectra {
                     size += bytes;
                 };
                 add_readback_region(FrozenSceneReadbackKind::GeometryPosition, geometry.positions, geometry.vertex_count, sizeof(math::Float3));
-                if ((geometry.attribute_mask & 1u) != 0) add_readback_region(FrozenSceneReadbackKind::GeometryNormal, geometry.normals, geometry.vertex_count, sizeof(math::Float3));
-                if ((geometry.attribute_mask & 2u) != 0) add_readback_region(FrozenSceneReadbackKind::GeometryTangent, geometry.tangents, geometry.vertex_count, sizeof(math::Float3));
-                if ((geometry.attribute_mask & 4u) != 0) add_readback_region(FrozenSceneReadbackKind::GeometryTextureCoordinate, geometry.texture_coordinates, geometry.vertex_count, sizeof(math::Float2));
+                if ((geometry.attribute_mask & gpu_geometry_attribute_normal) != 0) add_readback_region(FrozenSceneReadbackKind::GeometryNormal, geometry.normals, geometry.vertex_count, sizeof(math::Float3));
+                if ((geometry.attribute_mask & gpu_geometry_attribute_tangent) != 0) add_readback_region(FrozenSceneReadbackKind::GeometryTangent, geometry.tangents, geometry.vertex_count, sizeof(math::Float3));
+                if ((geometry.attribute_mask & gpu_geometry_attribute_texture_coordinate) != 0) add_readback_region(FrozenSceneReadbackKind::GeometryTextureCoordinate, geometry.texture_coordinates, geometry.vertex_count, sizeof(math::Float2));
                 add_readback_region(FrozenSceneReadbackKind::GeometryIndex, geometry.indices, geometry.index_count, sizeof(std::uint32_t));
             }
             for (const GpuSphereSet& spheres : gpu_scene.sphere_sets) {
@@ -127,12 +125,6 @@ namespace spectra {
             } else if (current_scene.dynamic_setup) {
                 const dynamics::DynamicFrame& published = dynamics.published_frame();
                 snapshot.frozen_frame.emplace(dynamics::FrozenFrame{published.simulation, published.presentation});
-                for (const dynamics::GpuSceneUpdate& update : published.scene_updates)
-                    if (const auto* bounds = std::get_if<dynamics::GpuSceneBoundsUpdate>(&update.data)) {
-                        const std::uint32_t bounds_index = static_cast<std::uint32_t>(snapshot.frozen_frame->bounds.size());
-                        snapshot.frozen_frame->bounds.push_back({bounds->domain, std::vector<dynamics::SceneBound>(bounds->count)});
-                        add_dynamic_readback(FrozenSceneReadbackKind::SceneBounds, bounds_index, 0, bounds->bounds, bounds->count * sizeof(dynamics::SceneBound));
-                    }
                 const auto image_element_size = [](const dynamics::ImageFormat format) -> std::uint64_t {
                     if (format == dynamics::ImageFormat::Rgba8Unorm) return sizeof(std::uint32_t);
                     if (format == dynamics::ImageFormat::Rgba16Float) return sizeof(std::uint16_t) * 4u;
@@ -301,12 +293,6 @@ namespace spectra {
                         system.snapshot.history.back() = std::move(sample);
                     else
                         system.snapshot.history.push_back(std::move(sample));
-                }
-                break;
-            case FrozenSceneReadbackKind::SceneBounds:
-                {
-                    std::vector<dynamics::SceneBound>& destination = this->frozen_frame->bounds[source.resource_index].values;
-                    std::memcpy(destination.data(), static_cast<const std::byte*>(this->readback_buffer.mapped) + source.offset, source.element_count);
                 }
                 break;
             }

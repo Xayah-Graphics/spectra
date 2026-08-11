@@ -1,6 +1,6 @@
 export module spectra.scene;
 
-export import spectra.util.math;
+export import spectra.math;
 
 import std;
 

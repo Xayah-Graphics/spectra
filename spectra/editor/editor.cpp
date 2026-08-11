@@ -1,22 +1,22 @@
 module spectra.editor;
 
-import :output.capture;
-import :output.frozen_scene;
-import spectra.diagnostics.renderer;
-import :diagnostics.settings;
-import :platform.dialogs;
-import :platform.presentation;
-import :platform.window;
-import :ui;
-import :ui.imgui;
-import :viewport.interaction;
-import spectra.overlay;
-import :viewport.picker;
-import spectra.visualization;
+import spectra.editor.output.capture;
+import spectra.editor.output.frozen_scene;
+import spectra.editor.platform.dialogs;
+import spectra.editor.platform.presentation;
+import spectra.editor.platform.window;
+import spectra.editor.ui;
+import spectra.editor.ui.imgui;
+import spectra.editor.viewport.interaction;
+import spectra.editor.viewport.picker;
 import spectra.dynamics.runtime;
 import spectra.render;
+import spectra.render.composition;
+import spectra.render.composition.diagnostics;
+import spectra.render.composition.overlay;
+import spectra.render.composition.visualization;
 import spectra.render.display;
-import spectra.render.scene;
+import spectra.render.gpu_scene;
 import spectra.runtime;
 import spectra.scene;
 import spectra.scene.document;
@@ -42,7 +42,7 @@ namespace spectra {
         VulkanRuntime runtime;
         VulkanPresentation presentation;
         SceneDocument document;
-        EditorSettings settings;
+        SceneDiagnosticSettings diagnostic_settings{};
         DynamicsRuntime dynamics;
         GpuScene gpu_scene;
         SceneDiagnosticRenderer diagnostics;
@@ -81,7 +81,7 @@ namespace spectra {
     };
 
     EditorApplication::EditorApplication(EditorRequest request, const std::filesystem::path& shader_directory, const std::filesystem::path& pathtracer_directory, const std::filesystem::path& output_directory)
-        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, settings{output_directory / "spectra.editor-settings"}, dynamics{runtime, document}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics, gpu_scene}, display{runtime, shader_directory}, visualization{runtime, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, capture{runtime, render_engine, display, output_directory}, frozen_export{runtime, gpu_scene, dynamics}, imgui{platform, runtime, display, shader_directory}, ui{document, settings, dynamics, render_engine, viewport, picker, frozen_export, imgui} {
+        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, dynamics{runtime, document}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics, gpu_scene}, display{runtime, shader_directory}, visualization{runtime, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, capture{runtime, render_engine, display, output_directory}, frozen_export{runtime, gpu_scene, dynamics}, imgui{platform, runtime, display, shader_directory}, ui{document, diagnostic_settings, dynamics, render_engine, viewport, picker, frozen_export, imgui} {
         this->display.initialize();
         this->diagnostics.initialize();
         this->imgui.initialize();
@@ -330,6 +330,7 @@ namespace spectra {
     void EditorApplication::run() {
         while (true) {
             this->platform.poll_events();
+            if (this->platform.take_resize_completion()) this->timing.simulation_sample_valid = false;
             if (this->platform.take_close_request()) {
                 try {
                     if (this->confirm_scene_replacement()) break;
@@ -371,20 +372,24 @@ namespace spectra {
                 const vk::Extent2D viewport_extent = this->display.image.extent;
                 if (this->prepare_rendering(frame->frame.command_buffer, viewport_extent)) {
                     this->render_engine.record(frame->frame.command_buffer, frame->frame.slot_index);
-                    const RenderOutput output = this->render_engine.output();
+                    const RenderOutput output                  = this->render_engine.output();
                     const std::optional<DepthBufferView> depth = this->render_engine.depth_buffer();
-                    std::optional<RenderOutput> renderer_composition{};
-                    if (depth && this->visualization.has_visible(this->dynamics.visualizations(), scene::VisualizationCompositionDomain::SceneLinear)) {
-                        this->display.prepare_linear_composition(frame->frame.command_buffer, output);
-                        this->visualization.record(frame->frame.command_buffer, this->display.linear_target(), *depth, this->viewport.view.render_camera, this->dynamics.visualizations(), scene::VisualizationCompositionDomain::SceneLinear);
-                        renderer_composition.emplace(this->display.linear_output(output));
-                    }
-                    this->display.record(frame->frame.command_buffer, renderer_composition ? *renderer_composition : output, this->ui.controls.exposure);
-                    if (depth) {
-                        if (this->settings.diagnostics.enabled) this->diagnostics.record(frame->frame.command_buffer, frame->frame.slot_index, this->display, *depth, this->document.content.evaluated.view(), this->viewport.view.render_camera, this->settings.diagnostics, this->viewport.view.selection);
-                        this->visualization.record(frame->frame.command_buffer, this->display.target(), *depth, this->viewport.view.render_camera, this->dynamics.visualizations(), scene::VisualizationCompositionDomain::DisplayReferred);
-                    }
-                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->viewport.view.render_camera, *depth, this->settings.diagnostics.enabled ? &this->diagnostics.pick_image() : nullptr);
+                    record_render_composition(frame->frame.command_buffer, this->display, this->visualization,
+                        RenderCompositionRequest{
+                            .renderer_output       = output,
+                            .depth                 = depth,
+                            .scene                 = this->document.content.evaluated.view(),
+                            .camera                = this->viewport.view.render_camera,
+                            .scene_camera_view     = this->viewport.view.source == CameraSource::Scene ? std::optional{this->viewport.view.render_camera.id} : std::nullopt,
+                            .visualizations        = this->dynamics.visualizations(),
+                            .diagnostics           = this->diagnostic_settings.enabled ? &this->diagnostics : nullptr,
+                            .diagnostic_settings   = &this->diagnostic_settings,
+                            .selection             = &this->viewport.view.selection,
+                            .frame_slot_index      = frame->frame.slot_index,
+                            .exposure              = this->ui.controls.exposure,
+                            .compose_visualizations = true,
+                        });
+                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->viewport.view.render_camera, *depth, this->diagnostic_settings.enabled ? &this->diagnostics.pick_image() : nullptr);
                     this->record_editor_overlays(frame->frame.command_buffer, actions.show_axes);
                     this->capture.record(frame->frame.command_buffer, frame->frame.slot_index, output);
                 }

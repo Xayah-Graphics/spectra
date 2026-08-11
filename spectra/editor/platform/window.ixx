@@ -4,7 +4,7 @@ module;
 
 #include <GLFW/glfw3.h>
 
-export module spectra.editor:platform.window;
+export module spectra.editor.platform.window;
 
 import std;
 import vulkan;
@@ -23,6 +23,7 @@ namespace spectra {
         void wait_events() noexcept;
         void request_close() noexcept;
         [[nodiscard]] bool take_close_request() noexcept;
+        [[nodiscard]] bool take_resize_completion() noexcept;
         [[nodiscard]] std::vector<std::filesystem::path> take_dropped_paths() noexcept;
 
         GLFWwindow* window{};
@@ -48,6 +49,7 @@ namespace spectra {
             WNDPROC original_window_proc{};
             std::vector<std::filesystem::path> dropped_paths{};
             bool close_requested{};
+            bool resize_completed{};
         } state;
     };
 } // namespace spectra

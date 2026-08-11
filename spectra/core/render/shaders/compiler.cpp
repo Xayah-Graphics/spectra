@@ -235,7 +235,7 @@ namespace {
 
 int main(const int argument_count, const char* const* arguments) {
     try {
-        if (argument_count < 9) throw std::runtime_error("Usage: spectra_shader_compiler <path-abi.types> <path-abi.ixx> <plugin-abi.types> <plugin-abi.ixx> <shader_entries.txt> <output-directory> <spirv-val> <shader-search-path>...");
+        if (argument_count < 11) throw std::runtime_error("Usage: spectra_shader_compiler <path-abi.types> <path-abi.ixx> <raster-abi.types> <raster-abi.ixx> <plugin-abi.types> <plugin-abi.ixx> <shader_entries.txt> <output-directory> <spirv-val> <shader-search-path>...");
 
         Slang::ComPtr<slang::IGlobalSession> global_session{};
         require_slang_success(slang::createGlobalSession(global_session.writeRef()), "Creating Slang global session");
@@ -252,8 +252,8 @@ int main(const int argument_count, const char* const* arguments) {
             "-spirv-unified-descriptor-heap-stride",
         };
         std::vector<const char*> search_paths{};
-        search_paths.reserve(argument_count - 8);
-        for (int index = 8; index != argument_count; ++index) search_paths.push_back(arguments[index]);
+        search_paths.reserve(argument_count - 10);
+        for (int index = 10; index != argument_count; ++index) search_paths.push_back(arguments[index]);
         slang::TargetDesc target_description{
             .format  = SLANG_SPIRV,
             .profile = global_session->findProfile("sm_6_6"),
@@ -282,11 +282,13 @@ int main(const int argument_count, const char* const* arguments) {
 
         const std::string path_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[1]), "spectra.render.pathtracer.abi", "spectra::pathtracer");
         write_if_different(arguments[2], path_abi_module.data(), path_abi_module.size(), "generated Path Tracer shader ABI module");
-        const std::string plugin_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[3]), "spectra.plugin.abi", "spectra::plugin_abi");
-        write_if_different(arguments[4], plugin_abi_module.data(), plugin_abi_module.size(), "generated Plugin shader ABI module");
+        const std::string raster_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[3]), "spectra.render.rasterizer.abi", "spectra");
+        write_if_different(arguments[4], raster_abi_module.data(), raster_abi_module.size(), "generated Rasterizer shader ABI module");
+        const std::string plugin_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[5]), "spectra.plugin.abi", "spectra::plugin_abi");
+        write_if_different(arguments[6], plugin_abi_module.data(), plugin_abi_module.size(), "generated Plugin shader ABI module");
 
-        const std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[5]);
-        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.output_name == "path_evaluate_surface_textures" ? *default_session : *optimized_session, entry, arguments[6], arguments[7]);
+        const std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[7]);
+        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.output_name == "path_evaluate_surface_textures" ? *default_session : *optimized_session, entry, arguments[8], arguments[9]);
     } catch (const std::exception& error) {
         std::println(std::cerr, "{}", error.what());
         return 1;

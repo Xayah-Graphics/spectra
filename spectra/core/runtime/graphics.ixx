@@ -1,4 +1,4 @@
-export module spectra.runtime:graphics;
+export module spectra.runtime.graphics;
 
 import std;
 import vulkan;

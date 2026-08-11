@@ -1,6 +1,5 @@
-module spectra.runtime;
+module spectra.runtime.graphics;
 
-import :graphics;
 import std;
 import vulkan;
 

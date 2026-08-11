@@ -4,9 +4,7 @@ module;
 
 #include <GLFW/glfw3.h>
 
-module spectra.editor;
-
-import :platform.presentation;
+module spectra.editor.platform.presentation;
 
 import std;
 import vulkan;

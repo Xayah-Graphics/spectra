@@ -1,6 +1,4 @@
-module spectra.overlay;
-
-import spectra.runtime.shaders;
+module spectra.render.composition.overlay;
 
 import std;
 import vulkan;
@@ -70,8 +68,8 @@ namespace spectra {
     }
 
     void ViewportOverlay::initialize_overlay() {
-        this->overlay.mask_descriptor                       = this->context.runtime.resources.allocate_resource_descriptor();
-        this->overlay.sampler_descriptor                    = this->context.runtime.resources.allocate_sampler_descriptor();
+        this->overlay.mask_descriptor                       = this->context.runtime.frames.allocate_resource_descriptor();
+        this->overlay.sampler_descriptor                    = this->context.runtime.frames.allocate_sampler_descriptor();
         const std::vector<std::uint32_t> mask_mesh_code     = load_spirv(this->context.shader_directory / "overlay_mesh.spv");
         const std::vector<std::uint32_t> mask_fragment_code = load_spirv(this->context.shader_directory / "overlay_mask.spv");
         const std::array mask_create_infos{
@@ -158,7 +156,7 @@ namespace spectra {
         GpuImage next_mask = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
         GpuImage next_depth = this->context.runtime.resources.create_image_2d(extent, vk::Format::eD32Sfloat, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageAspectFlagBits::eDepth);
         if (*this->overlay.mask.image) {
-            DescriptorLease next_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+            DescriptorLease next_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_sampled_image_descriptor(next_descriptor, next_mask, vk::ImageLayout::eShaderReadOnlyOptimal);
             this->overlay.mask_descriptor = std::move(next_descriptor);
             this->context.runtime.frames.defer_destruction([mask = std::move(this->overlay.mask), depth = std::move(this->overlay.depth)]() mutable {});

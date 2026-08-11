@@ -8,8 +8,6 @@ struct RasterVertex {
     float3 world_normal : NORMAL;
     float3 world_tangent : TANGENT;
     float2 texture_coordinates : TEXCOORD;
-    float3 emission : COLOR0;
-    float3 color_modifier : COLOR1;
     nointerpolation uint material : MATERIAL;
     nointerpolation uint area_light : AREA_LIGHT;
     nointerpolation uint sphere : SPHERE;
@@ -19,22 +17,15 @@ struct RasterVertex {
 }
 
 struct RasterSpherePushData {
-    uint64_t acceleration_structure_address;
     DescriptorHandle<StructuredBuffer<float3>> positions;
     DescriptorHandle<StructuredBuffer<float>> radii;
-    DescriptorHandle<StructuredBuffer<float3>> colors;
-    DescriptorHandle<StructuredBuffer<float>> temperatures;
-    DescriptorHandle<StructuredBuffer<uint>> materials;
+    DescriptorHandle<StructuredBuffer<uint>> unused_0;
+    DescriptorHandle<StructuredBuffer<uint>> unused_1;
+    DescriptorHandle<StructuredBuffer<uint>> unused_2;
     DescriptorHandle<StructuredBuffer<RasterSceneBindings>> bindings;
     uint scene_primitive_index;
     uint element_count;
     uint2 attributes;
-    DescriptorHandle<StructuredBuffer<uint>> sampling_tables;
-    uint4 sampler_metadata;
-    uint4 sampler_parameters;
-    uint2 extent;
-    uint sample_index;
-    uint reserved;
     float4 view_projection_row_0;
     float4 view_projection_row_1;
     float4 view_projection_row_2;
@@ -47,58 +38,6 @@ struct RasterSpherePushData {
 
 [vk::push_constant]
 uniform RasterSpherePushData push_data;
-
-float3 blackbody(float temperature) {
-    temperature =
-        clamp(
-            temperature,
-            1000.0,
-            40000.0) /
-        100.0;
-    float3 result;
-    if (temperature <= 66.0) {
-        result.x = 1.0;
-        result.y =
-            clamp(
-                0.3900815788 *
-                        log(temperature) -
-                    0.6318414438,
-                0.0,
-                1.0);
-    } else {
-        result.x =
-            clamp(
-                1.2929361861 *
-                    pow(
-                        temperature - 60.0,
-                        -0.1332047592),
-                0.0,
-                1.0);
-        result.y =
-            clamp(
-                1.129890861 *
-                    pow(
-                        temperature - 60.0,
-                        -0.0755148492),
-                0.0,
-                1.0);
-    }
-    if (temperature >= 66.0)
-        result.z = 1.0;
-    else if (temperature <= 19.0)
-        result.z = 0.0;
-    else
-        result.z =
-            clamp(
-                0.5432067891 *
-                        log(
-                            temperature -
-                            10.0) -
-                    1.1962540891,
-                0.0,
-                1.0);
-    return result;
-}
 
 [shader("mesh")]
 [outputtopology("triangle")]
@@ -124,10 +63,6 @@ void raster_spheres(
         push_data.positions;
     StructuredBuffer<float> radii =
         push_data.radii;
-    StructuredBuffer<float3> colors =
-        push_data.colors;
-    StructuredBuffer<float> temperatures =
-        push_data.temperatures;
     StructuredBuffer<RasterSceneBindings> binding_table =
         push_data.bindings;
     const RasterSceneBindings bindings =
@@ -136,8 +71,6 @@ void raster_spheres(
         bindings.primitives;
     StructuredBuffer<RasterTransform> transforms =
         bindings.transforms;
-    StructuredBuffer<uint> sphere_materials =
-        push_data.materials;
     const RasterPrimitive primitive =
         primitives[
             push_data.scene_primitive_index];
@@ -147,23 +80,10 @@ void raster_spheres(
     const uint sphere =
         first_sphere +
         thread_id;
-    const uint material =
-        (push_data.attributes.x & 8) == 0
-            ? primitive.material_index
-            : sphere_materials[sphere];
     const float3 center =
         positions[sphere];
     const float radius =
         radii[sphere];
-    float3 color_modifier =
-        float3(1.0);
-    if (
-        (
-            push_data.attributes.x &
-            2
-        ) != 0)
-        color_modifier =
-            colors[sphere];
     const float3 world_center =
         raster_transform_position(
             transform,
@@ -246,20 +166,8 @@ void raster_spheres(
                 corners[vertex] +
                 1.0
             );
-        output.emission =
-            (
-                push_data.attributes.x &
-                4
-            ) != 0
-                ? blackbody(
-                      temperatures[
-                          sphere]) *
-                      color_modifier
-                : float3(0.0);
-        output.color_modifier =
-            color_modifier;
         output.material =
-            material;
+            primitive.material_index;
         output.area_light =
             primitive.area_light_index;
         output.sphere = 1;

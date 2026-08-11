@@ -1,10 +1,10 @@
-export module spectra.editor:viewport.interaction;
+export module spectra.editor.viewport.interaction;
 
 import spectra.scene;
 import spectra.scene.document;
 import spectra.dynamics.runtime;
-import spectra.render.scene;
-import spectra.diagnostics;
+import spectra.render.gpu_scene;
+import spectra.render.composition.diagnostics;
 import std;
 
 namespace spectra {
@@ -60,6 +60,7 @@ namespace spectra {
 
     private:
         void frame_viewport_camera(math::Bounds3 bounds, float aspect) noexcept;
+        [[nodiscard]] math::Bounds3 navigation_bounds() const noexcept;
         [[nodiscard]] math::Bounds3 effective_scene_bounds() const noexcept;
         [[nodiscard]] bool entity_exists(SceneEntityReference entity) const noexcept;
         [[nodiscard]] std::optional<math::Bounds3> entity_bounds(SceneEntityReference entity) const noexcept;

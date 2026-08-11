@@ -18,7 +18,6 @@ namespace spectra::dynamics {
         TriangleMesh         = static_cast<std::uint32_t>(SpectraPluginDatasetKind::TriangleMesh),
         SphereSet            = static_cast<std::uint32_t>(SpectraPluginDatasetKind::SphereSet),
         InstanceTransformSet = static_cast<std::uint32_t>(SpectraPluginDatasetKind::InstanceTransformSet),
-        SceneBoundsSet       = static_cast<std::uint32_t>(SpectraPluginDatasetKind::SceneBoundsSet),
         PointSet             = static_cast<std::uint32_t>(SpectraPluginDatasetKind::PointSet),
         SegmentSet           = static_cast<std::uint32_t>(SpectraPluginDatasetKind::SegmentSet),
         CurveSet             = static_cast<std::uint32_t>(SpectraPluginDatasetKind::CurveSet),
@@ -37,7 +36,6 @@ namespace spectra::dynamics {
         TriangleIndex             = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::TriangleIndex),
         Sphere                    = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Sphere),
         InstanceTransform         = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::InstanceTransform),
-        SceneBounds               = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::SceneBounds),
         Point                     = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Point),
         Segment                   = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Segment),
         Curve                     = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Curve),
@@ -70,29 +68,6 @@ namespace spectra::dynamics {
         TopologyChanging = static_cast<std::uint32_t>(SpectraPluginMeshUpdateMode::TopologyChanging),
     };
 
-    export enum class BoundsDomain : std::uint32_t {
-        Local = static_cast<std::uint32_t>(SpectraPluginBoundsDomain::Local),
-        World = static_cast<std::uint32_t>(SpectraPluginBoundsDomain::World),
-    };
-
-    export enum class BoundResourceKind : std::uint32_t {
-        System    = static_cast<std::uint32_t>(SpectraPluginBoundResourceKind::System),
-        Geometry  = static_cast<std::uint32_t>(SpectraPluginBoundResourceKind::Geometry),
-        SphereSet = static_cast<std::uint32_t>(SpectraPluginBoundResourceKind::SphereSet),
-        Instance  = static_cast<std::uint32_t>(SpectraPluginBoundResourceKind::Instance),
-        Volume    = static_cast<std::uint32_t>(SpectraPluginBoundResourceKind::Volume),
-    };
-
-    export struct SceneBound {
-        math::Float3 minimum{};
-        BoundResourceKind resource_kind{BoundResourceKind::System};
-        math::Float3 maximum{};
-        BoundsDomain domain{BoundsDomain::World};
-        std::uint64_t resource_id{};
-        std::uint64_t reserved{};
-        math::Transform world_from_local{};
-    };
-
     export struct FieldChannelDescriptor {
         std::string id{};
         FieldChannelKind kind{FieldChannelKind::Float};
@@ -111,11 +86,6 @@ namespace spectra::dynamics {
 
     export struct InstanceTransformDataset {
         std::uint64_t capacity{};
-    };
-
-    export struct SceneBoundsDataset {
-        std::uint64_t capacity{};
-        BoundsDomain domain{BoundsDomain::World};
     };
 
     export struct PointDataset {
@@ -158,7 +128,7 @@ namespace spectra::dynamics {
 
     export struct DatasetDescriptor {
         std::string id{};
-        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, SceneBoundsDataset, PointDataset, SegmentDataset, CurveDataset, VectorDataset, FieldDataset, ImageDataset, CameraObservationDataset, TransformDataset> details{TriangleMeshDataset{}};
+        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, PointDataset, SegmentDataset, CurveDataset, VectorDataset, FieldDataset, ImageDataset, CameraObservationDataset, TransformDataset> details{TriangleMeshDataset{}};
     };
 
     export struct ParameterDescriptor {
@@ -275,14 +245,8 @@ namespace spectra::dynamics {
         std::optional<scene::VolumeRegion> dirty_region{};
     };
 
-    export struct GpuSceneBoundsUpdate {
-        GpuBufferView bounds{};
-        std::uint64_t count{};
-        BoundsDomain domain{BoundsDomain::World};
-    };
-
     export struct GpuSceneUpdate {
-        std::variant<GpuTriangleMeshUpdate, GpuSphereSetUpdate, GpuInstanceTransformUpdate, GpuFieldUpdate, GpuSceneBoundsUpdate> data{};
+        std::variant<GpuTriangleMeshUpdate, GpuSphereSetUpdate, GpuInstanceTransformUpdate, GpuFieldUpdate> data{};
     };
 
     export struct VisualizationStyle {

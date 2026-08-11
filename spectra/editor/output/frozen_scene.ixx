@@ -1,6 +1,6 @@
-export module spectra.editor:output.frozen_scene;
+export module spectra.editor.output.frozen_scene;
 
-import spectra.render.scene;
+import spectra.render.gpu_scene;
 import spectra.dynamics.frozen;
 import spectra.dynamics.runtime;
 import spectra.runtime;
@@ -21,7 +21,6 @@ namespace spectra {
         VolumeField,
         VisualizationBuffer,
         TelemetryValues,
-        SceneBounds,
     };
 
     export struct FrozenSceneReadbackRegion {

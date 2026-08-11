@@ -344,6 +344,7 @@ void record_surface_gbuffer(
     const MaterialGeometry material_geometry = {
         texture_context,
         geometric_normal,
+        tangent_hit.xyz,
         surface_dpdu,
         surface_dpdv,
         hit_dndu[path_id].xyz,
@@ -644,6 +645,7 @@ void sample_direct_lighting(
     const MaterialGeometry material_geometry = {
         texture_context,
         geometric_normal,
+        tangent_hit.xyz,
         surface_dpdu,
         surface_dpdv,
         hit_dndu[path_id].xyz,
@@ -987,6 +989,7 @@ void shade_surfaces(
     const MaterialGeometry material_geometry = {
         texture_context,
         geometric_normal,
+        tangent_hit.xyz,
         surface_dpdu,
         surface_dpdv,
         hit_dndu[path_id].xyz,

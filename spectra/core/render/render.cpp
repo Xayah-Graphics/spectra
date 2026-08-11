@@ -3,7 +3,7 @@ module spectra.render;
 import std;
 
 namespace spectra {
-    RenderEngine::RenderEngine(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory, const std::filesystem::path& pathtracer_directory, std::optional<std::string> initial_renderer, const RasterDisplayMode initial_raster_display_mode) : context{runtime, gpu_scene, std::move(shader_directory), pathtracer_directory}, sampling_resources{runtime, this->context.shader_directory.parent_path() / "sampling"} {
+    RenderEngine::RenderEngine(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory, const std::filesystem::path& pathtracer_directory, std::optional<std::string> initial_renderer, const RasterDisplayMode initial_raster_display_mode) : context{runtime, gpu_scene, std::move(shader_directory), pathtracer_directory} {
         this->backends.raster_display_mode = initial_raster_display_mode;
         if (initial_renderer) {
             if (*initial_renderer != rasterizer_descriptor.id && *initial_renderer != pathtracer_descriptor.id) throw std::runtime_error(std::format("Unknown Scene Renderer: {}", *initial_renderer));
@@ -29,11 +29,11 @@ namespace spectra {
 
     void RenderEngine::activate(const std::string_view id, const scene::SceneView scene) {
         if (id == rasterizer_descriptor.id) {
-            if (!this->backends.rasterizer) this->backends.rasterizer.emplace(this->context.runtime, this->context.gpu_scene, this->sampling_resources, scene, this->context.shader_directory);
+            if (!this->backends.rasterizer) this->backends.rasterizer.emplace(this->context.runtime, this->context.gpu_scene, scene, this->context.shader_directory);
             this->backends.rasterizer->set_display_mode(this->backends.raster_display_mode);
             this->backends.active                            = std::ref(*this->backends.rasterizer);
         } else if (id == pathtracer_descriptor.id) {
-            if (!this->pathtracer_resources) this->pathtracer_resources.emplace(this->context.runtime, this->sampling_resources, this->context.pathtracer_directory);
+            if (!this->pathtracer_resources) this->pathtracer_resources.emplace(this->context.runtime, this->context.pathtracer_directory);
             if (!this->backends.pathtracer) this->backends.pathtracer.emplace(this->context.runtime, this->context.gpu_scene, *this->pathtracer_resources, scene);
             this->backends.active.reset();
         } else
@@ -44,6 +44,10 @@ namespace spectra {
     void RenderEngine::set_raster_display_mode(const RasterDisplayMode mode) noexcept {
         this->backends.raster_display_mode = mode;
         if (this->backends.rasterizer) this->backends.rasterizer->set_display_mode(mode);
+    }
+
+    RasterDisplayMode RenderEngine::raster_display_mode() const noexcept {
+        return this->backends.raster_display_mode;
     }
 
     void RenderEngine::wait_for_pathtracer() {

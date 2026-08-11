@@ -1,6 +1,5 @@
 module spectra.render.display;
 
-import spectra.runtime.shaders;
 import std;
 import vulkan;
 
@@ -12,7 +11,7 @@ namespace spectra {
     }
 
     void DisplayPass::initialize() {
-        this->sampler_descriptor                       = this->context.runtime.resources.allocate_sampler_descriptor();
+        this->sampler_descriptor                       = this->context.runtime.frames.allocate_sampler_descriptor();
         const std::vector<std::uint32_t> vertex_code   = load_spirv(this->context.shader_directory / "display_vertex.spv");
         const std::vector<std::uint32_t> fragment_code = load_spirv(this->context.shader_directory / "display_fragment.spv");
         const std::array create_infos{
@@ -51,7 +50,7 @@ namespace spectra {
         if (*this->image.image && extent == this->image.extent) return false;
         GpuImage next_linear_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
         GpuImage next_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eB8G8R8A8Srgb, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc);
-        DescriptorLease next_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        DescriptorLease next_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         this->context.runtime.resources.write_sampled_image_descriptor(next_descriptor, next_linear_image, vk::ImageLayout::eShaderReadOnlyOptimal);
         if (*this->image.image) {
             this->context.runtime.frames.defer_destruction([linear = std::move(this->linear_image), display = std::move(this->image)]() mutable {});

@@ -4,15 +4,15 @@ module;
 
 #include <ImGuizmo.h>
 
-export module spectra.editor:ui;
+export module spectra.editor.ui;
 
-import :output.capture;
-import :output.frozen_scene;
-import :diagnostics.settings;
-import :ui.imgui;
-import :viewport.interaction;
-import :viewport.picker;
+import spectra.editor.output.capture;
+import spectra.editor.output.frozen_scene;
+import spectra.editor.ui.imgui;
+import spectra.editor.viewport.interaction;
+import spectra.editor.viewport.picker;
 import spectra.render;
+import spectra.render.composition.diagnostics;
 import spectra.dynamics.runtime;
 import spectra.scene;
 import spectra.scene.document;
@@ -34,14 +34,14 @@ namespace spectra {
     };
 
     export struct EditorUi {
-        EditorUi(SceneDocument& document, EditorSettings& settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, FrozenSceneExporter& frozen_export, ImGuiBackend& imgui) noexcept;
+        EditorUi(SceneDocument& document, SceneDiagnosticSettings& diagnostic_settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, FrozenSceneExporter& frozen_export, ImGuiBackend& imgui) noexcept;
 
         [[nodiscard]] EditorActions draw_editor_ui();
         void notify(std::string message, bool error = false);
 
         struct {
             SceneDocument& document;
-            EditorSettings& settings;
+            SceneDiagnosticSettings& diagnostic_settings;
             DynamicsRuntime& dynamics;
             RenderEngine& render_engine;
             ViewportInteraction& viewport;
@@ -60,6 +60,7 @@ namespace spectra {
             bool transform_drag_active{};
             bool transform_editable{true};
             std::optional<SceneEntityReference> transform_entity{};
+            std::optional<RasterDisplayMode> wireframe_restore_mode{};
             std::uint64_t transform_revision{};
             std::array<float, 3> translation{};
             std::array<float, 3> rotation{};
@@ -80,7 +81,7 @@ namespace spectra {
         void synchronize_transform();
         void apply_transform(SceneEntityReference entity, math::Transform transform);
         void transform_row(const char* identifier, const char* title, std::array<float, 3>& value, float speed, const char* format);
-        void handle_shortcuts(EditorActions& actions, float aspect, bool inspector_available, bool transform_editable);
+        void handle_shortcuts(EditorActions& actions, float aspect, bool inspector_available);
         void draw_orientation(ImVec2 position, ImVec2 size, bool show_axes);
         void draw_gizmo(ImVec2 minimum, ImVec2 size, bool blocked, bool transform_editable);
         void handle_viewport_input(ImVec2 minimum, ImVec2 size, bool blocked);

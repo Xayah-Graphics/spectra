@@ -1,7 +1,7 @@
 export module spectra.render.contract;
 
 import spectra.runtime;
-import spectra.render.scene;
+import spectra.render.gpu_scene;
 import spectra.scene;
 import std;
 import vulkan;
@@ -59,7 +59,6 @@ namespace spectra {
     export enum class RasterDisplayMode : std::uint8_t {
         Material,
         Wireframe,
-        MaterialWireframe,
     };
 
     export [[nodiscard]] RasterDisplayMode parse_raster_display_mode(std::string_view identifier);

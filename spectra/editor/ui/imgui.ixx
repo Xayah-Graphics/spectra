@@ -2,9 +2,9 @@ module;
 
 #include <imgui.h>
 
-export module spectra.editor:ui.imgui;
+export module spectra.editor.ui.imgui;
 
-import :platform.window;
+import spectra.editor.platform.window;
 import spectra.render.display;
 import spectra.runtime;
 import std;

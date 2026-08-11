@@ -24,12 +24,6 @@ namespace spectra {
         static_assert(sizeof(SpectraPluginSphere) == sizeof(plugin_abi::SpectraPluginSphere));
         static_assert(sizeof(SpectraPluginInstanceTransform) == sizeof(plugin_abi::SpectraPluginInstanceTransform));
         static_assert(offsetof(SpectraPluginInstanceTransform, transform) == offsetof(plugin_abi::SpectraPluginInstanceTransform, transform));
-        static_assert(sizeof(SpectraPluginSceneBounds) == sizeof(plugin_abi::SpectraPluginSceneBounds));
-        static_assert(offsetof(SpectraPluginSceneBounds, maximum) == offsetof(plugin_abi::SpectraPluginSceneBounds, maximum));
-        static_assert(offsetof(SpectraPluginSceneBounds, resource_id) == offsetof(plugin_abi::SpectraPluginSceneBounds, resource_id));
-        static_assert(offsetof(SpectraPluginSceneBounds, world_from_local) == offsetof(plugin_abi::SpectraPluginSceneBounds, world_from_local));
-        static_assert(sizeof(SpectraPluginSceneBounds) == sizeof(dynamics::SceneBound));
-        static_assert(alignof(SpectraPluginSceneBounds) == alignof(dynamics::SceneBound));
         static_assert(sizeof(SpectraPluginPoint) == sizeof(plugin_abi::SpectraPluginPoint));
         static_assert(alignof(SpectraPluginPoint) == alignof(plugin_abi::SpectraPluginPoint));
         static_assert(offsetof(SpectraPluginPoint, position) == offsetof(plugin_abi::SpectraPluginPoint, position));
@@ -122,7 +116,6 @@ namespace spectra {
             if (const auto* value = std::get_if<dynamics::TriangleMeshDataset>(&dataset.details)) return {value->vertex_capacity, value->index_capacity};
             if (const auto* value = std::get_if<dynamics::SphereSetDataset>(&dataset.details)) return {value->capacity, 0};
             if (const auto* value = std::get_if<dynamics::InstanceTransformDataset>(&dataset.details)) return {value->capacity, 0};
-            if (const auto* value = std::get_if<dynamics::SceneBoundsDataset>(&dataset.details)) return {value->capacity, 0};
             if (const auto* value = std::get_if<dynamics::PointDataset>(&dataset.details)) return {value->capacity, 0};
             if (const auto* value = std::get_if<dynamics::SegmentDataset>(&dataset.details)) return {value->capacity, 0};
             if (const auto* value = std::get_if<dynamics::CurveDataset>(&dataset.details)) return {value->capacity, 0};
@@ -147,8 +140,6 @@ namespace spectra {
                 layouts.emplace_back(SpectraPluginBufferSemantic::Sphere, 0, capacity, sizeof(SpectraPluginSphere));
             else if (std::holds_alternative<dynamics::InstanceTransformDataset>(dataset.details))
                 layouts.emplace_back(SpectraPluginBufferSemantic::InstanceTransform, 0, capacity, sizeof(SpectraPluginInstanceTransform));
-            else if (std::holds_alternative<dynamics::SceneBoundsDataset>(dataset.details))
-                layouts.emplace_back(SpectraPluginBufferSemantic::SceneBounds, 0, capacity, sizeof(SpectraPluginSceneBounds));
             else if (std::holds_alternative<dynamics::PointDataset>(dataset.details))
                 layouts.emplace_back(SpectraPluginBufferSemantic::Point, 0, capacity, sizeof(SpectraPluginPoint));
             else if (std::holds_alternative<dynamics::SegmentDataset>(dataset.details))
@@ -371,8 +362,6 @@ namespace spectra {
                     dataset.details = dynamics::SphereSetDataset{value.capacity};
                 } else if (source.kind == SpectraPluginDatasetKind::InstanceTransformSet)
                     dataset.details = dynamics::InstanceTransformDataset{source.details.instance_transforms.capacity};
-                else if (source.kind == SpectraPluginDatasetKind::SceneBoundsSet)
-                    dataset.details = dynamics::SceneBoundsDataset{source.details.scene_bounds.capacity, static_cast<dynamics::BoundsDomain>(source.details.scene_bounds.domain)};
                 else if (source.kind == SpectraPluginDatasetKind::PointSet)
                     dataset.details = dynamics::PointDataset{source.details.points.capacity};
                 else if (source.kind == SpectraPluginDatasetKind::SegmentSet)
@@ -474,7 +463,7 @@ namespace spectra {
         if (scene_binding != system.scene_bindings.end()) dataset.scene_binding = *scene_binding;
         for (const scene::DynamicVisualizationView& view : system.visualizations)
             if (view.dataset_id == dataset.descriptor.id) dataset.visualizations.emplace_back(view);
-        const bool implicit_scene_state = std::holds_alternative<dynamics::InstanceTransformDataset>(dataset.descriptor.details) || std::holds_alternative<dynamics::SceneBoundsDataset>(dataset.descriptor.details);
+        const bool implicit_scene_state = std::holds_alternative<dynamics::InstanceTransformDataset>(dataset.descriptor.details);
         if (!dataset.scene_binding && dataset.visualizations.empty() && !implicit_scene_state) throw std::runtime_error(std::format("GPU Dataset '{}' is neither bound to the Render Scene nor used by a Visualization", dataset.descriptor.id));
     }
 
@@ -502,7 +491,7 @@ namespace spectra {
             for (const DatasetBufferLayout& layout : layouts) {
                 DynamicDatasetBuffer buffer{.semantic = layout.semantic, .channel_index = layout.channel_index, .byte_size = layout.element_count * layout.element_size};
                 buffer.gpu_buffer = this->context.runtime.resources.create_external_buffer(buffer.byte_size, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress);
-                buffer.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+                buffer.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
                 this->context.runtime.resources.write_buffer_descriptor(buffer.descriptor, vk::DescriptorType::eStorageBuffer, buffer.gpu_buffer);
                 next_buffer_slots[slot_index].emplace_back(std::move(buffer));
             }
@@ -557,7 +546,7 @@ namespace spectra {
         for (std::uint32_t slot_index = 0; slot_index < VulkanFrames::frames_in_flight; ++slot_index) {
                 DynamicDatasetBuffer buffer{.semantic = SpectraPluginBufferSemantic::TelemetryValue, .byte_size = byte_size};
                 buffer.gpu_buffer = this->context.runtime.resources.create_external_buffer(byte_size, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eStorageBuffer);
-                buffer.descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+                buffer.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
                 this->context.runtime.resources.write_buffer_descriptor(buffer.descriptor, vk::DescriptorType::eStorageBuffer, buffer.gpu_buffer);
                 next.buffer_slots[slot_index].emplace_back(std::move(buffer));
                 next.readback_slots[slot_index].buffer = this->context.runtime.resources.create_buffer(byte_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
@@ -663,8 +652,7 @@ namespace spectra {
             dynamics::GpuFieldUpdate update{.volume_id = scene::VolumeId{dataset.scene_binding->resource_id}, .resolution = field->resolution, .local_from_grid = field->local_from_grid, .dirty_region = scene::VolumeRegion{{commit.region_minimum[0], commit.region_minimum[1], commit.region_minimum[2]}, {commit.region_maximum[0], commit.region_maximum[1], commit.region_maximum[2]}}};
             for (std::uint32_t channel_index = 0; channel_index < field->channels.size(); ++channel_index) update.channels.emplace_back(field->channels[channel_index], gpu_buffer(SpectraPluginBufferSemantic::FieldChannel, channel_index));
             frame.scene_updates.emplace_back(dynamics::GpuSceneUpdate{std::move(update)});
-        } else if (const auto* bounds = std::get_if<dynamics::SceneBoundsDataset>(&dataset.descriptor.details))
-            frame.scene_updates.emplace_back(dynamics::GpuSceneUpdate{dynamics::GpuSceneBoundsUpdate{gpu_buffer(SpectraPluginBufferSemantic::SceneBounds), commit.active_count, bounds->domain}});
+        }
 
         if (!this->configuration.setup.systems[system.scene_system_index].visible || commit.active_count == 0) return;
         for (const scene::DynamicVisualizationView& view : dataset.visualizations) {

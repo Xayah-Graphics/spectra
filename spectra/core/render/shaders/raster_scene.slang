@@ -1,8 +1,9 @@
 module raster_scene;
 
-public static const uint raster_display_material = 0;
+public static const uint gpu_geometry_attribute_tangent = 1u << 1u;
+public static const uint gpu_geometry_attribute_texture_coordinate = 1u << 2u;
+
 public static const uint raster_display_wireframe = 1;
-public static const uint raster_display_material_wireframe = 2;
 
 public struct RasterPrimitive {
     public uint transform_index;
@@ -137,14 +138,8 @@ public struct RasterMaterial {
     public uint4 spectrum_data_0;
     public float4 spectrum_value_1;
     public uint4 spectrum_data_1;
-    public float4 spectrum_value_2;
-    public uint4 spectrum_data_2;
-    public float4 spectrum_value_3;
-    public uint4 spectrum_data_3;
     public float4 scalar_values_0;
     public uint4 scalar_textures_0;
-    public float4 scalar_values_1;
-    public uint4 scalar_textures_1;
 }
 
 public struct RasterTextureHeader {
@@ -193,31 +188,6 @@ public struct RasterAreaLight {
     public uint4 metadata;
 }
 
-public struct RasterLight {
-    public uint4 metadata;
-    public float4 radiance;
-    public float4 position;
-    public float4 direction;
-    public float4 parameters;
-    public float4 transform_row_0;
-    public float4 transform_row_1;
-    public float4 transform_row_2;
-    public float4 texture_coordinates_0;
-    public float4 texture_coordinates_1;
-    public float4 selection;
-}
-
-public struct RasterRayPrimitive {
-    public DescriptorHandle<StructuredBuffer<float3>> positions;
-    public DescriptorHandle<StructuredBuffer<float2>> texture_coordinates;
-    public DescriptorHandle<StructuredBuffer<uint>> indices;
-    public DescriptorHandle<StructuredBuffer<float>> radii;
-    public uint4 metadata;
-    public float4 parameters;
-    public uint scene_primitive_index;
-    public uint3 reserved;
-}
-
 public struct RasterSceneBindings {
     public DescriptorHandle<StructuredBuffer<RasterPrimitive>> primitives;
     public DescriptorHandle<StructuredBuffer<RasterTransform>> transforms;
@@ -233,13 +203,9 @@ public struct RasterSceneBindings {
     public DescriptorHandle<StructuredBuffer<RasterCompositeTexture>> mix_textures;
     public DescriptorHandle<StructuredBuffer<RasterDirectionMixTexture>> direction_mix_textures;
     public DescriptorHandle<StructuredBuffer<RasterBilerpTexture>> bilerp_textures;
-    public DescriptorHandle<StructuredBuffer<RasterLight>> lights;
-    public DescriptorHandle<StructuredBuffer<RasterRayPrimitive>> ray_primitives;
-    public uint4 metadata;
 }
 
 public struct RasterPushData {
-    public uint64_t acceleration_structure_address;
     public DescriptorHandle<StructuredBuffer<float3>> positions;
     public DescriptorHandle<StructuredBuffer<float3>> normals;
     public DescriptorHandle<StructuredBuffer<float3>> tangents;
@@ -249,12 +215,6 @@ public struct RasterPushData {
     public uint scene_primitive_index;
     public uint element_count;
     public uint2 attributes;
-    public DescriptorHandle<StructuredBuffer<uint>> sampling_tables;
-    public uint4 sampler_metadata;
-    public uint4 sampler_parameters;
-    public uint2 extent;
-    public uint sample_index;
-    public uint reserved;
     public float4 view_projection_row_0;
     public float4 view_projection_row_1;
     public float4 view_projection_row_2;
@@ -267,7 +227,6 @@ public struct RasterPushData {
 
 public struct RasterVolume {
     public uint4 metadata;
-    public uint4 majorant_metadata;
     public float4 bounds_minimum;
     public float4 bounds_maximum;
     public float4 inverse_transform_row_0;
@@ -285,5 +244,4 @@ public struct RasterVolume {
     public DescriptorHandle<StructuredBuffer<float3>> sigma_s_field;
     public DescriptorHandle<StructuredBuffer<float>> emission_scale_field;
     public DescriptorHandle<StructuredBuffer<float3>> emission_field;
-    public DescriptorHandle<StructuredBuffer<float>> majorant;
 }

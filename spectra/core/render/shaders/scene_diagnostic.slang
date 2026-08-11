@@ -3,7 +3,7 @@ module scene_diagnostic;
 struct DiagnosticPushData {
     DescriptorHandle<ByteAddressBuffer> primary;
     DescriptorHandle<ByteAddressBuffer> secondary;
-    DescriptorHandle<RWByteAddressBuffer> tertiary;
+    DescriptorHandle<ByteAddressBuffer> tertiary;
     DescriptorHandle<Texture2D<float>> depth;
     uint4 metadata;
     uint4 detail;
@@ -39,7 +39,7 @@ uniform DiagnosticPushData push_data;
 float4 transform_position(float3 position) {
     const float4 value = float4(position, 1.0);
     if (push_data.detail.w != 0xffffffff) {
-        RWByteAddressBuffer transforms = push_data.tertiary;
+        ByteAddressBuffer transforms = push_data.tertiary;
         const uint offset = push_data.detail.w * 64;
         return float4(dot(transforms.Load<float4>(offset), value), dot(transforms.Load<float4>(offset + 16), value), dot(transforms.Load<float4>(offset + 32), value), dot(transforms.Load<float4>(offset + 48), value));
     }
@@ -48,11 +48,28 @@ float4 transform_position(float3 position) {
 
 float3 transform_vector(float3 vector) {
     if (push_data.detail.w != 0xffffffff) {
-        RWByteAddressBuffer transforms = push_data.tertiary;
+        ByteAddressBuffer transforms = push_data.tertiary;
         const uint offset = push_data.detail.w * 64;
         return float3(dot(transforms.Load<float4>(offset).xyz, vector), dot(transforms.Load<float4>(offset + 16).xyz, vector), dot(transforms.Load<float4>(offset + 32).xyz, vector));
     }
     return float3(dot(push_data.transform_row_0.xyz, vector), dot(push_data.transform_row_1.xyz, vector), dot(push_data.transform_row_2.xyz, vector));
+}
+
+float3 transform_normal(float3 normal) {
+    float3 row_0 = push_data.transform_row_0.xyz;
+    float3 row_1 = push_data.transform_row_1.xyz;
+    float3 row_2 = push_data.transform_row_2.xyz;
+    if (push_data.detail.w != 0xffffffff) {
+        ByteAddressBuffer transforms = push_data.tertiary;
+        const uint offset = push_data.detail.w * 64;
+        row_0 = transforms.Load<float4>(offset).xyz;
+        row_1 = transforms.Load<float4>(offset + 16).xyz;
+        row_2 = transforms.Load<float4>(offset + 32).xyz;
+    }
+    const float3 column_0 = float3(row_0.x, row_1.x, row_2.x);
+    const float3 column_1 = float3(row_0.y, row_1.y, row_2.y);
+    const float3 column_2 = float3(row_0.z, row_1.z, row_2.z);
+    return cross(column_1, column_2) * normal.x + cross(column_2, column_0) * normal.y + cross(column_0, column_1) * normal.z;
 }
 
 float4 project_position(float4 position) {
@@ -128,29 +145,6 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
         const float3 second = float3(dot(transform_row_0, second_value), dot(transform_row_1, second_value), dot(transform_row_2, second_value));
         return make_line(first, second, push_data.parameters.x, color, metadata.z, metadata.w, vertex_id % 6);
     }
-    if (kind == 7) {
-        ByteAddressBuffer bounds = push_data.primary;
-        const uint offset = instance_id * 112;
-        const float3 minimum = bounds.Load<float3>(offset);
-        const float3 maximum = bounds.Load<float3>(offset + 16);
-        const uint domain = bounds.Load<uint>(offset + 28);
-        const uint edges[24] = {0,1, 1,3, 3,2, 2,0, 4,5, 5,7, 7,6, 6,4, 0,4, 1,5, 2,6, 3,7};
-        const uint edge = vertex_id / 6;
-        const uint first_corner = edges[edge * 2];
-        const uint second_corner = edges[edge * 2 + 1];
-        float3 first = float3((first_corner & 1) != 0 ? maximum.x : minimum.x, (first_corner & 2) != 0 ? maximum.y : minimum.y, (first_corner & 4) != 0 ? maximum.z : minimum.z);
-        float3 second = float3((second_corner & 1) != 0 ? maximum.x : minimum.x, (second_corner & 2) != 0 ? maximum.y : minimum.y, (second_corner & 4) != 0 ? maximum.z : minimum.z);
-        if (domain == 0) {
-            const float4 first_value = float4(first, 1.0);
-            const float4 second_value = float4(second, 1.0);
-            const float4 row_0 = bounds.Load<float4>(offset + 48);
-            const float4 row_1 = bounds.Load<float4>(offset + 64);
-            const float4 row_2 = bounds.Load<float4>(offset + 80);
-            first = float3(dot(row_0, first_value), dot(row_1, first_value), dot(row_2, first_value));
-            second = float3(dot(row_0, second_value), dot(row_1, second_value), dot(row_2, second_value));
-        }
-        return make_line(first, second, push_data.parameters.x, push_data.color, 0, push_data.metadata.w, vertex_id % 6);
-    }
     ByteAddressBuffer primary = push_data.primary;
     ByteAddressBuffer secondary = push_data.secondary;
     if (kind == 8) {
@@ -178,7 +172,8 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
         const uint line_index = vertex_id / 6;
         const uint source_index = line_index * push_data.detail.z;
         const float3 first = primary.Load<float3>(source_index * 12);
-        const float3 direction = normalize(transform_vector(secondary.Load<float3>(source_index * 12))) * push_data.parameters.z;
+        const float3 source_direction = secondary.Load<float3>(source_index * 12);
+        const float3 direction = normalize(kind == 4 ? transform_normal(source_direction) : transform_vector(source_direction)) * push_data.parameters.z;
         const float3 world_first = transform_position(first).xyz;
         const float3 world_second = world_first + direction;
         DiagnosticVertexOutput output;
@@ -215,45 +210,4 @@ DiagnosticFragmentOutput scene_diagnostic_fragment(DiagnosticVertexOutput input)
     }
     DiagnosticFragmentOutput output = {color, input.pick_index};
     return output;
-}
-
-uint float_order(float value) {
-    const uint bits = asuint(value);
-    return (bits & 0x80000000) != 0 ? ~bits : bits ^ 0x80000000;
-}
-
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void scene_diagnostic_bounds_clear(uint3 dispatch_thread_id : SV_DispatchThreadID) {
-    if (dispatch_thread_id.x >= push_data.metadata.x) return;
-    RWByteAddressBuffer bounds = push_data.tertiary;
-    bounds.Store4(dispatch_thread_id.x * 32, uint4(0xffffffff, 0xffffffff, 0xffffffff, 0));
-    bounds.Store4(dispatch_thread_id.x * 32 + 16, uint4(0, 0, 0, 0));
-}
-
-[shader("compute")]
-[numthreads(256, 1, 1)]
-void scene_diagnostic_bounds_accumulate(uint3 dispatch_thread_id : SV_DispatchThreadID) {
-    const uint index = dispatch_thread_id.x;
-    if (index >= push_data.metadata.x) return;
-    ByteAddressBuffer positions = push_data.primary;
-    float3 position = positions.Load<float3>(index * 12);
-    float radius = 0.0;
-    if (push_data.metadata.z == 1) {
-        ByteAddressBuffer radii = push_data.secondary;
-        radius = radii.Load<float>(index * 4);
-    }
-    const float4 value = float4(position, 1.0);
-    position = float3(dot(push_data.transform_row_0, value), dot(push_data.transform_row_1, value), dot(push_data.transform_row_2, value));
-    const float3 extent = radius * float3(length(push_data.transform_row_0.xyz), length(push_data.transform_row_1.xyz), length(push_data.transform_row_2.xyz));
-    const float3 minimum = position - extent;
-    const float3 maximum = position + extent;
-    RWByteAddressBuffer bounds = push_data.tertiary;
-    const uint offset = push_data.metadata.y * 32;
-    bounds.InterlockedMin(offset, float_order(minimum.x));
-    bounds.InterlockedMin(offset + 4, float_order(minimum.y));
-    bounds.InterlockedMin(offset + 8, float_order(minimum.z));
-    bounds.InterlockedMax(offset + 16, float_order(maximum.x));
-    bounds.InterlockedMax(offset + 20, float_order(maximum.y));
-    bounds.InterlockedMax(offset + 24, float_order(maximum.z));
 }

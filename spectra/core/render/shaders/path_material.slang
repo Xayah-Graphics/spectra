@@ -15,6 +15,7 @@ struct SurfaceFrame {
 public struct MaterialGeometry {
     public TextureEvaluationContext texture;
     public float3 geometric_normal;
+    public float3 tangent;
     public float3 dpdu;
     public float3 dpdv;
     public float3 dndu;
@@ -65,10 +66,12 @@ public struct MaterialSample {
 
 SurfaceFrame make_surface_frame(
     float3 normal,
-    float3 tangent) {
+    float3 tangent,
+    float handedness) {
     SurfaceFrame result;
     result.tangent = tangent;
     result.bitangent =
+        handedness *
         cross(
             normal,
             tangent);
@@ -188,6 +191,21 @@ MaterialSurface make_material_surface(
     float3 dpdu = geometry.dpdu;
     float3 dpdv = geometry.dpdv;
     float3 normal = geometry.texture.normal;
+    float3 tangent =
+        normalize(
+            geometry.tangent -
+            dot(
+                geometry.tangent,
+                normal) *
+                normal);
+    const float tangent_handedness =
+        dot(
+            cross(
+                normal,
+                tangent),
+            dpdv) < 0.0
+            ? -1.0
+            : 1.0;
     if (material.normal_map != 0xffffffff) {
         const float3 tangent_normal =
             normalize(
@@ -201,8 +219,9 @@ MaterialSurface make_material_surface(
                         .xyz -
                 1.0);
         const float3 frame_tangent =
-            normalize(dpdu);
+            tangent;
         const float3 frame_bitangent =
+            tangent_handedness *
             cross(
                 normal,
                 frame_tangent);
@@ -316,13 +335,21 @@ MaterialSurface make_material_surface(
             normal,
             geometry.geometric_normal) < 0.0)
         normal = -normal;
+    tangent =
+        normalize(
+            tangent -
+            dot(
+                tangent,
+                normal) *
+                normal);
     MaterialSurface result;
     result.texture = geometry.texture;
     result.texture.normal = normal;
     result.frame =
         make_surface_frame(
             normal,
-            normalize(dpdu));
+            tangent,
+            tangent_handedness);
     return result;
 }
 

@@ -38,15 +38,9 @@ namespace spectra::dynamics {
         TelemetrySnapshot snapshot{};
     };
 
-    export struct FrozenBounds {
-        BoundsDomain domain{BoundsDomain::World};
-        std::vector<SceneBound> values{};
-    };
-
     export struct FrozenFrame {
         SimulationTimeline simulation{};
         PresentationTimeline presentation{};
-        std::vector<FrozenBounds> bounds{};
         std::vector<FrozenVisualization> visualizations{};
         std::vector<FrozenTelemetrySystem> telemetry{};
     };

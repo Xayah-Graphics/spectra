@@ -1,6 +1,6 @@
-export module spectra.editor:platform.dialogs;
+export module spectra.editor.platform.dialogs;
 
-import :platform.window;
+import spectra.editor.platform.window;
 import std;
 
 namespace spectra {

@@ -1,6 +1,4 @@
-module spectra.editor;
-
-import :viewport.interaction;
+module spectra.editor.viewport.interaction;
 
 import std;
 
@@ -9,7 +7,9 @@ namespace spectra {
 
     void ViewportInteraction::initialize_from_scene() {
         this->view.camera          = this->context.document.content.source.camera();
-        this->view.focus           = this->effective_scene_bounds().center();
+        const scene::CameraFrame camera_frame = this->view.camera.frame();
+        const math::Float3 bounds_center       = this->navigation_bounds().center();
+        this->view.focus                       = camera_frame.position + camera_frame.forward * (bounds_center - camera_frame.position).dot(camera_frame.forward);
         this->view.navigation_up   = {0.0f, 1.0f, 0.0f};
         this->view.camera_revision = 1;
         const scene::Film& film    = this->context.document.content.source.film();
@@ -125,7 +125,7 @@ namespace spectra {
     }
 
     void ViewportInteraction::frame_scene(const float aspect) noexcept {
-        this->frame_viewport_camera(this->effective_scene_bounds(), aspect);
+        this->frame_viewport_camera(this->navigation_bounds(), aspect);
         this->view.source = CameraSource::Viewport;
         this->camera_changed();
     }
@@ -141,7 +141,7 @@ namespace spectra {
         if (found)
             this->frame_viewport_camera(selected, aspect);
         else
-            this->frame_viewport_camera(this->effective_scene_bounds(), aspect);
+            this->frame_viewport_camera(this->navigation_bounds(), aspect);
         this->view.source = CameraSource::Viewport;
         this->camera_changed();
     }
@@ -154,7 +154,7 @@ namespace spectra {
                 selected.include(*entity_bound);
                 found = true;
             }
-        const math::Bounds3 bounds                  = found ? selected : this->effective_scene_bounds();
+        const math::Bounds3 bounds                  = found ? selected : this->navigation_bounds();
         this->view.focus                            = bounds.center();
         this->view.navigation_up                    = std::abs(direction.y) > 0.9f ? math::Float3{0.0f, 0.0f, -1.0f} : math::Float3{0.0f, 1.0f, 0.0f};
         this->view.camera.transform                 = math::Transform::look_at(this->view.focus + direction.normalized() * bounds.radius() * 3.0f, this->view.focus, this->view.navigation_up);
@@ -211,24 +211,37 @@ namespace spectra {
         return entity.subindex < prototype.primitives.size() && prototype.primitives[entity.subindex].area_light == scene::LightId{entity.id};
     }
 
+    math::Bounds3 ViewportInteraction::navigation_bounds() const noexcept {
+        const scene::Scene& source = this->context.document.content.evaluated;
+        const std::span<const math::Bounds3> gpu_bounds = this->context.gpu_scene.view().resolved_instance_bounds;
+        math::Bounds3 bounds = math::Bounds3::empty();
+        for (std::size_t index = 0; index != source.resources.instances.size(); ++index) {
+            const scene::Instance& instance = source.resources.instances[index];
+            if (!instance.visible) continue;
+            const scene::Prototype& prototype = *std::ranges::find(source.resources.prototypes, instance.prototype, &scene::Prototype::id);
+            if (std::ranges::all_of(prototype.primitives, [](const scene::Primitive& primitive) { return primitive.area_light.value != 0; })) continue;
+            bounds.include(gpu_bounds[index]);
+        }
+        for (const scene::Volume& volume : source.resources.volumes) bounds.include(volume.bounds.transformed(volume.transform));
+        return bounds;
+    }
+
     math::Bounds3 ViewportInteraction::effective_scene_bounds() const noexcept {
         math::Bounds3 bounds = this->context.document.content.evaluated.view().bounds();
-        bounds.include(this->context.gpu_scene.view().resolved_dynamic_bounds);
+        bounds.include(this->context.gpu_scene.view().resolved_scene_bounds);
         return bounds;
     }
 
     std::optional<math::Bounds3> ViewportInteraction::entity_bounds(const SceneEntityReference entity) const noexcept {
         const scene::Scene& source = this->context.document.content.evaluated;
-        for (const dynamics::SceneBound& dynamic_bound : this->context.gpu_scene.view().resolved_dynamic_bound_records) {
-            const bool resource_matches =
-                (entity.kind == SceneEntityKind::Instance && dynamic_bound.resource_kind == dynamics::BoundResourceKind::Instance && dynamic_bound.resource_id == entity.id) ||
-                (entity.kind == SceneEntityKind::AreaEmitter && dynamic_bound.resource_kind == dynamics::BoundResourceKind::Instance && dynamic_bound.resource_id == entity.owner) ||
-                (entity.kind == SceneEntityKind::Volume && dynamic_bound.resource_kind == dynamics::BoundResourceKind::Volume && dynamic_bound.resource_id == entity.id);
-            if (!resource_matches) continue;
-            const math::Bounds3 bounds{dynamic_bound.minimum, dynamic_bound.maximum};
-            return dynamic_bound.domain == dynamics::BoundsDomain::World ? bounds : bounds.transformed(dynamic_bound.world_from_local);
+        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) {
+            const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
+            const auto instance = std::ranges::find(source.resources.instances, instance_id, &scene::Instance::id);
+            const std::size_t index = static_cast<std::size_t>(instance - source.resources.instances.begin());
+            const std::span<const math::Bounds3> gpu_bounds = this->context.gpu_scene.view().resolved_instance_bounds;
+            if (index < gpu_bounds.size() && gpu_bounds[index].valid()) return gpu_bounds[index];
+            return source.view().bounds(std::array{instance_id});
         }
-        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) return source.view().bounds(std::array{scene::InstanceId{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner}});
         const math::Bounds3 scene_bounds = this->effective_scene_bounds();
         const float extent               = std::max(scene_bounds.radius() * 0.05f, 0.05f);
         if (entity.kind == SceneEntityKind::Volume) {

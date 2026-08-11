@@ -1,6 +1,5 @@
-module spectra.runtime;
+module spectra.runtime.frames;
 
-import :frames;
 import std;
 import vulkan;
 
@@ -44,7 +43,6 @@ namespace spectra {
     } // namespace
 
     VulkanFrames::VulkanFrames(VulkanGraphics& graphics, GpuResources& resources) : context{graphics, resources} {
-        resources.attach_frames(*this);
         for (std::vector<GpuBuffer>& buffers : this->uploads.buffers) buffers.emplace_back(resources.create_buffer(upload_frame_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true));
         this->frame.command_pool    = vk::raii::CommandPool{graphics.device, vk::CommandPoolCreateInfo{vk::CommandPoolCreateFlagBits::eResetCommandBuffer, graphics.queue_family_index}};
         this->frame.command_buffers = vk::raii::CommandBuffers{graphics.device, vk::CommandBufferAllocateInfo{*this->frame.command_pool, vk::CommandBufferLevel::ePrimary, frames_in_flight}};
@@ -127,6 +125,14 @@ namespace spectra {
         std::memcpy(static_cast<std::byte*>(buffer.mapped) + local_offset, data.data(), data.size_bytes());
         this->uploads.offsets[slot] = local_offset + data.size_bytes();
         return {*buffer.buffer, local_offset, data.size_bytes()};
+    }
+
+    DescriptorLease VulkanFrames::allocate_resource_descriptor() {
+        return DescriptorLease{*this, this->context.resources.acquire_resource_descriptor(), DescriptorKind::Resource};
+    }
+
+    DescriptorLease VulkanFrames::allocate_sampler_descriptor() {
+        return DescriptorLease{*this, this->context.resources.acquire_sampler_descriptor(), DescriptorKind::Sampler};
     }
 
     void VulkanFrames::defer_destruction(std::move_only_function<void()> destruction) {

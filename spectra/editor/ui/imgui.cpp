@@ -3,11 +3,7 @@ module;
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 
-module spectra.editor;
-
-import spectra.runtime.shaders;
-
-import :ui.imgui;
+module spectra.editor.ui.imgui;
 import std;
 import vulkan;
 
@@ -59,7 +55,7 @@ namespace spectra {
 
     void ImGuiBackend::resize_viewport(const vk::Extent2D extent) {
         if (!this->context.display.resize(extent)) return;
-        DescriptorLease descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         this->context.runtime.resources.write_sampled_image_descriptor(descriptor, this->context.display.image, vk::ImageLayout::eShaderReadOnlyOptimal);
         this->renderer.viewport_descriptor = std::move(descriptor);
         this->viewport_texture_id          = static_cast<std::uint64_t>(this->renderer.viewport_descriptor.handle().slot_index) + 1u;
@@ -89,11 +85,11 @@ namespace spectra {
     } // namespace
 
     void ImGuiBackend::initialize_renderer() {
-        this->renderer.sampler_descriptor  = this->context.runtime.resources.allocate_sampler_descriptor();
-        this->renderer.viewport_descriptor = this->context.runtime.resources.allocate_resource_descriptor();
+        this->renderer.sampler_descriptor  = this->context.runtime.frames.allocate_sampler_descriptor();
+        this->renderer.viewport_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         this->viewport_texture_id          = static_cast<std::uint64_t>(this->renderer.viewport_descriptor.handle().slot_index) + 1u;
         this->renderer.frames.reserve(VulkanFrames::frames_in_flight);
-        for (std::uint32_t index = 0; index < VulkanFrames::frames_in_flight; ++index) this->renderer.frames.emplace_back(GpuBuffer{}, GpuBuffer{}, this->context.runtime.resources.allocate_resource_descriptor(), this->context.runtime.resources.allocate_resource_descriptor());
+        for (std::uint32_t index = 0; index < VulkanFrames::frames_in_flight; ++index) this->renderer.frames.emplace_back(GpuBuffer{}, GpuBuffer{}, this->context.runtime.frames.allocate_resource_descriptor(), this->context.runtime.frames.allocate_resource_descriptor());
         const std::vector<std::uint32_t> vertex_code   = load_spirv(this->context.shader_directory / "imgui_vertex.spv");
         const std::vector<std::uint32_t> fragment_code = load_spirv(this->context.shader_directory / "imgui_fragment.spv");
         const std::array create_infos{
@@ -151,7 +147,7 @@ namespace spectra {
         if (texture.Status == ImTextureStatus_WantCreate) {
             ImGuiTexture* backend_texture = new ImGuiTexture{
                 this->context.runtime.resources.create_image_2d({static_cast<std::uint32_t>(texture.Width), static_cast<std::uint32_t>(texture.Height)}, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst),
-                this->context.runtime.resources.allocate_resource_descriptor(),
+                this->context.runtime.frames.allocate_resource_descriptor(),
             };
             this->context.runtime.resources.write_sampled_image_descriptor(backend_texture->descriptor, backend_texture->image, vk::ImageLayout::eShaderReadOnlyOptimal);
             texture.BackendUserData = backend_texture;

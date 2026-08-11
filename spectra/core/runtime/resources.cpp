@@ -6,9 +6,7 @@ module;
 #include <unistd.h>
 #endif
 
-module spectra.runtime;
-
-import :resources;
+module spectra.runtime.resources;
 
 import std;
 import vulkan;
@@ -377,36 +375,32 @@ namespace spectra {
         return result;
     }
 
-    DescriptorLease GpuResources::allocate_resource_descriptor() {
+    DescriptorHandle GpuResources::acquire_resource_descriptor() {
         if (!this->descriptors.free_resource_indices.empty()) {
             const DescriptorHandle handle{
                 this->descriptors.free_resource_indices.back(),
             };
             this->descriptors.free_resource_indices.pop_back();
-            return DescriptorLease{*this->frames, handle, DescriptorKind::Resource};
+            return handle;
         }
         const DescriptorHandle handle{this->descriptors.next_resource_index};
         if (static_cast<vk::DeviceSize>(handle.slot_index + 1u) * this->descriptors.resource_stride > this->descriptors.resource_heap.size - this->descriptors.properties.minResourceHeapReservedRange) throw std::runtime_error("Spectra resource descriptor heap is exhausted");
         ++this->descriptors.next_resource_index;
-        return DescriptorLease{*this->frames, handle, DescriptorKind::Resource};
+        return handle;
     }
 
-    DescriptorLease GpuResources::allocate_sampler_descriptor() {
+    DescriptorHandle GpuResources::acquire_sampler_descriptor() {
         if (!this->descriptors.free_sampler_indices.empty()) {
             const DescriptorHandle handle{
                 this->descriptors.free_sampler_indices.back(),
             };
             this->descriptors.free_sampler_indices.pop_back();
-            return DescriptorLease{*this->frames, handle, DescriptorKind::Sampler};
+            return handle;
         }
         const DescriptorHandle handle{this->descriptors.next_sampler_index};
         if (static_cast<vk::DeviceSize>(handle.slot_index + 1u) * this->descriptors.sampler_stride > this->descriptors.sampler_heap.size - this->descriptors.properties.minSamplerHeapReservedRange) throw std::runtime_error("Spectra sampler descriptor heap is exhausted");
         ++this->descriptors.next_sampler_index;
-        return DescriptorLease{*this->frames, handle, DescriptorKind::Sampler};
-    }
-
-    void GpuResources::attach_frames(VulkanFrames& descriptor_frames) noexcept {
-        this->frames = &descriptor_frames;
+        return handle;
     }
 
     void GpuResources::reclaim_resource_descriptor(const std::uint32_t slot_index) noexcept {
