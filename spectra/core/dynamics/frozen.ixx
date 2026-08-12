@@ -51,32 +51,31 @@ namespace spectra::dynamics {
         TelemetrySnapshot snapshot{};
     };
 
-    export struct FrozenFrame {
+    export struct FrozenSnapshot {
         SimulationTimeline simulation{};
-        PresentationTimeline presentation{};
         std::vector<FrozenVisualization> visualizations{};
         std::vector<FrozenTelemetrySystem> telemetry{};
     };
 
-    export [[nodiscard]] std::vector<std::byte> serialize_frozen_frame(const FrozenFrame& frame);
-    export [[nodiscard]] FrozenFrame deserialize_frozen_frame(std::span<const std::byte> payload);
-    export void write_telemetry(const std::filesystem::path& path, const FrozenFrame& frame);
+    export [[nodiscard]] std::vector<std::byte> serialize_frozen_snapshot(const FrozenSnapshot& snapshot);
+    export [[nodiscard]] FrozenSnapshot deserialize_frozen_snapshot(std::span<const std::byte> payload);
+    export void write_telemetry(const std::filesystem::path& path, const FrozenSnapshot& snapshot);
 
-    export struct FrozenFrameRuntime {
-        explicit FrozenFrameRuntime(VulkanRuntime& runtime) noexcept;
-        ~FrozenFrameRuntime();
+    export struct FrozenSnapshotRuntime {
+        explicit FrozenSnapshotRuntime(VulkanRuntime& runtime) noexcept;
+        ~FrozenSnapshotRuntime();
 
-        FrozenFrameRuntime(const FrozenFrameRuntime&)            = delete;
-        FrozenFrameRuntime(FrozenFrameRuntime&&)                 = delete;
-        FrozenFrameRuntime& operator=(const FrozenFrameRuntime&) = delete;
-        FrozenFrameRuntime& operator=(FrozenFrameRuntime&&)      = delete;
+        FrozenSnapshotRuntime(const FrozenSnapshotRuntime&)            = delete;
+        FrozenSnapshotRuntime(FrozenSnapshotRuntime&&)                 = delete;
+        FrozenSnapshotRuntime& operator=(const FrozenSnapshotRuntime&) = delete;
+        FrozenSnapshotRuntime& operator=(FrozenSnapshotRuntime&&)      = delete;
 
         void initialize(std::span<const std::byte> payload);
         void destroy() noexcept;
         [[nodiscard]] bool initialized() const noexcept;
         [[nodiscard]] std::span<const GpuVisualization> visualizations() const noexcept;
-        [[nodiscard]] const FrozenFrame& frame() const noexcept;
-        [[nodiscard]] const DynamicFrame& pending_frame() const noexcept;
+        [[nodiscard]] const FrozenSnapshot& snapshot() const noexcept;
+        [[nodiscard]] const DynamicSnapshot& pending_snapshot() const noexcept;
 
     private:
         struct Buffer {
@@ -84,9 +83,9 @@ namespace spectra::dynamics {
             DescriptorLease descriptor{};
         };
         VulkanRuntime& runtime;
-        FrozenFrame data{};
+        FrozenSnapshot data{};
         std::deque<Buffer> buffers{};
-        DynamicFrame gpu_frame{};
+        DynamicSnapshot gpu_snapshot{};
         std::vector<GpuVisualization> gpu_visualizations{};
         bool ready{};
     };

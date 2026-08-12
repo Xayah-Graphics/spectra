@@ -31,7 +31,7 @@ namespace spectra {
             FrozenSceneSnapshot snapshot{};
             snapshot.frozen_scene = current_scene;
             snapshot.frozen_scene.dynamic_setup.reset();
-            snapshot.frozen_scene.frozen_dynamic_frame.reset();
+            snapshot.frozen_scene.frozen_dynamic_snapshot.reset();
             scene::Camera snapshot_camera = camera;
             snapshot_camera.id            = {std::ranges::fold_left(snapshot.frozen_scene.resources.cameras, std::uint64_t{}, [](const std::uint64_t maximum, const scene::Camera& value) { return std::max(maximum, value.id.value); }) + 1};
             snapshot_camera.name          = "Snapshot Camera";
@@ -137,11 +137,11 @@ namespace spectra {
                 size += sizeof(math::Transform);
             }
 
-            if (const dynamics::FrozenFrame* frozen = dynamics.frozen_frame()) {
-                snapshot.frozen_frame = *frozen;
+            if (const dynamics::FrozenSnapshot* frozen = dynamics.frozen_snapshot()) {
+                snapshot.frozen_snapshot = *frozen;
             } else if (current_scene.dynamic_setup) {
-                const dynamics::DynamicFrame& published = dynamics.published_frame();
-                snapshot.frozen_frame.emplace(dynamics::FrozenFrame{published.simulation, published.presentation});
+                const dynamics::DynamicSnapshot& published = dynamics.published_snapshot();
+                snapshot.frozen_snapshot.emplace(dynamics::FrozenSnapshot{published.simulation});
                 const auto image_element_size = [](const dynamics::ImageFormat format) -> std::uint64_t {
                     switch (format) {
                     case dynamics::ImageFormat::Rgba8Unorm: return sizeof(std::uint32_t);
@@ -151,7 +151,7 @@ namespace spectra {
                     throw std::runtime_error("Unknown frozen Visualization image format");
                 };
                 for (const dynamics::GpuVisualization& source : dynamics.visualizations()) {
-                    const std::uint32_t visualization_index = static_cast<std::uint32_t>(snapshot.frozen_frame->visualizations.size());
+                    const std::uint32_t visualization_index = static_cast<std::uint32_t>(snapshot.frozen_snapshot->visualizations.size());
                     dynamics::FrozenVisualization destination{};
                     std::visit(
                         [&](const auto& visualization) {
@@ -191,7 +191,7 @@ namespace spectra {
                             }
                         },
                         source.data);
-                    snapshot.frozen_frame->visualizations.push_back(std::move(destination));
+                    snapshot.frozen_snapshot->visualizations.push_back(std::move(destination));
                 }
                 for (std::size_t system_index = 0; system_index != current_scene.dynamic_setup->systems.size(); ++system_index) {
                     const scene::DynamicSystem& source_system = current_scene.dynamic_setup->systems[system_index];
@@ -205,8 +205,8 @@ namespace spectra {
                         system.snapshot.message  = update->message;
                         system.snapshot.values.resize(update->value_count);
                     }
-                    const std::uint32_t frozen_system_index = static_cast<std::uint32_t>(snapshot.frozen_frame->telemetry.size());
-                    snapshot.frozen_frame->telemetry.push_back(std::move(system));
+                    const std::uint32_t frozen_system_index = static_cast<std::uint32_t>(snapshot.frozen_snapshot->telemetry.size());
+                    snapshot.frozen_snapshot->telemetry.push_back(std::move(system));
                     if (update != published.telemetry.end()) add_dynamic_readback(FrozenSceneReadbackKind::TelemetryValues, frozen_system_index, 0, update->values, update->value_count, sizeof(SpectraPluginTelemetryGpuValue));
                 }
             }
@@ -276,7 +276,7 @@ namespace spectra {
                 break;
             case FrozenSceneReadbackKind::VisualizationBuffer:
                 {
-                    dynamics::FrozenVisualization& visualization = this->frozen_frame->visualizations[source.resource_index];
+                    dynamics::FrozenVisualization& visualization = this->frozen_snapshot->visualizations[source.resource_index];
                     std::vector<std::byte>* destination{};
                     std::visit(
                         [&destination, &source](auto& data) {
@@ -304,9 +304,9 @@ namespace spectra {
                 break;
             case FrozenSceneReadbackKind::TelemetryValues:
                 {
-                    dynamics::FrozenTelemetrySystem& system = this->frozen_frame->telemetry[source.resource_index];
+                    dynamics::FrozenTelemetrySystem& system = this->frozen_snapshot->telemetry[source.resource_index];
                     const auto* values                      = reinterpret_cast<const SpectraPluginTelemetryGpuValue*>(static_cast<const std::byte*>(this->readback_buffer.mapped) + source.byte_offset);
-                    dynamics::TelemetrySample sample{this->frozen_frame->simulation.step, this->frozen_frame->simulation.seconds};
+                    dynamics::TelemetrySample sample{this->frozen_snapshot->simulation.step, this->frozen_snapshot->simulation.seconds};
                     sample.values.reserve(system.descriptors.size());
                     for (std::size_t index = 0; index != system.descriptors.size(); ++index) {
                         const dynamics::TelemetryValue value{system.descriptors[index].kind, values[index].integer, {values[index].floating[0], values[index].floating[1], values[index].floating[2]}};
@@ -320,7 +320,7 @@ namespace spectra {
                 }
                 break;
             }
-        if (this->frozen_frame) this->frozen_scene.frozen_dynamic_frame = scene::FrozenDynamicFrame{.payload = dynamics::serialize_frozen_frame(*this->frozen_frame)};
+        if (this->frozen_snapshot) this->frozen_scene.frozen_dynamic_snapshot = scene::FrozenDynamicSnapshot{.payload = dynamics::serialize_frozen_snapshot(*this->frozen_snapshot)};
         this->frozen_scene.mark_all_changed();
     }
 

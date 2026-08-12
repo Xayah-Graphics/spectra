@@ -193,7 +193,7 @@ namespace spectra {
         void initialize(const scene::Scene& source_scene, std::span<const GpuGeometryBinding> geometry_bindings = {}, std::span<const std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities = {});
         void destroy() noexcept;
         [[nodiscard]] GpuSceneUpdate synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] GpuSceneUpdate apply(const dynamics::DynamicFrame& frame, scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        [[nodiscard]] GpuSceneUpdate apply(const dynamics::DynamicSnapshot& snapshot, scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         [[nodiscard]] GpuSceneView view() const noexcept;
         [[nodiscard]] const GpuTextureImage& texture_image(const scene::Texture& texture, vk::Format format) const;
 

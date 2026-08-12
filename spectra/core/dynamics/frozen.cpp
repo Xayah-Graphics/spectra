@@ -68,7 +68,7 @@ namespace spectra::dynamics {
             std::size_t offset{};
 
             void require(const std::size_t size) const {
-                if (size > this->data.size() - this->offset) throw std::runtime_error("Truncated Spectra Frozen Dynamic Frame");
+                if (size > this->data.size() - this->offset) throw std::runtime_error("Truncated Spectra Frozen Dynamic Snapshot");
             }
 
             template <std::integral Value>
@@ -88,20 +88,20 @@ namespace spectra::dynamics {
 
             [[nodiscard]] bool boolean() {
                 const std::uint8_t value = this->integer<std::uint8_t>();
-                if (value > 1) throw std::runtime_error("Invalid Boolean in Spectra Frozen Dynamic Frame");
+                if (value > 1) throw std::runtime_error("Invalid Boolean in Spectra Frozen Dynamic Snapshot");
                 return value != 0;
             }
 
             template <class Value>
             [[nodiscard]] Value enumeration(const Value maximum) {
                 const auto value = this->integer<std::underlying_type_t<Value>>();
-                if (value > std::to_underlying(maximum)) throw std::runtime_error("Invalid enum in Spectra Frozen Dynamic Frame");
+                if (value > std::to_underlying(maximum)) throw std::runtime_error("Invalid enum in Spectra Frozen Dynamic Snapshot");
                 return static_cast<Value>(value);
             }
 
             [[nodiscard]] std::size_t count() {
                 const std::uint64_t size = this->integer<std::uint64_t>();
-                if (size > std::numeric_limits<std::size_t>::max() || size > this->data.size() - this->offset) throw std::runtime_error("Invalid collection size in Spectra Frozen Dynamic Frame");
+                if (size > std::numeric_limits<std::size_t>::max() || size > this->data.size() - this->offset) throw std::runtime_error("Invalid collection size in Spectra Frozen Dynamic Snapshot");
                 return static_cast<std::size_t>(size);
             }
 
@@ -282,8 +282,8 @@ namespace spectra::dynamics {
             return checked_byte_size(pixels, element_size);
         }
 
-        void validate_frozen_frame(const FrozenFrame& frame) {
-            for (const FrozenVisualization& visualization : frame.visualizations) {
+        void validate_frozen_snapshot(const FrozenSnapshot& snapshot) {
+            for (const FrozenVisualization& visualization : snapshot.visualizations) {
                 const scene::VisualizationViewKind kind = scene::visualization_view_kind(visualization.style.view);
                 std::visit(
                     [kind](const auto& data) {
@@ -305,7 +305,7 @@ namespace spectra::dynamics {
                     },
                     visualization.data);
             }
-            for (const FrozenTelemetrySystem& system : frame.telemetry) {
+            for (const FrozenTelemetrySystem& system : snapshot.telemetry) {
                 if (system.snapshot.values.size() > system.descriptors.size()) throw std::runtime_error("Frozen Telemetry value count exceeds its descriptor count");
                 for (const TelemetrySample& sample : system.snapshot.history)
                     if (sample.values.size() != system.descriptors.size()) throw std::runtime_error("Frozen Telemetry history is inconsistent with its descriptors");
@@ -313,17 +313,15 @@ namespace spectra::dynamics {
         }
     } // namespace
 
-    std::vector<std::byte> serialize_frozen_frame(const FrozenFrame& frame) {
-        validate_frozen_frame(frame);
+    std::vector<std::byte> serialize_frozen_snapshot(const FrozenSnapshot& snapshot) {
+        validate_frozen_snapshot(snapshot);
         Writer writer{};
-        for (const char character : std::string_view{"SPDYN003"}) writer.integer(static_cast<std::uint8_t>(character));
-        writer.integer(std::uint32_t{3});
-        writer.integer(frame.simulation.step);
-        writer.floating(frame.simulation.seconds);
-        writer.integer(frame.presentation.frame);
-        writer.floating(frame.presentation.seconds);
-        writer.integer(static_cast<std::uint64_t>(frame.visualizations.size()));
-        for (const FrozenVisualization& visualization : frame.visualizations) {
+        for (const char character : std::string_view{"SPDYN004"}) writer.integer(static_cast<std::uint8_t>(character));
+        writer.integer(std::uint32_t{4});
+        writer.integer(snapshot.simulation.step);
+        writer.floating(snapshot.simulation.seconds);
+        writer.integer(static_cast<std::uint64_t>(snapshot.visualizations.size()));
+        for (const FrozenVisualization& visualization : snapshot.visualizations) {
             write_view(writer, visualization.style.view);
             writer.transform(visualization.style.transform);
             std::visit(
@@ -358,8 +356,8 @@ namespace spectra::dynamics {
                 },
                 visualization.data);
         }
-        writer.integer(static_cast<std::uint64_t>(frame.telemetry.size()));
-        for (const FrozenTelemetrySystem& system : frame.telemetry) {
+        writer.integer(static_cast<std::uint64_t>(snapshot.telemetry.size()));
+        for (const FrozenTelemetrySystem& system : snapshot.telemetry) {
             writer.string(system.id);
             writer.string(system.name);
             writer.string(system.provider_id);
@@ -391,14 +389,14 @@ namespace spectra::dynamics {
         return std::move(writer.data);
     }
 
-    FrozenFrame deserialize_frozen_frame(const std::span<const std::byte> payload) {
+    FrozenSnapshot deserialize_frozen_snapshot(const std::span<const std::byte> payload) {
         Reader reader{payload};
-        for (const char expected : std::string_view{"SPDYN003"})
-            if (reader.integer<std::uint8_t>() != static_cast<std::uint8_t>(expected)) throw std::runtime_error("Invalid Spectra Frozen Dynamic Frame header");
-        if (reader.integer<std::uint32_t>() != 3) throw std::runtime_error("Unsupported Spectra Frozen Dynamic Frame version");
-        FrozenFrame frame{{reader.integer<std::uint64_t>(), reader.floating64()}, {reader.integer<std::uint64_t>(), reader.floating64()}};
-        frame.visualizations.resize(reader.count());
-        for (FrozenVisualization& visualization : frame.visualizations) {
+        for (const char expected : std::string_view{"SPDYN004"})
+            if (reader.integer<std::uint8_t>() != static_cast<std::uint8_t>(expected)) throw std::runtime_error("Invalid Spectra Frozen Dynamic Snapshot header");
+        if (reader.integer<std::uint32_t>() != 4) throw std::runtime_error("Unsupported Spectra Frozen Dynamic Snapshot version");
+        FrozenSnapshot snapshot{{reader.integer<std::uint64_t>(), reader.floating64()}};
+        snapshot.visualizations.resize(reader.count());
+        for (FrozenVisualization& visualization : snapshot.visualizations) {
             visualization.style.view      = read_view(reader);
             visualization.style.transform = reader.transform();
             switch (scene::visualization_view_kind(visualization.style.view)) {
@@ -423,8 +421,8 @@ namespace spectra::dynamics {
                 }
             }
         }
-        frame.telemetry.resize(reader.count());
-        for (FrozenTelemetrySystem& system : frame.telemetry) {
+        snapshot.telemetry.resize(reader.count());
+        for (FrozenTelemetrySystem& system : snapshot.telemetry) {
             system.id          = reader.string();
             system.name        = reader.string();
             system.provider_id = reader.string();
@@ -451,16 +449,16 @@ namespace spectra::dynamics {
                 system.snapshot.history.push_back(std::move(sample));
             }
         }
-        if (!reader.finished()) throw std::runtime_error("Spectra Frozen Dynamic Frame contains trailing data");
-        validate_frozen_frame(frame);
-        return frame;
+        if (!reader.finished()) throw std::runtime_error("Spectra Frozen Dynamic Snapshot contains trailing data");
+        validate_frozen_snapshot(snapshot);
+        return snapshot;
     }
 
-    void write_telemetry(const std::filesystem::path& path, const FrozenFrame& frame) {
+    void write_telemetry(const std::filesystem::path& path, const FrozenSnapshot& snapshot) {
         if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
         std::ofstream stream{path, std::ios::trunc};
         stream << "system,metric,unit,kind,value\n";
-        for (const FrozenTelemetrySystem& system : frame.telemetry)
+        for (const FrozenTelemetrySystem& system : snapshot.telemetry)
             for (std::size_t index = 0; index != system.descriptors.size(); ++index) {
                 const TelemetryDescriptor& descriptor = system.descriptors[index];
                 stream << csv_field(system.id) << ',' << csv_field(descriptor.id) << ',' << csv_field(descriptor.unit) << ',' << static_cast<std::uint32_t>(descriptor.kind) << ',';
@@ -478,14 +476,14 @@ namespace spectra::dynamics {
         if (!stream) throw std::runtime_error(std::format("Failed to write Telemetry output: {}", path.string()));
     }
 
-    FrozenFrameRuntime::FrozenFrameRuntime(VulkanRuntime& runtime) noexcept : runtime{runtime} {}
+    FrozenSnapshotRuntime::FrozenSnapshotRuntime(VulkanRuntime& runtime) noexcept : runtime{runtime} {}
 
-    FrozenFrameRuntime::~FrozenFrameRuntime() {
+    FrozenSnapshotRuntime::~FrozenSnapshotRuntime() {
         this->destroy();
     }
 
-    void FrozenFrameRuntime::initialize(const std::span<const std::byte> payload) {
-        FrozenFrame next_data = deserialize_frozen_frame(payload);
+    void FrozenSnapshotRuntime::initialize(const std::span<const std::byte> payload) {
+        FrozenSnapshot next_data = deserialize_frozen_snapshot(payload);
         std::vector<std::span<const std::byte>> sources{};
         for (const FrozenVisualization& visualization : next_data.visualizations)
             std::visit(
@@ -515,7 +513,7 @@ namespace spectra::dynamics {
             total_size += size;
         }
         std::deque<Buffer> next_buffers{};
-        DynamicFrame next_gpu_frame{.simulation = next_data.simulation, .presentation = next_data.presentation};
+        DynamicSnapshot next_gpu_snapshot{.simulation = next_data.simulation};
         std::vector<GpuVisualization> next_gpu_visualizations{};
         GpuBuffer staging = this->runtime.resources.create_buffer(std::max<std::uint64_t>(total_size, sizeof(std::uint32_t)), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         struct Copy {
@@ -569,30 +567,31 @@ namespace spectra::dynamics {
         this->destroy();
         this->data = std::move(next_data);
         this->buffers.swap(next_buffers);
-        this->gpu_frame          = std::move(next_gpu_frame);
+        this->gpu_snapshot       = std::move(next_gpu_snapshot);
         this->gpu_visualizations = std::move(next_gpu_visualizations);
         this->ready              = true;
     }
 
-    void FrozenFrameRuntime::destroy() noexcept {
+    void FrozenSnapshotRuntime::destroy() noexcept {
         if (!this->ready) return;
         this->runtime.frames.defer_destruction([buffers = std::move(this->buffers)]() mutable {});
         this->gpu_visualizations.clear();
-        this->gpu_frame = {};
-        this->data      = {};
-        this->ready     = false;
+        this->gpu_snapshot = {};
+        this->data         = {};
+        this->ready        = false;
     }
 
-    bool FrozenFrameRuntime::initialized() const noexcept {
+    bool FrozenSnapshotRuntime::initialized() const noexcept {
         return this->ready;
     }
-    std::span<const GpuVisualization> FrozenFrameRuntime::visualizations() const noexcept {
+
+    std::span<const GpuVisualization> FrozenSnapshotRuntime::visualizations() const noexcept {
         return this->gpu_visualizations;
     }
-    const FrozenFrame& FrozenFrameRuntime::frame() const noexcept {
+    const FrozenSnapshot& FrozenSnapshotRuntime::snapshot() const noexcept {
         return this->data;
     }
-    const DynamicFrame& FrozenFrameRuntime::pending_frame() const noexcept {
-        return this->gpu_frame;
+    const DynamicSnapshot& FrozenSnapshotRuntime::pending_snapshot() const noexcept {
+        return this->gpu_snapshot;
     }
 } // namespace spectra::dynamics

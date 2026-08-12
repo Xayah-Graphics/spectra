@@ -513,8 +513,16 @@ float volume_density(
                 volume.metadata.yzw,
                 coordinate) *
             volume.scales.x;
+        if (density <= 0.0) {
+            temperature = 0.0;
+            sigma_a = float3(0.0);
+            sigma_s = float3(0.0);
+            emission = float3(0.0);
+            return 0.0;
+        }
         temperature = 0.0;
         if (
+            volume.temperature.z != 0.0 &&
             (
                 asuint(volume.procedural_parameters.w) &
                 1
@@ -537,6 +545,10 @@ float volume_density(
             volume.sigma_s.xyz;
         float emission_multiplier = 1.0;
         if (
+            (
+                any(volume.emission.xyz != 0.0) ||
+                volume.temperature.z != 0.0
+            ) &&
             (
                 asuint(volume.procedural_parameters.w) &
                 2
@@ -804,9 +816,7 @@ void raster_volume(
                     .scales.z;
             weight += density;
         }
-        if (weight == 0.0) {
-            continue;
-        }
+        if (weight == 0.0) continue;
         anisotropy /= weight;
         const float direct = 0.12 + 2.5 * phase_henyey_greenstein(dot(-ray_direction, incoming_direction), anisotropy);
         const float3 source =

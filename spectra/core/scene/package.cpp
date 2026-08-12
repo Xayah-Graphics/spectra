@@ -500,28 +500,28 @@ namespace spectra::scene {
             std::filesystem::copy_file(source, target, std::filesystem::copy_options::none);
         }
 
-        [[nodiscard]] AssetReference write_frozen_dynamic_frame_asset(const std::span<const std::byte> payload, const std::filesystem::path& package_root, AssetTransaction& transaction) {
+        [[nodiscard]] AssetReference write_frozen_dynamic_snapshot_asset(const std::span<const std::byte> payload, const std::filesystem::path& package_root, AssetTransaction& transaction) {
             AssetReference reference{.content_hash = content_hash::sha256_hex(std::array{payload})};
-            const std::filesystem::path path = asset_path(package_root, reference, ".dynamic-frame");
+            const std::filesystem::path path = asset_path(package_root, reference, ".dynamic-snapshot");
             if (std::filesystem::exists(path)) {
-                verify_asset(package_root, reference, ".dynamic-frame");
+                verify_asset(package_root, reference, ".dynamic-snapshot");
                 return reference;
             }
             std::filesystem::create_directories(path.parent_path());
             transaction.record(path);
             std::ofstream stream{path, std::ios::binary | std::ios::trunc};
             stream.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra Frozen Dynamic Frame asset: {}", path.string()));
+            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra Frozen Dynamic Snapshot asset: {}", path.string()));
             return reference;
         }
 
-        void load_frozen_dynamic_frame_asset(FrozenDynamicFrame& frame, const std::filesystem::path& package_root) {
-            verify_asset(package_root, frame.asset, ".dynamic-frame");
-            const std::filesystem::path path = asset_path(package_root, frame.asset, ".dynamic-frame");
+        void load_frozen_dynamic_snapshot_asset(FrozenDynamicSnapshot& snapshot, const std::filesystem::path& package_root) {
+            verify_asset(package_root, snapshot.asset, ".dynamic-snapshot");
+            const std::filesystem::path path = asset_path(package_root, snapshot.asset, ".dynamic-snapshot");
             std::ifstream stream{path, std::ios::binary};
-            frame.payload.resize(std::filesystem::file_size(path));
-            stream.read(reinterpret_cast<char*>(frame.payload.data()), static_cast<std::streamsize>(frame.payload.size()));
-            if (!stream) throw std::runtime_error(std::format("Failed to read Spectra Frozen Dynamic Frame asset: {}", path.string()));
+            snapshot.payload.resize(std::filesystem::file_size(path));
+            stream.read(reinterpret_cast<char*>(snapshot.payload.data()), static_cast<std::streamsize>(snapshot.payload.size()));
+            if (!stream) throw std::runtime_error(std::format("Failed to read Spectra Frozen Dynamic Snapshot asset: {}", path.string()));
         }
     } // namespace
 
@@ -555,7 +555,7 @@ namespace spectra::scene {
                 else
                     load_image_source(*image, texture.color_space, source_path(package_root, image->source));
             }
-        if (scene.frozen_dynamic_frame) load_frozen_dynamic_frame_asset(*scene.frozen_dynamic_frame, package_root);
+        if (scene.frozen_dynamic_snapshot) load_frozen_dynamic_snapshot_asset(*scene.frozen_dynamic_snapshot, package_root);
     }
 
     PackageReferences prepare_package_resources(const Scene& scene, const std::filesystem::path& package_root, const std::filesystem::path& source_root, const bool preserve_sources, AssetTransaction& transaction) {
@@ -621,12 +621,12 @@ namespace spectra::scene {
                 }
                 references.textures[index] = std::move(reference);
             }
-        if (scene.frozen_dynamic_frame) {
-            if (!scene.frozen_dynamic_frame->payload.empty())
-                references.frozen_dynamic_frame = write_frozen_dynamic_frame_asset(scene.frozen_dynamic_frame->payload, package_root, transaction);
+        if (scene.frozen_dynamic_snapshot) {
+            if (!scene.frozen_dynamic_snapshot->payload.empty())
+                references.frozen_dynamic_snapshot = write_frozen_dynamic_snapshot_asset(scene.frozen_dynamic_snapshot->payload, package_root, transaction);
             else {
-                copy_asset(scene.frozen_dynamic_frame->asset, ".dynamic-frame", source_root, package_root, transaction);
-                references.frozen_dynamic_frame = scene.frozen_dynamic_frame->asset;
+                copy_asset(scene.frozen_dynamic_snapshot->asset, ".dynamic-snapshot", source_root, package_root, transaction);
+                references.frozen_dynamic_snapshot = scene.frozen_dynamic_snapshot->asset;
             }
         }
         return references;

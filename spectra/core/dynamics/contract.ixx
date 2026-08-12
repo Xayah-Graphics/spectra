@@ -206,9 +206,4 @@ namespace spectra::dynamics {
         double seconds{};
     };
 
-    export struct PresentationTimeline {
-        std::uint64_t frame{};
-        double seconds{};
-    };
-
 } // namespace spectra::dynamics

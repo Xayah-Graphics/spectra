@@ -983,7 +983,7 @@ namespace spectra::scene {
             write_prototypes(writer, scene.resources.prototypes);
             write_instances(writer, scene.resources.instances);
             if (scene.dynamic_setup) write_dynamics(writer, *scene.dynamic_setup);
-            if (scene.frozen_dynamic_frame) writer.line(std::format("frozen-dynamic-frame asset={}", kdl_string(references.frozen_dynamic_frame->content_hash)));
+            if (scene.frozen_dynamic_snapshot) writer.line(std::format("frozen-dynamic-snapshot asset={}", kdl_string(references.frozen_dynamic_snapshot->content_hash)));
             writer.end();
             return writer.content;
         }
@@ -1903,8 +1903,8 @@ namespace spectra::scene {
                     read_instances(scene.resources, node);
                 else if (node.name() == u8"dynamics")
                     scene.dynamic_setup = read_dynamics(node);
-                else if (node.name() == u8"frozen-dynamic-frame")
-                    scene.frozen_dynamic_frame = FrozenDynamicFrame{.asset = {.content_hash = kdl_string_property(node, u8"asset", "")}};
+                else if (node.name() == u8"frozen-dynamic-snapshot")
+                    scene.frozen_dynamic_snapshot = FrozenDynamicSnapshot{.asset = {.content_hash = kdl_string_property(node, u8"asset", "")}};
                 else
                     throw std::runtime_error(std::format("Unknown Spectra scene section {}", kdl_text(node.name())));
             }

@@ -30,7 +30,6 @@ namespace spectra {
         if (request.renderer == pathtracer_descriptor.id && raster_display_mode != RasterDisplayMode::Material) throw std::runtime_error("--raster-mode only applies to the Rasterizer");
         if (request.simulation_step && request.simulation_seconds) throw std::runtime_error("Select either --simulation-step or --simulation-time");
         if (request.simulation_seconds && *request.simulation_seconds < 0.0) throw std::runtime_error("--simulation-time must be nonnegative");
-        if (request.presentation_seconds && *request.presentation_seconds < 0.0) throw std::runtime_error("--presentation-time must be nonnegative");
 
         VulkanInstance instance{"Spectra Render"};
         VulkanRuntime runtime{instance};
@@ -46,7 +45,7 @@ namespace spectra {
         document.content.evaluated = document.content.source;
 
         DynamicsRuntime dynamics{runtime, document};
-        if (document.content.source.dynamic_setup || document.content.source.frozen_dynamic_frame) dynamics.initialize(request.scene_path, document.content.source);
+        if (document.content.source.dynamic_setup || document.content.source.frozen_dynamic_snapshot) dynamics.initialize(request.scene_path, document.content.source);
 
         GpuScene gpu_scene{runtime, shader_directory};
         std::vector<GpuGeometryBinding> geometry_bindings{};
@@ -63,36 +62,26 @@ namespace spectra {
         for (const dynamics::SphereSetOutputBinding& binding : dynamics.sphere_set_bindings()) sphere_capacities.emplace_back(binding.sphere_set_id, binding.capacity);
         gpu_scene.initialize(document.content.source, geometry_bindings, sphere_capacities);
 
-        const auto consume_dynamic_frame = [&]() {
-            if (!dynamics.pending_frame()) return;
+        const auto consume_dynamic_snapshot = [&]() {
+            if (!dynamics.pending_snapshot()) return;
             const FrameContext frame = runtime.frames.begin_frame();
-            static_cast<void>(gpu_scene.apply(*dynamics.pending_frame(), document.content.evaluated.view(), frame.command_buffer));
+            static_cast<void>(gpu_scene.apply(*dynamics.pending_snapshot(), document.content.evaluated.view(), frame.command_buffer));
             dynamics.record_telemetry(frame.command_buffer, frame.slot_index);
-            dynamics.consume_frame();
+            dynamics.consume_snapshot();
             static_cast<void>(runtime.frames.submit_frame());
         };
-        consume_dynamic_frame();
+        consume_dynamic_snapshot();
         if (dynamics.initialized()) {
             if (request.simulation_step) {
                 if (*request.simulation_step < dynamics.timeline().step) throw std::runtime_error("The requested simulation step precedes the scene start step");
                 dynamics.evaluate(*request.simulation_step);
-                consume_dynamic_frame();
+                consume_dynamic_snapshot();
             } else if (request.simulation_seconds) {
                 if (*request.simulation_seconds < dynamics.timeline().seconds) throw std::runtime_error("The requested simulation time precedes the scene start time");
                 dynamics.evaluate_time(*request.simulation_seconds);
-                consume_dynamic_frame();
+                consume_dynamic_snapshot();
             }
-            const std::uint64_t target_presentation_frame = request.presentation_frame.value_or(request.presentation_seconds ? 1u : 0u);
-            if (target_presentation_frame < dynamics.presentation_timeline().frame) throw std::runtime_error("The requested presentation frame precedes the current frame");
-            const std::uint64_t presentation_ticks   = target_presentation_frame - dynamics.presentation_timeline().frame;
-            const double target_presentation_seconds = request.presentation_seconds.value_or(dynamics.presentation_timeline().seconds);
-            if (target_presentation_seconds < dynamics.presentation_timeline().seconds) throw std::runtime_error("The requested presentation time precedes the current time");
-            for (std::uint64_t tick = 0; tick != presentation_ticks; ++tick) {
-                const double remaining_seconds = target_presentation_seconds - dynamics.presentation_timeline().seconds;
-                dynamics.advance(std::chrono::duration<double>{remaining_seconds / static_cast<double>(presentation_ticks - tick)});
-                consume_dynamic_frame();
-            }
-        } else if (request.simulation_step || request.simulation_seconds || request.presentation_frame || request.presentation_seconds)
+        } else if (request.simulation_step || request.simulation_seconds)
             throw std::runtime_error("Dynamic time targets require a scene with an enabled Dynamic Setup");
 
         RenderEngine render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, request.renderer, raster_display_mode};
@@ -128,7 +117,7 @@ namespace spectra {
             const FrameContext frame = runtime.frames.begin_frame();
             GpuSceneUpdate gpu_update{};
             if (dynamics.initialized())
-                if (const dynamics::DynamicFrame* dynamic_frame = dynamics.pending_frame()) gpu_update = gpu_scene.apply(*dynamic_frame, document.content.evaluated.view(), frame.command_buffer);
+                if (const dynamics::DynamicSnapshot* dynamic_snapshot = dynamics.pending_snapshot()) gpu_update = gpu_scene.apply(*dynamic_snapshot, document.content.evaluated.view(), frame.command_buffer);
 
             scene::SceneView current_scene = document.content.evaluated.view();
             current_scene.revision.changes = current_scene.revision.changes | gpu_update.scene_changes;
@@ -179,7 +168,7 @@ namespace spectra {
             }
             if (dynamics.initialized()) {
                 dynamics.record_telemetry(frame.command_buffer, frame.slot_index);
-                dynamics.consume_frame();
+                dynamics.consume_snapshot();
             }
             document.content.evaluated.acknowledge_changes();
             document.content.source.acknowledge_changes();
@@ -193,6 +182,6 @@ namespace spectra {
         if (output_layer != RenderOutputLayer::RendererLinear) write_png(request.png_output_path, std::span{static_cast<const std::uint8_t*>(display_readback.mapped), pixel_count * 4u}, extent);
         write_linear_exr(request.linear_output_path, std::span{static_cast<const float*>(linear_readback.mapped), pixel_count * 4u}, extent, render_engine.output().color_space);
         if (request.gbuffer_output_path) write_gbuffer_exr(*request.gbuffer_output_path, render_engine.readback(), render_engine.output().color_space, film.gbuffer_camera_space);
-        if (request.telemetry_output_path) dynamics::write_telemetry(*request.telemetry_output_path, dynamics.telemetry_frame());
+        if (request.telemetry_output_path) dynamics::write_telemetry(*request.telemetry_output_path, dynamics.telemetry_snapshot());
     }
 } // namespace spectra

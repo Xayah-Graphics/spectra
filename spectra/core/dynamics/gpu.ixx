@@ -141,9 +141,8 @@ namespace spectra::dynamics {
         std::uint32_t capacity{};
     };
 
-    export struct DynamicFrame {
+    export struct DynamicSnapshot {
         SimulationTimeline simulation{};
-        PresentationTimeline presentation{};
         std::vector<GpuSceneUpdate> scene_updates{};
         std::vector<GpuVisualization> visualizations{};
         std::vector<GpuTelemetryUpdate> telemetry{};

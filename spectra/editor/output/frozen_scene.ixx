@@ -37,7 +37,7 @@ namespace spectra {
         scene::Scene frozen_scene{};
         GpuBuffer readback_buffer{};
         std::vector<FrozenSceneReadbackRegion> readback_regions{};
-        std::optional<dynamics::FrozenFrame> frozen_frame{};
+        std::optional<dynamics::FrozenSnapshot> frozen_snapshot{};
 
         void materialize();
     };

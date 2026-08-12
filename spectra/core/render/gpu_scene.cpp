@@ -967,10 +967,16 @@ namespace spectra {
         GpuVolume& volume                  = *std::ranges::find(this->resources.volumes, volume_id, &GpuVolume::volume_id);
         const std::uint64_t expected_count = static_cast<std::uint64_t>(dirty_region.maximum.x - dirty_region.minimum.x) * (dirty_region.maximum.y - dirty_region.minimum.y) * (dirty_region.maximum.z - dirty_region.minimum.z);
         if (voxel_count != expected_count) throw std::runtime_error("Dynamic Volume element count differs from its dirty region");
-        const auto copy = [&command_buffer, dirty_region, &volume](const GpuBuffer* source, const GpuVolumeField field, const vk::DeviceSize element_size) {
+        const auto copy = [&command_buffer, dirty_region, expected_count, &volume](const GpuBuffer* source, const GpuVolumeField field, const vk::DeviceSize element_size) {
             if (!source) return;
             const std::size_t index = std::to_underlying(field);
             if (!volume.field_present[index]) throw std::runtime_error("Dynamic Volume published a field absent from its Scene resource");
+            if (dirty_region.minimum == math::UInt3{} && dirty_region.maximum == volume.resolution) {
+                const vk::DeviceSize bytes = expected_count * element_size;
+                if (source->size < bytes) throw std::runtime_error("Dynamic Volume field buffer is smaller than its dirty region");
+                command_buffer.copyBuffer(*source->buffer, *volume.fields[index].buffer, vk::BufferCopy{0, 0, bytes});
+                return;
+            }
             std::vector<vk::BufferCopy> regions{};
             const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(dirty_region.maximum.x - dirty_region.minimum.x) * element_size;
             vk::DeviceSize source_offset{};
@@ -1168,7 +1174,7 @@ namespace spectra {
         command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
     }
 
-    GpuSceneUpdate GpuScene::apply(const dynamics::DynamicFrame& frame, const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
+    GpuSceneUpdate GpuScene::apply(const dynamics::DynamicSnapshot& snapshot, const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         this->resources.resource_binding_changes = scene::SceneChange::None;
         this->resources.dynamic_changes          = GpuSceneChange::None;
         const std::uint32_t frame_slot_index     = this->context.runtime.frames.frame.current_slot_index;
@@ -1176,7 +1182,7 @@ namespace spectra {
         std::vector<scene::GeometryId> external_geometries{};
         std::vector<scene::SphereSetId> external_sphere_sets{};
         std::vector<scene::VolumeId> external_volumes{};
-        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates) {
+        for (const dynamics::GpuSceneUpdate& update : snapshot.scene_updates) {
             if (const auto* mesh = std::get_if<dynamics::GpuTriangleMeshUpdate>(&update.data))
                 external_geometries.push_back(mesh->geometry_id);
             else if (const auto* spheres = std::get_if<dynamics::GpuSphereSetUpdate>(&update.data))
@@ -1187,7 +1193,7 @@ namespace spectra {
         this->begin_external_updates(external_geometries, external_sphere_sets, external_volumes);
         this->synchronize_scene(scene, command_buffer);
 
-        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates) {
+        for (const dynamics::GpuSceneUpdate& update : snapshot.scene_updates) {
             if (const auto* mesh = std::get_if<dynamics::GpuTriangleMeshUpdate>(&update.data)) {
                 this->synchronize_external_geometry(mesh->geometry_id, mesh->positions.buffer, mesh->normals ? mesh->normals->buffer : nullptr, mesh->tangents ? mesh->tangents->buffer : nullptr, mesh->texture_coordinates ? mesh->texture_coordinates->buffer : nullptr, mesh->indices ? mesh->indices->buffer : nullptr, static_cast<std::uint32_t>(mesh->vertex_count), static_cast<std::uint32_t>(mesh->index_count), command_buffer);
                 this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Geometry;
@@ -1230,7 +1236,7 @@ namespace spectra {
         }
         this->end_external_updates(scene, command_buffer);
         bool instance_transforms_updated{};
-        for (const dynamics::GpuSceneUpdate& update : frame.scene_updates)
+        for (const dynamics::GpuSceneUpdate& update : snapshot.scene_updates)
             if (const auto* transforms = std::get_if<dynamics::GpuInstanceTransformUpdate>(&update.data)) {
                 this->synchronize_external_instance_transforms(*transforms, command_buffer);
                 instance_transforms_updated = instance_transforms_updated || transforms->count != 0;

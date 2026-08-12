@@ -719,7 +719,7 @@ namespace spectra::scene {
     };
 
 
-    export inline constexpr std::uint32_t current_scene_format_version = 29;
+    export inline constexpr std::uint32_t current_scene_format_version = 30;
 
     export struct DynamicSystemId {
         std::string value{};
@@ -945,10 +945,10 @@ namespace spectra::scene {
         friend auto operator<=>(const DynamicSetup&, const DynamicSetup&) = default;
     };
 
-    export struct FrozenDynamicFrame {
+    export struct FrozenDynamicSnapshot {
         AssetReference asset{};
         std::vector<std::byte> payload{};
-        friend auto operator<=>(const FrozenDynamicFrame&, const FrozenDynamicFrame&) = default;
+        friend auto operator<=>(const FrozenDynamicSnapshot&, const FrozenDynamicSnapshot&) = default;
     };
 
     export struct SceneResources {
@@ -1021,7 +1021,7 @@ namespace spectra::scene {
         SamplerId active_sampler{};
         TransportSettings transport{};
         std::optional<DynamicSetup> dynamic_setup{};
-        std::optional<FrozenDynamicFrame> frozen_dynamic_frame{};
+        std::optional<FrozenDynamicSnapshot> frozen_dynamic_snapshot{};
 
         [[nodiscard]] SceneView view() const noexcept;
         [[nodiscard]] const Camera& camera() const noexcept;

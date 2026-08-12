@@ -1,10 +1,11 @@
-#pragma once
+#ifndef SPECTRA_PLUGIN_API_H
+#define SPECTRA_PLUGIN_API_H
 
 #include <cstddef>
 #include <cstdint>
 
-inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 21;
-inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_21";
+inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 22;
+inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_22";
 
 #if defined(_WIN32)
 #define SPECTRA_PLUGIN_EXPORT __declspec(dllexport)
@@ -235,6 +236,7 @@ struct SpectraPluginFieldChannelDescriptor {
 };
 
 struct SpectraPluginTriangleMeshDatasetDescriptor {
+    // Capacities are fixed maxima for the lifetime of a Provider instance.
     std::uint32_t vertex_capacity;
     std::uint32_t index_capacity;
     SpectraPluginMeshUpdateMode update_mode;
@@ -369,11 +371,6 @@ struct SpectraPluginProviderCreateResult {
     void* provider;
 };
 
-struct SpectraPluginPresentationTickResult {
-    SpectraPluginResult result;
-    std::uint8_t dirty;
-};
-
 struct SpectraPluginGpuBuffer {
     SpectraPluginBufferSemantic semantic;
     std::uint32_t channel_index;
@@ -431,12 +428,11 @@ struct SpectraPluginTelemetryCommit {
     SpectraPluginString message;
 };
 
-struct SpectraPluginFrameSink {
-    // The sink and every commit pointer are valid only during publish_frame. Host
+struct SpectraPluginSnapshotSink {
+    // The sink and every commit pointer are valid only during publish_snapshot. Host
     // copies commit values and strings before each sink callback returns.
     void* context;
     SpectraPluginResult (*commit_dataset)(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept;
-    SpectraPluginResult (*request_dataset_capacity)(void* context, std::uint64_t dataset_index, std::uint32_t capacity, std::uint32_t secondary_capacity) noexcept;
     SpectraPluginResult (*commit_telemetry)(void* context, const SpectraPluginTelemetryCommit* commit) noexcept;
 };
 
@@ -455,21 +451,20 @@ struct SpectraPluginApi {
     SpectraPluginResult (*apply_parameters)(void* provider, const SpectraPluginParameterValue* values, std::uint64_t value_count) noexcept;
     SpectraPluginResult (*reset)(void* provider, std::uint64_t seed) noexcept;
     SpectraPluginResult (*step)(void* provider, double step_seconds, std::uint64_t step_count) noexcept;
-    SpectraPluginResult (*publish_frame)(void* provider, std::uint64_t simulation_step, const SpectraPluginFrameSink* sink) noexcept;
-    SpectraPluginPresentationTickResult (*tick_presentation)(void* provider, double elapsed_seconds) noexcept;
+    SpectraPluginResult (*publish_snapshot)(void* provider, std::uint64_t simulation_step, const SpectraPluginSnapshotSink* sink) noexcept;
 };
 
 static_assert(sizeof(SpectraPluginTriangleMeshDatasetDescriptor) == 16);
 static_assert(sizeof(SpectraPluginSphereSetDatasetDescriptor) == 4);
 static_assert(sizeof(SpectraPluginTelemetryDescriptor) == 72);
 static_assert(offsetof(SpectraPluginTelemetryDescriptor, plot) == 68);
-static_assert(sizeof(SpectraPluginPresentationTickResult) == 24);
-static_assert(offsetof(SpectraPluginPresentationTickResult, dirty) == 16);
 static_assert(sizeof(SpectraPluginDatasetCommit) == 48);
 static_assert(offsetof(SpectraPluginDatasetCommit, signal_value) == 16);
-static_assert(sizeof(SpectraPluginFrameSink) == 32);
-static_assert(sizeof(SpectraPluginApi) == 88);
+static_assert(sizeof(SpectraPluginSnapshotSink) == 24);
+static_assert(sizeof(SpectraPluginApi) == 80);
 
 extern "C" {
-SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_21() noexcept;
+SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_22() noexcept;
 }
+
+#endif

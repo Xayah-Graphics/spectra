@@ -70,9 +70,18 @@ namespace spectra {
     void ViewportPicker::upload(const scene::SceneView source_scene, const vk::raii::CommandBuffer* command_buffer) {
         std::vector<ViewportPickPrimitive> primitives{};
         primitives.reserve(this->context.gpu_scene.view().acceleration_primitive_indices.size());
+        const auto volume_medium = [&source_scene](const scene::MediumId medium_id) {
+            if (medium_id.value == 0) return false;
+            const scene::Medium& medium = *std::ranges::find(source_scene.resources.media, medium_id, &scene::Medium::id);
+            return std::holds_alternative<scene::VolumeMedium>(medium.data);
+        };
         for (const std::uint32_t scene_primitive_index : this->context.gpu_scene.view().acceleration_primitive_indices) {
             const GpuScenePrimitive& gpu_primitive = this->context.gpu_scene.view().primitives[scene_primitive_index];
+            const scene::Instance& instance        = source_scene.resources.instances[gpu_primitive.scene_instance_index];
+            const scene::Prototype& prototype      = *std::ranges::find(source_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
+            const scene::Primitive& primitive      = prototype.primitives[gpu_primitive.prototype_primitive_index];
             ViewportPickPrimitive pick{};
+            pick.metadata[1] = volume_medium(primitive.media.inside) || volume_medium(primitive.media.outside) ? 1u : 0u;
             if (gpu_primitive.kind == GpuScenePrimitiveKind::SphereSet) {
                 const GpuSphereSet& spheres = this->context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
                 pick.positions              = spheres.positions_descriptor;
@@ -81,9 +90,6 @@ namespace spectra {
                 primitives.push_back(pick);
                 continue;
             }
-            const scene::Instance& instance   = source_scene.resources.instances[gpu_primitive.scene_instance_index];
-            const scene::Prototype& prototype = *std::ranges::find(source_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
-            const scene::Primitive& primitive = prototype.primitives[gpu_primitive.prototype_primitive_index];
             const scene::Geometry& geometry   = *std::ranges::find(source_scene.resources.geometries, primitive.geometry, &scene::Geometry::id);
             std::visit(
                 [&pick](const auto& data) {

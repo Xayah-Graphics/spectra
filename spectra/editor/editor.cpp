@@ -61,11 +61,6 @@ namespace spectra {
             std::uint64_t synchronized_scene_revision{};
         } rendering;
 
-        struct {
-            std::chrono::steady_clock::time_point previous_simulation_sample{};
-            bool simulation_sample_valid{};
-        } timing;
-
     private:
         void open_scene(const std::filesystem::path& path);
         void handle_dropped_scene_paths();
@@ -128,7 +123,7 @@ namespace spectra {
             this->document.content.source    = std::move(next_scene);
             this->document.content.evaluated = this->document.content.source;
             this->document.content.path      = path;
-            if (this->document.content.source.dynamic_setup || this->document.content.source.frozen_dynamic_frame) this->dynamics.initialize(path, this->document.content.source);
+            if (this->document.content.source.dynamic_setup || this->document.content.source.frozen_dynamic_snapshot) this->dynamics.initialize(path, this->document.content.source);
             this->rebuild_rendering(this->document.content.source);
             this->viewport.initialize_from_scene();
             this->document.content.loaded               = true;
@@ -146,7 +141,7 @@ namespace spectra {
             this->rendering.synchronized_scene_revision = 0;
             if (previous_loaded) {
                 try {
-                    if (this->document.content.source.dynamic_setup || this->document.content.source.frozen_dynamic_frame) this->dynamics.initialize(this->document.content.path, this->document.content.source);
+                    if (this->document.content.source.dynamic_setup || this->document.content.source.frozen_dynamic_snapshot) this->dynamics.initialize(this->document.content.path, this->document.content.source);
                     this->rebuild_rendering(this->document.content.source);
                     this->viewport.initialize_from_scene();
                     this->document.content.loaded = true;
@@ -199,7 +194,6 @@ namespace spectra {
 
     bool EditorApplication::confirm_scene_replacement() {
         if (!this->document.content.loaded || !this->document.content.modified) return true;
-        this->timing.simulation_sample_valid    = false;
         const SceneReplacementDecision decision = this->dialogs.confirm_scene_replacement();
         if (decision == SceneReplacementDecision::Cancel) return false;
         if (decision == SceneReplacementDecision::Save) this->document.save();
@@ -207,14 +201,12 @@ namespace spectra {
     }
 
     void EditorApplication::replace_scene(const std::filesystem::path& path) {
-        this->timing.simulation_sample_valid = false;
         if (path.extension() != ".spectra") throw std::runtime_error("Spectra accepts only .spectra scenes");
         if (!this->confirm_scene_replacement()) return;
         this->open_scene(path);
     }
 
     void EditorApplication::reload_scene() {
-        this->timing.simulation_sample_valid = false;
         if (!this->confirm_scene_replacement()) return;
         this->open_scene(this->document.content.path);
         this->ui.notify("Scene reloaded");
@@ -235,24 +227,20 @@ namespace spectra {
         if (actions.exit_application) this->platform.request_close();
         try {
             if (actions.open_scene_file) {
-                this->timing.simulation_sample_valid = false;
                 if (const std::optional<std::filesystem::path> path = this->dialogs.choose_scene_file()) this->replace_scene(*path);
             }
             if (actions.reload_scene) this->reload_scene();
             if (actions.save_scene) {
-                this->timing.simulation_sample_valid = false;
                 this->document.save();
                 this->ui.notify("Scene saved");
             }
             if (actions.save_scene_as) {
-                this->timing.simulation_sample_valid = false;
                 if (const std::optional<std::filesystem::path> path = this->dialogs.choose_scene_save_path(this->document.content.path)) {
                     this->document.save_as(*path);
                     this->ui.notify("Scene saved");
                 }
             }
             if (actions.export_frozen_scene) {
-                this->timing.simulation_sample_valid = false;
                 if (const std::optional<std::filesystem::path> path = this->dialogs.choose_scene_save_path(this->document.content.path, true)) {
                     this->frozen_export.request(*path);
                     this->ui.notify("Capturing Frozen Scene");
@@ -269,8 +257,8 @@ namespace spectra {
     bool EditorApplication::prepare_rendering(const vk::raii::CommandBuffer& command_buffer, const vk::Extent2D extent) {
         GpuSceneUpdate gpu_update{};
         bool gpu_scene_synchronized{};
-        if (const dynamics::DynamicFrame* frame = this->dynamics.pending_frame()) {
-            gpu_update             = this->gpu_scene.apply(*frame, this->document.content.evaluated.view(), command_buffer);
+        if (const dynamics::DynamicSnapshot* snapshot = this->dynamics.pending_snapshot()) {
+            gpu_update             = this->gpu_scene.apply(*snapshot, this->document.content.evaluated.view(), command_buffer);
             gpu_scene_synchronized = true;
         }
 
@@ -304,7 +292,7 @@ namespace spectra {
         if (this->dynamics.initialized()) {
             this->dynamics.record_telemetry(command_buffer, this->runtime.frames.frame.current_slot_index);
         }
-        this->dynamics.consume_frame();
+        this->dynamics.consume_snapshot();
         return renderer_ready;
     }
 
@@ -336,7 +324,7 @@ namespace spectra {
     void EditorApplication::run() {
         while (true) {
             this->platform.poll_events();
-            if (this->platform.take_resize_completion()) this->timing.simulation_sample_valid = false;
+            static_cast<void>(this->platform.take_resize_completion());
             if (this->platform.take_close_request()) {
                 try {
                     if (this->confirm_scene_replacement()) break;
@@ -349,31 +337,22 @@ namespace spectra {
             const std::optional<PresentedFrameContext> frame = this->presentation.begin_frame();
             if (!frame) {
                 this->platform.wait_events();
-                this->timing.simulation_sample_valid = false;
                 continue;
             }
 
-            const std::chrono::steady_clock::time_point current_clock_sample = std::chrono::steady_clock::now();
-            const bool simulation_clock_active                               = this->document.content.loaded;
             if (this->document.content.loaded) {
                 this->begin_frame(frame->frame.slot_index);
-                if (simulation_clock_active && this->timing.simulation_sample_valid && this->dynamics.initialized()) this->dynamics.advance(current_clock_sample - this->timing.previous_simulation_sample);
                 this->imgui.resize_viewport(frame->presentation_target.extent);
             }
-            this->timing.previous_simulation_sample = current_clock_sample;
-            this->timing.simulation_sample_valid    = simulation_clock_active;
 
             this->imgui.begin_frame();
             const EditorActions actions        = this->ui.draw_editor_ui();
             this->platform.window_drag_regions = actions.window_drag_regions;
             this->handle_actions(actions);
-            if (!this->timing.simulation_sample_valid && this->document.content.loaded) {
-                this->timing.previous_simulation_sample = std::chrono::steady_clock::now();
-                this->timing.simulation_sample_valid    = true;
-            }
             this->imgui.end_frame();
 
             if (this->document.content.loaded) {
+                if (this->dynamics.initialized()) this->dynamics.advance();
                 this->imgui.resize_viewport(frame->presentation_target.extent);
                 const vk::Extent2D viewport_extent = this->display.image.extent;
                 if (this->prepare_rendering(frame->frame.command_buffer, viewport_extent)) {

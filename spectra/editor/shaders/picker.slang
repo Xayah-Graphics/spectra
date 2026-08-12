@@ -204,6 +204,9 @@ void pick() {
     RWStructuredBuffer<uint> result =
         push_data.result;
     while (query.Proceed()) {
+        const ViewportPickPrimitive candidate =
+            primitives[
+                query.CandidateInstanceID()];
         float distance = -1.0;
         if (
             query.CandidateType() ==
@@ -212,10 +215,7 @@ void pick() {
                 query.CandidateTriangleRayT();
         else if (
             query.CandidateType() ==
-            CANDIDATE_PROCEDURAL_PRIMITIVE) {
-            const ViewportPickPrimitive candidate =
-                primitives[
-                    query.CandidateInstanceID()];
+                CANDIDATE_PROCEDURAL_PRIMITIVE) {
             distance =
                 procedural_hit_distance(
                     candidate,
@@ -237,7 +237,13 @@ void pick() {
                           ((push_data.far_plane - push_data.near_plane) * camera_depth)
                 : (camera_depth - push_data.near_plane) /
                       (push_data.far_plane - push_data.near_plane);
-        if (abs(candidate_device_depth - visible_depth) > 0.001) continue;
+        const bool volume_boundary =
+            candidate.metadata.y != 0;
+        if (
+            volume_boundary
+                ? candidate_device_depth > visible_depth + 0.001
+                : abs(candidate_device_depth - visible_depth) > 0.001)
+            continue;
         if (
             query.CandidateType() ==
             CANDIDATE_NON_OPAQUE_TRIANGLE)

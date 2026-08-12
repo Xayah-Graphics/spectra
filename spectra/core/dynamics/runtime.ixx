@@ -48,8 +48,6 @@ namespace spectra {
             GpuExternalTimelineSemaphore timeline_semaphore{};
             std::uint32_t capacity{};
             std::uint32_t secondary_capacity{};
-            std::uint32_t requested_capacity{};
-            std::uint32_t requested_secondary_capacity{};
             std::uint64_t timeline_signal_value{};
             bool output_pending{};
         };
@@ -69,7 +67,6 @@ namespace spectra {
             std::vector<std::vector<DynamicDatasetBuffer>> buffer_slots{};
             GpuExternalTimelineSemaphore timeline_semaphore{};
             std::array<TelemetryReadbackSlot, VulkanFrames::frames_in_flight> readback_slots{};
-            GpuBuffer immediate_readback{};
             std::uint64_t timeline_signal_value{};
             std::uint64_t simulation_step{};
             std::uint64_t sequence{};
@@ -116,35 +113,33 @@ namespace spectra {
         DynamicsRuntime& operator=(const DynamicsRuntime&) = delete;
         DynamicsRuntime& operator=(DynamicsRuntime&&)      = delete;
 
-        void initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene);
-        void destroy() noexcept;
-        void advance(std::chrono::duration<double> elapsed);
-        [[nodiscard]] const dynamics::DynamicFrame* pending_frame() noexcept;
-        void consume_frame() noexcept;
-        void resolve_telemetry(std::uint32_t frame_slot_index);
-        void record_telemetry(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
-        [[nodiscard]] bool controls(scene::InstanceId instance_id) const noexcept;
-        [[nodiscard]] bool controls(scene::VolumeId volume_id) const noexcept;
         [[nodiscard]] const dynamics::ProviderDescriptor& provider_descriptor(std::string_view provider_id) const;
         [[nodiscard]] const dynamics::TelemetrySnapshot& telemetry(std::size_t system_index) const;
         [[nodiscard]] bool initialized() const noexcept;
         [[nodiscard]] std::span<const dynamics::MeshOutputBinding> mesh_bindings() const noexcept;
         [[nodiscard]] std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings() const noexcept;
         [[nodiscard]] std::span<const dynamics::GpuVisualization> visualizations() const noexcept;
-        [[nodiscard]] const dynamics::DynamicFrame& published_frame() const noexcept;
-        [[nodiscard]] const dynamics::FrozenFrame* frozen_frame() const noexcept;
-        [[nodiscard]] dynamics::FrozenFrame telemetry_frame() const;
-
+        [[nodiscard]] const dynamics::DynamicSnapshot& published_snapshot() const noexcept;
+        [[nodiscard]] const dynamics::FrozenSnapshot* frozen_snapshot() const noexcept;
+        [[nodiscard]] dynamics::FrozenSnapshot telemetry_snapshot() const;
+        void initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene);
+        void advance();
+        [[nodiscard]] const dynamics::DynamicSnapshot* pending_snapshot() noexcept;
+        void consume_snapshot() noexcept;
+        void resolve_telemetry(std::uint32_t frame_slot_index);
+        void record_telemetry(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
+        [[nodiscard]] bool controls(scene::InstanceId instance_id) const noexcept;
+        [[nodiscard]] bool controls(scene::VolumeId volume_id) const noexcept;
+        void apply_parameter_changes(std::size_t system_index, std::span<const scene::DynamicParameterSetting> parameters, bool reset);
+        void destroy() noexcept;
         [[nodiscard]] bool running() const noexcept;
         [[nodiscard]] dynamics::SimulationTimeline timeline() const noexcept;
-        [[nodiscard]] dynamics::PresentationTimeline presentation_timeline() const noexcept;
         void start();
         void pause();
         void step();
         void evaluate(std::uint64_t simulation_step);
         void evaluate_time(double simulation_seconds);
         void reset();
-        void apply_parameter_changes(std::size_t system_index, std::span<const scene::DynamicParameterSetting> parameters, bool reset);
 
     private:
         struct {
@@ -152,7 +147,7 @@ namespace spectra {
             SceneDocument& document;
         } context;
 
-        dynamics::FrozenFrameRuntime frozen;
+        dynamics::FrozenSnapshotRuntime frozen;
 
         struct {
             bool initialized{};
@@ -172,20 +167,17 @@ namespace spectra {
 
         struct {
             std::uint64_t simulation_step{};
-            std::uint64_t presentation_frame{};
-            double presentation_seconds{};
-            std::chrono::duration<double> accumulator{};
             bool playing{};
         } clock;
 
         struct {
-            dynamics::DynamicFrame frame{};
-            bool frame_pending{};
+            dynamics::DynamicSnapshot snapshot{};
             DynamicSystemRuntime* publishing_system{};
             std::vector<PendingDatasetCommit> dataset_commits{};
             std::vector<PendingTelemetryCommit> telemetry_commits{};
             std::string callback_error{};
-            bool frozen_frame_pending{};
+            bool snapshot_pending{};
+            bool frozen_snapshot_pending{};
         } publication;
 
         struct {
@@ -194,25 +186,24 @@ namespace spectra {
         } outputs;
 
         [[nodiscard]] ProviderLibrary& provider_library(std::string_view provider_id) const;
+        static SpectraPluginResult collect_dataset(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept;
+        static SpectraPluginResult collect_telemetry(void* context, const SpectraPluginTelemetryCommit* commit) noexcept;
         void bind_dataset(DynamicDatasetRuntime& dataset, const scene::DynamicSystem& system) const;
         void declare_scene_output(const DynamicDatasetRuntime& dataset);
         void configure_dataset(DynamicSystemRuntime& system, std::size_t dataset_index);
         void configure_telemetry(DynamicSystemRuntime& system);
-        void consume_telemetry(DynamicSystemRuntime& system, const SpectraPluginTelemetryGpuValue* values, std::uint64_t simulation_step, double simulation_seconds, std::string phase, std::string headline, std::string message);
-        void flush_telemetry(DynamicSystemRuntime& system);
         [[nodiscard]] DynamicDatasetRuntime& dataset_runtime(DynamicSystemRuntime& system, std::uint64_t dataset_index);
+        void consume_telemetry(DynamicSystemRuntime& system, const SpectraPluginTelemetryGpuValue* values, std::uint64_t simulation_step, double simulation_seconds, std::string phase, std::string headline, std::string message);
         void apply_parameters(DynamicSystemRuntime& system);
-        void append_dataset(const PendingDatasetCommit& pending, dynamics::DynamicFrame& frame) const;
-        void abort_publication(std::size_t first_dataset_commit = 0, std::size_t first_telemetry_commit = 0);
-        void commit_publication(dynamics::DynamicFrame& frame);
-        void publish_frame(std::uint64_t simulation_step);
+        void append_dataset(const PendingDatasetCommit& pending, dynamics::DynamicSnapshot& snapshot) const;
+        void abort_publication();
+        void commit_publication(dynamics::DynamicSnapshot& snapshot);
+        void discard_pending_snapshot();
+        void publish_snapshot(std::uint64_t simulation_step);
         void step_to(std::uint64_t target_step);
         void reset_systems();
         void evaluate_frame(std::uint64_t target_step);
         void reset_simulation();
         void advance_one_step();
-        static SpectraPluginResult collect_dataset(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept;
-        static SpectraPluginResult collect_capacity(void* context, std::uint64_t dataset_index, std::uint32_t capacity, std::uint32_t secondary_capacity) noexcept;
-        static SpectraPluginResult collect_telemetry(void* context, const SpectraPluginTelemetryCommit* commit) noexcept;
     };
 } // namespace spectra
