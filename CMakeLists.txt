@@ -102,9 +102,7 @@ target_sources(
         FILE_SET internal_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
         FILES
-        spectra/core/scene/content_hash.ixx
         spectra/core/scene/asset_import.ixx
-        spectra/core/scene/package.ixx
         PRIVATE
         spectra/core/runtime/runtime.cpp
         spectra/core/runtime/graphics.cpp
@@ -113,9 +111,7 @@ target_sources(
         spectra/core/util/math.cpp
         spectra/core/headless.cpp
         spectra/core/scene/scene.cpp
-        spectra/core/scene/content_hash.cpp
         spectra/core/scene/asset_import.cpp
-        spectra/core/scene/package.cpp
         spectra/core/scene/format.cpp
         spectra/core/scene/document.cpp
         spectra/core/dynamics/runtime.cpp

@@ -60,7 +60,6 @@ add_custom_command(
         "${SPECTRA_SHADER_EDITOR_ENTRIES}"
         "${SPECTRA_BUILD_UI}"
         ${SPECTRA_SHADER_INCLUDE_DIRECTORIES}
-        "${SPECTRA_NANOVDB_INCLUDE_DIR}"
         COMMAND "${CMAKE_COMMAND}" -E touch "${SPECTRA_SHADER_STAMP}"
         DEPENDS
         spectra_shader_compiler
@@ -69,7 +68,6 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/raster_abi.types"
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/plugin_abi.types"
         ${SPECTRA_SHADER_ENTRY_FILES}
-        "${SPECTRA_NANOVDB_INCLUDE_DIR}/nanovdb/PNanoVDB.h"
         ${SPECTRA_SHADER_SOURCES}
         VERBATIM
 )

@@ -38,6 +38,12 @@ namespace spectra::scene {
             std::vector<PlyProperty> properties{};
         };
 
+        struct PlySource {
+            std::ifstream stream{};
+            PlyFormat format{};
+            std::vector<PlyElement> elements{};
+        };
+
         struct ExrReader {
             exr_reader* value{};
 
@@ -60,6 +66,67 @@ namespace spectra::scene {
             if (name == "float" || name == "float32") return PlyScalarType::Float32;
             if (name == "double" || name == "float64") return PlyScalarType::Float64;
             throw std::runtime_error(std::format("Unsupported PLY scalar type {}", name));
+        }
+
+        [[nodiscard]] PlySource open_ply_source(const std::filesystem::path& path) {
+            PlySource source{.stream = std::ifstream{path, std::ios::binary}};
+            if (!source.stream) throw std::runtime_error(std::format("Failed to open PLY source {}", path.string()));
+            std::string line{};
+            std::getline(source.stream, line);
+            if (line.ends_with('\r')) line.pop_back();
+            if (line != "ply") throw std::runtime_error(std::format("PLY source has an invalid signature: {}", path.string()));
+            bool format_present{};
+            bool header_complete{};
+            while (std::getline(source.stream, line)) {
+                if (line.ends_with('\r')) line.pop_back();
+                std::istringstream tokens{line};
+                std::string command{};
+                tokens >> command;
+                if (command.empty() || command == "comment" || command == "obj_info") continue;
+                if (command == "format") {
+                    std::string identifier{};
+                    std::string version{};
+                    tokens >> identifier >> version;
+                    if (version != "1.0") throw std::runtime_error(std::format("Unsupported PLY version {}", version));
+                    if (identifier == "ascii")
+                        source.format = PlyFormat::Ascii;
+                    else if (identifier == "binary_little_endian")
+                        source.format = PlyFormat::BinaryLittleEndian;
+                    else if (identifier == "binary_big_endian")
+                        source.format = PlyFormat::BinaryBigEndian;
+                    else
+                        throw std::runtime_error(std::format("Unsupported PLY format {}", identifier));
+                    format_present = true;
+                } else if (command == "element") {
+                    PlyElement element{};
+                    tokens >> element.name >> element.count;
+                    if (!tokens) throw std::runtime_error("Invalid PLY element declaration");
+                    source.elements.push_back(std::move(element));
+                } else if (command == "property") {
+                    if (source.elements.empty()) throw std::runtime_error("PLY property appears before an element declaration");
+                    std::string type{};
+                    tokens >> type;
+                    PlyProperty property{};
+                    if (type == "list") {
+                        std::string count_type{};
+                        std::string value_type{};
+                        tokens >> count_type >> value_type >> property.name;
+                        property.count_type = ply_scalar_type(count_type);
+                        property.value_type = ply_scalar_type(value_type);
+                    } else {
+                        tokens >> property.name;
+                        property.value_type = ply_scalar_type(type);
+                    }
+                    if (!tokens) throw std::runtime_error("Invalid PLY property declaration");
+                    source.elements.back().properties.push_back(std::move(property));
+                } else if (command == "end_header") {
+                    header_complete = true;
+                    break;
+                } else
+                    throw std::runtime_error(std::format("Unsupported PLY header declaration {}", command));
+            }
+            if (!format_present || !header_complete) throw std::runtime_error(std::format("Incomplete PLY header: {}", path.string()));
+            return source;
         }
 
         template <class Value>
@@ -209,69 +276,11 @@ namespace spectra::scene {
 
     void load_triangle_mesh_source(TriangleMeshGeometry& mesh, const std::filesystem::path& path) {
         if (path.extension() != ".ply") throw std::runtime_error(std::format("Triangle Mesh source must use the PLY format: {}", path.string()));
-        std::ifstream stream{path, std::ios::binary};
-        if (!stream) throw std::runtime_error(std::format("Failed to open PLY source {}", path.string()));
-        std::string line{};
-        std::getline(stream, line);
-        if (line.ends_with('\r')) line.pop_back();
-        if (line != "ply") throw std::runtime_error(std::format("PLY source has an invalid signature: {}", path.string()));
-        PlyFormat format{};
-        bool format_present{};
-        bool header_complete{};
-        std::vector<PlyElement> elements{};
-        while (std::getline(stream, line)) {
-            if (line.ends_with('\r')) line.pop_back();
-            std::istringstream tokens{line};
-            std::string command{};
-            tokens >> command;
-            if (command.empty() || command == "comment" || command == "obj_info") continue;
-            if (command == "format") {
-                std::string identifier{};
-                std::string version{};
-                tokens >> identifier >> version;
-                if (version != "1.0") throw std::runtime_error(std::format("Unsupported PLY version {}", version));
-                if (identifier == "ascii")
-                    format = PlyFormat::Ascii;
-                else if (identifier == "binary_little_endian")
-                    format = PlyFormat::BinaryLittleEndian;
-                else if (identifier == "binary_big_endian")
-                    format = PlyFormat::BinaryBigEndian;
-                else
-                    throw std::runtime_error(std::format("Unsupported PLY format {}", identifier));
-                format_present = true;
-            } else if (command == "element") {
-                PlyElement element{};
-                tokens >> element.name >> element.count;
-                if (!tokens) throw std::runtime_error("Invalid PLY element declaration");
-                elements.push_back(std::move(element));
-            } else if (command == "property") {
-                if (elements.empty()) throw std::runtime_error("PLY property appears before an element declaration");
-                std::string type{};
-                tokens >> type;
-                PlyProperty property{};
-                if (type == "list") {
-                    std::string count_type{};
-                    std::string value_type{};
-                    tokens >> count_type >> value_type >> property.name;
-                    property.count_type = ply_scalar_type(count_type);
-                    property.value_type = ply_scalar_type(value_type);
-                } else {
-                    tokens >> property.name;
-                    property.value_type = ply_scalar_type(type);
-                }
-                if (!tokens) throw std::runtime_error("Invalid PLY property declaration");
-                elements.back().properties.push_back(std::move(property));
-            } else if (command == "end_header") {
-                header_complete = true;
-                break;
-            } else
-                throw std::runtime_error(std::format("Unsupported PLY header declaration {}", command));
-        }
-        if (!format_present || !header_complete) throw std::runtime_error(std::format("Incomplete PLY header: {}", path.string()));
+        PlySource source = open_ply_source(path);
 
-        const auto vertex_element = std::ranges::find(elements, std::string{"vertex"}, &PlyElement::name);
-        const auto face_element   = std::ranges::find(elements, std::string{"face"}, &PlyElement::name);
-        if (vertex_element == elements.end() || face_element == elements.end()) throw std::runtime_error("PLY Triangle Mesh requires vertex and face elements");
+        const auto vertex_element = std::ranges::find(source.elements, std::string{"vertex"}, &PlyElement::name);
+        const auto face_element   = std::ranges::find(source.elements, std::string{"face"}, &PlyElement::name);
+        if (vertex_element == source.elements.end() || face_element == source.elements.end()) throw std::runtime_error("PLY Triangle Mesh requires vertex and face elements");
         const auto has_vertex_property = [&](const std::string_view name) { return std::ranges::contains(vertex_element->properties, name, &PlyProperty::name); };
         if (!has_vertex_property("x") || !has_vertex_property("y") || !has_vertex_property("z")) throw std::runtime_error("PLY Triangle Mesh requires x, y and z vertex properties");
         const bool has_nx = has_vertex_property("nx");
@@ -309,19 +318,19 @@ namespace spectra::scene {
             mesh.tangents.clear();
         std::vector<std::vector<std::uint32_t>> polygons{};
         polygons.reserve(face_element->count);
-        for (const PlyElement& element : elements)
+        for (const PlyElement& element : source.elements)
             for (std::uint64_t element_index = 0; element_index != element.count; ++element_index) {
                 std::vector<std::uint32_t> polygon{};
                 for (const PlyProperty& property : element.properties) {
                     if (property.count_type) {
-                        const std::uint64_t count = ply_count(stream, format, *property.count_type);
+                        const std::uint64_t count = ply_count(source.stream, source.format, *property.count_type);
                         if (element.name == "face" && (property.name == "vertex_indices" || property.name == "vertex_index")) {
                             polygon.reserve(count);
-                            for (std::uint64_t index = 0; index != count; ++index) polygon.push_back(ply_index(stream, format, property.value_type));
+                            for (std::uint64_t index = 0; index != count; ++index) polygon.push_back(ply_index(source.stream, source.format, property.value_type));
                         } else
-                            for (std::uint64_t index = 0; index != count; ++index) static_cast<void>(ply_number(stream, format, property.value_type));
+                            for (std::uint64_t index = 0; index != count; ++index) static_cast<void>(ply_number(source.stream, source.format, property.value_type));
                     } else {
-                        const double value = ply_number(stream, format, property.value_type);
+                        const double value = ply_number(source.stream, source.format, property.value_type);
                         if (element.name != "vertex") continue;
                         math::Float3& position = mesh.positions[element_index];
                         if (property.name == "x")
@@ -359,6 +368,36 @@ namespace spectra::scene {
                 if (index >= mesh.positions.size()) throw std::runtime_error("PLY face references a vertex outside the vertex element");
             triangulate_polygon(polygon, mesh.positions, mesh.indices);
         }
+    }
+
+    void load_sphere_set_source(SphereSet& spheres, const std::filesystem::path& path) {
+        if (path.extension() != ".ply") throw std::runtime_error(std::format("Sphere Set source must use the PLY format: {}", path.string()));
+        PlySource source    = open_ply_source(path);
+        const auto vertices = std::ranges::find(source.elements, std::string{"vertex"}, &PlyElement::name);
+        if (vertices == source.elements.end()) throw std::runtime_error("PLY Sphere Set requires a vertex element");
+        const auto has_property = [&vertices](const std::string_view name) { return std::ranges::contains(vertices->properties, name, &PlyProperty::name); };
+        if (!has_property("x") || !has_property("y") || !has_property("z") || !has_property("radius")) throw std::runtime_error("PLY Sphere Set requires x, y, z and radius vertex properties");
+        spheres.positions.assign(vertices->count, {});
+        spheres.radii.assign(vertices->count, {});
+        for (const PlyElement& element : source.elements)
+            for (std::uint64_t element_index = 0; element_index != element.count; ++element_index)
+                for (const PlyProperty& property : element.properties) {
+                    if (property.count_type) {
+                        const std::uint64_t count = ply_count(source.stream, source.format, *property.count_type);
+                        for (std::uint64_t index = 0; index != count; ++index) static_cast<void>(ply_number(source.stream, source.format, property.value_type));
+                        continue;
+                    }
+                    const double value = ply_number(source.stream, source.format, property.value_type);
+                    if (element.name != "vertex") continue;
+                    if (property.name == "x")
+                        spheres.positions[element_index].x = static_cast<float>(value);
+                    else if (property.name == "y")
+                        spheres.positions[element_index].y = static_cast<float>(value);
+                    else if (property.name == "z")
+                        spheres.positions[element_index].z = static_cast<float>(value);
+                    else if (property.name == "radius")
+                        spheres.radii[element_index] = static_cast<float>(value);
+                }
     }
 
     void load_png_source(ImageTexture& image, const TextureColorSpace color_space, const std::filesystem::path& path) {
@@ -480,7 +519,7 @@ namespace spectra::scene {
                 for (std::int32_t x = 0; x != info.width; ++x) {
                     const std::size_t source_index = static_cast<std::size_t>(y) * info.width + x;
                     const std::size_t target_index = mip_offset + static_cast<std::size_t>(info.y0 - header.data_window.min_y + y) * level_width + static_cast<std::size_t>(info.x0 - header.data_window.min_x + x);
-                    image.texels[target_index]      = {channels[0][source_index], channels[1][source_index], channels[2][source_index], channels[3][source_index]};
+                    image.texels[target_index]     = {channels[0][source_index], channels[1][source_index], channels[2][source_index], channels[3][source_index]};
                 }
         }
     }
@@ -497,8 +536,8 @@ namespace spectra::scene {
     void load_volume_source(DensityGridVolume& volume, const std::filesystem::path& path) {
         if (path.extension() != ".nvdb") throw std::runtime_error(std::format("Density Grid source must use the NanoVDB format: {}", path.string()));
         const nanovdb::GridHandle density_handle = nanovdb::io::readGrid(path.string(), "density");
-        const auto density = density_handle.grid<float>()->tree().getAccessor();
-        const std::size_t sample_count = static_cast<std::size_t>(volume.resolution.x) * volume.resolution.y * volume.resolution.z;
+        const auto density                       = density_handle.grid<float>()->tree().getAccessor();
+        const std::size_t sample_count           = static_cast<std::size_t>(volume.resolution.x) * volume.resolution.y * volume.resolution.z;
         volume.density.resize(sample_count);
         volume.temperature.clear();
         volume.emission_scale.clear();
@@ -507,7 +546,7 @@ namespace spectra::scene {
                 for (std::uint32_t x = 0; x != volume.resolution.x; ++x) volume.density[(static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x] = density.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
         if (nanovdb::io::hasGrid(path.string(), "temperature")) {
             const nanovdb::GridHandle temperature_handle = nanovdb::io::readGrid(path.string(), "temperature");
-            const auto temperature = temperature_handle.grid<float>()->tree().getAccessor();
+            const auto temperature                       = temperature_handle.grid<float>()->tree().getAccessor();
             volume.temperature.resize(sample_count);
             for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
                 for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
@@ -515,7 +554,7 @@ namespace spectra::scene {
         }
         if (nanovdb::io::hasGrid(path.string(), "emission_scale")) {
             const nanovdb::GridHandle emission_scale_handle = nanovdb::io::readGrid(path.string(), "emission_scale");
-            const auto emission_scale = emission_scale_handle.grid<float>()->tree().getAccessor();
+            const auto emission_scale                       = emission_scale_handle.grid<float>()->tree().getAccessor();
             volume.emission_scale.resize(sample_count);
             for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
                 for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
@@ -525,27 +564,38 @@ namespace spectra::scene {
 
     void load_volume_source(RgbGridVolume& volume, const std::filesystem::path& path) {
         if (path.extension() != ".nvdb") throw std::runtime_error(std::format("RGB Grid source must use the NanoVDB format: {}", path.string()));
-        const nanovdb::GridHandle sigma_a_handle = nanovdb::io::readGrid(path.string(), "sigma_a");
-        const nanovdb::GridHandle sigma_s_handle = nanovdb::io::readGrid(path.string(), "sigma_s");
-        const nanovdb::GridHandle emission_handle = nanovdb::io::readGrid(path.string(), "emission");
-        const auto sigma_a = sigma_a_handle.grid<nanovdb::Vec3f>()->tree().getAccessor();
-        const auto sigma_s = sigma_s_handle.grid<nanovdb::Vec3f>()->tree().getAccessor();
-        const auto emission = emission_handle.grid<nanovdb::Vec3f>()->tree().getAccessor();
         const std::size_t sample_count = static_cast<std::size_t>(volume.resolution.x) * volume.resolution.y * volume.resolution.z;
-        volume.sigma_a.resize(sample_count);
-        volume.sigma_s.resize(sample_count);
-        volume.emission.resize(sample_count);
-        for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
-            for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
-                for (std::uint32_t x = 0; x != volume.resolution.x; ++x) {
-                    const std::size_t index = (static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x;
-                    const nanovdb::Coord coordinate{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)};
-                    const nanovdb::Vec3f absorption = sigma_a.getValue(coordinate);
-                    const nanovdb::Vec3f scattering = sigma_s.getValue(coordinate);
-                    const nanovdb::Vec3f radiance   = emission.getValue(coordinate);
-                    volume.sigma_a[index]           = {absorption[0], absorption[1], absorption[2]};
-                    volume.sigma_s[index]           = {scattering[0], scattering[1], scattering[2]};
-                    volume.emission[index]          = {radiance[0], radiance[1], radiance[2]};
-                }
+        const auto load                = [&path, &volume, sample_count](const std::string_view name, std::vector<math::Float3>& values) {
+            values.clear();
+            if (!nanovdb::io::hasGrid(path.string(), std::string{name})) return;
+            const nanovdb::GridHandle handle = nanovdb::io::readGrid(path.string(), std::string{name});
+            const auto accessor              = handle.grid<nanovdb::Vec3f>()->tree().getAccessor();
+            values.resize(sample_count);
+            for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
+                for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
+                    for (std::uint32_t x = 0; x != volume.resolution.x; ++x) {
+                        const std::size_t index    = (static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x;
+                        const nanovdb::Vec3f value = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
+                        values[index]              = {value[0], value[1], value[2]};
+                    }
+        };
+        load("sigma_a", volume.sigma_a);
+        load("sigma_s", volume.sigma_s);
+        load("emission", volume.emission);
+    }
+
+    void load_scene_sources(Scene& scene, const std::filesystem::path& root) {
+        for (Geometry& geometry : scene.resources.geometries)
+            if (TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data)) load_triangle_mesh_source(*mesh, root / mesh->source);
+        for (SphereSet& spheres : scene.resources.sphere_sets)
+            if (!spheres.source.empty()) load_sphere_set_source(spheres, root / spheres.source);
+        for (Volume& volume : scene.resources.volumes) {
+            if (DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data))
+                load_volume_source(*density, root / density->source);
+            else if (RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data))
+                load_volume_source(*rgb, root / rgb->source);
+        }
+        for (Texture& texture : scene.resources.textures)
+            if (ImageTexture* image = std::get_if<ImageTexture>(&texture.data)) load_image_source(*image, texture.color_space, root / image->source);
     }
 } // namespace spectra::scene

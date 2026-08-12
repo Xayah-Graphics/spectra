@@ -616,11 +616,10 @@ namespace spectra {
                         record.metadata                 = {1, data.resolution.x, data.resolution.y, data.resolution.z};
                         const std::uint32_t field_flags = (data.sigma_a.empty() ? 0u : 1u) | (data.sigma_s.empty() ? 0u : 2u) | (data.emission.empty() ? 0u : 4u) | (std::to_underlying(data.color_space) << 8);
                         record.procedural_parameters[3] = std::bit_cast<float>(field_flags);
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ProceduralCloudVolume>) {
+                    } else {
                         record.metadata              = {2, 0, 0, 0};
                         record.procedural_parameters = {data.density, data.wispiness, data.frequency, 0.0f};
-                    } else
-                        throw std::runtime_error("Rasterizer requires dense or procedural Volume data; NanoVDB is currently a Path-only resource");
+                    }
                 },
                 volume.data);
             const auto field = [this, &shared](const GpuVolumeField field) -> DescriptorHandle {

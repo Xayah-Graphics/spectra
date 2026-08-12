@@ -4,8 +4,5 @@ import spectra.scene;
 import std;
 
 namespace spectra::scene {
-    export void load_triangle_mesh_source(TriangleMeshGeometry& mesh, const std::filesystem::path& path);
-    export void load_image_source(ImageTexture& image, TextureColorSpace color_space, const std::filesystem::path& path);
-    export void load_volume_source(DensityGridVolume& volume, const std::filesystem::path& path);
-    export void load_volume_source(RgbGridVolume& volume, const std::filesystem::path& path);
+    export void load_scene_sources(Scene& scene, const std::filesystem::path& root);
 } // namespace spectra::scene

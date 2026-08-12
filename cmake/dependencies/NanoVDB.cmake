@@ -9,7 +9,7 @@ function(spectra_prepare_nanovdb_dependency out_include_dir tag archive_sha256)
             "${archive_path}"
             "${archive_sha256}"
     )
-    if (NOT EXISTS "${include_dir}/nanovdb/PNanoVDB.h" OR NOT EXISTS "${include_dir}/nanovdb/tools/GridChecksum.h" OR EXISTS "${include_dir}/nanovdb/tools/GridBuilder.h")
+    if (NOT EXISTS "${include_dir}/nanovdb/io/IO.h" OR NOT EXISTS "${include_dir}/nanovdb/tools/GridChecksum.h" OR EXISTS "${include_dir}/nanovdb/tools/GridBuilder.h" OR EXISTS "${include_dir}/nanovdb/PNanoVDB.h")
         set(extract_dir "${archive_dir}/source")
         file(REMOVE_RECURSE "${extract_dir}" "${include_dir}")
         file(MAKE_DIRECTORY "${extract_dir}" "${include_dir}")
@@ -32,6 +32,8 @@ function(spectra_prepare_nanovdb_dependency out_include_dir tag archive_sha256)
         )
         file(REMOVE
                 "${include_dir}/nanovdb/CMakeLists.txt"
+                "${include_dir}/nanovdb/CNanoVDB.h"
+                "${include_dir}/nanovdb/PNanoVDB.h"
                 "${include_dir}/nanovdb/Readme.md"
                 "${include_dir}/nanovdb/tools/CreateNanoGrid.h"
                 "${include_dir}/nanovdb/tools/CreatePrimitives.h"

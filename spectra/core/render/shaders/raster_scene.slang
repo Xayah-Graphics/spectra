@@ -34,7 +34,6 @@ public static const uint area_source_sphere_set = SPECTRA_AREA_SOURCE_SPHERE_SET
 
 public static const uint volume_density_grid = SPECTRA_VOLUME_DENSITY_GRID;
 public static const uint volume_rgb_grid = SPECTRA_VOLUME_RGB_GRID;
-public static const uint volume_nanovdb = SPECTRA_VOLUME_NANOVDB;
 public static const uint volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
 
 public static const uint raster_display_wireframe = 1;

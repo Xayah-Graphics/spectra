@@ -284,7 +284,6 @@ public static const uint medium_volume = SPECTRA_MEDIUM_VOLUME;
 
 public static const uint volume_density_grid = SPECTRA_VOLUME_DENSITY_GRID;
 public static const uint volume_rgb_grid = SPECTRA_VOLUME_RGB_GRID;
-public static const uint volume_nanovdb = SPECTRA_VOLUME_NANOVDB;
 public static const uint volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
 
 public struct PathMedium {
@@ -309,8 +308,6 @@ public struct PathVolume {
     public DescriptorHandle<StructuredBuffer<PathPackedFloat3>> sigma_a;
     public DescriptorHandle<StructuredBuffer<PathPackedFloat3>> sigma_s;
     public DescriptorHandle<StructuredBuffer<PathPackedFloat3>> emission;
-    public DescriptorHandle<StructuredBuffer<uint>> nanovdb_density;
-    public DescriptorHandle<StructuredBuffer<uint>> nanovdb_temperature;
     public DescriptorHandle<StructuredBuffer<float>> majorant;
 }
 

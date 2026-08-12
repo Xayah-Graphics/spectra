@@ -4,9 +4,6 @@ import path_random;
 import path_scene;
 import path_spectrum;
 
-#define PNANOVDB_HLSL
-#include <nanovdb/PNanoVDB.h>
-
 static const int noise_permutation[256] = {
     151, 160, 137, 91, 90, 15, 131, 13,
     201, 95, 96, 53, 194, 233, 7, 225,
@@ -583,108 +580,6 @@ float3 sample_dense_rgb(
             delta.z);
 }
 
-float nanovdb_value(
-    StructuredBuffer<uint> data,
-    inout pnanovdb_readaccessor_t accessor,
-    int3 coordinate) {
-    pnanovdb_coord_t voxel =
-        coordinate;
-    return
-        pnanovdb_read_float(
-            data,
-            pnanovdb_readaccessor_get_value_address(
-                PNANOVDB_GRID_TYPE_FLOAT,
-                data,
-                accessor,
-                voxel));
-}
-
-float sample_nanovdb(
-    StructuredBuffer<uint> data,
-    float3 point) {
-    pnanovdb_grid_handle_t grid;
-    grid.address =
-        pnanovdb_address_null();
-    const pnanovdb_tree_handle_t tree =
-        pnanovdb_grid_get_tree(
-            data,
-            grid);
-    const pnanovdb_root_handle_t root =
-        pnanovdb_tree_get_root(
-            data,
-            tree);
-    pnanovdb_readaccessor_t accessor;
-    pnanovdb_readaccessor_init(
-        accessor,
-        root);
-    const float3 index_position =
-        pnanovdb_grid_world_to_indexf(
-            data,
-            grid,
-            point);
-    const int3 base =
-        int3(
-            floor(
-                index_position));
-    const float3 delta =
-        index_position -
-        float3(base);
-    return
-        lerp(
-            lerp(
-                lerp(
-                    nanovdb_value(
-                        data,
-                        accessor,
-                        base),
-                    nanovdb_value(
-                        data,
-                        accessor,
-                        base +
-                            int3(1, 0, 0)),
-                    delta.x),
-                lerp(
-                    nanovdb_value(
-                        data,
-                        accessor,
-                        base +
-                            int3(0, 1, 0)),
-                    nanovdb_value(
-                        data,
-                        accessor,
-                        base +
-                            int3(1, 1, 0)),
-                    delta.x),
-                delta.y),
-            lerp(
-                lerp(
-                    nanovdb_value(
-                        data,
-                        accessor,
-                        base +
-                            int3(0, 0, 1)),
-                    nanovdb_value(
-                        data,
-                        accessor,
-                        base +
-                            int3(1, 0, 1)),
-                    delta.x),
-                lerp(
-                    nanovdb_value(
-                        data,
-                        accessor,
-                        base +
-                            int3(0, 1, 1)),
-                    nanovdb_value(
-                        data,
-                        accessor,
-                        base +
-                            int3(1, 1, 1)),
-                    delta.x),
-                delta.y),
-            delta.z);
-}
-
 float4 normalized_blackbody(
     float temperature,
     float4 wavelengths) {
@@ -898,40 +793,6 @@ evaluate_medium(
                       wavelengths) *
                     medium.scales.y
                 : float4(0.0);
-        return result;
-    }
-    if (volume.metadata.x == volume_nanovdb) {
-        const float density =
-            sample_nanovdb(
-                volume.nanovdb_density,
-                point);
-        result.sigma_a *=
-            density;
-        result.sigma_s *=
-            density;
-        result.emission =
-            float4(0.0);
-        if (
-            (
-                volume.majorant_metadata.w &
-                1
-            ) != 0) {
-            const float temperature =
-                sample_nanovdb(
-                    volume
-                        .nanovdb_temperature,
-                    point) *
-                    medium.scales.w +
-                medium.temperature.x;
-            if (
-                temperature >=
-                medium.temperature.y)
-                result.emission =
-                    medium.scales.y *
-                    normalized_blackbody(
-                        temperature,
-                        wavelengths);
-        }
         return result;
     }
     const float density =

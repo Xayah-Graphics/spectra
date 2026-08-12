@@ -85,16 +85,6 @@ namespace spectra::scene {
         friend auto operator<=>(const ResourceRevision&, const ResourceRevision&) = default;
     };
 
-    export struct AssetReference {
-        std::string content_hash{};
-        friend auto operator<=>(const AssetReference&, const AssetReference&) = default;
-    };
-
-    export struct SourceReference {
-        std::string path{};
-        friend auto operator<=>(const SourceReference&, const SourceReference&) = default;
-    };
-
     export enum class SpectrumColorSpace : std::uint8_t {
         Srgb,
         Rec2020,
@@ -102,8 +92,7 @@ namespace spectra::scene {
     };
 
     export struct TriangleMeshGeometry {
-        AssetReference asset{};
-        SourceReference source{};
+        std::string source{};
         std::vector<math::Float3> positions{};
         std::vector<math::Float3> normals{};
         std::vector<math::Float3> tangents{};
@@ -156,7 +145,7 @@ namespace spectra::scene {
         SphereSetId id{};
         std::string name{};
         ResourceRevision revision{};
-        AssetReference asset{};
+        std::string source{};
         std::vector<math::Float3> positions{};
         std::vector<float> radii{};
     };
@@ -165,8 +154,7 @@ namespace spectra::scene {
 
     export struct DensityGridVolume {
         math::UInt3 resolution{};
-        AssetReference asset{};
-        SourceReference source{};
+        std::string source{};
         std::vector<float> density{};
         std::vector<float> temperature{};
         std::vector<float> emission_scale{};
@@ -175,21 +163,10 @@ namespace spectra::scene {
     export struct RgbGridVolume {
         math::UInt3 resolution{};
         SpectrumColorSpace color_space{SpectrumColorSpace::Srgb};
-        AssetReference asset{};
-        SourceReference source{};
+        std::string source{};
         std::vector<math::Float3> sigma_a{};
         std::vector<math::Float3> sigma_s{};
         std::vector<math::Float3> emission{};
-    };
-
-    export struct NanoVdbVolume {
-        AssetReference asset{};
-        std::string density_grid{"density"};
-        std::optional<std::string> temperature_grid{};
-        math::UInt3 majorant_resolution{};
-        std::vector<std::uint32_t> density_data{};
-        std::vector<std::uint32_t> temperature_data{};
-        std::vector<float> majorant{};
     };
 
     export struct ProceduralCloudVolume {
@@ -212,7 +189,7 @@ namespace spectra::scene {
         math::Bounds3 bounds{};
         math::Transform transform{};
         std::optional<VolumeRegion> dirty_region{};
-        std::variant<DensityGridVolume, RgbGridVolume, NanoVdbVolume, ProceduralCloudVolume> data{};
+        std::variant<DensityGridVolume, RgbGridVolume, ProceduralCloudVolume> data{};
     };
 
     export enum class TextureValueKind : std::uint8_t {
@@ -329,8 +306,7 @@ namespace spectra::scene {
     };
 
     export struct ImageTexture {
-        AssetReference asset{};
-        SourceReference source{};
+        std::string source{};
         TextureMapping mapping{};
         TextureWrapMode wrap{TextureWrapMode::Repeat};
         TextureChannel channel{TextureChannel::Luminance};

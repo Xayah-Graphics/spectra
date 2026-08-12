@@ -125,8 +125,6 @@ namespace spectra {
         SigmaA,
         SigmaS,
         Emission,
-        NanoVdbDensity,
-        NanoVdbTemperature,
         Count,
     };
 

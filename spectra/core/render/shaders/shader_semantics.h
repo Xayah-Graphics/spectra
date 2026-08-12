@@ -60,8 +60,7 @@
 #define SPECTRA_MEDIUM_VOLUME           1u
 #define SPECTRA_VOLUME_DENSITY_GRID     0u
 #define SPECTRA_VOLUME_RGB_GRID         1u
-#define SPECTRA_VOLUME_NANOVDB          2u
-#define SPECTRA_VOLUME_PROCEDURAL_CLOUD 3u
+#define SPECTRA_VOLUME_PROCEDURAL_CLOUD 2u
 
 #define SPECTRA_SPECTRUM_RGB              0u
 #define SPECTRA_SPECTRUM_CONSTANT         1u
@@ -134,7 +133,6 @@ namespace spectra::shader_semantics {
     inline constexpr std::uint32_t medium_volume           = SPECTRA_MEDIUM_VOLUME;
     inline constexpr std::uint32_t volume_density_grid     = SPECTRA_VOLUME_DENSITY_GRID;
     inline constexpr std::uint32_t volume_rgb_grid         = SPECTRA_VOLUME_RGB_GRID;
-    inline constexpr std::uint32_t volume_nanovdb          = SPECTRA_VOLUME_NANOVDB;
     inline constexpr std::uint32_t volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
 
     inline constexpr std::uint32_t spectrum_rgb              = SPECTRA_SPECTRUM_RGB;

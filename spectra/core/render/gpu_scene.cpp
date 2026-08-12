@@ -40,8 +40,7 @@ namespace spectra {
 
         [[nodiscard]] std::string texture_cache_key(const scene::Texture& texture) {
             const scene::ImageTexture& image = std::get<scene::ImageTexture>(texture.data);
-            const std::string identity       = image.asset.content_hash.empty() ? std::format("memory:{}", texture.id.value) : image.asset.content_hash;
-            return std::format("{}:{}:{}:{}:{}:{}", identity, texture.revision.content, texture.revision.topology, std::to_underlying(image.wrap), std::to_underlying(image.filter), std::bit_cast<std::uint32_t>(image.maximum_anisotropy));
+            return std::format("{}:{}:{}:{}:{}:{}", image.source, texture.revision.content, texture.revision.topology, std::to_underlying(image.wrap), std::to_underlying(image.filter), std::bit_cast<std::uint32_t>(image.maximum_anisotropy));
         }
 
         [[nodiscard]] vk::AccelerationStructureGeometryKHR triangle_geometry(const GpuGeometry& mesh) {
@@ -596,9 +595,6 @@ namespace spectra {
                     upload(GpuVolumeField::SigmaA, std::span<const math::Float3>{data.sigma_a});
                     upload(GpuVolumeField::SigmaS, std::span<const math::Float3>{data.sigma_s});
                     upload(GpuVolumeField::Emission, std::span<const math::Float3>{data.emission});
-                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::NanoVdbVolume>) {
-                    upload(GpuVolumeField::NanoVdbDensity, std::span<const std::uint32_t>{data.density_data});
-                    upload(GpuVolumeField::NanoVdbTemperature, std::span<const std::uint32_t>{data.temperature_data});
                 }
             },
             volume.data);

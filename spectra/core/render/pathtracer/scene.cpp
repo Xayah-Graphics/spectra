@@ -130,7 +130,7 @@ namespace spectra {
             std::visit(
                 [&copy](const auto& data) {
                     if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::TriangleMeshGeometry>)
-                        copy.data = scene::TriangleMeshGeometry{.asset = data.asset, .source = data.source};
+                        copy.data = scene::TriangleMeshGeometry{.source = data.source};
                     else
                         copy.data = data;
                 },
@@ -138,7 +138,7 @@ namespace spectra {
             result.geometries.push_back(std::move(copy));
         }
         result.sphere_sets.reserve(source.sphere_sets.size());
-        for (const scene::SphereSet& spheres : source.sphere_sets) result.sphere_sets.emplace_back(spheres.id, spheres.name, spheres.revision, spheres.asset);
+        for (const scene::SphereSet& spheres : source.sphere_sets) result.sphere_sets.emplace_back(spheres.id, spheres.name, spheres.revision, spheres.source);
         result.volumes    = source.volumes;
         result.textures   = source.textures;
         result.materials  = source.materials;
@@ -189,7 +189,6 @@ namespace spectra {
         enum class PathVolumeKind : std::uint32_t {
             DensityGrid     = shader_semantics::volume_density_grid,
             RgbGrid         = shader_semantics::volume_rgb_grid,
-            NanoVdb         = shader_semantics::volume_nanovdb,
             ProceduralCloud = shader_semantics::volume_procedural_cloud,
         };
 
@@ -1103,8 +1102,6 @@ namespace spectra {
             result.sigma_a                 = resources.zero_volume_field_descriptor;
             result.sigma_s                 = resources.zero_volume_field_descriptor;
             result.emission                = resources.zero_volume_field_descriptor;
-            result.nanovdb_density         = resources.zero_volume_field_descriptor;
-            result.nanovdb_temperature     = resources.zero_volume_field_descriptor;
             result.majorant                = resources.zero_volume_field_descriptor;
             result.bounds_minimum          = {volume.bounds.minimum.x, volume.bounds.minimum.y, volume.bounds.minimum.z, 0.0f};
             result.bounds_maximum          = {volume.bounds.maximum.x, volume.bounds.maximum.y, volume.bounds.maximum.z, 0.0f};
@@ -1140,12 +1137,6 @@ namespace spectra {
                         result.emission                   = field(GpuVolumeField::Emission);
                         const std::vector<float> majorant = build_rgb_majorant(data, spectrum_tables);
                         result.majorant                   = prepare_majorant(std::span<const float>{majorant});
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::NanoVdbVolume>) {
-                        result.metadata[0]         = std::to_underlying(PathVolumeKind::NanoVdb);
-                        result.majorant_metadata   = {data.majorant_resolution.x, data.majorant_resolution.y, data.majorant_resolution.z, data.temperature_data.empty() ? 0u : 1u};
-                        result.nanovdb_density     = field(GpuVolumeField::NanoVdbDensity);
-                        result.nanovdb_temperature = field(GpuVolumeField::NanoVdbTemperature);
-                        result.majorant            = prepare_majorant(std::span<const float>{data.majorant});
                     } else {
                         result.metadata[0]           = std::to_underlying(PathVolumeKind::ProceduralCloud);
                         result.procedural_parameters = {data.density, data.wispiness, data.frequency, 0.0f};
