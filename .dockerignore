@@ -2,6 +2,8 @@
 !CMakeLists.txt
 !LICENSE
 !main.cpp
+!cmake/
+!cmake/**
 !sdk/
 !sdk/**
 !spectra/
