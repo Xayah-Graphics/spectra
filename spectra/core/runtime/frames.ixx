@@ -25,10 +25,6 @@ namespace spectra {
             return this->value;
         }
 
-        [[nodiscard]] explicit operator bool() const noexcept {
-            return static_cast<bool>(this->value);
-        }
-
         [[nodiscard]] DescriptorHandle handle() const noexcept {
             return this->value;
         }

@@ -20,7 +20,7 @@ namespace spectra {
         EditorDialogs& operator=(EditorDialogs&&)      = delete;
 
         [[nodiscard]] std::optional<std::filesystem::path> choose_scene_file();
-        [[nodiscard]] std::optional<std::filesystem::path> choose_scene_save_path(const std::filesystem::path& current_path, bool frozen_scene = false);
+        [[nodiscard]] std::optional<std::filesystem::path> choose_scene_save_path(const std::filesystem::path& current_path);
         [[nodiscard]] SceneReplacementDecision confirm_scene_replacement() const noexcept;
 
         WindowPlatform& platform;

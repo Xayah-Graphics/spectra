@@ -4,10 +4,6 @@ import std;
 import vulkan;
 
 namespace spectra {
-    VisualizationRenderer::~VisualizationRenderer() {
-        this->context.runtime.frames.defer_destruction([shaders = std::move(this->shaders)]() mutable {});
-    }
-
     namespace {
         struct alignas(16) VisualizationPushData {
             DescriptorHandle primary{};
@@ -164,6 +160,10 @@ namespace spectra {
         this->shaders = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, create_infos};
     }
 
+    VisualizationRenderer::~VisualizationRenderer() {
+        this->context.runtime.frames.defer_destruction([shaders = std::move(this->shaders)]() mutable {});
+    }
+
     bool VisualizationRenderer::has_visible(const std::span<const dynamics::GpuVisualization> views, const scene::VisualizationCompositionDomain domain) const noexcept {
         return std::ranges::any_of(views, [domain](const dynamics::GpuVisualization& source) { return std::visit([domain](const auto& value) { return value.style.view.visible && value.style.view.composition_domain == domain; }, source.data); });
     }
@@ -186,17 +186,10 @@ namespace spectra {
         command_buffer.setFrontFace(vk::FrontFace::eCounterClockwise);
         command_buffer.setDepthTestEnable(vk::False);
         command_buffer.setDepthWriteEnable(vk::False);
-        command_buffer.setRasterizerDiscardEnable(vk::False);
-        command_buffer.setPolygonModeEXT(vk::PolygonMode::eFill);
-        command_buffer.setRasterizationSamplesEXT(vk::SampleCountFlagBits::e1);
-        command_buffer.setAlphaToCoverageEnableEXT(vk::False);
-        command_buffer.setDepthBiasEnable(vk::False);
-        command_buffer.setStencilTestEnable(vk::False);
+        set_basic_graphics_state(command_buffer);
         command_buffer.setVertexInputEXT({}, {});
         command_buffer.setPrimitiveTopology(vk::PrimitiveTopology::eTriangleList);
         command_buffer.setPrimitiveRestartEnable(vk::False);
-        constexpr vk::SampleMask sample_mask = 1;
-        command_buffer.setSampleMaskEXT(vk::SampleCountFlagBits::e1, sample_mask);
         constexpr vk::Bool32 blend_enable = vk::True;
         command_buffer.setColorBlendEnableEXT(0, blend_enable);
         command_buffer.setColorBlendEquationEXT(0, vk::ColorBlendEquationEXT{vk::BlendFactor::eSrcAlpha, vk::BlendFactor::eOneMinusSrcAlpha, vk::BlendOp::eAdd, vk::BlendFactor::eOne, vk::BlendFactor::eOneMinusSrcAlpha, vk::BlendOp::eAdd});

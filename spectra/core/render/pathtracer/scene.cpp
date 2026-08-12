@@ -63,11 +63,6 @@ namespace spectra {
         return {result[0], result[1], result[2]};
     }
 
-    std::span<const std::uint32_t> RgbToSpectrumTables::checked_data(const std::span<const std::uint32_t> data) {
-        if (data.size() != table_word_count * 3) throw std::runtime_error("Invalid RGB-to-spectrum table collection");
-        return data;
-    }
-
     RgbToSpectrumTables::RgbToSpectrumTables(const std::span<const std::uint32_t> data) : srgb(checked_data(data).first(table_word_count)), rec2020(data.subspan(table_word_count, table_word_count)), aces2065_1(data.last(table_word_count)) {}
 
     const RgbToSpectrumTable& RgbToSpectrumTables::table_for(const scene::SpectrumColorSpace color_space) const noexcept {
@@ -77,6 +72,11 @@ namespace spectra {
         case scene::SpectrumColorSpace::Aces2065_1: return this->aces2065_1;
         }
         std::unreachable();
+    }
+
+    std::span<const std::uint32_t> RgbToSpectrumTables::checked_data(const std::span<const std::uint32_t> data) {
+        if (data.size() != table_word_count * 3) throw std::runtime_error("Invalid RGB-to-spectrum table collection");
+        return data;
     }
 
     CompiledSpectrum compile_spectrum(const scene::SpectrumParameter& spectrum, const RgbToSpectrumTables& tables, std::vector<math::Float2>& piecewise_samples) {

@@ -16,6 +16,8 @@ import std;
 
 namespace spectra::scene {
     namespace {
+        constexpr std::uint32_t current_scene_format_version = 31;
+
         struct KdlWriter {
             std::string content{};
             std::uint32_t indentation{};
@@ -983,7 +985,6 @@ namespace spectra::scene {
             write_prototypes(writer, scene.resources.prototypes);
             write_instances(writer, scene.resources.instances);
             if (scene.dynamic_setup) write_dynamics(writer, *scene.dynamic_setup);
-            if (scene.frozen_dynamic_snapshot) writer.line(std::format("frozen-dynamic-snapshot asset={}", kdl_string(references.frozen_dynamic_snapshot->content_hash)));
             writer.end();
             return writer.content;
         }
@@ -1863,11 +1864,9 @@ namespace spectra::scene {
             const kdl::Document document = kdl::parse({reinterpret_cast<const char8_t*>(text.data()), text.size()}, kdl::KdlVersion::Kdl_2);
             if (document.nodes().empty()) throw std::runtime_error(std::format("Spectra scene has no root node: {}", path.string()));
             const kdl::Node& root = document.nodes()[0];
-            Scene scene{
-                .format_version = kdl_number<std::uint32_t>(root.args()[0]),
-                .name           = kdl_value_text(root.args()[1]),
-            };
-            if (scene.format_version != current_scene_format_version) throw std::runtime_error(std::format("Unsupported Spectra scene format {}", scene.format_version));
+            const std::uint32_t format_version = kdl_number<std::uint32_t>(root.args()[0]);
+            if (format_version != current_scene_format_version) throw std::runtime_error(std::format("Unsupported Spectra scene format {}", format_version));
+            Scene scene{.name = kdl_value_text(root.args()[1])};
             for (const kdl::Node& node : root.children()) {
                 if (node.name() == u8"active") {
                     scene.active_camera.value  = kdl_number_property<std::uint64_t>(node, u8"camera", 0);
@@ -1903,8 +1902,6 @@ namespace spectra::scene {
                     read_instances(scene.resources, node);
                 else if (node.name() == u8"dynamics")
                     scene.dynamic_setup = read_dynamics(node);
-                else if (node.name() == u8"frozen-dynamic-snapshot")
-                    scene.frozen_dynamic_snapshot = FrozenDynamicSnapshot{.asset = {.content_hash = kdl_string_property(node, u8"asset", "")}};
                 else
                     throw std::runtime_error(std::format("Unknown Spectra scene section {}", kdl_text(node.name())));
             }
@@ -1920,7 +1917,7 @@ namespace spectra::scene {
         return scene;
     }
 
-    void save_scene(const Scene& scene, const std::filesystem::path& path, const std::filesystem::path& source_scene_path, const SceneSaveMode mode) {
+    void save_scene(const Scene& scene, const std::filesystem::path& path, const std::filesystem::path& source_scene_path) {
         const std::filesystem::path package_root = path.parent_path();
         if (!package_root.empty()) std::filesystem::create_directories(package_root);
         const std::filesystem::path source_root = source_scene_path.empty() ? package_root : source_scene_path.parent_path();
@@ -1929,7 +1926,7 @@ namespace spectra::scene {
         std::filesystem::path temporary_path = path;
         temporary_path += std::format(".spectra-save-{}-{}.tmp", std::chrono::steady_clock::now().time_since_epoch().count(), temporary_sequence.fetch_add(1, std::memory_order_relaxed));
         try {
-            const PackageReferences references = prepare_package_resources(scene, package_root, source_root, mode == SceneSaveMode::PreserveSources, transaction);
+            const PackageReferences references = prepare_package_resources(scene, package_root, source_root, transaction);
             const std::string document         = serialize_scene_kdl(scene, references);
             std::ofstream stream{temporary_path, std::ios::binary | std::ios::trunc};
             if (!stream) throw std::runtime_error(std::format("Failed to create Spectra scene: {}", temporary_path.string()));

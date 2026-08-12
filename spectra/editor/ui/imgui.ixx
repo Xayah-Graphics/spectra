@@ -12,15 +12,6 @@ import vulkan;
 
 namespace spectra {
     export struct ImGuiBackend {
-        struct FrameResources {
-            GpuBuffer vertex_buffer{};
-            GpuBuffer index_buffer{};
-            DescriptorLease vertex_descriptor{};
-            DescriptorLease index_descriptor{};
-            std::size_t vertex_capacity{};
-            std::size_t index_capacity{};
-        };
-
         ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, DisplayPass& display, std::filesystem::path shader_directory) noexcept;
         ~ImGuiBackend();
 
@@ -34,6 +25,17 @@ namespace spectra {
         void end_frame();
         void resize_viewport(vk::Extent2D extent);
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, vk::Image target_image, vk::ImageView target_view, vk::Extent2D extent, vk::ImageLayout target_layout, vk::ImageLayout final_layout);
+        std::uint64_t viewport_texture_id{};
+
+    private:
+        struct FrameResources {
+            GpuBuffer vertex_buffer{};
+            GpuBuffer index_buffer{};
+            DescriptorLease vertex_descriptor{};
+            DescriptorLease index_descriptor{};
+            std::size_t vertex_capacity{};
+            std::size_t index_capacity{};
+        };
 
         struct {
             WindowPlatform& platform;
@@ -49,10 +51,8 @@ namespace spectra {
             DescriptorLease viewport_descriptor{};
         } renderer;
 
-        std::uint64_t viewport_texture_id{};
         bool initialized{};
 
-    private:
         void initialize_renderer();
         void update_texture(ImTextureData& texture, const vk::raii::CommandBuffer& command_buffer);
         void destroy_texture(ImTextureData& texture);

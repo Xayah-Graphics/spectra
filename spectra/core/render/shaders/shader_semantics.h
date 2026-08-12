@@ -1,4 +1,5 @@
-#pragma once
+#ifndef SPECTRA_SHADER_SEMANTICS_H
+#define SPECTRA_SHADER_SEMANTICS_H
 
 #define SPECTRA_GPU_ATTRIBUTE_NORMAL             (1u << 0u)
 #define SPECTRA_GPU_ATTRIBUTE_TANGENT            (1u << 1u)
@@ -144,4 +145,6 @@ namespace spectra::shader_semantics {
     inline constexpr std::uint32_t illuminant_d65            = SPECTRA_ILLUMINANT_D65;
     inline constexpr std::uint32_t illuminant_d60            = SPECTRA_ILLUMINANT_D60;
 } // namespace spectra::shader_semantics
+#endif
+
 #endif

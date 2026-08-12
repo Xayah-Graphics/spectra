@@ -83,6 +83,17 @@ namespace spectra {
             if (result.error.size != 0) throw std::runtime_error(std::format("Provider {} failed: {}", operation, plugin_string(result.error)));
         }
 
+        [[nodiscard]] std::string csv_field(const std::string_view source) {
+            if (source.find_first_of(",\"\r\n") == std::string_view::npos) return std::string{source};
+            std::string result{"\""};
+            for (const char character : source) {
+                if (character == '\"') result += '\"';
+                result += character;
+            }
+            result += '\"';
+            return result;
+        }
+
         template <class Destination, class Source>
         [[nodiscard]] Destination checked_plugin_enum(const Source value, const std::initializer_list<Source> accepted, const std::string_view name) {
             if (!std::ranges::contains(accepted, value)) throw std::runtime_error(std::format("Provider declared unknown {} value {}", name, std::to_underlying(value)));
@@ -113,15 +124,6 @@ namespace spectra {
             std::uint64_t element_count{};
             std::uint64_t element_size{};
         };
-
-        [[nodiscard]] std::uint64_t image_element_size(const dynamics::ImageFormat format) {
-            switch (format) {
-            case dynamics::ImageFormat::Rgba8Unorm: return sizeof(std::uint32_t);
-            case dynamics::ImageFormat::Rgba16Float: return sizeof(std::uint16_t) * 4;
-            case dynamics::ImageFormat::Rgba32Float: return sizeof(float) * 4;
-            }
-            throw std::runtime_error("Unknown dynamic Image format");
-        }
 
         [[nodiscard]] std::uint32_t checked_capacity_product(const std::initializer_list<std::uint32_t> factors) {
             std::uint32_t product = 1;
@@ -172,10 +174,10 @@ namespace spectra {
                 const std::uint64_t voxel_count = static_cast<std::uint64_t>(value->resolution.x) * value->resolution.y * value->resolution.z;
                 for (std::uint32_t channel_index = 0; channel_index < value->channels.size(); ++channel_index) layouts.emplace_back(SpectraPluginBufferSemantic::FieldChannel, channel_index, voxel_count, value->channels[channel_index].kind == dynamics::FieldChannelKind::Float ? sizeof(float) : sizeof(SpectraPluginFloat3));
             } else if (const auto* value = std::get_if<dynamics::ImageDataset>(&dataset.details))
-                layouts.emplace_back(SpectraPluginBufferSemantic::ImagePixel, 0, static_cast<std::uint64_t>(value->extent[0]) * value->extent[1], image_element_size(value->format));
+                layouts.emplace_back(SpectraPluginBufferSemantic::ImagePixel, 0, static_cast<std::uint64_t>(value->extent[0]) * value->extent[1], dynamics::image_element_size(value->format));
             else if (const auto* value = std::get_if<dynamics::CameraObservationDataset>(&dataset.details)) {
                 layouts.emplace_back(SpectraPluginBufferSemantic::CameraObservation, 0, capacity, sizeof(SpectraPluginCameraObservation));
-                layouts.emplace_back(SpectraPluginBufferSemantic::ImagePixel, 0, static_cast<std::uint64_t>(capacity) * value->images.extent[0] * value->images.extent[1], image_element_size(value->images.format));
+                layouts.emplace_back(SpectraPluginBufferSemantic::ImagePixel, 0, static_cast<std::uint64_t>(capacity) * value->images.extent[0] * value->images.extent[1], dynamics::image_element_size(value->images.format));
             } else if (std::holds_alternative<dynamics::TransformDataset>(dataset.details))
                 layouts.emplace_back(SpectraPluginBufferSemantic::Transform, 0, capacity, sizeof(SpectraPluginTransform));
             return layouts;
@@ -189,139 +191,14 @@ namespace spectra {
 
     } // namespace
 
-    DynamicsRuntime::ProviderLibrary::ProviderLibrary(const std::filesystem::path& library_path, const std::string_view expected_provider_id) : library_path(std::filesystem::weakly_canonical(library_path)) {
-#if defined(_WIN32)
-        const HMODULE loaded = LoadLibraryW(this->library_path.c_str());
-        if (!loaded) throw std::runtime_error(std::format("Windows failed to load Provider Library: {}", this->library_path.string()));
-        const auto entry = reinterpret_cast<const SpectraPluginApi* (*) () noexcept>(GetProcAddress(loaded, SPECTRA_PLUGIN_ENTRY_NAME));
-#else
-        void* loaded = dlopen(this->library_path.c_str(), RTLD_NOW | RTLD_LOCAL);
-        if (!loaded) throw std::runtime_error(std::format("Linux failed to load Provider Library '{}': {}", this->library_path.string(), dlerror()));
-        const auto entry = reinterpret_cast<const SpectraPluginApi* (*) () noexcept>(dlsym(loaded, SPECTRA_PLUGIN_ENTRY_NAME));
-#endif
-        try {
-            if (!entry) throw std::runtime_error(std::format("Provider Library does not export {}: {}", SPECTRA_PLUGIN_ENTRY_NAME, this->library_path.string()));
-            const SpectraPluginApi* loaded_api = entry();
-            if (!loaded_api || loaded_api->api_version != SPECTRA_PLUGIN_API_VERSION || loaded_api->struct_size != sizeof(SpectraPluginApi) || !loaded_api->describe_provider || !loaded_api->create_provider || !loaded_api->destroy_provider || !loaded_api->configure_dataset || !loaded_api->configure_telemetry || !loaded_api->apply_parameters || !loaded_api->reset || !loaded_api->step || !loaded_api->publish_snapshot) throw std::runtime_error(std::format("Provider Library has an incomplete Plugin API {} entry: {}", SPECTRA_PLUGIN_API_VERSION, this->library_path.string()));
-            const SpectraPluginProviderDescriptionResult description = loaded_api->describe_provider();
-            check_plugin_result(description.result, "description");
-            const std::string reported_provider_id = plugin_string(description.descriptor.id);
-            if (reported_provider_id != expected_provider_id) throw std::runtime_error(std::format("Provider Library '{}' reports Provider '{}' instead of '{}'", this->library_path.string(), reported_provider_id, expected_provider_id));
-            this->plugin_api = loaded_api;
-            this->descriptor = description.descriptor;
-        } catch (...) {
-#if defined(_WIN32)
-            FreeLibrary(loaded);
-#else
-            dlclose(loaded);
-#endif
-            throw;
-        }
-        this->library_handle = loaded;
-    }
-
-    DynamicsRuntime::ProviderLibrary::~ProviderLibrary() {
-        if (!this->library_handle) return;
-#if defined(_WIN32)
-        FreeLibrary(static_cast<HMODULE>(this->library_handle));
-#else
-        dlclose(this->library_handle);
-#endif
-    }
-
-    DynamicsRuntime::DynamicsRuntime(VulkanRuntime& runtime, SceneDocument& document) noexcept : context{runtime, document}, frozen{runtime} {}
+    DynamicsRuntime::DynamicsRuntime(VulkanRuntime& runtime) noexcept : context{runtime} {}
 
     DynamicsRuntime::~DynamicsRuntime() {
         this->destroy();
     }
 
-    DynamicsRuntime::ProviderLibrary& DynamicsRuntime::provider_library(const std::string_view provider_id) const {
-        const auto found = this->providers.by_id.find(std::string{provider_id});
-        if (found == this->providers.by_id.end()) throw std::runtime_error(std::format("Scene Dynamics does not contain Provider '{}'", provider_id));
-        return *found->second;
-    }
-
-    const dynamics::ProviderDescriptor& DynamicsRuntime::provider_descriptor(const std::string_view provider_id) const {
-        const auto found = std::ranges::find(this->providers.descriptors, provider_id, &dynamics::ProviderDescriptor::id);
-        if (found == this->providers.descriptors.end()) throw std::runtime_error(std::format("Scene Dynamics does not contain Provider '{}'", provider_id));
-        return *found;
-    }
-
-    const dynamics::TelemetrySnapshot& DynamicsRuntime::telemetry(const std::size_t system_index) const {
-        const auto found = std::ranges::find(this->systems.runtimes, system_index, &DynamicSystemRuntime::scene_system_index);
-        if (found == this->systems.runtimes.end()) throw std::runtime_error("Scene Dynamics does not contain the requested System runtime");
-        return found->telemetry;
-    }
-
-    bool DynamicsRuntime::initialized() const noexcept {
-        return this->configuration.initialized;
-    }
-
-    std::span<const dynamics::MeshOutputBinding> DynamicsRuntime::mesh_bindings() const noexcept {
-        return this->outputs.mesh_bindings;
-    }
-
-    std::span<const dynamics::SphereSetOutputBinding> DynamicsRuntime::sphere_set_bindings() const noexcept {
-        return this->outputs.sphere_set_bindings;
-    }
-
-    std::span<const dynamics::GpuVisualization> DynamicsRuntime::visualizations() const noexcept {
-        if (this->frozen.initialized()) return this->frozen.visualizations();
-        return this->publication.snapshot.visualizations;
-    }
-
-    const dynamics::DynamicSnapshot& DynamicsRuntime::published_snapshot() const noexcept {
-        return this->publication.snapshot;
-    }
-
-    const dynamics::FrozenSnapshot* DynamicsRuntime::frozen_snapshot() const noexcept {
-        return this->frozen.initialized() ? &this->frozen.snapshot() : nullptr;
-    }
-
-    dynamics::FrozenSnapshot DynamicsRuntime::telemetry_snapshot() const {
-        if (this->frozen.initialized()) return this->frozen.snapshot();
-        dynamics::FrozenSnapshot result{this->timeline()};
-        result.telemetry.reserve(this->systems.runtimes.size());
-        for (const DynamicSystemRuntime& runtime : this->systems.runtimes) {
-            const scene::DynamicSystem& system = this->configuration.setup.systems[runtime.scene_system_index];
-            result.telemetry.emplace_back(system.id.value, system.name, system.provider_id, runtime.provider_descriptor->telemetry, runtime.telemetry);
-        }
-        return result;
-    }
-
-    SpectraPluginResult DynamicsRuntime::collect_dataset(void* context, const std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept {
-        DynamicsRuntime& world = *static_cast<DynamicsRuntime*>(context);
-        try {
-            DynamicSystemRuntime& system   = *world.publication.publishing_system;
-            DynamicDatasetRuntime& dataset = world.dataset_runtime(system, dataset_index);
-            if (std::ranges::contains(world.publication.dataset_commits, &dataset, &PendingDatasetCommit::dataset)) throw std::runtime_error("Provider committed the same GPU Dataset more than once in one publication");
-            world.publication.dataset_commits.emplace_back(&system, &dataset, *commit);
-            return {};
-        } catch (const std::exception& error) {
-            world.publication.callback_error = error.what();
-            return {{world.publication.callback_error.data(), world.publication.callback_error.size()}};
-        }
-    }
-
-    SpectraPluginResult DynamicsRuntime::collect_telemetry(void* context, const SpectraPluginTelemetryCommit* commit) noexcept {
-        DynamicsRuntime& world = *static_cast<DynamicsRuntime*>(context);
-        try {
-            if (std::ranges::contains(world.publication.telemetry_commits, world.publication.publishing_system, &PendingTelemetryCommit::system)) throw std::runtime_error("Provider committed Telemetry more than once in one publication");
-            world.publication.telemetry_commits.emplace_back(world.publication.publishing_system, commit->slot_index, commit->signal_value, plugin_string(commit->phase), plugin_string(commit->headline), plugin_string(commit->message));
-            return {};
-        } catch (const std::exception& error) {
-            world.publication.callback_error = error.what();
-            return {{world.publication.callback_error.data(), world.publication.callback_error.size()}};
-        }
-    }
-
     void DynamicsRuntime::initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene) {
         this->destroy();
-        if (source_scene.frozen_dynamic_snapshot) {
-            this->frozen.initialize(source_scene.frozen_dynamic_snapshot->payload);
-            this->publication.frozen_snapshot_pending = true;
-            return;
-        }
         this->configuration.source_scene = &source_scene;
         this->configuration.setup        = *source_scene.dynamic_setup;
         if (!(this->configuration.setup.clock.step_seconds > 0.0)) throw std::runtime_error("Scene Dynamics clock step duration must be positive");
@@ -416,8 +293,8 @@ namespace spectra {
                 const SpectraPluginTelemetryDescriptor& telemetry = source_provider.telemetry[telemetry_index];
                 provider.telemetry.emplace_back(plugin_string(telemetry.id), plugin_string(telemetry.name), plugin_string(telemetry.unit), plugin_string(telemetry.section_id), checked_plugin_enum<dynamics::TelemetryKind>(telemetry.kind, {SpectraPluginTelemetryKind::Boolean, SpectraPluginTelemetryKind::Integer, SpectraPluginTelemetryKind::Float, SpectraPluginTelemetryKind::Float3}, "Telemetry kind"), telemetry.plot != 0);
             }
-            if (!this->providers.by_id.emplace(provider.id, &library).second) throw std::runtime_error(std::format("Provider '{}' is loaded more than once", provider.id));
-            this->providers.descriptors.emplace_back(std::move(provider));
+            library.provider = std::move(provider);
+            if (!this->providers.by_id.emplace(library.provider.id, &library).second) throw std::runtime_error(std::format("Provider '{}' is loaded more than once", library.provider.id));
         }
 
         std::unordered_map<std::string, std::size_t> scene_writers{};
@@ -440,7 +317,7 @@ namespace spectra {
                 system.parameter_values.emplace_back(configured == declared.parameters.end() ? parameter.value : configured->value);
             }
             for (std::size_t dataset_index = 0; dataset_index < provider.datasets.size(); ++dataset_index) {
-                DynamicDatasetRuntime dataset{.dataset_index = dataset_index, .descriptor = provider.datasets[dataset_index]};
+                DynamicDatasetRuntime dataset{.descriptor = provider.datasets[dataset_index]};
                 this->bind_dataset(dataset, declared);
                 if (dataset.scene_binding) {
                     const std::string key = std::format("{}:{}", std::to_underlying(dataset.scene_binding->resource_kind), dataset.scene_binding->resource_id);
@@ -458,8 +335,273 @@ namespace spectra {
             this->configure_telemetry(system);
             this->apply_parameters(system);
         }
-        this->configuration.initialized = true;
         this->reset_simulation();
+    }
+
+    void DynamicsRuntime::destroy() noexcept {
+        if (!this->configuration.source_scene && this->providers.libraries.empty()) return;
+        for (DynamicSystemRuntime& system : this->systems.runtimes)
+            if (system.provider_instance && system.plugin_api->destroy_provider(system.provider_instance).error.size != 0) std::terminate();
+        this->context.runtime.frames.defer_destruction([systems = std::move(this->systems.runtimes)]() mutable {});
+        this->providers.by_id.clear();
+        this->providers.libraries.clear();
+        this->publication   = {};
+        this->outputs       = {};
+        this->clock         = {};
+        this->configuration = {};
+    }
+
+    bool DynamicsRuntime::initialized() const noexcept {
+        return this->configuration.source_scene != nullptr;
+    }
+
+    const dynamics::ProviderDescriptor& DynamicsRuntime::provider_descriptor(const std::string_view provider_id) const {
+        return this->provider_library(provider_id).provider;
+    }
+
+    const dynamics::TelemetrySnapshot& DynamicsRuntime::telemetry(const std::size_t system_index) const {
+        const auto found = std::ranges::find(this->systems.runtimes, system_index, &DynamicSystemRuntime::scene_system_index);
+        if (found == this->systems.runtimes.end()) throw std::runtime_error("Scene Dynamics does not contain the requested System runtime");
+        return found->telemetry;
+    }
+
+    void DynamicsRuntime::write_telemetry(const std::filesystem::path& path) const {
+        if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+        std::ofstream stream{path, std::ios::trunc};
+        stream << "system,metric,unit,kind,value\n";
+        for (const DynamicSystemRuntime& runtime : this->systems.runtimes) {
+            const scene::DynamicSystem& system = this->configuration.setup.systems[runtime.scene_system_index];
+            for (std::size_t index = 0; index != runtime.provider_descriptor->telemetry.size(); ++index) {
+                const dynamics::TelemetryDescriptor& descriptor = runtime.provider_descriptor->telemetry[index];
+                stream << csv_field(system.id.value) << ',' << csv_field(descriptor.id) << ',' << csv_field(descriptor.unit) << ',' << static_cast<std::uint32_t>(descriptor.kind) << ',';
+                if (index < runtime.telemetry.values.size() && runtime.telemetry.values[index]) {
+                    const dynamics::TelemetryValue& value = *runtime.telemetry.values[index];
+                    if (value.kind == dynamics::TelemetryKind::Boolean || value.kind == dynamics::TelemetryKind::Integer)
+                        stream << value.integer;
+                    else if (value.kind == dynamics::TelemetryKind::Float)
+                        stream << value.floating[0];
+                    else
+                        stream << csv_field(std::format("{} {} {}", value.floating[0], value.floating[1], value.floating[2]));
+                }
+                stream << '\n';
+            }
+        }
+        if (!stream) throw std::runtime_error(std::format("Failed to write Telemetry output: {}", path.string()));
+    }
+
+    std::span<const dynamics::MeshOutputBinding> DynamicsRuntime::mesh_bindings() const noexcept {
+        return this->outputs.mesh_bindings;
+    }
+
+    std::span<const dynamics::SphereSetOutputBinding> DynamicsRuntime::sphere_set_bindings() const noexcept {
+        return this->outputs.sphere_set_bindings;
+    }
+
+    std::span<const dynamics::GpuVisualization> DynamicsRuntime::visualizations() const noexcept {
+        return this->publication.snapshot.visualizations;
+    }
+
+    bool DynamicsRuntime::controls(const scene::InstanceId instance_id) const noexcept {
+        for (const DynamicSystemRuntime& system : this->systems.runtimes)
+            for (const DynamicDatasetRuntime& dataset : system.datasets) {
+                if (!dataset.scene_binding) continue;
+                const scene::DynamicSceneBinding& binding = *dataset.scene_binding;
+                const auto instance                       = std::ranges::find(this->configuration.source_scene->resources.instances, instance_id, &scene::Instance::id);
+                if (instance == this->configuration.source_scene->resources.instances.end()) continue;
+                const scene::Prototype& prototype = *std::ranges::find(this->configuration.source_scene->resources.prototypes, instance->prototype, &scene::Prototype::id);
+                if (std::ranges::any_of(prototype.primitives, [&binding](const scene::Primitive& primitive) { return (binding.resource_kind == scene::DynamicSceneResourceKind::Geometry && binding.resource_id == primitive.geometry.value) || (binding.resource_kind == scene::DynamicSceneResourceKind::SphereSet && binding.resource_id == primitive.spheres.value); })) return true;
+            }
+        return false;
+    }
+
+    bool DynamicsRuntime::controls(const scene::VolumeId volume_id) const noexcept {
+        for (const DynamicSystemRuntime& system : this->systems.runtimes)
+            for (const DynamicDatasetRuntime& dataset : system.datasets)
+                if (dataset.scene_binding && dataset.scene_binding->resource_kind == scene::DynamicSceneResourceKind::Volume && dataset.scene_binding->resource_id == volume_id.value) return true;
+        return false;
+    }
+
+    bool DynamicsRuntime::running() const noexcept {
+        return this->clock.playing;
+    }
+
+    dynamics::SimulationTimeline DynamicsRuntime::timeline() const noexcept {
+        return {this->clock.simulation_step, static_cast<double>(this->clock.simulation_step) * this->configuration.setup.clock.step_seconds};
+    }
+
+    void DynamicsRuntime::start() {
+        this->clock.playing = true;
+    }
+
+    void DynamicsRuntime::pause() {
+        this->clock.playing = false;
+    }
+
+    void DynamicsRuntime::step() {
+        this->advance_one_step();
+    }
+
+    void DynamicsRuntime::advance() {
+        if (this->systems.runtimes.empty() || !this->clock.playing || this->publication.snapshot_pending) return;
+        if (this->configuration.setup.clock.end_step && *this->configuration.setup.clock.end_step == this->configuration.setup.clock.start_step) {
+            this->clock.playing = false;
+            return;
+        }
+        this->advance_one_step();
+        if (this->configuration.setup.clock.end_step && this->clock.simulation_step == *this->configuration.setup.clock.end_step && !this->configuration.setup.clock.loop) this->clock.playing = false;
+    }
+
+    void DynamicsRuntime::evaluate(const std::uint64_t simulation_step) {
+        this->evaluate_frame(simulation_step);
+    }
+
+    void DynamicsRuntime::evaluate_time(const double simulation_seconds) {
+        if (simulation_seconds < 0.0) throw std::runtime_error("Requested Dynamics time cannot be negative");
+        this->evaluate(static_cast<std::uint64_t>(std::floor(simulation_seconds / this->configuration.setup.clock.step_seconds)));
+    }
+
+    void DynamicsRuntime::reset() {
+        this->pause();
+        this->reset_simulation();
+    }
+    void DynamicsRuntime::apply_parameter_changes(const std::size_t system_index, const std::span<const scene::DynamicParameterSetting> parameters, const bool reset) {
+        this->configuration.setup.systems[system_index].parameters.assign(parameters.begin(), parameters.end());
+        const auto found = std::ranges::find(this->systems.runtimes, system_index, &DynamicSystemRuntime::scene_system_index);
+        if (found == this->systems.runtimes.end()) return;
+        const bool playing = this->clock.playing;
+        DynamicSystemRuntime& destination = *found;
+        destination.parameter_values.clear();
+        for (const dynamics::ParameterDescriptor& descriptor : destination.provider_descriptor->parameters) {
+            const auto configured = std::ranges::find(parameters, descriptor.id, &scene::DynamicParameterSetting::parameter_id);
+            destination.parameter_values.emplace_back(configured == parameters.end() ? descriptor.value : configured->value);
+        }
+        this->apply_parameters(destination);
+        if (reset)
+            this->reset_simulation();
+        else if (!playing)
+            this->publish_snapshot(this->clock.simulation_step);
+    }
+
+    const dynamics::DynamicSnapshot* DynamicsRuntime::acquire_snapshot() noexcept {
+        if (!this->publication.snapshot_pending) return nullptr;
+        for (DynamicSystemRuntime& system : this->systems.runtimes)
+            for (DynamicDatasetRuntime& dataset : system.datasets) {
+                if (dataset.output_pending) this->context.runtime.frames.enqueue_external_wait(dataset.timeline_semaphore, dataset.timeline_signal_value, vk::PipelineStageFlagBits2::eCopy | vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eMeshShaderEXT | vk::PipelineStageFlagBits2::eFragmentShader);
+            }
+        return &this->publication.snapshot;
+    }
+
+    void DynamicsRuntime::consume_snapshot() noexcept {
+        if (!this->publication.snapshot_pending) return;
+        for (DynamicSystemRuntime& system : this->systems.runtimes)
+            for (DynamicDatasetRuntime& dataset : system.datasets)
+                if (dataset.output_pending) {
+                    this->context.runtime.frames.enqueue_external_signal(dataset.timeline_semaphore, dataset.timeline_signal_value + 1, vk::PipelineStageFlagBits2::eAllCommands);
+                    dataset.output_pending = false;
+                }
+        this->publication.snapshot_pending = false;
+    }
+
+    void DynamicsRuntime::record_telemetry(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index) {
+        for (DynamicSystemRuntime& system : this->systems.runtimes) {
+            DynamicTelemetryRuntime& telemetry = system.telemetry_gpu;
+            if (!telemetry.output_pending) continue;
+            this->context.runtime.frames.enqueue_external_wait(telemetry.timeline_semaphore, telemetry.timeline_signal_value, vk::PipelineStageFlagBits2::eCopy);
+            const DynamicDatasetBuffer& source = telemetry.buffer_slots[telemetry.current_slot_index].front();
+            TelemetryReadbackSlot& destination = telemetry.readback_slots[frame_slot_index];
+            command_buffer.copyBuffer(*source.gpu_buffer.buffer, *destination.buffer.buffer, vk::BufferCopy{0, 0, source.byte_size});
+            destination.simulation_step    = telemetry.simulation_step;
+            destination.simulation_seconds = telemetry.simulation_seconds;
+            destination.phase              = telemetry.phase;
+            destination.headline           = telemetry.headline;
+            destination.message            = telemetry.message;
+            destination.pending            = true;
+            this->context.runtime.frames.enqueue_external_signal(telemetry.timeline_semaphore, telemetry.timeline_signal_value + 1, vk::PipelineStageFlagBits2::eAllCommands);
+            telemetry.output_pending = false;
+        }
+    }
+
+    void DynamicsRuntime::resolve_telemetry(const std::uint32_t frame_slot_index) {
+        for (DynamicSystemRuntime& system : this->systems.runtimes) {
+            TelemetryReadbackSlot& readback = system.telemetry_gpu.readback_slots[frame_slot_index];
+            if (!readback.pending) continue;
+            const auto* values = static_cast<const SpectraPluginTelemetryGpuValue*>(readback.buffer.mapped);
+            this->consume_telemetry(system, values, readback.simulation_step, readback.simulation_seconds, std::move(readback.phase), std::move(readback.headline), std::move(readback.message));
+            readback.pending = false;
+        }
+    }
+
+    DynamicsRuntime::ProviderLibrary::ProviderLibrary(const std::filesystem::path& library_path, const std::string_view expected_provider_id) {
+        const std::filesystem::path canonical_path = std::filesystem::weakly_canonical(library_path);
+#if defined(_WIN32)
+        const HMODULE loaded = LoadLibraryW(canonical_path.c_str());
+        if (!loaded) throw std::runtime_error(std::format("Windows failed to load Provider Library: {}", canonical_path.string()));
+        const auto entry = reinterpret_cast<const SpectraPluginApi* (*) () noexcept>(GetProcAddress(loaded, SPECTRA_PLUGIN_ENTRY_NAME));
+#else
+        void* loaded = dlopen(canonical_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!loaded) throw std::runtime_error(std::format("Linux failed to load Provider Library '{}': {}", canonical_path.string(), dlerror()));
+        const auto entry = reinterpret_cast<const SpectraPluginApi* (*) () noexcept>(dlsym(loaded, SPECTRA_PLUGIN_ENTRY_NAME));
+#endif
+        try {
+            if (!entry) throw std::runtime_error(std::format("Provider Library does not export {}: {}", SPECTRA_PLUGIN_ENTRY_NAME, canonical_path.string()));
+            const SpectraPluginApi* loaded_api = entry();
+            if (!loaded_api || loaded_api->api_version != SPECTRA_PLUGIN_API_VERSION || loaded_api->struct_size != sizeof(SpectraPluginApi) || !loaded_api->describe_provider || !loaded_api->create_provider || !loaded_api->destroy_provider || !loaded_api->configure_dataset || !loaded_api->configure_telemetry || !loaded_api->apply_parameters || !loaded_api->reset || !loaded_api->step || !loaded_api->publish_snapshot) throw std::runtime_error(std::format("Provider Library has an incomplete Plugin API {} entry: {}", SPECTRA_PLUGIN_API_VERSION, canonical_path.string()));
+            const SpectraPluginProviderDescriptionResult description = loaded_api->describe_provider();
+            check_plugin_result(description.result, "description");
+            const std::string reported_provider_id = plugin_string(description.descriptor.id);
+            if (reported_provider_id != expected_provider_id) throw std::runtime_error(std::format("Provider Library '{}' reports Provider '{}' instead of '{}'", canonical_path.string(), reported_provider_id, expected_provider_id));
+            this->plugin_api = loaded_api;
+            this->descriptor = description.descriptor;
+        } catch (...) {
+#if defined(_WIN32)
+            FreeLibrary(loaded);
+#else
+            dlclose(loaded);
+#endif
+            throw;
+        }
+        this->library_handle = loaded;
+    }
+
+    DynamicsRuntime::ProviderLibrary::~ProviderLibrary() {
+        if (!this->library_handle) return;
+#if defined(_WIN32)
+        FreeLibrary(static_cast<HMODULE>(this->library_handle));
+#else
+        dlclose(this->library_handle);
+#endif
+    }
+
+    DynamicsRuntime::ProviderLibrary& DynamicsRuntime::provider_library(const std::string_view provider_id) const {
+        const auto found = this->providers.by_id.find(std::string{provider_id});
+        if (found == this->providers.by_id.end()) throw std::runtime_error(std::format("Scene Dynamics does not contain Provider '{}'", provider_id));
+        return *found->second;
+    }
+
+    SpectraPluginResult DynamicsRuntime::collect_dataset(void* context, const std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept {
+        DynamicsRuntime& world = *static_cast<DynamicsRuntime*>(context);
+        try {
+            DynamicSystemRuntime& system   = *world.publication.publishing_system;
+            DynamicDatasetRuntime& dataset = world.dataset_runtime(system, dataset_index);
+            if (std::ranges::contains(world.publication.dataset_commits, &dataset, &PendingDatasetCommit::dataset)) throw std::runtime_error("Provider committed the same GPU Dataset more than once in one publication");
+            world.publication.dataset_commits.emplace_back(&system, &dataset, *commit);
+            return {};
+        } catch (const std::exception& error) {
+            world.publication.callback_error = error.what();
+            return {{world.publication.callback_error.data(), world.publication.callback_error.size()}};
+        }
+    }
+
+    SpectraPluginResult DynamicsRuntime::collect_telemetry(void* context, const SpectraPluginTelemetryCommit* commit) noexcept {
+        DynamicsRuntime& world = *static_cast<DynamicsRuntime*>(context);
+        try {
+            if (std::ranges::contains(world.publication.telemetry_commits, world.publication.publishing_system, &PendingTelemetryCommit::system)) throw std::runtime_error("Provider committed Telemetry more than once in one publication");
+            world.publication.telemetry_commits.emplace_back(world.publication.publishing_system, commit->slot_index, commit->signal_value, plugin_string(commit->phase), plugin_string(commit->headline), plugin_string(commit->message));
+            return {};
+        } catch (const std::exception& error) {
+            world.publication.callback_error = error.what();
+            return {{world.publication.callback_error.data(), world.publication.callback_error.size()}};
+        }
     }
 
     void DynamicsRuntime::bind_dataset(DynamicDatasetRuntime& dataset, const scene::DynamicSystem& system) const {
@@ -516,7 +658,7 @@ namespace spectra {
         }
         ExternalHandle timeline_handle        = this->context.runtime.resources.export_timeline_semaphore_handle(next_timeline_semaphore);
         const GpuDeviceIdentity& gpu_identity = this->context.runtime.graphics.identity;
-        SpectraPluginDatasetConfiguration configuration{dataset.dataset_index, plugin_slots.data(), plugin_slots.size(), plugin_external_handle(timeline_handle), {}, {}, gpu_identity.node_mask};
+        SpectraPluginDatasetConfiguration configuration{dataset_index, plugin_slots.data(), plugin_slots.size(), plugin_external_handle(timeline_handle), {}, {}, gpu_identity.node_mask};
         std::ranges::copy(gpu_identity.uuid, configuration.vulkan_device_uuid);
         std::ranges::copy(gpu_identity.luid, configuration.vulkan_device_luid);
 #if !defined(_WIN32)
@@ -684,7 +826,7 @@ namespace spectra {
         this->publication.telemetry_commits.clear();
     }
 
-    void DynamicsRuntime::commit_publication(dynamics::DynamicSnapshot& snapshot) {
+    void DynamicsRuntime::commit_publication(dynamics::DynamicSnapshot& snapshot, const std::uint64_t simulation_step) {
         for (const PendingDatasetCommit& pending : this->publication.dataset_commits) {
             if (pending.commit.slot_index >= pending.dataset->buffer_slots.size()) throw std::runtime_error("Provider committed an invalid GPU Dataset slot");
             if (pending.commit.active_count > pending.dataset->capacity || pending.commit.secondary_count > pending.dataset->secondary_capacity) throw std::runtime_error("Provider committed more GPU Dataset elements than configured");
@@ -694,13 +836,7 @@ namespace spectra {
         const std::size_t visualization_count = std::ranges::fold_left(this->publication.dataset_commits, std::size_t{}, [](const std::size_t count, const PendingDatasetCommit& pending) { return count + pending.dataset->visualizations.size(); });
         snapshot.scene_updates.reserve(this->publication.dataset_commits.size());
         snapshot.visualizations.reserve(visualization_count);
-        snapshot.telemetry.reserve(this->publication.telemetry_commits.size());
         for (const PendingDatasetCommit& pending : this->publication.dataset_commits) this->append_dataset(pending, snapshot);
-        for (const PendingTelemetryCommit& pending : this->publication.telemetry_commits) {
-            const DynamicTelemetryRuntime& telemetry = pending.system->telemetry_gpu;
-            const DynamicDatasetBuffer& values       = telemetry.buffer_slots[pending.slot_index].front();
-            snapshot.telemetry.emplace_back(pending.system->scene_system_index, dynamics::GpuBufferView{&values.gpu_buffer, values.descriptor}, static_cast<std::uint32_t>(pending.system->provider_descriptor->telemetry.size()), pending.phase, pending.headline, pending.message);
-        }
         for (const PendingDatasetCommit& pending : this->publication.dataset_commits) {
             DynamicDatasetRuntime& dataset = *pending.dataset;
             dataset.timeline_signal_value  = pending.commit.signal_value;
@@ -710,9 +846,8 @@ namespace spectra {
             DynamicTelemetryRuntime& telemetry = pending.system->telemetry_gpu;
             telemetry.current_slot_index       = pending.slot_index;
             telemetry.timeline_signal_value    = pending.signal_value;
-            telemetry.simulation_step          = snapshot.simulation.step;
-            telemetry.sequence                 = telemetry.next_sequence++;
-            telemetry.simulation_seconds       = snapshot.simulation.seconds;
+            telemetry.simulation_step          = simulation_step;
+            telemetry.simulation_seconds       = static_cast<double>(simulation_step) * this->configuration.setup.clock.step_seconds;
             telemetry.phase                    = std::move(pending.phase);
             telemetry.headline                 = std::move(pending.headline);
             telemetry.message                  = std::move(pending.message);
@@ -743,7 +878,7 @@ namespace spectra {
 
     void DynamicsRuntime::publish_snapshot(const std::uint64_t simulation_step) {
         this->discard_pending_snapshot();
-        dynamics::DynamicSnapshot snapshot{.simulation = {simulation_step, static_cast<double>(simulation_step) * this->configuration.setup.clock.step_seconds}};
+        dynamics::DynamicSnapshot snapshot{};
         const std::size_t dataset_count = std::ranges::fold_left(this->systems.runtimes, std::size_t{}, [](const std::size_t count, const DynamicSystemRuntime& system) { return count + system.datasets.size(); });
         this->publication.dataset_commits.reserve(dataset_count);
         this->publication.telemetry_commits.reserve(this->systems.runtimes.size());
@@ -755,7 +890,7 @@ namespace spectra {
                 check_plugin_result(system.plugin_api->publish_snapshot(system.provider_instance, simulation_step, &sink), "snapshot publication");
                 if (!this->publication.callback_error.empty()) throw std::runtime_error(this->publication.callback_error);
             }
-            this->commit_publication(snapshot);
+            this->commit_publication(snapshot, simulation_step);
         } catch (...) {
             this->abort_publication();
             this->publication.publishing_system = nullptr;
@@ -791,91 +926,6 @@ namespace spectra {
         this->publish_snapshot(this->clock.simulation_step);
     }
 
-    void DynamicsRuntime::advance() {
-        if (this->systems.runtimes.empty() || !this->clock.playing || this->publication.snapshot_pending) return;
-        if (this->configuration.setup.clock.end_step && *this->configuration.setup.clock.end_step == this->configuration.setup.clock.start_step) {
-            this->clock.playing = false;
-            return;
-        }
-        this->advance_one_step();
-        if (this->configuration.setup.clock.end_step && this->clock.simulation_step == *this->configuration.setup.clock.end_step && !this->configuration.setup.clock.loop) this->clock.playing = false;
-    }
-
-    const dynamics::DynamicSnapshot* DynamicsRuntime::pending_snapshot() noexcept {
-        if (this->publication.frozen_snapshot_pending) return &this->frozen.pending_snapshot();
-        if (!this->publication.snapshot_pending) return nullptr;
-        for (DynamicSystemRuntime& system : this->systems.runtimes)
-            for (DynamicDatasetRuntime& dataset : system.datasets) {
-                if (dataset.output_pending) this->context.runtime.frames.enqueue_external_wait(dataset.timeline_semaphore, dataset.timeline_signal_value, vk::PipelineStageFlagBits2::eCopy | vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eMeshShaderEXT | vk::PipelineStageFlagBits2::eFragmentShader);
-            }
-        return &this->publication.snapshot;
-    }
-
-    void DynamicsRuntime::consume_snapshot() noexcept {
-        if (this->publication.frozen_snapshot_pending) {
-            this->publication.frozen_snapshot_pending = false;
-            return;
-        }
-        if (!this->publication.snapshot_pending) return;
-        for (DynamicSystemRuntime& system : this->systems.runtimes)
-            for (DynamicDatasetRuntime& dataset : system.datasets)
-                if (dataset.output_pending) {
-                    this->context.runtime.frames.enqueue_external_signal(dataset.timeline_semaphore, dataset.timeline_signal_value + 1, vk::PipelineStageFlagBits2::eAllCommands);
-                    dataset.output_pending = false;
-                }
-        this->publication.snapshot_pending = false;
-    }
-
-    void DynamicsRuntime::resolve_telemetry(const std::uint32_t frame_slot_index) {
-        for (DynamicSystemRuntime& system : this->systems.runtimes) {
-            TelemetryReadbackSlot& readback = system.telemetry_gpu.readback_slots[frame_slot_index];
-            if (!readback.pending) continue;
-            const auto* values = static_cast<const SpectraPluginTelemetryGpuValue*>(readback.buffer.mapped);
-            this->consume_telemetry(system, values, readback.simulation_step, readback.simulation_seconds, std::move(readback.phase), std::move(readback.headline), std::move(readback.message));
-            readback.pending = false;
-        }
-    }
-
-    void DynamicsRuntime::record_telemetry(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index) {
-        for (DynamicSystemRuntime& system : this->systems.runtimes) {
-            DynamicTelemetryRuntime& telemetry = system.telemetry_gpu;
-            if (!telemetry.output_pending) continue;
-            this->context.runtime.frames.enqueue_external_wait(telemetry.timeline_semaphore, telemetry.timeline_signal_value, vk::PipelineStageFlagBits2::eCopy);
-            const DynamicDatasetBuffer& source = telemetry.buffer_slots[telemetry.current_slot_index].front();
-            TelemetryReadbackSlot& destination = telemetry.readback_slots[frame_slot_index];
-            command_buffer.copyBuffer(*source.gpu_buffer.buffer, *destination.buffer.buffer, vk::BufferCopy{0, 0, source.byte_size});
-            destination.simulation_step    = telemetry.simulation_step;
-            destination.sequence           = telemetry.sequence;
-            destination.simulation_seconds = telemetry.simulation_seconds;
-            destination.phase              = telemetry.phase;
-            destination.headline           = telemetry.headline;
-            destination.message            = telemetry.message;
-            destination.pending            = true;
-            this->context.runtime.frames.enqueue_external_signal(telemetry.timeline_semaphore, telemetry.timeline_signal_value + 1, vk::PipelineStageFlagBits2::eAllCommands);
-            telemetry.output_pending = false;
-        }
-    }
-
-    bool DynamicsRuntime::controls(const scene::InstanceId instance_id) const noexcept {
-        for (const DynamicSystemRuntime& system : this->systems.runtimes)
-            for (const DynamicDatasetRuntime& dataset : system.datasets) {
-                if (!dataset.scene_binding) continue;
-                const scene::DynamicSceneBinding& binding = *dataset.scene_binding;
-                const auto instance                       = std::ranges::find(this->configuration.source_scene->resources.instances, instance_id, &scene::Instance::id);
-                if (instance == this->configuration.source_scene->resources.instances.end()) continue;
-                const scene::Prototype& prototype = *std::ranges::find(this->configuration.source_scene->resources.prototypes, instance->prototype, &scene::Prototype::id);
-                if (std::ranges::any_of(prototype.primitives, [&binding](const scene::Primitive& primitive) { return (binding.resource_kind == scene::DynamicSceneResourceKind::Geometry && binding.resource_id == primitive.geometry.value) || (binding.resource_kind == scene::DynamicSceneResourceKind::SphereSet && binding.resource_id == primitive.spheres.value); })) return true;
-            }
-        return false;
-    }
-
-    bool DynamicsRuntime::controls(const scene::VolumeId volume_id) const noexcept {
-        for (const DynamicSystemRuntime& system : this->systems.runtimes)
-            for (const DynamicDatasetRuntime& dataset : system.datasets)
-                if (dataset.scene_binding && dataset.scene_binding->resource_kind == scene::DynamicSceneResourceKind::Volume && dataset.scene_binding->resource_id == volume_id.value) return true;
-        return false;
-    }
-
     void DynamicsRuntime::advance_one_step() {
         if (this->configuration.setup.clock.end_step && this->clock.simulation_step >= *this->configuration.setup.clock.end_step) {
             if (!this->configuration.setup.clock.loop) return;
@@ -885,71 +935,4 @@ namespace spectra {
         this->evaluate_frame(this->configuration.setup.clock.end_step ? std::min(requested, *this->configuration.setup.clock.end_step) : requested);
     }
 
-    void DynamicsRuntime::apply_parameter_changes(const std::size_t system_index, const std::span<const scene::DynamicParameterSetting> parameters, const bool reset) {
-        this->configuration.setup.systems[system_index].parameters.assign(parameters.begin(), parameters.end());
-        const auto found = std::ranges::find(this->systems.runtimes, system_index, &DynamicSystemRuntime::scene_system_index);
-        if (found == this->systems.runtimes.end()) return;
-        const bool playing = this->clock.playing;
-        DynamicSystemRuntime& destination = *found;
-        destination.parameter_values.clear();
-        for (const dynamics::ParameterDescriptor& descriptor : destination.provider_descriptor->parameters) {
-            const auto configured = std::ranges::find(parameters, descriptor.id, &scene::DynamicParameterSetting::parameter_id);
-            destination.parameter_values.emplace_back(configured == parameters.end() ? descriptor.value : configured->value);
-        }
-        this->apply_parameters(destination);
-        if (reset)
-            this->reset_simulation();
-        else if (!playing)
-            this->publish_snapshot(this->clock.simulation_step);
-    }
-
-    void DynamicsRuntime::destroy() noexcept {
-        this->frozen.destroy();
-        if (!this->configuration.initialized && this->providers.libraries.empty()) return;
-        for (DynamicSystemRuntime& system : this->systems.runtimes)
-            if (system.provider_instance && system.plugin_api->destroy_provider(system.provider_instance).error.size != 0) std::terminate();
-        this->context.runtime.frames.defer_destruction([systems = std::move(this->systems.runtimes)]() mutable {});
-        this->providers.by_id.clear();
-        this->providers.libraries.clear();
-        this->providers.descriptors.clear();
-        this->publication   = {};
-        this->outputs       = {};
-        this->clock         = {};
-        this->configuration = {};
-    }
-
-    bool DynamicsRuntime::running() const noexcept {
-        return this->clock.playing;
-    }
-
-    dynamics::SimulationTimeline DynamicsRuntime::timeline() const noexcept {
-        if (this->frozen.initialized()) return this->frozen.snapshot().simulation;
-        return {this->clock.simulation_step, this->publication.snapshot.simulation.seconds};
-    }
-
-    void DynamicsRuntime::start() {
-        this->clock.playing = true;
-    }
-
-    void DynamicsRuntime::pause() {
-        this->clock.playing = false;
-    }
-
-    void DynamicsRuntime::step() {
-        this->advance_one_step();
-    }
-
-    void DynamicsRuntime::evaluate(const std::uint64_t simulation_step) {
-        this->evaluate_frame(simulation_step);
-    }
-
-    void DynamicsRuntime::evaluate_time(const double simulation_seconds) {
-        if (simulation_seconds < 0.0) throw std::runtime_error("Requested Dynamics time cannot be negative");
-        this->evaluate(static_cast<std::uint64_t>(std::floor(simulation_seconds / this->configuration.setup.clock.step_seconds)));
-    }
-
-    void DynamicsRuntime::reset() {
-        this->pause();
-        this->reset_simulation();
-    }
 } // namespace spectra

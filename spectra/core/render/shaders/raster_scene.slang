@@ -14,7 +14,6 @@ public static const uint raster_material_interface = SPECTRA_RASTER_MATERIAL_INT
 public static const uint raster_material_diffuse = SPECTRA_RASTER_MATERIAL_DIFFUSE;
 public static const uint raster_material_diffuse_transmission = SPECTRA_RASTER_MATERIAL_DIFFUSE_TRANSMISSION;
 public static const uint raster_material_conductor = SPECTRA_RASTER_MATERIAL_CONDUCTOR;
-public static const uint raster_material_dielectric = SPECTRA_RASTER_MATERIAL_DIELECTRIC;
 public static const uint raster_material_coated_diffuse = SPECTRA_RASTER_MATERIAL_COATED_DIFFUSE;
 public static const uint raster_material_coated_conductor = SPECTRA_RASTER_MATERIAL_COATED_CONDUCTOR;
 
@@ -24,17 +23,14 @@ public static const uint texture_checkerboard = SPECTRA_TEXTURE_CHECKERBOARD;
 public static const uint texture_scale = SPECTRA_TEXTURE_SCALE;
 public static const uint texture_mix = SPECTRA_TEXTURE_MIX;
 public static const uint texture_direction_mix = SPECTRA_TEXTURE_DIRECTION_MIX;
-public static const uint texture_bilerp = SPECTRA_TEXTURE_BILERP;
 
 public static const uint mapping_uv = SPECTRA_MAPPING_UV;
 public static const uint mapping_planar = SPECTRA_MAPPING_PLANAR;
 public static const uint mapping_spherical = SPECTRA_MAPPING_SPHERICAL;
-public static const uint mapping_cylindrical = SPECTRA_MAPPING_CYLINDRICAL;
 public static const uint mapping_checkerboard_3d = SPECTRA_MAPPING_CHECKERBOARD_3D;
 
 public static const uint area_source_triangle = SPECTRA_AREA_SOURCE_TRIANGLE;
 public static const uint area_source_sphere_set = SPECTRA_AREA_SOURCE_SPHERE_SET;
-public static const uint area_source_analytic = SPECTRA_AREA_SOURCE_ANALYTIC;
 
 public static const uint volume_density_grid = SPECTRA_VOLUME_DENSITY_GRID;
 public static const uint volume_rgb_grid = SPECTRA_VOLUME_RGB_GRID;
@@ -42,6 +38,20 @@ public static const uint volume_nanovdb = SPECTRA_VOLUME_NANOVDB;
 public static const uint volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
 
 public static const uint raster_display_wireframe = 1;
+
+public struct RasterVertex {
+    public float4 position : SV_Position;
+    public float3 world_position : POSITION;
+    public float3 world_normal : NORMAL;
+    public float3 world_tangent : TANGENT;
+    public float2 texture_coordinates : TEXCOORD;
+    public nointerpolation uint material : MATERIAL;
+    public nointerpolation uint area_light : AREA_LIGHT;
+    public nointerpolation uint sphere : SPHERE;
+    public nointerpolation float3 sphere_center : POSITION1;
+    public nointerpolation float sphere_radius : RADIUS;
+    public noperspective float3 wire_coordinates : TEXCOORD1;
+}
 
 public struct RasterPrimitive {
     public uint transform_index;

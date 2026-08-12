@@ -28,9 +28,7 @@ namespace spectra {
         void set_raster_display_mode(RasterDisplayMode mode) noexcept;
         [[nodiscard]] RasterDisplayMode raster_display_mode() const noexcept;
         void wait_for_pathtracer();
-        [[nodiscard]] RendererDescriptor active_descriptor() const;
         [[nodiscard]] RendererDescriptor selected_descriptor() const noexcept;
-        [[nodiscard]] bool ready() const noexcept;
         [[nodiscard]] std::optional<PathTracerPreparationProgress> pathtracer_preparation() const;
         [[nodiscard]] std::optional<DepthBufferView> depth_buffer() noexcept;
         void invalidate(scene::SceneChange changes, GpuSceneUpdate gpu_update = {}) noexcept;
@@ -40,8 +38,6 @@ namespace spectra {
         [[nodiscard]] std::optional<RenderProgress> progress() const noexcept;
         void set_paused(bool paused);
         void reset();
-        [[nodiscard]] bool gbuffer_available() const noexcept;
-        void record_gbuffer_readback(const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot);
         [[nodiscard]] RenderGBufferReadback readback();
 
     private:

@@ -500,29 +500,6 @@ namespace spectra::scene {
             std::filesystem::copy_file(source, target, std::filesystem::copy_options::none);
         }
 
-        [[nodiscard]] AssetReference write_frozen_dynamic_snapshot_asset(const std::span<const std::byte> payload, const std::filesystem::path& package_root, AssetTransaction& transaction) {
-            AssetReference reference{.content_hash = content_hash::sha256_hex(std::array{payload})};
-            const std::filesystem::path path = asset_path(package_root, reference, ".dynamic-snapshot");
-            if (std::filesystem::exists(path)) {
-                verify_asset(package_root, reference, ".dynamic-snapshot");
-                return reference;
-            }
-            std::filesystem::create_directories(path.parent_path());
-            transaction.record(path);
-            std::ofstream stream{path, std::ios::binary | std::ios::trunc};
-            stream.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-            if (!stream) throw std::runtime_error(std::format("Failed to write Spectra Frozen Dynamic Snapshot asset: {}", path.string()));
-            return reference;
-        }
-
-        void load_frozen_dynamic_snapshot_asset(FrozenDynamicSnapshot& snapshot, const std::filesystem::path& package_root) {
-            verify_asset(package_root, snapshot.asset, ".dynamic-snapshot");
-            const std::filesystem::path path = asset_path(package_root, snapshot.asset, ".dynamic-snapshot");
-            std::ifstream stream{path, std::ios::binary};
-            snapshot.payload.resize(std::filesystem::file_size(path));
-            stream.read(reinterpret_cast<char*>(snapshot.payload.data()), static_cast<std::streamsize>(snapshot.payload.size()));
-            if (!stream) throw std::runtime_error(std::format("Failed to read Spectra Frozen Dynamic Snapshot asset: {}", path.string()));
-        }
     } // namespace
 
     void load_package_resources(Scene& scene, const std::filesystem::path& package_root) {
@@ -555,16 +532,15 @@ namespace spectra::scene {
                 else
                     load_image_source(*image, texture.color_space, source_path(package_root, image->source));
             }
-        if (scene.frozen_dynamic_snapshot) load_frozen_dynamic_snapshot_asset(*scene.frozen_dynamic_snapshot, package_root);
     }
 
-    PackageReferences prepare_package_resources(const Scene& scene, const std::filesystem::path& package_root, const std::filesystem::path& source_root, const bool preserve_sources, AssetTransaction& transaction) {
+    PackageReferences prepare_package_resources(const Scene& scene, const std::filesystem::path& package_root, const std::filesystem::path& source_root, AssetTransaction& transaction) {
         PackageReferences references{};
         references.geometries.resize(scene.resources.geometries.size());
         for (std::size_t index = 0; index != scene.resources.geometries.size(); ++index)
             if (const TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&scene.resources.geometries[index].data)) {
                 PackageResourceReference reference{};
-                if (!mesh->source.path.empty() && preserve_sources) {
+                if (!mesh->source.path.empty()) {
                     copy_source(mesh->source, source_root, package_root, transaction);
                     reference.source = mesh->source;
                 } else
@@ -578,7 +554,7 @@ namespace spectra::scene {
             const Volume& volume = scene.resources.volumes[index];
             if (const DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data)) {
                 PackageResourceReference reference{};
-                if (!density->source.path.empty() && preserve_sources) {
+                if (!density->source.path.empty()) {
                     copy_source(density->source, source_root, package_root, transaction);
                     reference.source = density->source;
                 } else
@@ -586,7 +562,7 @@ namespace spectra::scene {
                 references.volumes[index] = std::move(reference);
             } else if (const RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data)) {
                 PackageResourceReference reference{};
-                if (!rgb->source.path.empty() && preserve_sources) {
+                if (!rgb->source.path.empty()) {
                     copy_source(rgb->source, source_root, package_root, transaction);
                     reference.source = rgb->source;
                 } else
@@ -607,7 +583,7 @@ namespace spectra::scene {
         for (std::size_t index = 0; index != scene.resources.textures.size(); ++index)
             if (const ImageTexture* image = std::get_if<ImageTexture>(&scene.resources.textures[index].data)) {
                 PackageResourceReference reference{};
-                if (!image->source.path.empty() && preserve_sources) {
+                if (!image->source.path.empty()) {
                     copy_source(image->source, source_root, package_root, transaction);
                     reference.source = image->source;
                 } else if (!image->texels.empty())
@@ -621,14 +597,6 @@ namespace spectra::scene {
                 }
                 references.textures[index] = std::move(reference);
             }
-        if (scene.frozen_dynamic_snapshot) {
-            if (!scene.frozen_dynamic_snapshot->payload.empty())
-                references.frozen_dynamic_snapshot = write_frozen_dynamic_snapshot_asset(scene.frozen_dynamic_snapshot->payload, package_root, transaction);
-            else {
-                copy_asset(scene.frozen_dynamic_snapshot->asset, ".dynamic-snapshot", source_root, package_root, transaction);
-                references.frozen_dynamic_snapshot = scene.frozen_dynamic_snapshot->asset;
-            }
-        }
         return references;
     }
 } // namespace spectra::scene

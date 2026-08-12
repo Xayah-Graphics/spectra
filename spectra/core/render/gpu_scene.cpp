@@ -4,12 +4,6 @@ import std;
 import vulkan;
 
 namespace spectra {
-    GpuScene::GpuScene(VulkanRuntime& runtime, std::filesystem::path shader_directory) noexcept : context{runtime, std::move(shader_directory)} {}
-
-    GpuScene::~GpuScene() {
-        this->destroy();
-    }
-
     namespace {
         struct DynamicInstanceBinding {
             std::array<std::uint32_t, 4> metadata{};
@@ -50,55 +44,6 @@ namespace spectra {
             return std::format("{}:{}:{}:{}:{}:{}", identity, texture.revision.content, texture.revision.topology, std::to_underlying(image.wrap), std::to_underlying(image.filter), std::bit_cast<std::uint32_t>(image.maximum_anisotropy));
         }
 
-    } // namespace
-
-    GpuTextureImage upload_texture_image(VulkanRuntime& runtime, const scene::ImageTexture& data, const vk::Format format, const vk::PipelineStageFlags2 destination_stages, const vk::raii::CommandBuffer& command_buffer) {
-        GpuTextureImage result{runtime.resources.create_image_2d({data.width, data.height}, format, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageAspectFlagBits::eColor, static_cast<std::uint32_t>(data.mip_offsets.size())), runtime.frames.allocate_resource_descriptor(), runtime.frames.allocate_sampler_descriptor()};
-        runtime.resources.write_sampled_image_descriptor(result.image_descriptor, result.image, vk::ImageLayout::eShaderReadOnlyOptimal);
-        const vk::SamplerAddressMode address_mode = data.wrap == scene::TextureWrapMode::Repeat ? vk::SamplerAddressMode::eRepeat : data.wrap == scene::TextureWrapMode::Clamp ? vk::SamplerAddressMode::eClampToEdge : vk::SamplerAddressMode::eClampToBorder;
-        const bool linear                         = data.filter != scene::TextureFilter::Point;
-        runtime.resources.write_sampler_descriptor(result.sampler_descriptor, vk::SamplerCreateInfo{{}, linear ? vk::Filter::eLinear : vk::Filter::eNearest, linear ? vk::Filter::eLinear : vk::Filter::eNearest, data.filter == scene::TextureFilter::Trilinear || data.filter == scene::TextureFilter::Ewa ? vk::SamplerMipmapMode::eLinear : vk::SamplerMipmapMode::eNearest, address_mode, address_mode, address_mode, 0.0f, data.filter == scene::TextureFilter::Ewa ? vk::True : vk::False, data.maximum_anisotropy, vk::False, vk::CompareOp::eNever, 0.0f, static_cast<float>(data.mip_offsets.size() - 1u), vk::BorderColor::eFloatTransparentBlack});
-        vk::DeviceSize texel_size{};
-        GpuBuffer staging{};
-        if (format == vk::Format::eR16G16B16A16Sfloat) {
-            std::vector<std::uint16_t> texels(data.texels.size() * 4u);
-            for (std::size_t index = 0; index != data.texels.size(); ++index) {
-                texels[index * 4u]      = float_to_half(data.texels[index].x);
-                texels[index * 4u + 1u] = float_to_half(data.texels[index].y);
-                texels[index * 4u + 2u] = float_to_half(data.texels[index].z);
-                texels[index * 4u + 3u] = float_to_half(data.texels[index].w);
-            }
-            texel_size = 4u * sizeof(std::uint16_t);
-            staging    = runtime.resources.create_buffer(texels.size() * sizeof(std::uint16_t), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-            std::memcpy(staging.mapped, texels.data(), texels.size() * sizeof(std::uint16_t));
-        } else if (format == vk::Format::eR32G32B32A32Sfloat) {
-            texel_size = sizeof(math::Float4);
-            staging    = runtime.resources.create_buffer(data.texels.size() * texel_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-            std::memcpy(staging.mapped, data.texels.data(), data.texels.size() * texel_size);
-        } else
-            throw std::runtime_error("GPU Texture Image format must be RGBA16F or RGBA32F");
-        std::vector<vk::BufferImageCopy> copies{};
-        copies.reserve(data.mip_offsets.size());
-        std::uint32_t mip_width  = data.width;
-        std::uint32_t mip_height = data.height;
-        for (std::uint32_t level = 0; level != data.mip_offsets.size(); ++level) {
-            copies.push_back(vk::BufferImageCopy{data.mip_offsets[level] * texel_size, 0, 0, {vk::ImageAspectFlagBits::eColor, level, 0, 1}, {0, 0, 0}, {mip_width, mip_height, 1}});
-            mip_width  = std::max(1u, mip_width / 2u);
-            mip_height = std::max(1u, mip_height / 2u);
-        }
-        const auto record = [&result, &staging, &copies, destination_stages](const vk::raii::CommandBuffer& commands) {
-            const vk::ImageMemoryBarrier2 to_transfer{vk::PipelineStageFlagBits2::eNone, {}, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *result.image.image, {vk::ImageAspectFlagBits::eColor, 0, result.image.mip_levels, 0, 1}};
-            commands.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_transfer});
-            commands.copyBufferToImage(*staging.buffer, *result.image.image, vk::ImageLayout::eTransferDstOptimal, copies);
-            const vk::ImageMemoryBarrier2 to_shader{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, destination_stages, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *result.image.image, {vk::ImageAspectFlagBits::eColor, 0, result.image.mip_levels, 0, 1}};
-            commands.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_shader});
-        };
-        record(command_buffer);
-        runtime.frames.defer_destruction([upload = std::move(staging)]() mutable {});
-        return result;
-    }
-
-    namespace {
         [[nodiscard]] vk::AccelerationStructureGeometryKHR triangle_geometry(const GpuGeometry& mesh) {
             const vk::AccelerationStructureGeometryTrianglesDataKHR triangles{
                 vk::Format::eR32G32B32Sfloat,
@@ -134,95 +79,6 @@ namespace spectra {
             };
         }
 
-    } // namespace
-
-    scene::TriangleMeshGeometry tessellate_geometry(const scene::Geometry& geometry) {
-        if (const scene::TriangleMeshGeometry* mesh = std::get_if<scene::TriangleMeshGeometry>(&geometry.data)) return *mesh;
-        scene::TriangleMeshGeometry result{};
-        const auto vertex = [&result](const math::Float3 position, const math::Float3 normal, const math::Float3 tangent, const math::Float2 uv) {
-            result.positions.push_back(position);
-            result.normals.push_back(normal);
-            result.tangents.push_back(tangent);
-            result.texture_coordinates.push_back(uv);
-            return static_cast<std::uint32_t>(result.positions.size() - 1u);
-        };
-        if (const scene::BoxGeometry* box = std::get_if<scene::BoxGeometry>(&geometry.data)) {
-            const math::Float3 minimum = box->bounds.minimum;
-            const math::Float3 maximum = box->bounds.maximum;
-            const std::array positions{std::array{math::Float3{minimum.x, minimum.y, minimum.z}, math::Float3{maximum.x, minimum.y, minimum.z}, math::Float3{maximum.x, maximum.y, minimum.z}, math::Float3{minimum.x, maximum.y, minimum.z}}, std::array{math::Float3{minimum.x, minimum.y, maximum.z}, math::Float3{minimum.x, maximum.y, maximum.z}, math::Float3{maximum.x, maximum.y, maximum.z}, math::Float3{maximum.x, minimum.y, maximum.z}}, std::array{math::Float3{minimum.x, minimum.y, minimum.z}, math::Float3{minimum.x, minimum.y, maximum.z}, math::Float3{maximum.x, minimum.y, maximum.z}, math::Float3{maximum.x, minimum.y, minimum.z}}, std::array{math::Float3{minimum.x, maximum.y, minimum.z}, math::Float3{maximum.x, maximum.y, minimum.z}, math::Float3{maximum.x, maximum.y, maximum.z}, math::Float3{minimum.x, maximum.y, maximum.z}},
-                std::array{math::Float3{minimum.x, minimum.y, minimum.z}, math::Float3{minimum.x, maximum.y, minimum.z}, math::Float3{minimum.x, maximum.y, maximum.z}, math::Float3{minimum.x, minimum.y, maximum.z}}, std::array{math::Float3{maximum.x, minimum.y, minimum.z}, math::Float3{maximum.x, minimum.y, maximum.z}, math::Float3{maximum.x, maximum.y, maximum.z}, math::Float3{maximum.x, maximum.y, minimum.z}}};
-            const std::array normals{math::Float3{0.0f, 0.0f, -1.0f}, math::Float3{0.0f, 0.0f, 1.0f}, math::Float3{0.0f, -1.0f, 0.0f}, math::Float3{0.0f, 1.0f, 0.0f}, math::Float3{-1.0f, 0.0f, 0.0f}, math::Float3{1.0f, 0.0f, 0.0f}};
-            const std::array tangents{math::Float3{1.0f, 0.0f, 0.0f}, math::Float3{-1.0f, 0.0f, 0.0f}, math::Float3{1.0f, 0.0f, 0.0f}, math::Float3{1.0f, 0.0f, 0.0f}, math::Float3{0.0f, 1.0f, 0.0f}, math::Float3{0.0f, -1.0f, 0.0f}};
-            constexpr std::array texture_coordinates{math::Float2{0.0f, 0.0f}, math::Float2{1.0f, 0.0f}, math::Float2{1.0f, 1.0f}, math::Float2{0.0f, 1.0f}};
-            for (std::uint32_t face = 0; face != 6; ++face) {
-                const std::uint32_t first = static_cast<std::uint32_t>(result.positions.size());
-                for (std::uint32_t corner = 0; corner != 4; ++corner) vertex(positions[face][corner], normals[face], tangents[face], texture_coordinates[corner]);
-                result.indices.insert(result.indices.end(), {first, first + 2u, first + 1u, first, first + 3u, first + 2u});
-            }
-            return result;
-        }
-        if (const scene::RectangleGeometry* rectangle = std::get_if<scene::RectangleGeometry>(&geometry.data)) {
-            vertex({rectangle->minimum.x, rectangle->minimum.y, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f});
-            vertex({rectangle->maximum.x, rectangle->minimum.y, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f});
-            vertex({rectangle->maximum.x, rectangle->maximum.y, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f});
-            vertex({rectangle->minimum.x, rectangle->maximum.y, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f});
-            result.indices = {0, 1, 2, 0, 2, 3};
-            return result;
-        }
-        constexpr std::uint32_t segments = 64;
-        if (const scene::SphereGeometry* sphere = std::get_if<scene::SphereGeometry>(&geometry.data)) {
-            constexpr std::uint32_t rings = 32;
-            const float phi_max           = sphere->phi_max * std::numbers::pi_v<float> / 180.0f;
-            for (std::uint32_t ring = 0; ring <= rings; ++ring) {
-                const float v      = static_cast<float>(ring) / rings;
-                const float z      = std::lerp(sphere->z_min, sphere->z_max, v);
-                const float radial = std::sqrt(std::max(0.0f, sphere->radius * sphere->radius - z * z));
-                for (std::uint32_t segment = 0; segment <= segments; ++segment) {
-                    const float u   = static_cast<float>(segment) / segments;
-                    const float phi = phi_max * u;
-                    const math::Float3 position{radial * std::cos(phi), radial * std::sin(phi), z};
-                    vertex(position, {position.x / sphere->radius, position.y / sphere->radius, position.z / sphere->radius}, {-std::sin(phi), std::cos(phi), 0.0f}, {u, v});
-                }
-            }
-            for (std::uint32_t ring = 0; ring != rings; ++ring)
-                for (std::uint32_t segment = 0; segment != segments; ++segment) {
-                    const std::uint32_t first  = ring * (segments + 1u) + segment;
-                    const std::uint32_t second = first + segments + 1u;
-                    result.indices.insert(result.indices.end(), {first, second, second + 1u, first, second + 1u, first + 1u});
-                }
-            return result;
-        }
-        if (const scene::DiskGeometry* disk = std::get_if<scene::DiskGeometry>(&geometry.data)) {
-            const float phi_max = disk->phi_max * std::numbers::pi_v<float> / 180.0f;
-            for (std::uint32_t segment = 0; segment <= segments; ++segment) {
-                const float u   = static_cast<float>(segment) / segments;
-                const float phi = phi_max * u;
-                for (const float radius : {disk->inner_radius, disk->radius}) vertex({radius * std::cos(phi), radius * std::sin(phi), disk->height}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {u, (disk->radius - radius) / (disk->radius - disk->inner_radius)});
-            }
-            for (std::uint32_t segment = 0; segment != segments; ++segment) {
-                const std::uint32_t first = segment * 2u;
-                result.indices.insert(result.indices.end(), {first, first + 1u, first + 3u});
-                if (disk->inner_radius != 0.0f) result.indices.insert(result.indices.end(), {first, first + 3u, first + 2u});
-            }
-            return result;
-        }
-        const scene::CylinderGeometry& cylinder = std::get<scene::CylinderGeometry>(geometry.data);
-        const float phi_max                     = cylinder.phi_max * std::numbers::pi_v<float> / 180.0f;
-        for (std::uint32_t segment = 0; segment <= segments; ++segment) {
-            const float u   = static_cast<float>(segment) / segments;
-            const float phi = phi_max * u;
-            const math::Float3 normal{std::cos(phi), std::sin(phi), 0.0f};
-            for (std::uint32_t end = 0; end != 2; ++end) vertex({cylinder.radius * normal.x, cylinder.radius * normal.y, end == 0 ? cylinder.z_min : cylinder.z_max}, normal, {-normal.y, normal.x, 0.0f}, {u, static_cast<float>(end)});
-        }
-        for (std::uint32_t segment = 0; segment != segments; ++segment) {
-            const std::uint32_t first = segment * 2u;
-            result.indices.insert(result.indices.end(), {first, first + 1u, first + 3u, first, first + 3u, first + 2u});
-        }
-        return result;
-    }
-
-    namespace {
-
         template <typename Element>
         [[nodiscard]] GpuBuffer upload_buffer(VulkanRuntime& runtime, const vk::raii::CommandBuffer& command_buffer, const std::span<const Element> elements, const vk::BufferUsageFlags usage, const std::size_t element_capacity = 0) {
             const std::array<Element, 1> empty{};
@@ -245,20 +101,307 @@ namespace spectra {
             command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 1, &dependency});
             return destination;
         }
+
+        GpuTextureImage upload_texture_image(VulkanRuntime& runtime, const scene::ImageTexture& data, const vk::Format format, const vk::PipelineStageFlags2 destination_stages, const vk::raii::CommandBuffer& command_buffer) {
+            GpuTextureImage result{runtime.resources.create_image_2d({data.width, data.height}, format, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageAspectFlagBits::eColor, static_cast<std::uint32_t>(data.mip_offsets.size())), runtime.frames.allocate_resource_descriptor(), runtime.frames.allocate_sampler_descriptor()};
+            runtime.resources.write_sampled_image_descriptor(result.image_descriptor, result.image, vk::ImageLayout::eShaderReadOnlyOptimal);
+            const vk::SamplerAddressMode address_mode = data.wrap == scene::TextureWrapMode::Repeat ? vk::SamplerAddressMode::eRepeat : data.wrap == scene::TextureWrapMode::Clamp ? vk::SamplerAddressMode::eClampToEdge : vk::SamplerAddressMode::eClampToBorder;
+            const bool linear                         = data.filter != scene::TextureFilter::Point;
+            runtime.resources.write_sampler_descriptor(result.sampler_descriptor, vk::SamplerCreateInfo{{}, linear ? vk::Filter::eLinear : vk::Filter::eNearest, linear ? vk::Filter::eLinear : vk::Filter::eNearest, data.filter == scene::TextureFilter::Trilinear || data.filter == scene::TextureFilter::Ewa ? vk::SamplerMipmapMode::eLinear : vk::SamplerMipmapMode::eNearest, address_mode, address_mode, address_mode, 0.0f, data.filter == scene::TextureFilter::Ewa ? vk::True : vk::False, data.maximum_anisotropy, vk::False, vk::CompareOp::eNever, 0.0f, static_cast<float>(data.mip_offsets.size() - 1u), vk::BorderColor::eFloatTransparentBlack});
+            vk::DeviceSize texel_size{};
+            GpuBuffer staging{};
+            if (format == vk::Format::eR16G16B16A16Sfloat) {
+                std::vector<std::uint16_t> texels(data.texels.size() * 4u);
+                for (std::size_t index = 0; index != data.texels.size(); ++index) {
+                    texels[index * 4u]      = float_to_half(data.texels[index].x);
+                    texels[index * 4u + 1u] = float_to_half(data.texels[index].y);
+                    texels[index * 4u + 2u] = float_to_half(data.texels[index].z);
+                    texels[index * 4u + 3u] = float_to_half(data.texels[index].w);
+                }
+                texel_size = 4u * sizeof(std::uint16_t);
+                staging    = runtime.resources.create_buffer(texels.size() * sizeof(std::uint16_t), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+                std::memcpy(staging.mapped, texels.data(), texels.size() * sizeof(std::uint16_t));
+            } else if (format == vk::Format::eR32G32B32A32Sfloat) {
+                texel_size = sizeof(math::Float4);
+                staging    = runtime.resources.create_buffer(data.texels.size() * texel_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+                std::memcpy(staging.mapped, data.texels.data(), data.texels.size() * texel_size);
+            } else
+                throw std::runtime_error("GPU Texture Image format must be RGBA16F or RGBA32F");
+            std::vector<vk::BufferImageCopy> copies{};
+            copies.reserve(data.mip_offsets.size());
+            std::uint32_t mip_width  = data.width;
+            std::uint32_t mip_height = data.height;
+            for (std::uint32_t level = 0; level != data.mip_offsets.size(); ++level) {
+                copies.push_back(vk::BufferImageCopy{data.mip_offsets[level] * texel_size, 0, 0, {vk::ImageAspectFlagBits::eColor, level, 0, 1}, {0, 0, 0}, {mip_width, mip_height, 1}});
+                mip_width  = std::max(1u, mip_width / 2u);
+                mip_height = std::max(1u, mip_height / 2u);
+            }
+            const auto record = [&result, &staging, &copies, destination_stages](const vk::raii::CommandBuffer& commands) {
+                const vk::ImageMemoryBarrier2 to_transfer{vk::PipelineStageFlagBits2::eNone, {}, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *result.image.image, {vk::ImageAspectFlagBits::eColor, 0, result.image.mip_levels, 0, 1}};
+                commands.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_transfer});
+                commands.copyBufferToImage(*staging.buffer, *result.image.image, vk::ImageLayout::eTransferDstOptimal, copies);
+                const vk::ImageMemoryBarrier2 to_shader{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, destination_stages, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *result.image.image, {vk::ImageAspectFlagBits::eColor, 0, result.image.mip_levels, 0, 1}};
+                commands.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_shader});
+            };
+            record(command_buffer);
+            runtime.frames.defer_destruction([upload = std::move(staging)]() mutable {});
+            return result;
+        }
+
+        scene::TriangleMeshGeometry tessellate_geometry(const scene::Geometry& geometry) {
+            if (const scene::TriangleMeshGeometry* mesh = std::get_if<scene::TriangleMeshGeometry>(&geometry.data)) return *mesh;
+            scene::TriangleMeshGeometry result{};
+            const auto vertex = [&result](const math::Float3 position, const math::Float3 normal, const math::Float3 tangent, const math::Float2 uv) {
+                result.positions.push_back(position);
+                result.normals.push_back(normal);
+                result.tangents.push_back(tangent);
+                result.texture_coordinates.push_back(uv);
+                return static_cast<std::uint32_t>(result.positions.size() - 1u);
+            };
+            if (const scene::BoxGeometry* box = std::get_if<scene::BoxGeometry>(&geometry.data)) {
+                const math::Float3 minimum = box->bounds.minimum;
+                const math::Float3 maximum = box->bounds.maximum;
+                const std::array positions{std::array{math::Float3{minimum.x, minimum.y, minimum.z}, math::Float3{maximum.x, minimum.y, minimum.z}, math::Float3{maximum.x, maximum.y, minimum.z}, math::Float3{minimum.x, maximum.y, minimum.z}}, std::array{math::Float3{minimum.x, minimum.y, maximum.z}, math::Float3{minimum.x, maximum.y, maximum.z}, math::Float3{maximum.x, maximum.y, maximum.z}, math::Float3{maximum.x, minimum.y, maximum.z}}, std::array{math::Float3{minimum.x, minimum.y, minimum.z}, math::Float3{minimum.x, minimum.y, maximum.z}, math::Float3{maximum.x, minimum.y, maximum.z}, math::Float3{maximum.x, minimum.y, minimum.z}}, std::array{math::Float3{minimum.x, maximum.y, minimum.z}, math::Float3{maximum.x, maximum.y, minimum.z}, math::Float3{maximum.x, maximum.y, maximum.z}, math::Float3{minimum.x, maximum.y, maximum.z}},
+                    std::array{math::Float3{minimum.x, minimum.y, minimum.z}, math::Float3{minimum.x, maximum.y, minimum.z}, math::Float3{minimum.x, maximum.y, maximum.z}, math::Float3{minimum.x, minimum.y, maximum.z}}, std::array{math::Float3{maximum.x, minimum.y, minimum.z}, math::Float3{maximum.x, minimum.y, maximum.z}, math::Float3{maximum.x, maximum.y, maximum.z}, math::Float3{maximum.x, maximum.y, minimum.z}}};
+                const std::array normals{math::Float3{0.0f, 0.0f, -1.0f}, math::Float3{0.0f, 0.0f, 1.0f}, math::Float3{0.0f, -1.0f, 0.0f}, math::Float3{0.0f, 1.0f, 0.0f}, math::Float3{-1.0f, 0.0f, 0.0f}, math::Float3{1.0f, 0.0f, 0.0f}};
+                const std::array tangents{math::Float3{1.0f, 0.0f, 0.0f}, math::Float3{-1.0f, 0.0f, 0.0f}, math::Float3{1.0f, 0.0f, 0.0f}, math::Float3{1.0f, 0.0f, 0.0f}, math::Float3{0.0f, 1.0f, 0.0f}, math::Float3{0.0f, -1.0f, 0.0f}};
+                constexpr std::array texture_coordinates{math::Float2{0.0f, 0.0f}, math::Float2{1.0f, 0.0f}, math::Float2{1.0f, 1.0f}, math::Float2{0.0f, 1.0f}};
+                for (std::uint32_t face = 0; face != 6; ++face) {
+                    const std::uint32_t first = static_cast<std::uint32_t>(result.positions.size());
+                    for (std::uint32_t corner = 0; corner != 4; ++corner) vertex(positions[face][corner], normals[face], tangents[face], texture_coordinates[corner]);
+                    result.indices.insert(result.indices.end(), {first, first + 2u, first + 1u, first, first + 3u, first + 2u});
+                }
+                return result;
+            }
+            if (const scene::RectangleGeometry* rectangle = std::get_if<scene::RectangleGeometry>(&geometry.data)) {
+                vertex({rectangle->minimum.x, rectangle->minimum.y, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f});
+                vertex({rectangle->maximum.x, rectangle->minimum.y, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f});
+                vertex({rectangle->maximum.x, rectangle->maximum.y, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f});
+                vertex({rectangle->minimum.x, rectangle->maximum.y, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f});
+                result.indices = {0, 1, 2, 0, 2, 3};
+                return result;
+            }
+            constexpr std::uint32_t segments = 64;
+            if (const scene::SphereGeometry* sphere = std::get_if<scene::SphereGeometry>(&geometry.data)) {
+                constexpr std::uint32_t rings = 32;
+                const float phi_max           = sphere->phi_max * std::numbers::pi_v<float> / 180.0f;
+                for (std::uint32_t ring = 0; ring <= rings; ++ring) {
+                    const float v      = static_cast<float>(ring) / rings;
+                    const float z      = std::lerp(sphere->z_min, sphere->z_max, v);
+                    const float radial = std::sqrt(std::max(0.0f, sphere->radius * sphere->radius - z * z));
+                    for (std::uint32_t segment = 0; segment <= segments; ++segment) {
+                        const float u   = static_cast<float>(segment) / segments;
+                        const float phi = phi_max * u;
+                        const math::Float3 position{radial * std::cos(phi), radial * std::sin(phi), z};
+                        vertex(position, {position.x / sphere->radius, position.y / sphere->radius, position.z / sphere->radius}, {-std::sin(phi), std::cos(phi), 0.0f}, {u, v});
+                    }
+                }
+                for (std::uint32_t ring = 0; ring != rings; ++ring)
+                    for (std::uint32_t segment = 0; segment != segments; ++segment) {
+                        const std::uint32_t first  = ring * (segments + 1u) + segment;
+                        const std::uint32_t second = first + segments + 1u;
+                        result.indices.insert(result.indices.end(), {first, second, second + 1u, first, second + 1u, first + 1u});
+                    }
+                return result;
+            }
+            if (const scene::DiskGeometry* disk = std::get_if<scene::DiskGeometry>(&geometry.data)) {
+                const float phi_max = disk->phi_max * std::numbers::pi_v<float> / 180.0f;
+                for (std::uint32_t segment = 0; segment <= segments; ++segment) {
+                    const float u   = static_cast<float>(segment) / segments;
+                    const float phi = phi_max * u;
+                    for (const float radius : {disk->inner_radius, disk->radius}) vertex({radius * std::cos(phi), radius * std::sin(phi), disk->height}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {u, (disk->radius - radius) / (disk->radius - disk->inner_radius)});
+                }
+                for (std::uint32_t segment = 0; segment != segments; ++segment) {
+                    const std::uint32_t first = segment * 2u;
+                    result.indices.insert(result.indices.end(), {first, first + 1u, first + 3u});
+                    if (disk->inner_radius != 0.0f) result.indices.insert(result.indices.end(), {first, first + 3u, first + 2u});
+                }
+                return result;
+            }
+            const scene::CylinderGeometry& cylinder = std::get<scene::CylinderGeometry>(geometry.data);
+            const float phi_max                     = cylinder.phi_max * std::numbers::pi_v<float> / 180.0f;
+            for (std::uint32_t segment = 0; segment <= segments; ++segment) {
+                const float u   = static_cast<float>(segment) / segments;
+                const float phi = phi_max * u;
+                const math::Float3 normal{std::cos(phi), std::sin(phi), 0.0f};
+                for (std::uint32_t end = 0; end != 2; ++end) vertex({cylinder.radius * normal.x, cylinder.radius * normal.y, end == 0 ? cylinder.z_min : cylinder.z_max}, normal, {-normal.y, normal.x, 0.0f}, {u, static_cast<float>(end)});
+            }
+            for (std::uint32_t segment = 0; segment != segments; ++segment) {
+                const std::uint32_t first = segment * 2u;
+                result.indices.insert(result.indices.end(), {first, first + 1u, first + 3u, first, first + 3u, first + 2u});
+            }
+            return result;
+        }
+
     } // namespace
 
-    void GpuScene::initialize(const scene::Scene& source_scene, const std::span<const GpuGeometryBinding> geometry_bindings, const std::span<const std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities) {
+    GpuScene::GpuScene(VulkanRuntime& runtime, std::filesystem::path shader_directory) noexcept : context{runtime, std::move(shader_directory)} {}
+
+    GpuScene::~GpuScene() {
+        this->destroy();
+    }
+
+    void GpuScene::initialize(const scene::Scene& source_scene, const std::span<const dynamics::MeshOutputBinding> mesh_bindings, const std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings) {
         GpuScene next{this->context.runtime, this->context.shader_directory};
-        next.initialize_resources(source_scene.view(), geometry_bindings, sphere_capacities, nullptr);
+        next.initialize_resources(source_scene.view(), mesh_bindings, sphere_set_bindings, nullptr);
         this->destroy();
         std::swap(this->resources, next.resources);
     }
 
-    void GpuScene::initialize_resources(const scene::SceneView scene, const std::span<const GpuGeometryBinding> geometry_bindings, const std::span<const std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities, const vk::raii::CommandBuffer* command_buffer) {
+    void GpuScene::destroy() noexcept {
+        this->context.runtime.frames.defer_destruction([attribute_clear_shader = std::move(this->resources.attribute_clear_shader), attribute_accumulation_shader = std::move(this->resources.attribute_accumulation_shader), attribute_normalization_shader = std::move(this->resources.attribute_normalization_shader), bounds_clear_shader = std::move(this->resources.bounds_clear_shader), bounds_accumulation_shader = std::move(this->resources.bounds_accumulation_shader), sphere_unpack_shader = std::move(this->resources.sphere_unpack_shader), instance_apply_shader = std::move(this->resources.instance_apply_shader), texture_images = std::move(this->resources.texture_images), acceleration_instances = std::move(this->resources.acceleration_structure_instances), primitive_transforms = std::move(this->resources.primitive_transforms), instance_bindings = std::move(this->resources.dynamic_instance_bindings), instance_bounds = std::move(this->resources.instance_bounds),
+                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), immediate_scratch = std::move(this->resources.immediate_scratch), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), volumes = std::move(this->resources.volumes), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
+        this->resources.texture_image_indices.clear();
+        this->resources.acceleration_structure_instances_descriptor = {};
+        this->resources.primitive_transforms_descriptor             = {};
+        this->resources.dynamic_instance_bindings_descriptor        = {};
+        this->resources.instance_bounds_descriptor                  = {};
+        this->resources.instance_bounds_readback_counts             = {};
+        this->resources.resolved_instance_bounds.clear();
+        this->resources.resolved_scene_bounds = math::Bounds3::empty();
+        this->resources.scratch_offsets       = {};
+        this->resources.external_geometries.clear();
+        this->resources.external_sphere_sets.clear();
+        this->resources.external_volumes.clear();
+        this->resources.mesh_bindings.clear();
+        this->resources.primitives.clear();
+        this->resources.acceleration_primitive_indices.clear();
+        this->resources.primitive_instance_ids.clear();
+        this->resources.acceleration_instance_ids.clear();
+        this->resources.resource_binding_changes      = scene::SceneChange::None;
+        this->resources.dynamic_changes               = GpuSceneChange::None;
+        this->resources.dynamic_revision              = 0;
+        this->resources.dynamic_structure_revision    = 0;
+        this->resources.external_bottom_level_rebuilt = false;
+        this->resources.instance_bounds_dirty         = false;
+    }
+
+    const GpuTextureImage& GpuScene::texture_image(const scene::Texture& texture, const vk::Format format) const {
+        return this->resources.texture_images[this->resources.texture_image_indices.at({texture.id, format})];
+    }
+
+    GpuSceneView GpuScene::view() const noexcept {
+        return {
+            this->resources.geometries,
+            this->resources.sphere_sets,
+            this->resources.volumes,
+            this->resources.primitives,
+            this->resources.acceleration_primitive_indices,
+            this->resources.primitive_instance_ids,
+            this->resources.acceleration_instance_ids,
+            this->resources.top_level_acceleration_structure.address,
+            this->resources.primitive_transforms_descriptor,
+            &this->resources.primitive_transforms,
+            this->resources.instance_bounds_descriptor,
+            this->resources.resolved_instance_bounds,
+            this->resources.resolved_scene_bounds,
+            this->resources.dynamic_revision,
+            this->resources.dynamic_structure_revision,
+        };
+    }
+
+    GpuSceneUpdate GpuScene::apply(const dynamics::DynamicSnapshot& snapshot, const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
+        this->resources.resource_binding_changes = scene::SceneChange::None;
+        this->resources.dynamic_changes          = GpuSceneChange::None;
+        const std::uint32_t frame_slot_index     = this->context.runtime.frames.frame.current_slot_index;
+        this->resolve_instance_bounds(frame_slot_index);
+        std::vector<scene::GeometryId> external_geometries{};
+        std::vector<scene::SphereSetId> external_sphere_sets{};
+        std::vector<scene::VolumeId> external_volumes{};
+        for (const dynamics::GpuSceneUpdate& update : snapshot.scene_updates) {
+            if (const auto* mesh = std::get_if<dynamics::GpuTriangleMeshUpdate>(&update.data))
+                external_geometries.push_back(mesh->geometry_id);
+            else if (const auto* spheres = std::get_if<dynamics::GpuSphereSetUpdate>(&update.data))
+                external_sphere_sets.push_back(spheres->sphere_set_id);
+            else if (const auto* field = std::get_if<dynamics::GpuFieldUpdate>(&update.data))
+                external_volumes.push_back(field->volume_id);
+        }
+        this->begin_external_updates(external_geometries, external_sphere_sets, external_volumes);
+        this->synchronize_scene(scene, command_buffer);
+
+        for (const dynamics::GpuSceneUpdate& update : snapshot.scene_updates) {
+            if (const auto* mesh = std::get_if<dynamics::GpuTriangleMeshUpdate>(&update.data)) {
+                this->synchronize_external_geometry(mesh->geometry_id, mesh->positions.buffer, mesh->normals ? mesh->normals->buffer : nullptr, mesh->tangents ? mesh->tangents->buffer : nullptr, mesh->texture_coordinates ? mesh->texture_coordinates->buffer : nullptr, mesh->indices ? mesh->indices->buffer : nullptr, static_cast<std::uint32_t>(mesh->vertex_count), static_cast<std::uint32_t>(mesh->index_count), command_buffer);
+                this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Geometry;
+                continue;
+            }
+            if (const auto* spheres = std::get_if<dynamics::GpuSphereSetUpdate>(&update.data)) {
+                this->synchronize_external_sphere_set(spheres->sphere_set_id, spheres->spheres.descriptor, static_cast<std::uint32_t>(spheres->count), command_buffer);
+                this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Geometry;
+                continue;
+            }
+            const auto* field = std::get_if<dynamics::GpuFieldUpdate>(&update.data);
+            if (!field) continue;
+            const auto bound_volume = std::ranges::find(this->resources.volumes, field->volume_id, &GpuVolume::volume_id);
+            if (bound_volume == this->resources.volumes.end()) throw std::runtime_error("Dynamic field update references an unknown Scene Volume");
+            if (field->resolution != bound_volume->resolution) throw std::runtime_error("Dynamic field resolution differs from its bound Scene Volume");
+            if (field->local_from_grid != math::Transform{}) throw std::runtime_error("A dynamic field bound to a Scene Volume requires an identity local-from-grid transform");
+            std::array<const GpuBuffer*, static_cast<std::size_t>(GpuVolumeField::Count)> fields{};
+            for (const dynamics::GpuFieldChannelView& channel_view : field->channels) {
+                const std::string& channel = channel_view.channel.id;
+                if (channel == "density")
+                    fields[std::to_underlying(GpuVolumeField::Density)] = channel_view.values.buffer;
+                else if (channel == "temperature")
+                    fields[std::to_underlying(GpuVolumeField::Temperature)] = channel_view.values.buffer;
+                else if (channel == "emission-scale")
+                    fields[std::to_underlying(GpuVolumeField::EmissionScale)] = channel_view.values.buffer;
+                else if (channel == "sigma-a")
+                    fields[std::to_underlying(GpuVolumeField::SigmaA)] = channel_view.values.buffer;
+                else if (channel == "sigma-s")
+                    fields[std::to_underlying(GpuVolumeField::SigmaS)] = channel_view.values.buffer;
+                else if (channel == "emission")
+                    fields[std::to_underlying(GpuVolumeField::Emission)] = channel_view.values.buffer;
+                else
+                    throw std::runtime_error(std::format("Dynamic field update contains unknown channel {}", channel));
+            }
+            const scene::VolumeRegion region = field->dirty_region.value_or(scene::VolumeRegion{{}, field->resolution});
+            if (region.minimum.x >= region.maximum.x || region.minimum.y >= region.maximum.y || region.minimum.z >= region.maximum.z || region.maximum.x > field->resolution.x || region.maximum.y > field->resolution.y || region.maximum.z > field->resolution.z) throw std::runtime_error("Dynamic field dirty region is empty, reversed, or outside its resolution");
+            const std::uint64_t voxel_count = static_cast<std::uint64_t>(region.maximum.x - region.minimum.x) * (region.maximum.y - region.minimum.y) * (region.maximum.z - region.minimum.z);
+            this->synchronize_external_volume(field->volume_id, fields[std::to_underlying(GpuVolumeField::Density)], fields[std::to_underlying(GpuVolumeField::Temperature)], fields[std::to_underlying(GpuVolumeField::EmissionScale)], fields[std::to_underlying(GpuVolumeField::SigmaA)], fields[std::to_underlying(GpuVolumeField::SigmaS)], fields[std::to_underlying(GpuVolumeField::Emission)], voxel_count, region, command_buffer);
+            this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Volume;
+        }
+        this->end_external_updates(scene, command_buffer);
+        bool instance_transforms_updated{};
+        for (const dynamics::GpuSceneUpdate& update : snapshot.scene_updates)
+            if (const auto* transforms = std::get_if<dynamics::GpuInstanceTransformUpdate>(&update.data)) {
+                this->synchronize_external_instance_transforms(*transforms, command_buffer);
+                instance_transforms_updated = instance_transforms_updated || transforms->count != 0;
+            }
+        if (instance_transforms_updated) {
+            this->update_top_level_from_gpu(static_cast<std::uint32_t>(this->resources.acceleration_primitive_indices.size()), command_buffer);
+            this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Transform;
+        }
+        if (std::exchange(this->resources.instance_bounds_dirty, false)) this->update_instance_bounds(scene, command_buffer, frame_slot_index);
+        if (this->resources.dynamic_changes != GpuSceneChange::None) ++this->resources.dynamic_revision;
+        if ((this->resources.dynamic_changes & GpuSceneChange::Structure) != GpuSceneChange::None) ++this->resources.dynamic_structure_revision;
+        return {
+            std::exchange(this->resources.resource_binding_changes, scene::SceneChange::None),
+            std::exchange(this->resources.dynamic_changes, GpuSceneChange::None),
+            this->resources.dynamic_revision,
+            this->resources.dynamic_structure_revision,
+        };
+    }
+
+    GpuSceneUpdate GpuScene::synchronize(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
+        this->resources.resource_binding_changes = scene::SceneChange::None;
+        this->resources.dynamic_changes          = GpuSceneChange::None;
+        const std::uint32_t frame_slot_index     = this->context.runtime.frames.frame.current_slot_index;
+        this->resolve_instance_bounds(frame_slot_index);
+        this->synchronize_scene(scene, command_buffer);
+        if (std::exchange(this->resources.instance_bounds_dirty, false)) this->update_instance_bounds(scene, command_buffer, frame_slot_index);
+        return {
+            std::exchange(this->resources.resource_binding_changes, scene::SceneChange::None),
+            std::exchange(this->resources.dynamic_changes, GpuSceneChange::None),
+            this->resources.dynamic_revision,
+            this->resources.dynamic_structure_revision,
+        };
+    }
+
+    void GpuScene::initialize_resources(const scene::SceneView scene, const std::span<const dynamics::MeshOutputBinding> mesh_bindings, const std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings, const vk::raii::CommandBuffer* command_buffer) {
         this->resources.dynamic_changes            = GpuSceneChange::None;
         this->resources.dynamic_revision           = 0;
         this->resources.dynamic_structure_revision = 0;
-        this->resources.geometry_bindings          = {geometry_bindings.begin(), geometry_bindings.end()};
+        this->resources.mesh_bindings              = {mesh_bindings.begin(), mesh_bindings.end()};
         const auto create_shader                   = [this](const std::string_view file, const char* entry) {
             const std::vector<std::uint32_t> code = load_spirv(this->context.shader_directory / file);
             return vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, code.size() * sizeof(std::uint32_t), code.data(), entry}};
@@ -276,8 +419,8 @@ namespace spectra {
             for (const scene::Geometry& geometry : scene.resources.geometries) this->resources.geometries.emplace_back(this->create_geometry(geometry, target));
             this->resources.sphere_sets.reserve(scene.resources.sphere_sets.size());
             for (const scene::SphereSet& spheres : scene.resources.sphere_sets) {
-                const auto capacity = std::ranges::find(sphere_capacities, spheres.id, &std::pair<scene::SphereSetId, std::uint32_t>::first);
-                this->resources.sphere_sets.emplace_back(this->create_sphere_set(spheres, target, capacity == sphere_capacities.end() ? 0 : capacity->second));
+                const auto binding = std::ranges::find(sphere_set_bindings, spheres.id, &dynamics::SphereSetOutputBinding::sphere_set_id);
+                this->resources.sphere_sets.emplace_back(this->create_sphere_set(spheres, target, binding == sphere_set_bindings.end() ? 0 : binding->capacity));
             }
             this->resources.volumes.reserve(scene.resources.volumes.size());
             for (const scene::Volume& volume : scene.resources.volumes) this->resources.volumes.emplace_back(this->create_volume(volume, target));
@@ -327,34 +470,6 @@ namespace spectra {
         this->resources.synchronized_revision = scene.revision;
     }
 
-    void GpuScene::destroy() noexcept {
-        this->context.runtime.frames.defer_destruction([attribute_clear_shader = std::move(this->resources.attribute_clear_shader), attribute_accumulation_shader = std::move(this->resources.attribute_accumulation_shader), attribute_normalization_shader = std::move(this->resources.attribute_normalization_shader), bounds_clear_shader = std::move(this->resources.bounds_clear_shader), bounds_accumulation_shader = std::move(this->resources.bounds_accumulation_shader), sphere_unpack_shader = std::move(this->resources.sphere_unpack_shader), instance_apply_shader = std::move(this->resources.instance_apply_shader), texture_images = std::move(this->resources.texture_images), acceleration_instances = std::move(this->resources.acceleration_structure_instances), primitive_transforms = std::move(this->resources.primitive_transforms), instance_bindings = std::move(this->resources.dynamic_instance_bindings), instance_bounds = std::move(this->resources.instance_bounds),
-                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), immediate_scratch = std::move(this->resources.immediate_scratch), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), volumes = std::move(this->resources.volumes), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
-        this->resources.texture_image_indices.clear();
-        this->resources.acceleration_structure_instances_descriptor = {};
-        this->resources.primitive_transforms_descriptor             = {};
-        this->resources.dynamic_instance_bindings_descriptor        = {};
-        this->resources.instance_bounds_descriptor                  = {};
-        this->resources.instance_bounds_readback_counts             = {};
-        this->resources.resolved_instance_bounds.clear();
-        this->resources.resolved_scene_bounds = math::Bounds3::empty();
-        this->resources.scratch_offsets       = {};
-        this->resources.external_geometries.clear();
-        this->resources.external_sphere_sets.clear();
-        this->resources.external_volumes.clear();
-        this->resources.geometry_bindings.clear();
-        this->resources.primitives.clear();
-        this->resources.acceleration_primitive_indices.clear();
-        this->resources.primitive_instance_ids.clear();
-        this->resources.acceleration_instance_ids.clear();
-        this->resources.resource_binding_changes      = scene::SceneChange::None;
-        this->resources.dynamic_changes               = GpuSceneChange::None;
-        this->resources.dynamic_revision              = 0;
-        this->resources.dynamic_structure_revision    = 0;
-        this->resources.external_bottom_level_rebuilt = false;
-        this->resources.instance_bounds_dirty         = false;
-    }
-
     void GpuScene::cache_texture_images(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         std::map<std::pair<scene::TextureId, vk::Format>, std::size_t> previous_indices = std::move(this->resources.texture_image_indices);
         std::vector<GpuTextureImage> previous_images                                    = std::move(this->resources.texture_images);
@@ -378,41 +493,17 @@ namespace spectra {
         this->context.runtime.frames.defer_destruction([images = std::move(previous_images)]() mutable {});
     }
 
-    const GpuTextureImage& GpuScene::texture_image(const scene::Texture& texture, const vk::Format format) const {
-        return this->resources.texture_images[this->resources.texture_image_indices.at({texture.id, format})];
-    }
-
-    GpuSceneView GpuScene::view() const noexcept {
-        return {
-            this->resources.geometries,
-            this->resources.sphere_sets,
-            this->resources.volumes,
-            this->resources.primitives,
-            this->resources.acceleration_primitive_indices,
-            this->resources.primitive_instance_ids,
-            this->resources.acceleration_instance_ids,
-            this->resources.top_level_acceleration_structure.address,
-            this->resources.primitive_transforms_descriptor,
-            &this->resources.primitive_transforms,
-            this->resources.instance_bounds_descriptor,
-            this->resources.resolved_instance_bounds,
-            this->resources.resolved_scene_bounds,
-            this->resources.dynamic_revision,
-            this->resources.dynamic_structure_revision,
-        };
-    }
-
     GpuGeometry GpuScene::create_geometry(const scene::Geometry& geometry, const vk::raii::CommandBuffer& command_buffer) {
         const scene::TriangleMeshGeometry mesh = tessellate_geometry(geometry);
         GpuGeometry result{};
         result.geometry_id                  = geometry.id;
-        const auto binding                  = std::ranges::find(this->resources.geometry_bindings, geometry.id, &GpuGeometryBinding::geometry_id);
-        result.update_mode                  = binding == this->resources.geometry_bindings.end() ? GpuMeshUpdateMode::Immutable : binding->update_mode;
+        const auto binding                  = std::ranges::find(this->resources.mesh_bindings, geometry.id, &dynamics::MeshOutputBinding::geometry_id);
+        result.update_mode                  = binding == this->resources.mesh_bindings.end() ? GpuMeshUpdateMode::Immutable : binding->update_mode == dynamics::MeshUpdateMode::Deformable ? GpuMeshUpdateMode::Deformable : GpuMeshUpdateMode::TopologyChanging;
         result.acceleration_kind            = std::holds_alternative<scene::SphereGeometry>(geometry.data) || std::holds_alternative<scene::DiskGeometry>(geometry.data) || std::holds_alternative<scene::CylinderGeometry>(geometry.data) ? AccelerationGeometryKind::Procedural : AccelerationGeometryKind::Triangle;
         result.vertex_count                 = static_cast<std::uint32_t>(mesh.positions.size());
         result.index_count                  = static_cast<std::uint32_t>(mesh.indices.size());
-        result.vertex_capacity              = std::max({result.vertex_count, binding == this->resources.geometry_bindings.end() ? 0u : binding->vertex_capacity, 1u});
-        result.index_capacity               = std::max({result.index_count, binding == this->resources.geometry_bindings.end() ? 0u : binding->index_capacity, 3u});
+        result.vertex_capacity              = std::max({result.vertex_count, binding == this->resources.mesh_bindings.end() ? 0u : binding->vertex_capacity, 1u});
+        result.index_capacity               = std::max({result.index_count, binding == this->resources.mesh_bindings.end() ? 0u : binding->index_capacity, 3u});
         result.acceleration_primitive_count = result.acceleration_kind == AccelerationGeometryKind::Triangle ? result.index_count / 3u : 1u;
         result.attribute_mask               = (mesh.normals.empty() ? 0u : gpu_geometry_attribute_normal) | (mesh.tangents.empty() ? 0u : gpu_geometry_attribute_tangent) | (mesh.texture_coordinates.empty() ? 0u : gpu_geometry_attribute_texture_coordinate);
         const std::array<math::Float3, 1> missing_float3{};
@@ -1174,117 +1265,20 @@ namespace spectra {
         command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
     }
 
-    GpuSceneUpdate GpuScene::apply(const dynamics::DynamicSnapshot& snapshot, const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
-        this->resources.resource_binding_changes = scene::SceneChange::None;
-        this->resources.dynamic_changes          = GpuSceneChange::None;
-        const std::uint32_t frame_slot_index     = this->context.runtime.frames.frame.current_slot_index;
-        this->resolve_instance_bounds(frame_slot_index);
-        std::vector<scene::GeometryId> external_geometries{};
-        std::vector<scene::SphereSetId> external_sphere_sets{};
-        std::vector<scene::VolumeId> external_volumes{};
-        for (const dynamics::GpuSceneUpdate& update : snapshot.scene_updates) {
-            if (const auto* mesh = std::get_if<dynamics::GpuTriangleMeshUpdate>(&update.data))
-                external_geometries.push_back(mesh->geometry_id);
-            else if (const auto* spheres = std::get_if<dynamics::GpuSphereSetUpdate>(&update.data))
-                external_sphere_sets.push_back(spheres->sphere_set_id);
-            else if (const auto* field = std::get_if<dynamics::GpuFieldUpdate>(&update.data))
-                external_volumes.push_back(field->volume_id);
-        }
-        this->begin_external_updates(external_geometries, external_sphere_sets, external_volumes);
-        this->synchronize_scene(scene, command_buffer);
-
-        for (const dynamics::GpuSceneUpdate& update : snapshot.scene_updates) {
-            if (const auto* mesh = std::get_if<dynamics::GpuTriangleMeshUpdate>(&update.data)) {
-                this->synchronize_external_geometry(mesh->geometry_id, mesh->positions.buffer, mesh->normals ? mesh->normals->buffer : nullptr, mesh->tangents ? mesh->tangents->buffer : nullptr, mesh->texture_coordinates ? mesh->texture_coordinates->buffer : nullptr, mesh->indices ? mesh->indices->buffer : nullptr, static_cast<std::uint32_t>(mesh->vertex_count), static_cast<std::uint32_t>(mesh->index_count), command_buffer);
-                this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Geometry;
-                continue;
-            }
-            if (const auto* spheres = std::get_if<dynamics::GpuSphereSetUpdate>(&update.data)) {
-                this->synchronize_external_sphere_set(spheres->sphere_set_id, spheres->spheres.descriptor, static_cast<std::uint32_t>(spheres->count), command_buffer);
-                this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Geometry;
-                continue;
-            }
-            const auto* field = std::get_if<dynamics::GpuFieldUpdate>(&update.data);
-            if (!field) continue;
-            const auto bound_volume = std::ranges::find(this->resources.volumes, field->volume_id, &GpuVolume::volume_id);
-            if (bound_volume == this->resources.volumes.end()) throw std::runtime_error("Dynamic field update references an unknown Scene Volume");
-            if (field->resolution != bound_volume->resolution) throw std::runtime_error("Dynamic field resolution differs from its bound Scene Volume");
-            if (field->local_from_grid != math::Transform{}) throw std::runtime_error("A dynamic field bound to a Scene Volume requires an identity local-from-grid transform");
-            std::array<const GpuBuffer*, static_cast<std::size_t>(GpuVolumeField::Count)> fields{};
-            for (const dynamics::GpuFieldChannelView& channel_view : field->channels) {
-                const std::string& channel = channel_view.channel.id;
-                if (channel == "density")
-                    fields[std::to_underlying(GpuVolumeField::Density)] = channel_view.values.buffer;
-                else if (channel == "temperature")
-                    fields[std::to_underlying(GpuVolumeField::Temperature)] = channel_view.values.buffer;
-                else if (channel == "emission-scale")
-                    fields[std::to_underlying(GpuVolumeField::EmissionScale)] = channel_view.values.buffer;
-                else if (channel == "sigma-a")
-                    fields[std::to_underlying(GpuVolumeField::SigmaA)] = channel_view.values.buffer;
-                else if (channel == "sigma-s")
-                    fields[std::to_underlying(GpuVolumeField::SigmaS)] = channel_view.values.buffer;
-                else if (channel == "emission")
-                    fields[std::to_underlying(GpuVolumeField::Emission)] = channel_view.values.buffer;
-                else
-                    throw std::runtime_error(std::format("Dynamic field update contains unknown channel {}", channel));
-            }
-            const scene::VolumeRegion region = field->dirty_region.value_or(scene::VolumeRegion{{}, field->resolution});
-            if (region.minimum.x >= region.maximum.x || region.minimum.y >= region.maximum.y || region.minimum.z >= region.maximum.z || region.maximum.x > field->resolution.x || region.maximum.y > field->resolution.y || region.maximum.z > field->resolution.z) throw std::runtime_error("Dynamic field dirty region is empty, reversed, or outside its resolution");
-            const std::uint64_t voxel_count = static_cast<std::uint64_t>(region.maximum.x - region.minimum.x) * (region.maximum.y - region.minimum.y) * (region.maximum.z - region.minimum.z);
-            this->synchronize_external_volume(field->volume_id, fields[std::to_underlying(GpuVolumeField::Density)], fields[std::to_underlying(GpuVolumeField::Temperature)], fields[std::to_underlying(GpuVolumeField::EmissionScale)], fields[std::to_underlying(GpuVolumeField::SigmaA)], fields[std::to_underlying(GpuVolumeField::SigmaS)], fields[std::to_underlying(GpuVolumeField::Emission)], voxel_count, region, command_buffer);
-            this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Volume;
-        }
-        this->end_external_updates(scene, command_buffer);
-        bool instance_transforms_updated{};
-        for (const dynamics::GpuSceneUpdate& update : snapshot.scene_updates)
-            if (const auto* transforms = std::get_if<dynamics::GpuInstanceTransformUpdate>(&update.data)) {
-                this->synchronize_external_instance_transforms(*transforms, command_buffer);
-                instance_transforms_updated = instance_transforms_updated || transforms->count != 0;
-            }
-        if (instance_transforms_updated) {
-            this->update_top_level_from_gpu(static_cast<std::uint32_t>(this->resources.acceleration_primitive_indices.size()), command_buffer);
-            this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Transform;
-        }
-        if (std::exchange(this->resources.instance_bounds_dirty, false)) this->update_instance_bounds(scene, command_buffer, frame_slot_index);
-        if (this->resources.dynamic_changes != GpuSceneChange::None) ++this->resources.dynamic_revision;
-        if ((this->resources.dynamic_changes & GpuSceneChange::Structure) != GpuSceneChange::None) ++this->resources.dynamic_structure_revision;
-        return {
-            std::exchange(this->resources.resource_binding_changes, scene::SceneChange::None),
-            std::exchange(this->resources.dynamic_changes, GpuSceneChange::None),
-            this->resources.dynamic_revision,
-            this->resources.dynamic_structure_revision,
-        };
-    }
-
-    GpuSceneUpdate GpuScene::synchronize(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
-        this->resources.resource_binding_changes = scene::SceneChange::None;
-        this->resources.dynamic_changes          = GpuSceneChange::None;
-        const std::uint32_t frame_slot_index     = this->context.runtime.frames.frame.current_slot_index;
-        this->resolve_instance_bounds(frame_slot_index);
-        this->synchronize_scene(scene, command_buffer);
-        if (std::exchange(this->resources.instance_bounds_dirty, false)) this->update_instance_bounds(scene, command_buffer, frame_slot_index);
-        return {
-            std::exchange(this->resources.resource_binding_changes, scene::SceneChange::None),
-            std::exchange(this->resources.dynamic_changes, GpuSceneChange::None),
-            this->resources.dynamic_revision,
-            this->resources.dynamic_structure_revision,
-        };
-    }
-
     void GpuScene::synchronize_scene(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         if (scene.revision.number == this->resources.synchronized_revision.number) return;
         if ((scene.revision.changes & scene::SceneChange::Structure) != scene::SceneChange::None) {
             const std::vector<scene::GeometryId> external_geometries   = this->resources.external_geometries;
             const std::vector<scene::SphereSetId> external_sphere_sets = this->resources.external_sphere_sets;
             const std::vector<scene::VolumeId> external_volumes        = this->resources.external_volumes;
-            const std::vector<GpuGeometryBinding> geometry_bindings    = this->resources.geometry_bindings;
-            std::vector<std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities{};
-            sphere_capacities.reserve(this->resources.sphere_sets.size());
-            for (const GpuSphereSet& spheres : this->resources.sphere_sets) sphere_capacities.emplace_back(spheres.sphere_set_id, spheres.sphere_capacity);
+            const std::vector<dynamics::MeshOutputBinding> mesh_bindings = this->resources.mesh_bindings;
+            std::vector<dynamics::SphereSetOutputBinding> sphere_set_bindings{};
+            sphere_set_bindings.reserve(this->resources.sphere_sets.size());
+            for (const GpuSphereSet& spheres : this->resources.sphere_sets) sphere_set_bindings.emplace_back(spheres.sphere_set_id, spheres.sphere_capacity);
             const std::uint64_t dynamic_revision   = this->resources.dynamic_revision + 1;
             const std::uint64_t structure_revision = this->resources.dynamic_structure_revision + 1;
             GpuScene next{this->context.runtime, this->context.shader_directory};
-            next.initialize_resources(scene, geometry_bindings, sphere_capacities, &command_buffer);
+            next.initialize_resources(scene, mesh_bindings, sphere_set_bindings, &command_buffer);
             next.resources.external_geometries        = external_geometries;
             next.resources.external_sphere_sets       = external_sphere_sets;
             next.resources.external_volumes           = external_volumes;

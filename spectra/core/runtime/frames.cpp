@@ -4,8 +4,6 @@ import std;
 import vulkan;
 
 namespace spectra {
-    DescriptorLease::DescriptorLease(VulkanFrames& descriptor_frames, const DescriptorHandle descriptor_value, const DescriptorKind descriptor_kind) noexcept : frames{&descriptor_frames}, value{descriptor_value}, kind{descriptor_kind} {}
-
     DescriptorLease::~DescriptorLease() {
         this->reset();
     }
@@ -34,12 +32,11 @@ namespace spectra {
         this->value  = {};
     }
 
+    DescriptorLease::DescriptorLease(VulkanFrames& descriptor_frames, const DescriptorHandle descriptor_value, const DescriptorKind descriptor_kind) noexcept : frames{&descriptor_frames}, value{descriptor_value}, kind{descriptor_kind} {}
+
     namespace {
         constexpr vk::DeviceSize upload_frame_size = 64u * 1024u * 1024u;
 
-        [[nodiscard]] constexpr vk::DeviceSize align_up(const vk::DeviceSize value, const vk::DeviceSize alignment) noexcept {
-            return (value + alignment - 1u) & ~(alignment - 1u);
-        }
     } // namespace
 
     VulkanFrames::VulkanFrames(VulkanGraphics& graphics, GpuResources& resources) : context{graphics, resources} {
@@ -113,13 +110,13 @@ namespace spectra {
 
     GpuUploadSlice VulkanFrames::stage_upload(const std::span<const std::byte> data, const vk::DeviceSize alignment) {
         const std::uint32_t slot = this->frame.current_slot_index;
-        vk::DeviceSize local_offset = align_up(this->uploads.offsets[slot], alignment);
+        vk::DeviceSize local_offset = align_device_size(this->uploads.offsets[slot], alignment);
         std::vector<GpuBuffer>& buffers = this->uploads.buffers[slot];
         if (local_offset + data.size_bytes() > buffers[this->uploads.current_buffers[slot]].size) {
             ++this->uploads.current_buffers[slot];
             this->uploads.offsets[slot] = 0;
             local_offset = 0;
-            if (this->uploads.current_buffers[slot] == buffers.size()) buffers.emplace_back(this->context.resources.create_buffer(std::max<vk::DeviceSize>(upload_frame_size, align_up(data.size_bytes(), 64u * 1024u)), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true));
+            if (this->uploads.current_buffers[slot] == buffers.size()) buffers.emplace_back(this->context.resources.create_buffer(std::max<vk::DeviceSize>(upload_frame_size, align_device_size(data.size_bytes(), 64u * 1024u)), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true));
         }
         GpuBuffer& buffer = buffers[this->uploads.current_buffers[slot]];
         std::memcpy(static_cast<std::byte*>(buffer.mapped) + local_offset, data.data(), data.size_bytes());

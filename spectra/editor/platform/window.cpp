@@ -14,14 +14,6 @@ import std;
 import vulkan;
 
 namespace spectra {
-    WindowPlatform::GlfwLifetime::GlfwLifetime() {
-        if (glfwInit() != GLFW_TRUE) throw std::runtime_error("GLFW initialization failed");
-    }
-
-    WindowPlatform::GlfwLifetime::~GlfwLifetime() {
-        glfwTerminate();
-    }
-
     WindowPlatform::WindowPlatform(const std::string_view application_name, const vk::Extent2D initial_extent) {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
@@ -57,6 +49,39 @@ namespace spectra {
     WindowPlatform::~WindowPlatform() {
         SetWindowLongPtrW(this->native_window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(this->state.original_window_proc));
         RemovePropW(this->native_window, L"SpectraWindow");
+    }
+
+    void WindowPlatform::poll_events() noexcept {
+        glfwPollEvents();
+    }
+
+    void WindowPlatform::wait_events() noexcept {
+        int width{};
+        int height{};
+        glfwGetFramebufferSize(this->window, &width, &height);
+        if (width == 0 || height == 0)
+            glfwWaitEvents();
+        else
+            glfwPollEvents();
+    }
+
+    void WindowPlatform::request_close() noexcept {
+        this->state.close_requested = true;
+    }
+
+    bool WindowPlatform::take_close_request() noexcept {
+        return std::exchange(this->state.close_requested, false);
+    }
+
+    std::vector<std::filesystem::path> WindowPlatform::take_dropped_paths() noexcept {
+        return std::exchange(this->state.dropped_paths, {});
+    }
+    WindowPlatform::GlfwLifetime::GlfwLifetime() {
+        if (glfwInit() != GLFW_TRUE) throw std::runtime_error("GLFW initialization failed");
+    }
+
+    WindowPlatform::GlfwLifetime::~GlfwLifetime() {
+        glfwTerminate();
     }
 
     LRESULT CALLBACK WindowPlatform::window_proc(HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
@@ -108,40 +133,8 @@ namespace spectra {
                 SetWindowPos(window, nullptr, suggested.left, suggested.top, suggested.right - suggested.left, suggested.bottom - suggested.top, SWP_NOZORDER | SWP_NOACTIVATE);
                 return 0;
             }
-        case WM_SIZING:
-            platform->state.resize_completed = true;
-            break;
         }
         return CallWindowProcW(platform->state.original_window_proc, window, message, wparam, lparam);
     }
 
-    void WindowPlatform::poll_events() noexcept {
-        glfwPollEvents();
-    }
-
-    void WindowPlatform::wait_events() noexcept {
-        int width{};
-        int height{};
-        glfwGetFramebufferSize(this->window, &width, &height);
-        if (width == 0 || height == 0)
-            glfwWaitEvents();
-        else
-            glfwPollEvents();
-    }
-
-    void WindowPlatform::request_close() noexcept {
-        this->state.close_requested = true;
-    }
-
-    bool WindowPlatform::take_close_request() noexcept {
-        return std::exchange(this->state.close_requested, false);
-    }
-
-    bool WindowPlatform::take_resize_completion() noexcept {
-        return std::exchange(this->state.resize_completed, false);
-    }
-
-    std::vector<std::filesystem::path> WindowPlatform::take_dropped_paths() noexcept {
-        return std::exchange(this->state.dropped_paths, {});
-    }
 } // namespace spectra

@@ -7,15 +7,51 @@ export module spectra.dynamics.runtime;
 export import spectra.dynamics;
 export import spectra.dynamics.gpu;
 
-import spectra.dynamics.frozen;
 import spectra.runtime;
 import spectra.scene;
-import spectra.scene.document;
 import std;
 import vulkan;
 
 namespace spectra {
     export struct DynamicsRuntime {
+        DynamicsRuntime(VulkanRuntime& runtime) noexcept;
+        ~DynamicsRuntime();
+
+        DynamicsRuntime(const DynamicsRuntime&)            = delete;
+        DynamicsRuntime(DynamicsRuntime&&)                 = delete;
+        DynamicsRuntime& operator=(const DynamicsRuntime&) = delete;
+        DynamicsRuntime& operator=(DynamicsRuntime&&)      = delete;
+
+        void initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene);
+        void destroy() noexcept;
+        [[nodiscard]] bool initialized() const noexcept;
+
+        [[nodiscard]] const dynamics::ProviderDescriptor& provider_descriptor(std::string_view provider_id) const;
+        [[nodiscard]] const dynamics::TelemetrySnapshot& telemetry(std::size_t system_index) const;
+        void write_telemetry(const std::filesystem::path& path) const;
+        [[nodiscard]] std::span<const dynamics::MeshOutputBinding> mesh_bindings() const noexcept;
+        [[nodiscard]] std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings() const noexcept;
+        [[nodiscard]] std::span<const dynamics::GpuVisualization> visualizations() const noexcept;
+        [[nodiscard]] bool controls(scene::InstanceId instance_id) const noexcept;
+        [[nodiscard]] bool controls(scene::VolumeId volume_id) const noexcept;
+
+        [[nodiscard]] bool running() const noexcept;
+        [[nodiscard]] dynamics::SimulationTimeline timeline() const noexcept;
+        void start();
+        void pause();
+        void step();
+        void advance();
+        void evaluate(std::uint64_t simulation_step);
+        void evaluate_time(double simulation_seconds);
+        void reset();
+        void apply_parameter_changes(std::size_t system_index, std::span<const scene::DynamicParameterSetting> parameters, bool reset);
+
+        [[nodiscard]] const dynamics::DynamicSnapshot* acquire_snapshot() noexcept;
+        void consume_snapshot() noexcept;
+        void record_telemetry(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
+        void resolve_telemetry(std::uint32_t frame_slot_index);
+
+    private:
         struct ProviderLibrary {
             ProviderLibrary(const std::filesystem::path& library_path, std::string_view expected_provider_id);
             ~ProviderLibrary();
@@ -25,10 +61,10 @@ namespace spectra {
             ProviderLibrary& operator=(const ProviderLibrary&) = delete;
             ProviderLibrary& operator=(ProviderLibrary&&)      = delete;
 
-            std::filesystem::path library_path{};
             void* library_handle{};
             const SpectraPluginApi* plugin_api{};
             SpectraPluginProviderDescriptor descriptor{};
+            dynamics::ProviderDescriptor provider{};
         };
 
         struct DynamicDatasetBuffer {
@@ -40,7 +76,6 @@ namespace spectra {
         };
 
         struct DynamicDatasetRuntime {
-            std::size_t dataset_index{};
             dynamics::DatasetDescriptor descriptor{};
             std::optional<scene::DynamicSceneBinding> scene_binding{};
             std::vector<scene::DynamicVisualizationView> visualizations{};
@@ -55,7 +90,6 @@ namespace spectra {
         struct TelemetryReadbackSlot {
             GpuBuffer buffer{};
             std::uint64_t simulation_step{};
-            std::uint64_t sequence{};
             double simulation_seconds{};
             std::string phase{};
             std::string headline{};
@@ -69,8 +103,6 @@ namespace spectra {
             std::array<TelemetryReadbackSlot, VulkanFrames::frames_in_flight> readback_slots{};
             std::uint64_t timeline_signal_value{};
             std::uint64_t simulation_step{};
-            std::uint64_t sequence{};
-            std::uint64_t next_sequence{};
             double simulation_seconds{};
             std::uint32_t current_slot_index{};
             std::string phase{};
@@ -105,52 +137,11 @@ namespace spectra {
             std::string message{};
         };
 
-        DynamicsRuntime(VulkanRuntime& runtime, SceneDocument& document) noexcept;
-        ~DynamicsRuntime();
-
-        DynamicsRuntime(const DynamicsRuntime&)            = delete;
-        DynamicsRuntime(DynamicsRuntime&&)                 = delete;
-        DynamicsRuntime& operator=(const DynamicsRuntime&) = delete;
-        DynamicsRuntime& operator=(DynamicsRuntime&&)      = delete;
-
-        [[nodiscard]] const dynamics::ProviderDescriptor& provider_descriptor(std::string_view provider_id) const;
-        [[nodiscard]] const dynamics::TelemetrySnapshot& telemetry(std::size_t system_index) const;
-        [[nodiscard]] bool initialized() const noexcept;
-        [[nodiscard]] std::span<const dynamics::MeshOutputBinding> mesh_bindings() const noexcept;
-        [[nodiscard]] std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings() const noexcept;
-        [[nodiscard]] std::span<const dynamics::GpuVisualization> visualizations() const noexcept;
-        [[nodiscard]] const dynamics::DynamicSnapshot& published_snapshot() const noexcept;
-        [[nodiscard]] const dynamics::FrozenSnapshot* frozen_snapshot() const noexcept;
-        [[nodiscard]] dynamics::FrozenSnapshot telemetry_snapshot() const;
-        void initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene);
-        void advance();
-        [[nodiscard]] const dynamics::DynamicSnapshot* pending_snapshot() noexcept;
-        void consume_snapshot() noexcept;
-        void resolve_telemetry(std::uint32_t frame_slot_index);
-        void record_telemetry(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
-        [[nodiscard]] bool controls(scene::InstanceId instance_id) const noexcept;
-        [[nodiscard]] bool controls(scene::VolumeId volume_id) const noexcept;
-        void apply_parameter_changes(std::size_t system_index, std::span<const scene::DynamicParameterSetting> parameters, bool reset);
-        void destroy() noexcept;
-        [[nodiscard]] bool running() const noexcept;
-        [[nodiscard]] dynamics::SimulationTimeline timeline() const noexcept;
-        void start();
-        void pause();
-        void step();
-        void evaluate(std::uint64_t simulation_step);
-        void evaluate_time(double simulation_seconds);
-        void reset();
-
-    private:
         struct {
             VulkanRuntime& runtime;
-            SceneDocument& document;
         } context;
 
-        dynamics::FrozenSnapshotRuntime frozen;
-
         struct {
-            bool initialized{};
             const scene::Scene* source_scene{};
             scene::DynamicSetup setup{};
         } configuration;
@@ -158,7 +149,6 @@ namespace spectra {
         struct {
             std::deque<ProviderLibrary> libraries{};
             std::unordered_map<std::string, ProviderLibrary*> by_id{};
-            std::vector<dynamics::ProviderDescriptor> descriptors{};
         } providers;
 
         struct {
@@ -177,7 +167,6 @@ namespace spectra {
             std::vector<PendingTelemetryCommit> telemetry_commits{};
             std::string callback_error{};
             bool snapshot_pending{};
-            bool frozen_snapshot_pending{};
         } publication;
 
         struct {
@@ -197,7 +186,7 @@ namespace spectra {
         void apply_parameters(DynamicSystemRuntime& system);
         void append_dataset(const PendingDatasetCommit& pending, dynamics::DynamicSnapshot& snapshot) const;
         void abort_publication();
-        void commit_publication(dynamics::DynamicSnapshot& snapshot);
+        void commit_publication(dynamics::DynamicSnapshot& snapshot, std::uint64_t simulation_step);
         void discard_pending_snapshot();
         void publish_snapshot(std::uint64_t simulation_step);
         void step_to(std::uint64_t target_step);

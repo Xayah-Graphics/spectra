@@ -102,32 +102,6 @@ namespace spectra {
         this->camera_changed();
     }
 
-    void ViewportInteraction::frame_viewport_camera(const math::Bounds3 bounds, const float aspect) {
-        const scene::CameraFrame camera_frame = this->view.camera.frame();
-        const math::Float3 target             = bounds.center();
-        const math::Float3 offset             = camera_frame.position - this->view.focus;
-        const math::Float3 direction          = offset == math::Float3{} ? -camera_frame.forward : offset.normalized();
-        if (scene::OrthographicCameraData* orthographic = std::get_if<scene::OrthographicCameraData>(&this->view.camera.data)) {
-            const float half_height     = bounds.radius() * 1.1f * std::max(1.0f, 1.0f / aspect);
-            const float half_width      = half_height * aspect;
-            const float distance        = std::max((camera_frame.position - this->view.focus).length(), bounds.radius() * 3.0f);
-            orthographic->screen_window = {{-half_width, -half_height}, {half_width, half_height}};
-            orthographic->far_plane     = std::max(orthographic->far_plane, distance + bounds.radius() * 4.0f);
-            this->view.focus            = target;
-            this->view.camera.transform = math::Transform::look_at(target + direction * distance, target, this->view.navigation_up);
-            ++this->view.camera_revision;
-            return;
-        }
-        scene::PerspectiveCameraData& perspective = std::get<scene::PerspectiveCameraData>(this->view.camera.data);
-        const float horizontal_fov                = 2.0f * std::atan(std::tan(perspective.vertical_fov * std::numbers::pi_v<float> / 360.0f) * aspect);
-        const float limiting_fov                  = std::min(perspective.vertical_fov * std::numbers::pi_v<float> / 180.0f, horizontal_fov);
-        const float distance                      = bounds.radius() / std::sin(limiting_fov * 0.5f) * 1.1f;
-        this->view.focus                          = target;
-        this->view.camera.transform               = math::Transform::look_at(target + direction * distance, target, this->view.navigation_up);
-        perspective.far_plane                     = std::max(perspective.far_plane, distance + bounds.radius() * 4.0f);
-        ++this->view.camera_revision;
-    }
-
     void ViewportInteraction::frame_scene(const float aspect) {
         this->frame_viewport_camera(this->navigation_bounds(), aspect);
         this->view.source = CameraSource::Viewport;
@@ -202,6 +176,38 @@ namespace spectra {
         this->view.selection.hovered.reset();
     }
 
+    void ViewportInteraction::prune_selection() noexcept {
+        std::erase_if(this->view.selection.selected, [this](const SceneEntityReference entity) { return !this->entity_exists(entity); });
+        if (this->view.selection.hovered && !this->entity_exists(*this->view.selection.hovered)) this->view.selection.hovered.reset();
+        if (this->view.selection.active && !this->entity_exists(*this->view.selection.active)) this->view.selection.active.reset();
+    }
+
+    void ViewportInteraction::frame_viewport_camera(const math::Bounds3 bounds, const float aspect) {
+        const scene::CameraFrame camera_frame = this->view.camera.frame();
+        const math::Float3 target             = bounds.center();
+        const math::Float3 offset             = camera_frame.position - this->view.focus;
+        const math::Float3 direction          = offset == math::Float3{} ? -camera_frame.forward : offset.normalized();
+        if (scene::OrthographicCameraData* orthographic = std::get_if<scene::OrthographicCameraData>(&this->view.camera.data)) {
+            const float half_height     = bounds.radius() * 1.1f * std::max(1.0f, 1.0f / aspect);
+            const float half_width      = half_height * aspect;
+            const float distance        = std::max((camera_frame.position - this->view.focus).length(), bounds.radius() * 3.0f);
+            orthographic->screen_window = {{-half_width, -half_height}, {half_width, half_height}};
+            orthographic->far_plane     = std::max(orthographic->far_plane, distance + bounds.radius() * 4.0f);
+            this->view.focus            = target;
+            this->view.camera.transform = math::Transform::look_at(target + direction * distance, target, this->view.navigation_up);
+            ++this->view.camera_revision;
+            return;
+        }
+        scene::PerspectiveCameraData& perspective = std::get<scene::PerspectiveCameraData>(this->view.camera.data);
+        const float horizontal_fov                = 2.0f * std::atan(std::tan(perspective.vertical_fov * std::numbers::pi_v<float> / 360.0f) * aspect);
+        const float limiting_fov                  = std::min(perspective.vertical_fov * std::numbers::pi_v<float> / 180.0f, horizontal_fov);
+        const float distance                      = bounds.radius() / std::sin(limiting_fov * 0.5f) * 1.1f;
+        this->view.focus                          = target;
+        this->view.camera.transform               = math::Transform::look_at(target + direction * distance, target, this->view.navigation_up);
+        perspective.far_plane                     = std::max(perspective.far_plane, distance + bounds.radius() * 4.0f);
+        ++this->view.camera_revision;
+    }
+
     bool ViewportInteraction::entity_exists(const SceneEntityReference entity) const noexcept {
         const scene::SceneResources& resources = this->context.document.content.source.resources;
         if (entity.kind == SceneEntityKind::Instance) return std::ranges::contains(resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id);
@@ -274,12 +280,6 @@ namespace spectra {
                     return scene_bounds;
             },
             light.data);
-    }
-
-    void ViewportInteraction::prune_selection() noexcept {
-        std::erase_if(this->view.selection.selected, [this](const SceneEntityReference entity) { return !this->entity_exists(entity); });
-        if (this->view.selection.hovered && !this->entity_exists(*this->view.selection.hovered)) this->view.selection.hovered.reset();
-        if (this->view.selection.active && !this->entity_exists(*this->view.selection.active)) this->view.selection.active.reset();
     }
 
 } // namespace spectra

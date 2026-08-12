@@ -93,7 +93,7 @@ namespace spectra {
             return index;
         }
 
-        [[nodiscard]] RasterTextureCompilation compile_raster_textures(const Rasterizer& renderer, const scene::SceneView scene) {
+        [[nodiscard]] RasterTextureCompilation compile_raster_textures(GpuScene& gpu_scene, const scene::SceneView scene) {
             RasterTextureCompilation result{};
             const std::size_t texture_count = scene.resources.textures.size();
             result.handles.assign(texture_count, invalid_raster_index);
@@ -139,7 +139,7 @@ namespace spectra {
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ImageTexture>) {
                             kind                         = shader_semantics::texture_image;
                             local_index                  = static_cast<std::uint32_t>(result.images.size());
-                            const GpuTextureImage& image = renderer.context.gpu_scene.texture_image(texture, texture.spectrum_type == scene::TextureSpectrumType::Albedo ? vk::Format::eR16G16B16A16Sfloat : vk::Format::eR32G32B32A32Sfloat);
+                            const GpuTextureImage& image = gpu_scene.texture_image(texture, texture.spectrum_type == scene::TextureSpectrumType::Albedo ? vk::Format::eR16G16B16A16Sfloat : vk::Format::eR32G32B32A32Sfloat);
                             result.images.push_back(RasterImageTexture{image.image_descriptor, image.sampler_descriptor, {compile_raster_mapping(result.mappings, data.mapping), static_cast<std::uint32_t>(data.channel), static_cast<std::uint32_t>(data.filter), data.invert ? 1u : 0u}, {data.scale, static_cast<float>(std::to_underlying(texture.color_space)), data.maximum_anisotropy, static_cast<float>(std::to_underlying(data.wrap))}});
                         } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::CheckerboardTexture>) {
                             kind        = shader_semantics::texture_checkerboard;
@@ -408,10 +408,10 @@ namespace spectra {
             return 0.2126f * luminance.x + 0.7152f * luminance.y + 0.0722f * luminance.z;
         }
 
-        void compile_raster_emitters(const Rasterizer& renderer, const scene::SceneView scene, const RasterTextureCompilation& textures, std::vector<RasterAreaLight>& surface_lights, std::vector<RasterAreaEmitterRange>& area_emitters) {
+        void compile_raster_emitters(const GpuSceneView gpu_scene, const scene::SceneView scene, const RasterTextureCompilation& textures, std::vector<RasterAreaLight>& surface_lights, std::vector<RasterAreaEmitterRange>& area_emitters) {
             const auto texture_handle = [&](const scene::TextureId id) { return id.value == 0 ? invalid_raster_index : textures.handles[raster_texture_source_index(scene, id)]; };
-            surface_lights.reserve(renderer.context.gpu_scene.view().primitives.size());
-            for (const GpuScenePrimitive& gpu_primitive : renderer.context.gpu_scene.view().primitives) {
+            surface_lights.reserve(gpu_scene.primitives.size());
+            for (const GpuScenePrimitive& gpu_primitive : gpu_scene.primitives) {
                 surface_lights.emplace_back();
                 const scene::Instance& instance   = scene.resources.instances[gpu_primitive.scene_instance_index];
                 const scene::Prototype& prototype = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
@@ -449,6 +449,61 @@ namespace spectra {
 
     } // namespace
 
+    Rasterizer::Rasterizer(VulkanRuntime& runtime, GpuScene& gpu_scene, const scene::SceneView scene_view, std::filesystem::path shader_directory) : context{runtime, gpu_scene, std::move(shader_directory)} {
+        this->initialize_scene(scene_view);
+        this->initialize_renderer();
+    }
+
+    Rasterizer::~Rasterizer() {
+        this->destroy();
+    }
+
+    void Rasterizer::invalidate(const scene::SceneChange changes, const GpuSceneUpdate gpu_update) noexcept {
+        this->renderer.pending_changes     = this->renderer.pending_changes | changes;
+        this->renderer.pending_gpu_changes = this->renderer.pending_gpu_changes | gpu_update.gpu_changes;
+    }
+
+    void Rasterizer::prepare(scene::SceneView scene_view, const RenderView& view, const vk::raii::CommandBuffer& command_buffer) {
+        if (this->renderer.pending_changes != scene::SceneChange::None) {
+            scene_view.revision.changes = this->renderer.pending_changes;
+            this->synchronize_scene(scene_view, command_buffer);
+            this->renderer.pending_changes = scene::SceneChange::None;
+        }
+        bool gpu_recompiled{};
+        if ((this->renderer.pending_gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None) {
+            this->upload_scene(scene_view, command_buffer);
+            gpu_recompiled = true;
+        }
+        if (!gpu_recompiled && (this->renderer.pending_gpu_changes & (GpuSceneChange::Geometry | GpuSceneChange::Transform)) != GpuSceneChange::None) this->update_area_emitters(command_buffer);
+        this->renderer.pending_gpu_changes = GpuSceneChange::None;
+        this->renderer.camera              = view.camera;
+        if (!*this->renderer.output_image.image || this->renderer.output_image.extent != view.extent) this->create_output(view.extent);
+    }
+
+    void Rasterizer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t) {
+        this->record_commands(command_buffer);
+    }
+
+    RenderOutput Rasterizer::output() const noexcept {
+        return {
+            this->renderer.output_image,
+            this->renderer.sampled_output_descriptor,
+            this->renderer.output_layout,
+            this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::PipelineStageFlagBits2::eComputeShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::AccessFlagBits2::eShaderStorageWrite : vk::AccessFlagBits2::eColorAttachmentWrite,
+            scene::SpectrumColorSpace::Srgb,
+            this->renderer.film_exposure,
+        };
+    }
+
+    DepthBufferView Rasterizer::depth_buffer() noexcept {
+        return {this->renderer.depth_image, this->renderer.sampled_depth_descriptor, this->renderer.depth_layout};
+    }
+
+    void Rasterizer::set_display_mode(const RasterDisplayMode mode) noexcept {
+        this->renderer.display_mode = mode;
+    }
+
     void Rasterizer::initialize_scene(const scene::SceneView scene) {
         if (scene.camera.medium.value != 0) throw std::runtime_error("Rasterizer does not support camera media; use Path Tracer");
         for (const scene::Instance& instance : scene.resources.instances) {
@@ -479,12 +534,12 @@ namespace spectra {
     }
 
     void Rasterizer::upload_scene(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
-        RasterTextureCompilation textures   = compile_raster_textures(*this, scene);
+        RasterTextureCompilation textures   = compile_raster_textures(this->context.gpu_scene, scene);
         RasterMaterialCompilation materials = compile_raster_materials(scene, textures);
 
         std::vector<RasterAreaLight> area_lights{};
         std::vector<RasterAreaEmitterRange> area_emitters{};
-        compile_raster_emitters(*this, scene, textures, area_lights, area_emitters);
+        compile_raster_emitters(this->context.gpu_scene.view(), scene, textures, area_lights, area_emitters);
         if (area_lights.empty()) area_lights.emplace_back();
 
         std::vector<RasterPrimitive> primitives{};
@@ -852,14 +907,7 @@ namespace spectra {
         command_buffer.setDepthTestEnable(vk::True);
         command_buffer.setDepthWriteEnable(vk::True);
         command_buffer.setDepthCompareOp(vk::CompareOp::eLess);
-        command_buffer.setRasterizerDiscardEnable(vk::False);
-        command_buffer.setPolygonModeEXT(vk::PolygonMode::eFill);
-        command_buffer.setRasterizationSamplesEXT(vk::SampleCountFlagBits::e1);
-        command_buffer.setAlphaToCoverageEnableEXT(vk::False);
-        command_buffer.setDepthBiasEnable(vk::False);
-        command_buffer.setStencilTestEnable(vk::False);
-        constexpr vk::SampleMask sample_mask = 1;
-        command_buffer.setSampleMaskEXT(vk::SampleCountFlagBits::e1, sample_mask);
+        set_basic_graphics_state(command_buffer);
         const vk::Bool32 blend_enable = wireframe_only ? vk::True : vk::False;
         command_buffer.setColorBlendEnableEXT(0, blend_enable);
         if (wireframe_only)
@@ -987,56 +1035,6 @@ namespace spectra {
         command_buffer.dispatch((this->renderer.output_image.extent.width + 7) / 8, (this->renderer.output_image.extent.height + 7) / 8, 1);
         this->renderer.output_layout = vk::ImageLayout::eGeneral;
         this->renderer.depth_layout  = vk::ImageLayout::eShaderReadOnlyOptimal;
-    }
-
-    RenderOutput Rasterizer::output() const noexcept {
-        return {
-            this->renderer.output_image,
-            this->renderer.sampled_output_descriptor,
-            this->renderer.output_layout,
-            this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::PipelineStageFlagBits2::eComputeShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::AccessFlagBits2::eShaderStorageWrite : vk::AccessFlagBits2::eColorAttachmentWrite,
-            scene::SpectrumColorSpace::Srgb,
-            this->renderer.film_exposure,
-        };
-    }
-    Rasterizer::Rasterizer(VulkanRuntime& runtime, GpuScene& gpu_scene, const scene::SceneView scene_view, std::filesystem::path shader_directory) : context{runtime, gpu_scene, std::move(shader_directory)} {
-        this->initialize_scene(scene_view);
-        this->initialize_renderer();
-    }
-
-    Rasterizer::~Rasterizer() {
-        this->destroy();
-    }
-
-    void Rasterizer::invalidate(const scene::SceneChange changes, const GpuSceneUpdate gpu_update) noexcept {
-        this->renderer.pending_changes     = this->renderer.pending_changes | changes;
-        this->renderer.pending_gpu_changes = this->renderer.pending_gpu_changes | gpu_update.gpu_changes;
-    }
-
-    void Rasterizer::prepare(scene::SceneView scene_view, const RenderView& view, const vk::raii::CommandBuffer& command_buffer) {
-        if (this->renderer.pending_changes != scene::SceneChange::None) {
-            scene_view.revision.changes = this->renderer.pending_changes;
-            this->synchronize_scene(scene_view, command_buffer);
-            this->renderer.pending_changes = scene::SceneChange::None;
-        }
-        bool gpu_recompiled{};
-        if ((this->renderer.pending_gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None) {
-            this->upload_scene(scene_view, command_buffer);
-            gpu_recompiled = true;
-        }
-        if (!gpu_recompiled && (this->renderer.pending_gpu_changes & (GpuSceneChange::Geometry | GpuSceneChange::Transform)) != GpuSceneChange::None) this->update_area_emitters(command_buffer);
-        this->renderer.pending_gpu_changes = GpuSceneChange::None;
-        this->renderer.camera              = view.camera;
-        if (!*this->renderer.output_image.image || this->renderer.output_image.extent != view.extent) this->create_output(view.extent);
-    }
-
-    void Rasterizer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t) {
-        this->record_commands(command_buffer);
-    }
-
-    void Rasterizer::set_display_mode(const RasterDisplayMode mode) noexcept {
-        this->renderer.display_mode = mode;
     }
 
     void Rasterizer::destroy() noexcept {

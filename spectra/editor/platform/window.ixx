@@ -23,7 +23,6 @@ namespace spectra {
         void wait_events() noexcept;
         void request_close() noexcept;
         [[nodiscard]] bool take_close_request() noexcept;
-        [[nodiscard]] bool take_resize_completion() noexcept;
         [[nodiscard]] std::vector<std::filesystem::path> take_dropped_paths() noexcept;
 
         GLFWwindow* window{};
@@ -42,14 +41,12 @@ namespace spectra {
         };
 
         static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
-
         struct {
             GlfwLifetime glfw{};
             std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)> glfw_window{nullptr, glfwDestroyWindow};
             WNDPROC original_window_proc{};
             std::vector<std::filesystem::path> dropped_paths{};
             bool close_requested{};
-            bool resize_completed{};
         } state;
     };
 } // namespace spectra

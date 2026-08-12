@@ -22,13 +22,6 @@ namespace spectra {
         TopologyChanging,
     };
 
-    export struct GpuGeometryBinding {
-        scene::GeometryId geometry_id{};
-        GpuMeshUpdateMode update_mode{GpuMeshUpdateMode::Immutable};
-        std::uint32_t vertex_capacity{};
-        std::uint32_t index_capacity{};
-    };
-
     export enum class AccelerationGeometryKind : std::uint8_t {
         Triangle,
         Procedural,
@@ -190,12 +183,12 @@ namespace spectra {
         GpuScene& operator=(const GpuScene&) = delete;
         GpuScene& operator=(GpuScene&&)      = delete;
 
-        void initialize(const scene::Scene& source_scene, std::span<const GpuGeometryBinding> geometry_bindings = {}, std::span<const std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities = {});
+        void initialize(const scene::Scene& source_scene, std::span<const dynamics::MeshOutputBinding> mesh_bindings = {}, std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings = {});
         void destroy() noexcept;
-        [[nodiscard]] GpuSceneUpdate synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] GpuSceneUpdate apply(const dynamics::DynamicSnapshot& snapshot, scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] GpuSceneView view() const noexcept;
         [[nodiscard]] const GpuTextureImage& texture_image(const scene::Texture& texture, vk::Format format) const;
+        [[nodiscard]] GpuSceneView view() const noexcept;
+        [[nodiscard]] GpuSceneUpdate apply(const dynamics::DynamicSnapshot& snapshot, scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        [[nodiscard]] GpuSceneUpdate synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
 
     private:
         struct {
@@ -232,7 +225,7 @@ namespace spectra {
             std::vector<scene::GeometryId> external_geometries{};
             std::vector<scene::SphereSetId> external_sphere_sets{};
             std::vector<scene::VolumeId> external_volumes{};
-            std::vector<GpuGeometryBinding> geometry_bindings{};
+            std::vector<dynamics::MeshOutputBinding> mesh_bindings{};
             bool external_bottom_level_rebuilt{};
             scene::SceneChange resource_binding_changes{scene::SceneChange::None};
             GpuSceneChange dynamic_changes{GpuSceneChange::None};
@@ -249,30 +242,30 @@ namespace spectra {
             bool instance_bounds_dirty{};
         } resources;
 
-        void initialize_resources(scene::SceneView scene, std::span<const GpuGeometryBinding> geometry_bindings, std::span<const std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities, const vk::raii::CommandBuffer* command_buffer);
-        void begin_external_updates(std::span<const scene::GeometryId> geometry_ids, std::span<const scene::SphereSetId> sphere_set_ids, std::span<const scene::VolumeId> volume_ids);
-        void end_external_updates(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void initialize_resources(scene::SceneView scene, std::span<const dynamics::MeshOutputBinding> mesh_bindings, std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings, const vk::raii::CommandBuffer* command_buffer);
+        void cache_texture_images(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        [[nodiscard]] GpuGeometry create_geometry(const scene::Geometry& geometry, const vk::raii::CommandBuffer& command_buffer);
+        [[nodiscard]] GpuSphereSet create_sphere_set(const scene::SphereSet& spheres, const vk::raii::CommandBuffer& command_buffer, std::uint32_t capacity = 0);
+        [[nodiscard]] GpuVolume create_volume(const scene::Volume& volume, const vk::raii::CommandBuffer& command_buffer);
+        [[nodiscard]] std::vector<vk::AccelerationStructureInstanceKHR> acceleration_structure_instance_data(scene::SceneView scene);
+        [[nodiscard]] vk::DeviceAddress acquire_acceleration_scratch(vk::DeviceSize size, bool immediate);
+        void update_bottom_level(GpuGeometry& geometry, const scene::Geometry& source_geometry, const vk::raii::CommandBuffer& command_buffer);
+        void generate_missing_attributes(GpuGeometry& geometry, bool generate_normals, bool generate_tangents, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_geometry(scene::GeometryId geometry_id, const GpuBuffer* positions, const GpuBuffer* normals, const GpuBuffer* tangents, const GpuBuffer* texture_coordinates, const GpuBuffer* indices, std::uint32_t vertex_count, std::uint32_t index_count, const vk::raii::CommandBuffer& command_buffer);
+        void update_sphere_set(GpuSphereSet& spheres, const scene::SphereSet& source_spheres, const vk::raii::CommandBuffer& command_buffer);
+        void update_sphere_set_acceleration(GpuSphereSet& spheres, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_sphere_set(scene::SphereSetId sphere_set_id, DescriptorHandle spheres_descriptor, std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_instance_transforms(const dynamics::GpuInstanceTransformUpdate& update, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_volume(scene::VolumeId volume_id, const GpuBuffer* density, const GpuBuffer* temperature, const GpuBuffer* emission_scale, const GpuBuffer* sigma_a, const GpuBuffer* sigma_s, const GpuBuffer* emission, std::uint64_t voxel_count, scene::VolumeRegion dirty_region, const vk::raii::CommandBuffer& command_buffer);
+        void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_instance_state(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_instance_bounds(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         void resolve_instance_bounds(std::uint32_t frame_slot_index);
         void update_top_level_from_gpu(std::uint32_t instance_count, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_external_volume(scene::VolumeId volume_id, const GpuBuffer* density, const GpuBuffer* temperature, const GpuBuffer* emission_scale, const GpuBuffer* sigma_a, const GpuBuffer* sigma_s, const GpuBuffer* emission, std::uint64_t voxel_count, scene::VolumeRegion dirty_region, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        void cache_texture_images(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        void generate_missing_attributes(GpuGeometry& geometry, bool generate_normals, bool generate_tangents, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] GpuGeometry create_geometry(const scene::Geometry& geometry, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] GpuSphereSet create_sphere_set(const scene::SphereSet& spheres, const vk::raii::CommandBuffer& command_buffer, std::uint32_t capacity = 0);
-        [[nodiscard]] GpuVolume create_volume(const scene::Volume& volume, const vk::raii::CommandBuffer& command_buffer);
-        void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] std::vector<vk::AccelerationStructureInstanceKHR> acceleration_structure_instance_data(scene::SceneView scene);
-        void update_bottom_level(GpuGeometry& geometry, const scene::Geometry& source_geometry, const vk::raii::CommandBuffer& command_buffer);
-        void update_sphere_set(GpuSphereSet& spheres, const scene::SphereSet& source_spheres, const vk::raii::CommandBuffer& command_buffer);
-        void update_sphere_set_acceleration(GpuSphereSet& spheres, const vk::raii::CommandBuffer& command_buffer);
         void update_top_level(std::span<const vk::AccelerationStructureInstanceKHR> instances, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] vk::DeviceAddress acquire_acceleration_scratch(vk::DeviceSize size, bool immediate);
+        void synchronize_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void begin_external_updates(std::span<const scene::GeometryId> geometry_ids, std::span<const scene::SphereSetId> sphere_set_ids, std::span<const scene::VolumeId> volume_ids);
+        void end_external_updates(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         [[nodiscard]] GpuAccelerationStructure build_bottom_level(const vk::AccelerationStructureGeometryKHR& geometry, std::uint32_t primitive_count, GpuMeshUpdateMode update_mode, const vk::raii::CommandBuffer& command_buffer, std::uint32_t maximum_primitive_count = 0);
         [[nodiscard]] GpuAccelerationStructure build_top_level(std::span<const vk::AccelerationStructureInstanceKHR> instances, std::uint32_t maximum_primitive_count, const vk::raii::CommandBuffer& command_buffer);
     };

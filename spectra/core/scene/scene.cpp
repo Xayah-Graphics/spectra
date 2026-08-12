@@ -151,6 +151,47 @@ namespace spectra::scene {
             geometry.data);
     }
 
+    math::Bounds3 sphere_set_bounds(const SphereSet& spheres) noexcept {
+        math::Bounds3 result = math::Bounds3::empty();
+        for (std::size_t index = 0; index != spheres.positions.size(); ++index) {
+            const math::Float3 position = spheres.positions[index];
+            const float radius          = spheres.radii[index];
+            result.include(math::Float3{position.x - radius, position.y - radius, position.z - radius});
+            result.include(math::Float3{position.x + radius, position.y + radius, position.z + radius});
+        }
+        return result;
+    }
+
+    BlackbodySpectrum::BlackbodySpectrum(const float temperature) noexcept : temperature(temperature) {
+        if (temperature <= 0.0f) return;
+        constexpr float speed_of_light     = 299792458.0f;
+        constexpr float planck_constant    = 6.62606957e-34f;
+        constexpr float boltzmann_constant = 1.3806488e-23f;
+        const float maximum_wavelength     = 2.8977721e-3f / temperature * 1.0e9f;
+        const float wavelength_meters      = maximum_wavelength * 1.0e-9f;
+        this->normalization                = std::pow(wavelength_meters, 5.0f) * (std::exp(planck_constant * speed_of_light / (wavelength_meters * boltzmann_constant * temperature)) - 1.0f) / (2.0f * planck_constant * speed_of_light * speed_of_light);
+    }
+
+    float BlackbodySpectrum::evaluate(const float wavelength) const noexcept {
+        if (this->temperature <= 0.0f) return 0.0f;
+        constexpr float speed_of_light     = 299792458.0f;
+        constexpr float planck_constant    = 6.62606957e-34f;
+        constexpr float boltzmann_constant = 1.3806488e-23f;
+        const float wavelength_meters      = wavelength * 1.0e-9f;
+        return (2.0f * planck_constant * speed_of_light * speed_of_light) / (std::pow(wavelength_meters, 5.0f) * (std::exp(planck_constant * speed_of_light / (wavelength_meters * boltzmann_constant * this->temperature)) - 1.0f)) * this->normalization;
+    }
+
+    float PiecewiseLinearSpectrum::evaluate(const float wavelength) const noexcept {
+        if (this->wavelengths.empty() || wavelength < this->wavelengths.front() || wavelength > this->wavelengths.back()) return 0.0f;
+        const std::vector<float>::const_iterator upper = std::ranges::upper_bound(this->wavelengths, wavelength);
+        if (upper == this->wavelengths.begin()) return this->values.front();
+        if (upper == this->wavelengths.end()) return this->values.back();
+        const std::size_t upper_index = static_cast<std::size_t>(std::distance(this->wavelengths.begin(), upper));
+        const std::size_t lower_index = upper_index - 1;
+        const float value             = (wavelength - this->wavelengths[lower_index]) / (this->wavelengths[upper_index] - this->wavelengths[lower_index]);
+        return std::lerp(this->values[lower_index], this->values[upper_index], value);
+    }
+
     CameraFrame Camera::frame() const noexcept {
         const std::array<float, 16>& matrix = this->transform.matrix;
         return {
@@ -273,47 +314,6 @@ namespace spectra::scene {
             (projection_transform * view_transform).matrix,
             (this->transform * inverse_projection_transform).matrix,
         };
-    }
-
-    BlackbodySpectrum::BlackbodySpectrum(const float temperature) noexcept : temperature(temperature) {
-        if (temperature <= 0.0f) return;
-        constexpr float speed_of_light     = 299792458.0f;
-        constexpr float planck_constant    = 6.62606957e-34f;
-        constexpr float boltzmann_constant = 1.3806488e-23f;
-        const float maximum_wavelength     = 2.8977721e-3f / temperature * 1.0e9f;
-        const float wavelength_meters      = maximum_wavelength * 1.0e-9f;
-        this->normalization                = std::pow(wavelength_meters, 5.0f) * (std::exp(planck_constant * speed_of_light / (wavelength_meters * boltzmann_constant * temperature)) - 1.0f) / (2.0f * planck_constant * speed_of_light * speed_of_light);
-    }
-
-    float BlackbodySpectrum::evaluate(const float wavelength) const noexcept {
-        if (this->temperature <= 0.0f) return 0.0f;
-        constexpr float speed_of_light     = 299792458.0f;
-        constexpr float planck_constant    = 6.62606957e-34f;
-        constexpr float boltzmann_constant = 1.3806488e-23f;
-        const float wavelength_meters      = wavelength * 1.0e-9f;
-        return (2.0f * planck_constant * speed_of_light * speed_of_light) / (std::pow(wavelength_meters, 5.0f) * (std::exp(planck_constant * speed_of_light / (wavelength_meters * boltzmann_constant * this->temperature)) - 1.0f)) * this->normalization;
-    }
-
-    float PiecewiseLinearSpectrum::evaluate(const float wavelength) const noexcept {
-        if (this->wavelengths.empty() || wavelength < this->wavelengths.front() || wavelength > this->wavelengths.back()) return 0.0f;
-        const std::vector<float>::const_iterator upper = std::ranges::upper_bound(this->wavelengths, wavelength);
-        if (upper == this->wavelengths.begin()) return this->values.front();
-        if (upper == this->wavelengths.end()) return this->values.back();
-        const std::size_t upper_index = static_cast<std::size_t>(std::distance(this->wavelengths.begin(), upper));
-        const std::size_t lower_index = upper_index - 1;
-        const float value             = (wavelength - this->wavelengths[lower_index]) / (this->wavelengths[upper_index] - this->wavelengths[lower_index]);
-        return std::lerp(this->values[lower_index], this->values[upper_index], value);
-    }
-
-    math::Bounds3 sphere_set_bounds(const SphereSet& spheres) noexcept {
-        math::Bounds3 result = math::Bounds3::empty();
-        for (std::size_t index = 0; index != spheres.positions.size(); ++index) {
-            const math::Float3 position = spheres.positions[index];
-            const float radius          = spheres.radii[index];
-            result.include(math::Float3{position.x - radius, position.y - radius, position.z - radius});
-            result.include(math::Float3{position.x + radius, position.y + radius, position.z + radius});
-        }
-        return result;
     }
 
     namespace {

@@ -38,10 +38,6 @@ float3 dynamic_transform_point(DynamicLightTransform transform, float3 point) {
     return float3(dot(transform.row_0, homogeneous), dot(transform.row_1, homogeneous), dot(transform.row_2, homogeneous));
 }
 
-float3 dynamic_transform_vector(DynamicLightTransform transform, float3 vector) {
-    return float3(dot(transform.row_0.xyz, vector), dot(transform.row_1.xyz, vector), dot(transform.row_2.xyz, vector));
-}
-
 float3 dynamic_transform_normal(DynamicLightTransform transform, float3 normal) {
     const float3 column_0 = float3(transform.row_0.x, transform.row_1.x, transform.row_2.x);
     const float3 column_1 = float3(transform.row_0.y, transform.row_1.y, transform.row_2.y);

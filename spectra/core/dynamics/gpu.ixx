@@ -120,15 +120,6 @@ namespace spectra::dynamics {
         std::variant<GpuPointVisualization, GpuSegmentVisualization, GpuCurveVisualization, GpuVectorVisualization, GpuFieldVisualization, GpuImageVisualization, GpuCameraObservationVisualization, GpuTransformVisualization, GpuSurfaceVisualization> data{};
     };
 
-    export struct GpuTelemetryUpdate {
-        std::size_t system_index{};
-        GpuBufferView values{};
-        std::uint32_t value_count{};
-        std::string phase{};
-        std::string headline{};
-        std::string message{};
-    };
-
     export struct MeshOutputBinding {
         scene::GeometryId geometry_id{};
         MeshUpdateMode update_mode{MeshUpdateMode::Deformable};
@@ -142,9 +133,7 @@ namespace spectra::dynamics {
     };
 
     export struct DynamicSnapshot {
-        SimulationTimeline simulation{};
         std::vector<GpuSceneUpdate> scene_updates{};
         std::vector<GpuVisualization> visualizations{};
-        std::vector<GpuTelemetryUpdate> telemetry{};
     };
 } // namespace spectra::dynamics

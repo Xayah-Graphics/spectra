@@ -1,7 +1,6 @@
 module spectra.headless;
 
 import spectra.dynamics.runtime;
-import spectra.dynamics.frozen;
 import spectra.render.composition.diagnostics;
 import spectra.render.composition.overlay;
 import spectra.render.composition.visualization;
@@ -41,37 +40,23 @@ namespace spectra {
         scene::Film& film     = *std::ranges::find(document.content.source.resources.films, document.content.source.active_film, &scene::Film::id);
         scene::Camera& camera = *std::ranges::find(document.content.source.resources.cameras, document.content.source.active_camera, &scene::Camera::id);
         if (request.gbuffer_output_path) film.gbuffer = true;
-        document.content.source.mark_all_changed();
         document.content.evaluated = document.content.source;
 
-        DynamicsRuntime dynamics{runtime, document};
-        if (document.content.source.dynamic_setup || document.content.source.frozen_dynamic_snapshot) dynamics.initialize(request.scene_path, document.content.source);
+        DynamicsRuntime dynamics{runtime};
+        if (document.content.source.dynamic_setup) dynamics.initialize(request.scene_path, document.content.source);
 
         GpuScene gpu_scene{runtime, shader_directory};
-        std::vector<GpuGeometryBinding> geometry_bindings{};
-        geometry_bindings.reserve(dynamics.mesh_bindings().size());
-        for (const dynamics::MeshOutputBinding& binding : dynamics.mesh_bindings())
-            geometry_bindings.push_back(GpuGeometryBinding{
-                binding.geometry_id,
-                binding.update_mode == dynamics::MeshUpdateMode::Deformable ? GpuMeshUpdateMode::Deformable : GpuMeshUpdateMode::TopologyChanging,
-                binding.vertex_capacity,
-                binding.index_capacity,
-            });
-        std::vector<std::pair<scene::SphereSetId, std::uint32_t>> sphere_capacities{};
-        sphere_capacities.reserve(dynamics.sphere_set_bindings().size());
-        for (const dynamics::SphereSetOutputBinding& binding : dynamics.sphere_set_bindings()) sphere_capacities.emplace_back(binding.sphere_set_id, binding.capacity);
-        gpu_scene.initialize(document.content.source, geometry_bindings, sphere_capacities);
+        gpu_scene.initialize(document.content.source, dynamics.mesh_bindings(), dynamics.sphere_set_bindings());
 
         const auto consume_dynamic_snapshot = [&]() {
-            if (!dynamics.pending_snapshot()) return;
             const FrameContext frame = runtime.frames.begin_frame();
-            static_cast<void>(gpu_scene.apply(*dynamics.pending_snapshot(), document.content.evaluated.view(), frame.command_buffer));
+            static_cast<void>(gpu_scene.apply(*dynamics.acquire_snapshot(), document.content.evaluated.view(), frame.command_buffer));
             dynamics.record_telemetry(frame.command_buffer, frame.slot_index);
             dynamics.consume_snapshot();
             static_cast<void>(runtime.frames.submit_frame());
         };
-        consume_dynamic_snapshot();
         if (dynamics.initialized()) {
+            consume_dynamic_snapshot();
             if (request.simulation_step) {
                 if (*request.simulation_step < dynamics.timeline().step) throw std::runtime_error("The requested simulation step precedes the scene start step");
                 dynamics.evaluate(*request.simulation_step);
@@ -115,13 +100,7 @@ namespace spectra {
         bool complete{};
         while (!complete) {
             const FrameContext frame = runtime.frames.begin_frame();
-            GpuSceneUpdate gpu_update{};
-            if (dynamics.initialized())
-                if (const dynamics::DynamicSnapshot* dynamic_snapshot = dynamics.pending_snapshot()) gpu_update = gpu_scene.apply(*dynamic_snapshot, document.content.evaluated.view(), frame.command_buffer);
-
             scene::SceneView current_scene = document.content.evaluated.view();
-            current_scene.revision.changes = current_scene.revision.changes | gpu_update.scene_changes;
-            render_engine.invalidate(current_scene.revision.changes, gpu_update);
             static_cast<void>(render_engine.prepare(current_scene, view, frame.command_buffer));
             render_engine.record(frame.command_buffer, frame.slot_index);
             const std::optional<RenderProgress> progress = render_engine.progress();
@@ -166,12 +145,6 @@ namespace spectra {
                 }
                 record_linear_readback(runtime, frame.command_buffer, renderer_output, linear_readback);
             }
-            if (dynamics.initialized()) {
-                dynamics.record_telemetry(frame.command_buffer, frame.slot_index);
-                dynamics.consume_snapshot();
-            }
-            document.content.evaluated.acknowledge_changes();
-            document.content.source.acknowledge_changes();
             final_frame_slot = runtime.frames.submit_frame();
         }
         runtime.frames.wait_frame(final_frame_slot);
@@ -182,6 +155,6 @@ namespace spectra {
         if (output_layer != RenderOutputLayer::RendererLinear) write_png(request.png_output_path, std::span{static_cast<const std::uint8_t*>(display_readback.mapped), pixel_count * 4u}, extent);
         write_linear_exr(request.linear_output_path, std::span{static_cast<const float*>(linear_readback.mapped), pixel_count * 4u}, extent, render_engine.output().color_space);
         if (request.gbuffer_output_path) write_gbuffer_exr(*request.gbuffer_output_path, render_engine.readback(), render_engine.output().color_space, film.gbuffer_camera_space);
-        if (request.telemetry_output_path) dynamics::write_telemetry(*request.telemetry_output_path, dynamics.telemetry_snapshot());
+        if (request.telemetry_output_path) dynamics.write_telemetry(*request.telemetry_output_path);
     }
 } // namespace spectra

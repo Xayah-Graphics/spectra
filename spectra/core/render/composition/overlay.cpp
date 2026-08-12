@@ -1,5 +1,6 @@
 module spectra.render.composition.overlay;
 
+import spectra.render.contract;
 import std;
 import vulkan;
 
@@ -38,6 +39,48 @@ namespace spectra {
 
     } // namespace
 
+    ViewportOverlay::ViewportOverlay(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory) : context{runtime, gpu_scene, std::move(shader_directory)} {}
+
+    ViewportOverlay::~ViewportOverlay() {
+        this->destroy();
+    }
+
+    void ViewportOverlay::initialize() {
+        this->initialize_overlay();
+    }
+
+    void ViewportOverlay::destroy() noexcept {
+        this->context.runtime.frames.defer_destruction([
+            mask_shaders = std::move(this->overlay.mask_shaders),
+            axes_shaders = std::move(this->overlay.axes_shaders),
+            outline_shaders = std::move(this->overlay.outline_shaders),
+            mask = std::move(this->overlay.mask),
+            depth = std::move(this->overlay.depth)
+        ]() mutable {});
+        this->overlay.mask_descriptor = {};
+        this->overlay.sampler_descriptor = {};
+        this->overlay.mask_layout  = vk::ImageLayout::eUndefined;
+        this->overlay.depth_layout = vk::ImageLayout::eUndefined;
+    }
+
+    void ViewportOverlay::record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const scene::Camera& camera, const ViewportOverlayState& state) {
+        std::vector<std::uint32_t> selected_indices{};
+        std::vector<std::uint32_t> active_indices{};
+        std::vector<std::uint32_t> hovered_indices{};
+        const auto collect = [this](const scene::InstanceId instance, std::vector<std::uint32_t>& destination) {
+            for (std::uint32_t gpu_instance = 0; gpu_instance < this->context.gpu_scene.view().primitive_instance_ids.size(); ++gpu_instance) {
+                if (this->context.gpu_scene.view().primitive_instance_ids[gpu_instance] == instance) destination.push_back(gpu_instance);
+            }
+        };
+        for (const scene::InstanceId instance : state.selected_instances) collect(instance, selected_indices);
+        if (state.active_instance) collect(*state.active_instance, active_indices);
+        if (state.hovered_instance) collect(*state.hovered_instance, hovered_indices);
+        const vk::Extent2D extent = display.image.extent;
+        this->record_impl(command_buffer, *display.image.image, *display.image.view, display.layout, extent, vk::Rect2D{{0, 0}, extent}, camera, selected_indices, active_indices, hovered_indices, state.axes_plane, state.axes_visible, state.outline_visible);
+        display.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    }
+
+
     void ViewportOverlay::configure_mask_render_state(const vk::raii::CommandBuffer& command_buffer, const vk::Rect2D render_region, const vk::CompareOp depth_compare, const bool depth_write) {
         command_buffer.setViewportWithCount(vk::Viewport{
             static_cast<float>(render_region.offset.x),
@@ -53,14 +96,7 @@ namespace spectra {
         command_buffer.setDepthTestEnable(vk::True);
         command_buffer.setDepthWriteEnable(depth_write);
         command_buffer.setDepthCompareOp(depth_compare);
-        command_buffer.setRasterizerDiscardEnable(vk::False);
-        command_buffer.setPolygonModeEXT(vk::PolygonMode::eFill);
-        command_buffer.setRasterizationSamplesEXT(vk::SampleCountFlagBits::e1);
-        command_buffer.setAlphaToCoverageEnableEXT(vk::False);
-        command_buffer.setDepthBiasEnable(vk::False);
-        command_buffer.setStencilTestEnable(vk::False);
-        constexpr vk::SampleMask sample_mask = 1;
-        command_buffer.setSampleMaskEXT(vk::SampleCountFlagBits::e1, sample_mask);
+        set_basic_graphics_state(command_buffer);
         constexpr vk::Bool32 blend_enable = vk::False;
         command_buffer.setColorBlendEnableEXT(0, blend_enable);
         constexpr vk::ColorComponentFlags color_components = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
@@ -341,17 +377,10 @@ namespace spectra {
         });
         command_buffer.setScissorWithCount(render_region);
         command_buffer.setCullMode(vk::CullModeFlagBits::eNone);
-        command_buffer.setRasterizerDiscardEnable(vk::False);
-        command_buffer.setPolygonModeEXT(vk::PolygonMode::eFill);
-        command_buffer.setRasterizationSamplesEXT(vk::SampleCountFlagBits::e1);
-        command_buffer.setAlphaToCoverageEnableEXT(vk::False);
-        command_buffer.setDepthBiasEnable(vk::False);
-        command_buffer.setStencilTestEnable(vk::False);
+        set_basic_graphics_state(command_buffer);
         command_buffer.setVertexInputEXT({}, {});
         command_buffer.setPrimitiveTopology(vk::PrimitiveTopology::eTriangleList);
         command_buffer.setPrimitiveRestartEnable(vk::False);
-        constexpr vk::SampleMask sample_mask = 1;
-        command_buffer.setSampleMaskEXT(vk::SampleCountFlagBits::e1, sample_mask);
         constexpr vk::Bool32 blend_enable = vk::True;
         command_buffer.setColorBlendEnableEXT(0, blend_enable);
         command_buffer.setColorBlendEquationEXT(0, vk::ColorBlendEquationEXT{
@@ -452,46 +481,4 @@ namespace spectra {
         };
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &target_to_sample});
     }
-    void ViewportOverlay::initialize() {
-        this->initialize_overlay();
-    }
-
-    ViewportOverlay::ViewportOverlay(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory) : context{runtime, gpu_scene, std::move(shader_directory)} {}
-
-    ViewportOverlay::~ViewportOverlay() {
-        this->destroy();
-    }
-
-    void ViewportOverlay::destroy() noexcept {
-        this->context.runtime.frames.defer_destruction([
-            mask_shaders = std::move(this->overlay.mask_shaders),
-            axes_shaders = std::move(this->overlay.axes_shaders),
-            outline_shaders = std::move(this->overlay.outline_shaders),
-            mask = std::move(this->overlay.mask),
-            depth = std::move(this->overlay.depth)
-        ]() mutable {});
-        this->overlay.mask_descriptor = {};
-        this->overlay.sampler_descriptor = {};
-        this->overlay.mask_layout  = vk::ImageLayout::eUndefined;
-        this->overlay.depth_layout = vk::ImageLayout::eUndefined;
-    }
-
-    void ViewportOverlay::record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const scene::Camera& camera, const ViewportOverlayState& state) {
-        std::vector<std::uint32_t> selected_indices{};
-        std::vector<std::uint32_t> active_indices{};
-        std::vector<std::uint32_t> hovered_indices{};
-        const auto collect = [this](const scene::InstanceId instance, std::vector<std::uint32_t>& destination) {
-            for (std::uint32_t gpu_instance = 0; gpu_instance < this->context.gpu_scene.view().primitive_instance_ids.size(); ++gpu_instance) {
-                if (this->context.gpu_scene.view().primitive_instance_ids[gpu_instance] == instance) destination.push_back(gpu_instance);
-            }
-        };
-        for (const scene::InstanceId instance : state.selected_instances) collect(instance, selected_indices);
-        if (state.active_instance) collect(*state.active_instance, active_indices);
-        if (state.hovered_instance) collect(*state.hovered_instance, hovered_indices);
-        const vk::Extent2D extent = display.image.extent;
-        this->record_impl(command_buffer, *display.image.image, *display.image.view, display.layout, extent, vk::Rect2D{{0, 0}, extent}, camera, selected_indices, active_indices, hovered_indices, state.axes_plane, state.axes_visible, state.outline_visible);
-        display.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
-    }
-
-
 } // namespace spectra

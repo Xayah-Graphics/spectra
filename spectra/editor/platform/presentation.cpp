@@ -21,42 +21,6 @@ namespace spectra {
         this->context.frames.defer_destruction([swapchain = std::move(this->presentation.swapchain), views = std::move(this->presentation.views), image_available = std::move(this->presentation.image_available), render_finished = std::move(this->presentation.render_finished)]() mutable { views.clear(); });
     }
 
-    void VulkanPresentation::recreate_swapchain() {
-        this->context.graphics.device.waitIdle();
-        int width{};
-        int height{};
-        glfwGetFramebufferSize(this->context.platform.window, &width, &height);
-        if (width == 0 || height == 0) {
-            this->presentation.extent = vk::Extent2D{};
-            return;
-        }
-        const vk::SurfaceKHR surface                        = *this->context.surface.surface;
-        const vk::SurfaceCapabilitiesKHR capabilities       = this->context.graphics.physical_device.getSurfaceCapabilitiesKHR(surface);
-        const std::vector<vk::SurfaceFormatKHR> formats     = this->context.graphics.physical_device.getSurfaceFormatsKHR(surface);
-        const std::vector<vk::PresentModeKHR> present_modes = this->context.graphics.physical_device.getSurfacePresentModesKHR(surface);
-        constexpr vk::SurfaceFormatKHR required_format{vk::Format::eB8G8R8A8Srgb, vk::ColorSpaceKHR::eSrgbNonlinear};
-        if (!std::ranges::contains(formats, required_format)) throw std::runtime_error("Spectra requires a B8G8R8A8 sRGB swapchain");
-        if (!std::ranges::contains(present_modes, vk::PresentModeKHR::eMailbox)) throw std::runtime_error("Spectra requires mailbox presentation");
-        if (!static_cast<bool>(capabilities.supportedTransforms & vk::SurfaceTransformFlagBitsKHR::eIdentity)) throw std::runtime_error("Spectra requires identity surface transforms");
-        if (!static_cast<bool>(capabilities.supportedCompositeAlpha & vk::CompositeAlphaFlagBitsKHR::eOpaque)) throw std::runtime_error("Spectra requires opaque swapchain composition");
-        if (capabilities.minImageCount > 3 || (capabilities.maxImageCount != 0 && capabilities.maxImageCount < 3)) throw std::runtime_error("Spectra requires triple-buffered presentation");
-
-        this->presentation.extent            = vk::Extent2D{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
-        const vk::SwapchainKHR old_swapchain = *this->presentation.swapchain;
-        const vk::SwapchainCreateInfoKHR create_info{{}, surface, 3, required_format.format, required_format.colorSpace, this->presentation.extent, 1, vk::ImageUsageFlagBits::eColorAttachment, vk::SharingMode::eExclusive, 0, nullptr, vk::SurfaceTransformFlagBitsKHR::eIdentity, vk::CompositeAlphaFlagBitsKHR::eOpaque, vk::PresentModeKHR::eMailbox, vk::True, old_swapchain};
-        vk::raii::SwapchainKHR replacement{this->context.graphics.device, create_info};
-        this->presentation.views.clear();
-        this->presentation.swapchain = std::move(replacement);
-        this->presentation.images    = this->presentation.swapchain.getImages();
-        this->presentation.layouts.assign(this->presentation.images.size(), vk::ImageLayout::eUndefined);
-        this->presentation.render_finished.clear();
-        this->presentation.render_finished.reserve(this->presentation.images.size());
-        for (const vk::Image image : this->presentation.images) {
-            this->presentation.views.emplace_back(this->context.graphics.device, vk::ImageViewCreateInfo{{}, image, vk::ImageViewType::e2D, required_format.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}});
-            this->presentation.render_finished.emplace_back(this->context.graphics.device, vk::SemaphoreCreateInfo{});
-        }
-    }
-
     std::optional<PresentedFrameContext> VulkanPresentation::begin_frame() {
         int width{};
         int height{};
@@ -96,4 +60,40 @@ namespace spectra {
         }
         if (this->presentation.acquired_suboptimal || present_result == vk::Result::eSuboptimalKHR) this->recreate_swapchain();
     }
+    void VulkanPresentation::recreate_swapchain() {
+        this->context.graphics.device.waitIdle();
+        int width{};
+        int height{};
+        glfwGetFramebufferSize(this->context.platform.window, &width, &height);
+        if (width == 0 || height == 0) {
+            this->presentation.extent = vk::Extent2D{};
+            return;
+        }
+        const vk::SurfaceKHR surface                        = *this->context.surface.surface;
+        const vk::SurfaceCapabilitiesKHR capabilities       = this->context.graphics.physical_device.getSurfaceCapabilitiesKHR(surface);
+        const std::vector<vk::SurfaceFormatKHR> formats     = this->context.graphics.physical_device.getSurfaceFormatsKHR(surface);
+        const std::vector<vk::PresentModeKHR> present_modes = this->context.graphics.physical_device.getSurfacePresentModesKHR(surface);
+        constexpr vk::SurfaceFormatKHR required_format{vk::Format::eB8G8R8A8Srgb, vk::ColorSpaceKHR::eSrgbNonlinear};
+        if (!std::ranges::contains(formats, required_format)) throw std::runtime_error("Spectra requires a B8G8R8A8 sRGB swapchain");
+        if (!std::ranges::contains(present_modes, vk::PresentModeKHR::eMailbox)) throw std::runtime_error("Spectra requires mailbox presentation");
+        if (!static_cast<bool>(capabilities.supportedTransforms & vk::SurfaceTransformFlagBitsKHR::eIdentity)) throw std::runtime_error("Spectra requires identity surface transforms");
+        if (!static_cast<bool>(capabilities.supportedCompositeAlpha & vk::CompositeAlphaFlagBitsKHR::eOpaque)) throw std::runtime_error("Spectra requires opaque swapchain composition");
+        if (capabilities.minImageCount > 3 || (capabilities.maxImageCount != 0 && capabilities.maxImageCount < 3)) throw std::runtime_error("Spectra requires triple-buffered presentation");
+
+        this->presentation.extent            = vk::Extent2D{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
+        const vk::SwapchainKHR old_swapchain = *this->presentation.swapchain;
+        const vk::SwapchainCreateInfoKHR create_info{{}, surface, 3, required_format.format, required_format.colorSpace, this->presentation.extent, 1, vk::ImageUsageFlagBits::eColorAttachment, vk::SharingMode::eExclusive, 0, nullptr, vk::SurfaceTransformFlagBitsKHR::eIdentity, vk::CompositeAlphaFlagBitsKHR::eOpaque, vk::PresentModeKHR::eMailbox, vk::True, old_swapchain};
+        vk::raii::SwapchainKHR replacement{this->context.graphics.device, create_info};
+        this->presentation.views.clear();
+        this->presentation.swapchain = std::move(replacement);
+        this->presentation.images    = this->presentation.swapchain.getImages();
+        this->presentation.layouts.assign(this->presentation.images.size(), vk::ImageLayout::eUndefined);
+        this->presentation.render_finished.clear();
+        this->presentation.render_finished.reserve(this->presentation.images.size());
+        for (const vk::Image image : this->presentation.images) {
+            this->presentation.views.emplace_back(this->context.graphics.device, vk::ImageViewCreateInfo{{}, image, vk::ImageViewType::e2D, required_format.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}});
+            this->presentation.render_finished.emplace_back(this->context.graphics.device, vk::SemaphoreCreateInfo{});
+        }
+    }
+
 } // namespace spectra

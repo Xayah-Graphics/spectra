@@ -88,30 +88,6 @@ namespace spectra {
         this->renderer.initialized = true;
     }
 
-    void SceneDiagnosticRenderer::ensure_buffers(SceneDiagnosticFrameResources& frame, const std::size_t line_count, const std::size_t box_count) {
-        const auto ensure = [this](GpuBuffer& buffer, std::size_t& capacity, DescriptorLease& descriptor, const std::size_t count, const std::size_t stride) {
-            if (capacity >= std::max<std::size_t>(count, 1)) return;
-            const std::size_t next_capacity = std::bit_ceil(std::max<std::size_t>(count, 1));
-            GpuBuffer replacement           = this->context.runtime.resources.create_buffer(next_capacity * stride, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-            DescriptorLease next_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
-            this->context.runtime.resources.write_buffer_descriptor(next_descriptor, vk::DescriptorType::eStorageBuffer, replacement);
-            if (*buffer.buffer) this->context.runtime.frames.defer_destruction([previous = std::move(buffer)]() mutable {});
-            buffer     = std::move(replacement);
-            descriptor = std::move(next_descriptor);
-            capacity   = next_capacity;
-        };
-        ensure(frame.line_buffer, frame.line_capacity, frame.line_descriptor, line_count, sizeof(DiagnosticLine));
-        ensure(frame.box_buffer, frame.box_capacity, frame.box_descriptor, box_count, sizeof(DiagnosticBox));
-    }
-
-    void SceneDiagnosticRenderer::resize_pick_image(const vk::Extent2D extent) {
-        if (*this->renderer.pick_image.image && this->renderer.pick_image.extent == extent) return;
-        GpuImage next = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32Uint, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc);
-        if (*this->renderer.pick_image.image) this->context.runtime.frames.defer_destruction([previous = std::move(this->renderer.pick_image)]() mutable {});
-        this->renderer.pick_image  = std::move(next);
-        this->renderer.pick_layout = vk::ImageLayout::eUndefined;
-    }
-
     void SceneDiagnosticRenderer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, const scene::SceneView source_scene, const scene::Camera& camera, const std::optional<scene::CameraId> scene_camera_view, const SceneDiagnosticSettings& settings, const SelectionState& selection) {
         SceneDiagnosticFrameResources& frame_resources = this->renderer.frame_resources[frame_slot_index];
         std::vector<DiagnosticLine> lines{};
@@ -331,17 +307,10 @@ namespace spectra {
         command_buffer.setFrontFace(vk::FrontFace::eCounterClockwise);
         command_buffer.setDepthTestEnable(vk::False);
         command_buffer.setDepthWriteEnable(vk::False);
-        command_buffer.setRasterizerDiscardEnable(vk::False);
-        command_buffer.setPolygonModeEXT(vk::PolygonMode::eFill);
-        command_buffer.setRasterizationSamplesEXT(vk::SampleCountFlagBits::e1);
-        command_buffer.setAlphaToCoverageEnableEXT(vk::False);
-        command_buffer.setDepthBiasEnable(vk::False);
-        command_buffer.setStencilTestEnable(vk::False);
+        set_basic_graphics_state(command_buffer);
         command_buffer.setVertexInputEXT({}, {});
         command_buffer.setPrimitiveTopology(vk::PrimitiveTopology::eTriangleList);
         command_buffer.setPrimitiveRestartEnable(vk::False);
-        constexpr vk::SampleMask sample_mask = 1;
-        command_buffer.setSampleMaskEXT(vk::SampleCountFlagBits::e1, sample_mask);
         const std::array<vk::Bool32, 2> blend_enable{vk::True, vk::False};
         command_buffer.setColorBlendEnableEXT(0, blend_enable);
         const std::array blend_equations{
@@ -433,4 +402,28 @@ namespace spectra {
         if (pick_index == 0 || pick_index > this->renderer.pick_entities[frame_slot_index].size()) return std::nullopt;
         return this->renderer.pick_entities[frame_slot_index][pick_index - 1u];
     }
+    void SceneDiagnosticRenderer::ensure_buffers(SceneDiagnosticFrameResources& frame, const std::size_t line_count, const std::size_t box_count) {
+        const auto ensure = [this](GpuBuffer& buffer, std::size_t& capacity, DescriptorLease& descriptor, const std::size_t count, const std::size_t stride) {
+            if (capacity >= std::max<std::size_t>(count, 1)) return;
+            const std::size_t next_capacity = std::bit_ceil(std::max<std::size_t>(count, 1));
+            GpuBuffer replacement           = this->context.runtime.resources.create_buffer(next_capacity * stride, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+            DescriptorLease next_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            this->context.runtime.resources.write_buffer_descriptor(next_descriptor, vk::DescriptorType::eStorageBuffer, replacement);
+            if (*buffer.buffer) this->context.runtime.frames.defer_destruction([previous = std::move(buffer)]() mutable {});
+            buffer     = std::move(replacement);
+            descriptor = std::move(next_descriptor);
+            capacity   = next_capacity;
+        };
+        ensure(frame.line_buffer, frame.line_capacity, frame.line_descriptor, line_count, sizeof(DiagnosticLine));
+        ensure(frame.box_buffer, frame.box_capacity, frame.box_descriptor, box_count, sizeof(DiagnosticBox));
+    }
+
+    void SceneDiagnosticRenderer::resize_pick_image(const vk::Extent2D extent) {
+        if (*this->renderer.pick_image.image && this->renderer.pick_image.extent == extent) return;
+        GpuImage next = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32Uint, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc);
+        if (*this->renderer.pick_image.image) this->context.runtime.frames.defer_destruction([previous = std::move(this->renderer.pick_image)]() mutable {});
+        this->renderer.pick_image  = std::move(next);
+        this->renderer.pick_layout = vk::ImageLayout::eUndefined;
+    }
+
 } // namespace spectra

@@ -4,10 +4,31 @@ module;
 #include <imgui_impl_glfw.h>
 
 module spectra.editor.ui.imgui;
+import spectra.render.contract;
 import std;
 import vulkan;
 
 namespace spectra {
+    namespace {
+        struct ImGuiTexture {
+            GpuImage image{};
+            DescriptorLease descriptor{};
+        };
+
+        struct ImGuiPushData {
+            DescriptorHandle vertices;
+            DescriptorHandle indices;
+            DescriptorHandle texture;
+            DescriptorHandle sampler;
+            std::uint32_t index_offset;
+            std::uint32_t vertex_offset;
+            std::array<float, 2> scale;
+            std::array<float, 2> translation;
+        };
+
+        static_assert(sizeof(ImGuiPushData) == 56);
+    } // namespace
+
     ImGuiBackend::ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, DisplayPass& display, std::filesystem::path shader_directory) noexcept : context{platform, runtime, display, std::move(shader_directory)} {}
 
     ImGuiBackend::~ImGuiBackend() {
@@ -69,26 +90,159 @@ namespace spectra {
         this->viewport_texture_id          = static_cast<std::uint64_t>(this->renderer.viewport_descriptor.handle().slot_index) + 1u;
     }
 
-    namespace {
-        struct ImGuiTexture {
-            GpuImage image{};
-            DescriptorLease descriptor{};
+    void ImGuiBackend::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const vk::Image target_image, const vk::ImageView target_view, const vk::Extent2D extent, const vk::ImageLayout target_layout, const vk::ImageLayout final_layout) {
+        ImDrawData& draw_data = *ImGui::GetDrawData();
+        FrameResources& frame = this->renderer.frames[frame_slot_index];
+        if (draw_data.Textures != nullptr)
+            for (ImTextureData* texture : *draw_data.Textures) this->update_texture(*texture, command_buffer);
+
+        if (draw_data.TotalVtxCount != 0) {
+            static_assert(sizeof(ImDrawVert) == 20);
+            static_assert(offsetof(ImDrawVert, pos) == 0);
+            static_assert(offsetof(ImDrawVert, uv) == 8);
+            static_assert(offsetof(ImDrawVert, col) == 16);
+            const std::size_t required_vertex_bytes = static_cast<std::size_t>(draw_data.TotalVtxCount) * sizeof(ImDrawVert);
+            const std::size_t required_index_bytes  = static_cast<std::size_t>(draw_data.TotalIdxCount) * sizeof(std::uint32_t);
+            if (required_vertex_bytes > frame.vertex_capacity) {
+                frame.vertex_capacity = std::bit_ceil(std::max(required_vertex_bytes, std::size_t{4096}));
+                frame.vertex_buffer   = this->context.runtime.resources.create_buffer(frame.vertex_capacity, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+                this->context.runtime.resources.write_buffer_descriptor(frame.vertex_descriptor, vk::DescriptorType::eStorageBuffer, frame.vertex_buffer);
+            }
+            if (required_index_bytes > frame.index_capacity) {
+                frame.index_capacity = std::bit_ceil(std::max(required_index_bytes, std::size_t{4096}));
+                frame.index_buffer   = this->context.runtime.resources.create_buffer(frame.index_capacity, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+                this->context.runtime.resources.write_buffer_descriptor(frame.index_descriptor, vk::DescriptorType::eStorageBuffer, frame.index_buffer);
+            }
+
+            std::byte* vertex_destination    = static_cast<std::byte*>(frame.vertex_buffer.mapped);
+            std::uint32_t* index_destination = static_cast<std::uint32_t*>(frame.index_buffer.mapped);
+            for (const ImDrawList* draw_list : draw_data.CmdLists) {
+                const std::size_t vertex_bytes = static_cast<std::size_t>(draw_list->VtxBuffer.Size) * sizeof(ImDrawVert);
+                std::memcpy(vertex_destination, draw_list->VtxBuffer.Data, vertex_bytes);
+                vertex_destination += vertex_bytes;
+                for (const ImDrawIdx index : draw_list->IdxBuffer) *index_destination++ = index;
+            }
+        }
+
+        const vk::ImageMemoryBarrier2 target_to_color{
+            target_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eBottomOfPipe,
+            {},
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::AccessFlagBits2::eColorAttachmentWrite,
+            target_layout,
+            vk::ImageLayout::eColorAttachmentOptimal,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            target_image,
+            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &target_to_color});
 
-        struct ImGuiPushData {
-            DescriptorHandle vertices;
-            DescriptorHandle indices;
-            DescriptorHandle texture;
-            DescriptorHandle sampler;
-            std::uint32_t index_offset;
-            std::uint32_t vertex_offset;
-            std::array<float, 2> scale;
-            std::array<float, 2> translation;
+        const vk::RenderingAttachmentInfo color_attachment{
+            target_view,
+            vk::ImageLayout::eColorAttachmentOptimal,
+            vk::ResolveModeFlagBits::eNone,
+            {},
+            vk::ImageLayout::eUndefined,
+            vk::AttachmentLoadOp::eClear,
+            vk::AttachmentStoreOp::eStore,
+            vk::ClearValue{vk::ClearColorValue{std::array{0.018f, 0.022f, 0.030f, 1.0f}}},
         };
-        static_assert(sizeof(ImGuiPushData) == 56);
+        command_buffer.beginRendering(vk::RenderingInfo{
+            {},
+            vk::Rect2D{{0, 0}, extent},
+            1,
+            0,
+            1,
+            &color_attachment,
+        });
+        if (draw_data.TotalVtxCount != 0) {
+            const vk::MemoryBarrier2 host_to_shader{
+                vk::PipelineStageFlagBits2::eHost,
+                vk::AccessFlagBits2::eHostWrite,
+                vk::PipelineStageFlagBits2::eVertexShader,
+                vk::AccessFlagBits2::eShaderStorageRead,
+            };
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_to_shader});
+            this->setup_render_state(command_buffer, extent);
 
-    } // namespace
+            const std::array scale{
+                2.0f / draw_data.DisplaySize.x,
+                2.0f / draw_data.DisplaySize.y,
+            };
+            const std::array translation{
+                -1.0f - draw_data.DisplayPos.x * scale[0],
+                -1.0f - draw_data.DisplayPos.y * scale[1],
+            };
+            std::uint32_t global_index_offset  = 0;
+            std::uint32_t global_vertex_offset = 0;
+            for (const ImDrawList* draw_list : draw_data.CmdLists) {
+                for (const ImDrawCmd& draw_command : draw_list->CmdBuffer) {
+                    if (draw_command.UserCallback != nullptr) {
+                        if (draw_command.UserCallback == ImDrawCallback_ResetRenderState)
+                            this->setup_render_state(command_buffer, extent);
+                        else
+                            draw_command.UserCallback(draw_list, &draw_command);
+                        continue;
+                    }
 
+                    ImVec2 clip_min{
+                        (draw_command.ClipRect.x - draw_data.DisplayPos.x) * draw_data.FramebufferScale.x,
+                        (draw_command.ClipRect.y - draw_data.DisplayPos.y) * draw_data.FramebufferScale.y,
+                    };
+                    ImVec2 clip_max{
+                        (draw_command.ClipRect.z - draw_data.DisplayPos.x) * draw_data.FramebufferScale.x,
+                        (draw_command.ClipRect.w - draw_data.DisplayPos.y) * draw_data.FramebufferScale.y,
+                    };
+                    clip_min.x = std::max(clip_min.x, 0.0f);
+                    clip_min.y = std::max(clip_min.y, 0.0f);
+                    clip_max.x = std::min(clip_max.x, static_cast<float>(extent.width));
+                    clip_max.y = std::min(clip_max.y, static_cast<float>(extent.height));
+                    if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y) continue;
+                    command_buffer.setScissorWithCount(vk::Rect2D{
+                        {
+                            static_cast<std::int32_t>(clip_min.x),
+                            static_cast<std::int32_t>(clip_min.y),
+                        },
+                        {
+                            static_cast<std::uint32_t>(clip_max.x - clip_min.x),
+                            static_cast<std::uint32_t>(clip_max.y - clip_min.y),
+                        },
+                    });
+
+                    const ImGuiPushData push_data{
+                        frame.vertex_descriptor,
+                        frame.index_descriptor,
+                        DescriptorHandle{static_cast<std::uint32_t>(draw_command.GetTexID() - 1u)},
+                        this->renderer.sampler_descriptor,
+                        global_index_offset + draw_command.IdxOffset,
+                        global_vertex_offset + draw_command.VtxOffset,
+                        scale,
+                        translation,
+                    };
+                    this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
+                    command_buffer.draw(draw_command.ElemCount, 1, 0, 0);
+                }
+                global_index_offset += static_cast<std::uint32_t>(draw_list->IdxBuffer.Size);
+                global_vertex_offset += static_cast<std::uint32_t>(draw_list->VtxBuffer.Size);
+            }
+        }
+        command_buffer.endRendering();
+
+        const vk::ImageMemoryBarrier2 to_final{
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::AccessFlagBits2::eColorAttachmentWrite,
+            final_layout == vk::ImageLayout::ePresentSrcKHR ? vk::PipelineStageFlagBits2::eBottomOfPipe : vk::PipelineStageFlagBits2::eCopy,
+            final_layout == vk::ImageLayout::eTransferSrcOptimal ? vk::AccessFlagBits2::eTransferRead : vk::AccessFlags2{},
+            vk::ImageLayout::eColorAttachmentOptimal,
+            final_layout,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            target_image,
+            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_final});
+    }
     void ImGuiBackend::initialize_renderer() {
         this->renderer.sampler_descriptor  = this->context.runtime.frames.allocate_sampler_descriptor();
         this->renderer.viewport_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
@@ -247,17 +401,10 @@ namespace spectra {
         command_buffer.setCullMode(vk::CullModeFlagBits::eNone);
         command_buffer.setFrontFace(vk::FrontFace::eCounterClockwise);
         command_buffer.setDepthTestEnable(vk::False);
-        command_buffer.setRasterizerDiscardEnable(vk::False);
-        command_buffer.setPolygonModeEXT(vk::PolygonMode::eFill);
-        command_buffer.setRasterizationSamplesEXT(vk::SampleCountFlagBits::e1);
-        command_buffer.setAlphaToCoverageEnableEXT(vk::False);
-        command_buffer.setDepthBiasEnable(vk::False);
-        command_buffer.setStencilTestEnable(vk::False);
+        set_basic_graphics_state(command_buffer);
         command_buffer.setVertexInputEXT({}, {});
         command_buffer.setPrimitiveTopology(vk::PrimitiveTopology::eTriangleList);
         command_buffer.setPrimitiveRestartEnable(vk::False);
-        constexpr vk::SampleMask sample_mask = 1;
-        command_buffer.setSampleMaskEXT(vk::SampleCountFlagBits::e1, sample_mask);
         constexpr vk::Bool32 blend_enable = vk::True;
         command_buffer.setColorBlendEnableEXT(0, blend_enable);
         command_buffer.setColorBlendEquationEXT(0, vk::ColorBlendEquationEXT{
@@ -287,157 +434,4 @@ namespace spectra {
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
     }
 
-    void ImGuiBackend::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const vk::Image target_image, const vk::ImageView target_view, const vk::Extent2D extent, const vk::ImageLayout target_layout, const vk::ImageLayout final_layout) {
-        ImDrawData& draw_data = *ImGui::GetDrawData();
-        FrameResources& frame = this->renderer.frames[frame_slot_index];
-        if (draw_data.Textures != nullptr)
-            for (ImTextureData* texture : *draw_data.Textures) this->update_texture(*texture, command_buffer);
-
-        if (draw_data.TotalVtxCount != 0) {
-            static_assert(sizeof(ImDrawVert) == 20);
-            static_assert(offsetof(ImDrawVert, pos) == 0);
-            static_assert(offsetof(ImDrawVert, uv) == 8);
-            static_assert(offsetof(ImDrawVert, col) == 16);
-            const std::size_t required_vertex_bytes = static_cast<std::size_t>(draw_data.TotalVtxCount) * sizeof(ImDrawVert);
-            const std::size_t required_index_bytes  = static_cast<std::size_t>(draw_data.TotalIdxCount) * sizeof(std::uint32_t);
-            if (required_vertex_bytes > frame.vertex_capacity) {
-                frame.vertex_capacity = std::bit_ceil(std::max(required_vertex_bytes, std::size_t{4096}));
-                frame.vertex_buffer   = this->context.runtime.resources.create_buffer(frame.vertex_capacity, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-                this->context.runtime.resources.write_buffer_descriptor(frame.vertex_descriptor, vk::DescriptorType::eStorageBuffer, frame.vertex_buffer);
-            }
-            if (required_index_bytes > frame.index_capacity) {
-                frame.index_capacity = std::bit_ceil(std::max(required_index_bytes, std::size_t{4096}));
-                frame.index_buffer   = this->context.runtime.resources.create_buffer(frame.index_capacity, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-                this->context.runtime.resources.write_buffer_descriptor(frame.index_descriptor, vk::DescriptorType::eStorageBuffer, frame.index_buffer);
-            }
-
-            std::byte* vertex_destination    = static_cast<std::byte*>(frame.vertex_buffer.mapped);
-            std::uint32_t* index_destination = static_cast<std::uint32_t*>(frame.index_buffer.mapped);
-            for (const ImDrawList* draw_list : draw_data.CmdLists) {
-                const std::size_t vertex_bytes = static_cast<std::size_t>(draw_list->VtxBuffer.Size) * sizeof(ImDrawVert);
-                std::memcpy(vertex_destination, draw_list->VtxBuffer.Data, vertex_bytes);
-                vertex_destination += vertex_bytes;
-                for (const ImDrawIdx index : draw_list->IdxBuffer) *index_destination++ = index;
-            }
-        }
-
-        const vk::ImageMemoryBarrier2 target_to_color{
-            target_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eBottomOfPipe,
-            {},
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::AccessFlagBits2::eColorAttachmentWrite,
-            target_layout,
-            vk::ImageLayout::eColorAttachmentOptimal,
-            vk::QueueFamilyIgnored,
-            vk::QueueFamilyIgnored,
-            target_image,
-            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-        };
-        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &target_to_color});
-
-        const vk::RenderingAttachmentInfo color_attachment{
-            target_view,
-            vk::ImageLayout::eColorAttachmentOptimal,
-            vk::ResolveModeFlagBits::eNone,
-            {},
-            vk::ImageLayout::eUndefined,
-            vk::AttachmentLoadOp::eClear,
-            vk::AttachmentStoreOp::eStore,
-            vk::ClearValue{vk::ClearColorValue{std::array{0.018f, 0.022f, 0.030f, 1.0f}}},
-        };
-        command_buffer.beginRendering(vk::RenderingInfo{
-            {},
-            vk::Rect2D{{0, 0}, extent},
-            1,
-            0,
-            1,
-            &color_attachment,
-        });
-        if (draw_data.TotalVtxCount != 0) {
-            const vk::MemoryBarrier2 host_to_shader{
-                vk::PipelineStageFlagBits2::eHost,
-                vk::AccessFlagBits2::eHostWrite,
-                vk::PipelineStageFlagBits2::eVertexShader,
-                vk::AccessFlagBits2::eShaderStorageRead,
-            };
-            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_to_shader});
-            this->setup_render_state(command_buffer, extent);
-
-            const std::array scale{
-                2.0f / draw_data.DisplaySize.x,
-                2.0f / draw_data.DisplaySize.y,
-            };
-            const std::array translation{
-                -1.0f - draw_data.DisplayPos.x * scale[0],
-                -1.0f - draw_data.DisplayPos.y * scale[1],
-            };
-            std::uint32_t global_index_offset  = 0;
-            std::uint32_t global_vertex_offset = 0;
-            for (const ImDrawList* draw_list : draw_data.CmdLists) {
-                for (const ImDrawCmd& draw_command : draw_list->CmdBuffer) {
-                    if (draw_command.UserCallback != nullptr) {
-                        if (draw_command.UserCallback == ImDrawCallback_ResetRenderState)
-                            this->setup_render_state(command_buffer, extent);
-                        else
-                            draw_command.UserCallback(draw_list, &draw_command);
-                        continue;
-                    }
-
-                    ImVec2 clip_min{
-                        (draw_command.ClipRect.x - draw_data.DisplayPos.x) * draw_data.FramebufferScale.x,
-                        (draw_command.ClipRect.y - draw_data.DisplayPos.y) * draw_data.FramebufferScale.y,
-                    };
-                    ImVec2 clip_max{
-                        (draw_command.ClipRect.z - draw_data.DisplayPos.x) * draw_data.FramebufferScale.x,
-                        (draw_command.ClipRect.w - draw_data.DisplayPos.y) * draw_data.FramebufferScale.y,
-                    };
-                    clip_min.x = std::max(clip_min.x, 0.0f);
-                    clip_min.y = std::max(clip_min.y, 0.0f);
-                    clip_max.x = std::min(clip_max.x, static_cast<float>(extent.width));
-                    clip_max.y = std::min(clip_max.y, static_cast<float>(extent.height));
-                    if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y) continue;
-                    command_buffer.setScissorWithCount(vk::Rect2D{
-                        {
-                            static_cast<std::int32_t>(clip_min.x),
-                            static_cast<std::int32_t>(clip_min.y),
-                        },
-                        {
-                            static_cast<std::uint32_t>(clip_max.x - clip_min.x),
-                            static_cast<std::uint32_t>(clip_max.y - clip_min.y),
-                        },
-                    });
-
-                    const ImGuiPushData push_data{
-                        frame.vertex_descriptor,
-                        frame.index_descriptor,
-                        DescriptorHandle{static_cast<std::uint32_t>(draw_command.GetTexID() - 1u)},
-                        this->renderer.sampler_descriptor,
-                        global_index_offset + draw_command.IdxOffset,
-                        global_vertex_offset + draw_command.VtxOffset,
-                        scale,
-                        translation,
-                    };
-                    this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
-                    command_buffer.draw(draw_command.ElemCount, 1, 0, 0);
-                }
-                global_index_offset += static_cast<std::uint32_t>(draw_list->IdxBuffer.Size);
-                global_vertex_offset += static_cast<std::uint32_t>(draw_list->VtxBuffer.Size);
-            }
-        }
-        command_buffer.endRendering();
-
-        const vk::ImageMemoryBarrier2 to_final{
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::AccessFlagBits2::eColorAttachmentWrite,
-            final_layout == vk::ImageLayout::ePresentSrcKHR ? vk::PipelineStageFlagBits2::eBottomOfPipe : vk::PipelineStageFlagBits2::eCopy,
-            final_layout == vk::ImageLayout::eTransferSrcOptimal ? vk::AccessFlagBits2::eTransferRead : vk::AccessFlags2{},
-            vk::ImageLayout::eColorAttachmentOptimal,
-            final_layout,
-            vk::QueueFamilyIgnored,
-            vk::QueueFamilyIgnored,
-            target_image,
-            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-        };
-        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_final});
-    }
 } // namespace spectra

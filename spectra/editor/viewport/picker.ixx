@@ -9,25 +9,12 @@ import vulkan;
 
 namespace spectra {
     export struct ViewportPicker {
-        struct PickRequest {
-            float normalized_x{};
-            float normalized_y{};
-            bool select{};
-            bool additive{};
-        };
-
         struct PickResult {
             bool ready{};
             std::optional<std::uint32_t> acceleration_instance_index{};
             std::optional<std::uint32_t> diagnostic_pick_index{};
             bool select{};
             bool additive{};
-        };
-
-        struct PickFrameSlot {
-            GpuBuffer result_buffer{};
-            DescriptorLease result_descriptor{};
-            std::optional<PickRequest> submitted_request{};
         };
 
         ViewportPicker(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory) noexcept;
@@ -45,6 +32,20 @@ namespace spectra {
         void cancel_selection_requests() noexcept;
         [[nodiscard]] PickResult take_pick_result(std::uint32_t frame_slot_index) noexcept;
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Camera& camera, DepthBufferView depth, const GpuImage* diagnostic_pick_image);
+
+    private:
+        struct PickRequest {
+            float normalized_x{};
+            float normalized_y{};
+            bool select{};
+            bool additive{};
+        };
+
+        struct PickFrameSlot {
+            GpuBuffer result_buffer{};
+            DescriptorLease result_descriptor{};
+            std::optional<PickRequest> submitted_request{};
+        };
 
         struct {
             VulkanRuntime& runtime;
@@ -64,7 +65,6 @@ namespace spectra {
             std::optional<PickRequest> pending_request{};
         } picking;
 
-    private:
         void upload(scene::SceneView scene, const vk::raii::CommandBuffer* command_buffer = nullptr);
     };
 } // namespace spectra

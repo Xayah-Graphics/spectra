@@ -67,59 +67,6 @@ namespace spectra {
         this->scene.initialized = false;
     }
 
-    void ViewportPicker::upload(const scene::SceneView source_scene, const vk::raii::CommandBuffer* command_buffer) {
-        std::vector<ViewportPickPrimitive> primitives{};
-        primitives.reserve(this->context.gpu_scene.view().acceleration_primitive_indices.size());
-        const auto volume_medium = [&source_scene](const scene::MediumId medium_id) {
-            if (medium_id.value == 0) return false;
-            const scene::Medium& medium = *std::ranges::find(source_scene.resources.media, medium_id, &scene::Medium::id);
-            return std::holds_alternative<scene::VolumeMedium>(medium.data);
-        };
-        for (const std::uint32_t scene_primitive_index : this->context.gpu_scene.view().acceleration_primitive_indices) {
-            const GpuScenePrimitive& gpu_primitive = this->context.gpu_scene.view().primitives[scene_primitive_index];
-            const scene::Instance& instance        = source_scene.resources.instances[gpu_primitive.scene_instance_index];
-            const scene::Prototype& prototype      = *std::ranges::find(source_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
-            const scene::Primitive& primitive      = prototype.primitives[gpu_primitive.prototype_primitive_index];
-            ViewportPickPrimitive pick{};
-            pick.metadata[1] = volume_medium(primitive.media.inside) || volume_medium(primitive.media.outside) ? 1u : 0u;
-            if (gpu_primitive.kind == GpuScenePrimitiveKind::SphereSet) {
-                const GpuSphereSet& spheres = this->context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
-                pick.positions              = spheres.positions_descriptor;
-                pick.radii                  = spheres.radii_descriptor;
-                pick.metadata[0]            = 4;
-                primitives.push_back(pick);
-                continue;
-            }
-            const scene::Geometry& geometry   = *std::ranges::find(source_scene.resources.geometries, primitive.geometry, &scene::Geometry::id);
-            std::visit(
-                [&pick](const auto& data) {
-                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SphereGeometry>) {
-                        pick.metadata[0] = 1;
-                        pick.parameters  = {data.radius, data.z_min, data.z_max, data.phi_max * std::numbers::pi_v<float> / 180.0f};
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiskGeometry>) {
-                        pick.metadata[0] = 2;
-                        pick.parameters  = {data.height, data.radius, data.inner_radius, data.phi_max * std::numbers::pi_v<float> / 180.0f};
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::CylinderGeometry>) {
-                        pick.metadata[0] = 3;
-                        pick.parameters  = {data.radius, data.z_min, data.z_max, data.phi_max * std::numbers::pi_v<float> / 180.0f};
-                    }
-                },
-                geometry.data);
-            primitives.push_back(pick);
-        }
-        if (primitives.empty()) primitives.emplace_back();
-        GpuBuffer new_primitives = upload_pick_primitives(this->context.runtime, primitives, command_buffer);
-        if (command_buffer) {
-            DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
-            this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-            this->context.runtime.frames.defer_destruction([primitives = std::move(this->scene.primitives)]() mutable {});
-            this->scene.primitives_descriptor = std::move(descriptor);
-        } else {
-            this->context.runtime.resources.write_buffer_descriptor(this->scene.primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
-        }
-        this->scene.primitives = std::move(new_primitives);
-    }
-
     void ViewportPicker::synchronize(const scene::SceneView source_scene, const GpuSceneUpdate gpu_update, const vk::raii::CommandBuffer& command_buffer) {
         if (this->context.runtime.graphics.ray_tracing_supported && ((source_scene.revision.changes & scene::SceneChange::Geometry) != scene::SceneChange::None || (gpu_update.gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None)) this->upload(source_scene, &command_buffer);
     }
@@ -233,4 +180,57 @@ namespace spectra {
         const vk::MemoryBarrier2 completion{vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eShaderStorageWrite | vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostRead};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &completion});
     }
+    void ViewportPicker::upload(const scene::SceneView source_scene, const vk::raii::CommandBuffer* command_buffer) {
+        std::vector<ViewportPickPrimitive> primitives{};
+        primitives.reserve(this->context.gpu_scene.view().acceleration_primitive_indices.size());
+        const auto volume_medium = [&source_scene](const scene::MediumId medium_id) {
+            if (medium_id.value == 0) return false;
+            const scene::Medium& medium = *std::ranges::find(source_scene.resources.media, medium_id, &scene::Medium::id);
+            return std::holds_alternative<scene::VolumeMedium>(medium.data);
+        };
+        for (const std::uint32_t scene_primitive_index : this->context.gpu_scene.view().acceleration_primitive_indices) {
+            const GpuScenePrimitive& gpu_primitive = this->context.gpu_scene.view().primitives[scene_primitive_index];
+            const scene::Instance& instance        = source_scene.resources.instances[gpu_primitive.scene_instance_index];
+            const scene::Prototype& prototype      = *std::ranges::find(source_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
+            const scene::Primitive& primitive      = prototype.primitives[gpu_primitive.prototype_primitive_index];
+            ViewportPickPrimitive pick{};
+            pick.metadata[1] = volume_medium(primitive.media.inside) || volume_medium(primitive.media.outside) ? 1u : 0u;
+            if (gpu_primitive.kind == GpuScenePrimitiveKind::SphereSet) {
+                const GpuSphereSet& spheres = this->context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
+                pick.positions              = spheres.positions_descriptor;
+                pick.radii                  = spheres.radii_descriptor;
+                pick.metadata[0]            = 4;
+                primitives.push_back(pick);
+                continue;
+            }
+            const scene::Geometry& geometry   = *std::ranges::find(source_scene.resources.geometries, primitive.geometry, &scene::Geometry::id);
+            std::visit(
+                [&pick](const auto& data) {
+                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SphereGeometry>) {
+                        pick.metadata[0] = 1;
+                        pick.parameters  = {data.radius, data.z_min, data.z_max, data.phi_max * std::numbers::pi_v<float> / 180.0f};
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiskGeometry>) {
+                        pick.metadata[0] = 2;
+                        pick.parameters  = {data.height, data.radius, data.inner_radius, data.phi_max * std::numbers::pi_v<float> / 180.0f};
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::CylinderGeometry>) {
+                        pick.metadata[0] = 3;
+                        pick.parameters  = {data.radius, data.z_min, data.z_max, data.phi_max * std::numbers::pi_v<float> / 180.0f};
+                    }
+                },
+                geometry.data);
+            primitives.push_back(pick);
+        }
+        if (primitives.empty()) primitives.emplace_back();
+        GpuBuffer new_primitives = upload_pick_primitives(this->context.runtime, primitives, command_buffer);
+        if (command_buffer) {
+            DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+            this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
+            this->context.runtime.frames.defer_destruction([primitives = std::move(this->scene.primitives)]() mutable {});
+            this->scene.primitives_descriptor = std::move(descriptor);
+        } else {
+            this->context.runtime.resources.write_buffer_descriptor(this->scene.primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
+        }
+        this->scene.primitives = std::move(new_primitives);
+    }
+
 } // namespace spectra

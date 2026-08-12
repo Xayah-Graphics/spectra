@@ -14,7 +14,6 @@ namespace spectra::scene {
         std::vector<AssetReference> sphere_sets{};
         std::vector<std::optional<PackageResourceReference>> volumes{};
         std::vector<std::optional<PackageResourceReference>> textures{};
-        std::optional<AssetReference> frozen_dynamic_snapshot{};
     };
 
     export struct AssetTransaction {
@@ -26,5 +25,5 @@ namespace spectra::scene {
     };
 
     export void load_package_resources(Scene& scene, const std::filesystem::path& package_root);
-    export [[nodiscard]] PackageReferences prepare_package_resources(const Scene& scene, const std::filesystem::path& package_root, const std::filesystem::path& source_root, bool preserve_sources, AssetTransaction& transaction);
+    export [[nodiscard]] PackageReferences prepare_package_resources(const Scene& scene, const std::filesystem::path& package_root, const std::filesystem::path& source_root, AssetTransaction& transaction);
 } // namespace spectra::scene

@@ -61,15 +61,6 @@ namespace spectra {
         friend auto operator<=>(const SceneDiagnosticSettings&, const SceneDiagnosticSettings&) = default;
     };
 
-    export struct SceneDiagnosticFrameResources {
-        GpuBuffer line_buffer{};
-        GpuBuffer box_buffer{};
-        DescriptorLease line_descriptor{};
-        DescriptorLease box_descriptor{};
-        std::size_t line_capacity{};
-        std::size_t box_capacity{};
-    };
-
     export struct SceneDiagnosticRenderer {
         SceneDiagnosticRenderer(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory);
         ~SceneDiagnosticRenderer();
@@ -83,6 +74,16 @@ namespace spectra {
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, scene::SceneView scene, const scene::Camera& camera, std::optional<scene::CameraId> scene_camera_view, const SceneDiagnosticSettings& settings, const SelectionState& selection);
         [[nodiscard]] const GpuImage& pick_image() const noexcept;
         [[nodiscard]] std::optional<SceneEntityReference> pick_entity(std::uint32_t frame_slot_index, std::uint32_t pick_index) const noexcept;
+
+    private:
+        struct SceneDiagnosticFrameResources {
+            GpuBuffer line_buffer{};
+            GpuBuffer box_buffer{};
+            DescriptorLease line_descriptor{};
+            DescriptorLease box_descriptor{};
+            std::size_t line_capacity{};
+            std::size_t box_capacity{};
+        };
 
         struct {
             VulkanRuntime& runtime;
@@ -99,7 +100,6 @@ namespace spectra {
             bool initialized{};
         } renderer;
 
-    private:
         void ensure_buffers(SceneDiagnosticFrameResources& frame, std::size_t line_count, std::size_t box_count);
         void resize_pick_image(vk::Extent2D extent);
     };

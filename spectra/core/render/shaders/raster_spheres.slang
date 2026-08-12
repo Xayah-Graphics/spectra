@@ -2,20 +2,6 @@ module raster_spheres;
 
 import raster_scene;
 
-struct RasterVertex {
-    float4 position : SV_Position;
-    float3 world_position : POSITION;
-    float3 world_normal : NORMAL;
-    float3 world_tangent : TANGENT;
-    float2 texture_coordinates : TEXCOORD;
-    nointerpolation uint material : MATERIAL;
-    nointerpolation uint area_light : AREA_LIGHT;
-    nointerpolation uint sphere : SPHERE;
-    nointerpolation float3 sphere_center : POSITION1;
-    nointerpolation float sphere_radius : RADIUS;
-    noperspective float3 wire_coordinates : TEXCOORD1;
-}
-
 struct RasterSpherePushData {
     DescriptorHandle<StructuredBuffer<float3>> positions;
     DescriptorHandle<StructuredBuffer<float>> radii;

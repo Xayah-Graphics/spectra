@@ -21,39 +21,6 @@ namespace spectra::dynamics {
         ResetRequired = static_cast<std::uint32_t>(SpectraPluginParameterApplication::ResetRequired),
     };
 
-    export enum class DatasetKind : std::uint32_t {
-        TriangleMesh         = static_cast<std::uint32_t>(SpectraPluginDatasetKind::TriangleMesh),
-        SphereSet            = static_cast<std::uint32_t>(SpectraPluginDatasetKind::SphereSet),
-        InstanceTransformSet = static_cast<std::uint32_t>(SpectraPluginDatasetKind::InstanceTransformSet),
-        PointSet             = static_cast<std::uint32_t>(SpectraPluginDatasetKind::PointSet),
-        SegmentSet           = static_cast<std::uint32_t>(SpectraPluginDatasetKind::SegmentSet),
-        CurveSet             = static_cast<std::uint32_t>(SpectraPluginDatasetKind::CurveSet),
-        VectorSet            = static_cast<std::uint32_t>(SpectraPluginDatasetKind::VectorSet),
-        Field                = static_cast<std::uint32_t>(SpectraPluginDatasetKind::Field),
-        Image                = static_cast<std::uint32_t>(SpectraPluginDatasetKind::Image),
-        CameraObservationSet = static_cast<std::uint32_t>(SpectraPluginDatasetKind::CameraObservationSet),
-        TransformSet         = static_cast<std::uint32_t>(SpectraPluginDatasetKind::TransformSet),
-    };
-
-    export enum class BufferSemantic : std::uint32_t {
-        TrianglePosition          = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::TrianglePosition),
-        TriangleNormal            = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::TriangleNormal),
-        TriangleTangent           = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::TriangleTangent),
-        TriangleTextureCoordinate = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::TriangleTextureCoordinate),
-        TriangleIndex             = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::TriangleIndex),
-        Sphere                    = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Sphere),
-        InstanceTransform         = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::InstanceTransform),
-        Point                     = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Point),
-        Segment                   = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Segment),
-        Curve                     = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Curve),
-        Vector                    = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Vector),
-        FieldChannel              = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::FieldChannel),
-        ImagePixel                = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::ImagePixel),
-        CameraObservation         = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::CameraObservation),
-        Transform                 = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::Transform),
-        TelemetryValue            = static_cast<std::uint32_t>(SpectraPluginBufferSemantic::TelemetryValue),
-    };
-
     export enum class FieldChannelKind : std::uint32_t {
         Float  = static_cast<std::uint32_t>(SpectraPluginFieldChannelKind::Float),
         Float3 = static_cast<std::uint32_t>(SpectraPluginFieldChannelKind::Float3),
@@ -64,6 +31,15 @@ namespace spectra::dynamics {
         Rgba16Float = static_cast<std::uint32_t>(SpectraPluginImageFormat::Rgba16Float),
         Rgba32Float = static_cast<std::uint32_t>(SpectraPluginImageFormat::Rgba32Float),
     };
+
+    export [[nodiscard]] inline std::uint64_t image_element_size(const ImageFormat format) noexcept {
+        switch (format) {
+        case ImageFormat::Rgba8Unorm: return sizeof(std::uint32_t);
+        case ImageFormat::Rgba16Float: return sizeof(std::uint16_t) * 4;
+        case ImageFormat::Rgba32Float: return sizeof(float) * 4;
+        }
+        std::unreachable();
+    }
 
     export enum class TransferFunction : std::uint32_t {
         Linear = static_cast<std::uint32_t>(SpectraPluginTransferFunction::Linear),

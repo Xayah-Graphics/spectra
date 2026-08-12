@@ -42,16 +42,16 @@ int main(int argument_count, char** raw_arguments) {
         std::filesystem::path scene_path{};
         std::optional<std::string> renderer{};
         std::optional<std::string> raster_display_mode{};
+        std::optional<std::string> output_layer{};
+        std::optional<std::string> composition{};
+        bool axes{};
+        std::optional<std::string> axes_plane_text{};
+        std::uint64_t outlined_instance{std::numeric_limits<std::uint64_t>::max()};
+        std::optional<std::string> simulation_step_text{};
+        std::optional<std::string> simulation_seconds_text{};
         std::filesystem::path output_base{};
         std::optional<std::filesystem::path> gbuffer_output_path{};
         std::optional<std::filesystem::path> telemetry_output_path{};
-        std::uint64_t outlined_instance{std::numeric_limits<std::uint64_t>::max()};
-        std::optional<std::string> output_layer{};
-        std::optional<std::string> composition{};
-        std::optional<std::string> simulation_step_text{};
-        std::optional<std::string> simulation_seconds_text{};
-        std::optional<std::string> axes_plane_text{};
-        bool axes{};
 #if defined(SPECTRA_HAS_EDITOR)
         bool gui{};
 #endif
@@ -77,15 +77,14 @@ int main(int argument_count, char** raw_arguments) {
 
         const std::filesystem::path application_directory = executable_directory();
         const std::filesystem::path resource_directory    = (application_directory / SPECTRA_RESOURCE_DIRECTORY).lexically_normal();
-        const std::filesystem::path output_directory      = std::filesystem::current_path();
         const std::filesystem::path shader_directory      = resource_directory / "shaders";
         const std::filesystem::path pathtracer_directory  = resource_directory / "pathtracer";
 
 #if defined(SPECTRA_HAS_EDITOR)
         if (gui) {
-            if (output_layer || composition || axes || axes_plane || outlined_instance != std::numeric_limits<std::uint64_t>::max() || simulation_step || simulation_seconds || !output_base.empty() || gbuffer_output_path || telemetry_output_path) throw std::runtime_error("Headless output, composition, time, and capture options cannot be used with --gui");
+            if (output_layer || composition || axes || axes_plane || outlined_instance != std::numeric_limits<std::uint64_t>::max() || simulation_step || simulation_seconds || !output_base.empty() || gbuffer_output_path || telemetry_output_path) throw std::runtime_error("Headless-only options cannot be used with --gui");
             const std::optional<std::filesystem::path> initial_scene = scene_path.empty() ? std::nullopt : std::optional{scene_path};
-            spectra::run_editor({.scene_path = initial_scene, .renderer = std::move(renderer), .raster_display_mode = raster_display_mode.value_or("material")}, shader_directory, pathtracer_directory, output_directory);
+            spectra::run_editor({.scene_path = initial_scene, .renderer = std::move(renderer), .raster_display_mode = raster_display_mode.value_or("material")}, shader_directory, pathtracer_directory);
             return 0;
         }
 #endif
@@ -96,8 +95,7 @@ int main(int argument_count, char** raw_arguments) {
         const std::string selected_raster_display_mode = raster_display_mode.value_or("material");
         if (output_base.empty()) {
             const std::string output_name = selected_renderer == "rasterizer" && selected_raster_display_mode != "material" ? std::format("{}-{}", selected_renderer, selected_raster_display_mode) : selected_renderer;
-            output_base                   = output_directory / "renders" / scene_path.stem() / output_name;
-            std::filesystem::create_directories(output_base.parent_path());
+            output_base                   = std::filesystem::current_path() / "renders" / scene_path.stem() / output_name;
         }
         if (!output_base.parent_path().empty()) std::filesystem::create_directories(output_base.parent_path());
         if (gbuffer_output_path && !gbuffer_output_path->parent_path().empty()) std::filesystem::create_directories(gbuffer_output_path->parent_path());

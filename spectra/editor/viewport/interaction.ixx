@@ -60,9 +60,9 @@ namespace spectra {
 
     private:
         void frame_viewport_camera(math::Bounds3 bounds, float aspect);
+        [[nodiscard]] bool entity_exists(SceneEntityReference entity) const noexcept;
         [[nodiscard]] math::Bounds3 navigation_bounds() const noexcept;
         [[nodiscard]] math::Bounds3 effective_scene_bounds() const noexcept;
-        [[nodiscard]] bool entity_exists(SceneEntityReference entity) const noexcept;
         [[nodiscard]] std::optional<math::Bounds3> entity_bounds(SceneEntityReference entity) const noexcept;
     };
 } // namespace spectra

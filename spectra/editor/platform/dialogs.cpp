@@ -38,15 +38,14 @@ namespace spectra {
         return result;
     }
 
-    std::optional<std::filesystem::path> EditorDialogs::choose_scene_save_path(const std::filesystem::path& current_path, const bool frozen_scene) {
+    std::optional<std::filesystem::path> EditorDialogs::choose_scene_save_path(const std::filesystem::path& current_path) {
         Microsoft::WRL::ComPtr<IFileSaveDialog> dialog{};
         if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) throw std::runtime_error("Failed to create the Windows save dialog");
         constexpr std::array filters{COMDLG_FILTERSPEC{L"Spectra Scene", L"*.spectra"}};
         dialog->SetFileTypes(static_cast<UINT>(filters.size()), filters.data());
         dialog->SetDefaultExtension(L"spectra");
-        dialog->SetTitle(frozen_scene ? L"Export Frozen Spectra Scene" : L"Save Spectra Scene");
-        const std::filesystem::path filename = frozen_scene ? current_path.parent_path() / std::format("{}-snapshot.spectra", current_path.stem().string()) : current_path.filename();
-        dialog->SetFileName(filename.filename().c_str());
+        dialog->SetTitle(L"Save Spectra Scene");
+        dialog->SetFileName(current_path.filename().c_str());
         const HRESULT shown = dialog->Show(this->platform.native_window);
         if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;
         if (FAILED(shown)) throw std::runtime_error("The Windows save dialog failed");

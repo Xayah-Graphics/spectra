@@ -95,10 +95,6 @@ namespace spectra {
             return vk::raii::ShaderEXT{device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, code.size_bytes(), code.data(), entry}};
         }
 
-        [[nodiscard]] vk::DeviceSize align_up(const vk::DeviceSize value, const vk::DeviceSize alignment) noexcept {
-            return (value + alignment - 1u) & ~(alignment - 1u);
-        }
-
         [[nodiscard]] std::uint32_t query_stack_size(const vk::raii::Pipeline& pipeline) {
             const std::array general{
                 pipeline.getRayTracingShaderGroupStackSizeKHR(0, vk::ShaderGroupShaderKHR::eGeneral),
@@ -195,9 +191,9 @@ namespace spectra {
 
         void initialize_shader_binding_table(PathTracerResources& runtime) {
             const vk::PhysicalDeviceRayTracingPipelinePropertiesKHR& properties = runtime.runtime.graphics.ray_tracing_properties;
-            const vk::DeviceSize record_stride                                  = align_up(properties.shaderGroupHandleSize, properties.shaderGroupHandleAlignment);
-            const vk::DeviceSize miss_offset                                    = align_up(record_stride * 2u, properties.shaderGroupBaseAlignment);
-            const vk::DeviceSize hit_offset                                     = align_up(miss_offset + record_stride * 2u, properties.shaderGroupBaseAlignment);
+            const vk::DeviceSize record_stride                                  = align_device_size(properties.shaderGroupHandleSize, properties.shaderGroupHandleAlignment);
+            const vk::DeviceSize miss_offset                                    = align_device_size(record_stride * 2u, properties.shaderGroupBaseAlignment);
+            const vk::DeviceSize hit_offset                                     = align_device_size(miss_offset + record_stride * 2u, properties.shaderGroupBaseAlignment);
             const vk::DeviceSize table_size                                     = hit_offset + record_stride * 4u;
             runtime.shader_binding_table                                        = runtime.runtime.resources.create_buffer(table_size, vk::BufferUsageFlagBits::eShaderBindingTableKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
             std::byte* destination                                              = static_cast<std::byte*>(runtime.shader_binding_table.mapped);
@@ -225,10 +221,6 @@ namespace spectra {
         return this->progress;
     }
 
-    const vk::raii::ShaderEXT& PathTracerResources::shader(const PathTracerComputeShader shader) const noexcept {
-        return this->compute_shaders[std::to_underlying(shader)];
-    }
-
     PathTracerResources::PathTracerResources(VulkanRuntime& runtime, const std::filesystem::path& resource_directory) : runtime(runtime) {
         const std::filesystem::path spectral_directory = resource_directory / "spectral";
         this->rgb_to_spectrum_table_data               = load_rgb_tables(spectral_directory);
@@ -239,9 +231,9 @@ namespace spectra {
         this->cie_samples.resize(5u * 471u);
         std::memcpy(this->cie_samples.data(), cie_table.data() + 16, this->cie_samples.size() * sizeof(float));
         const vk::DeviceSize rgb_offset      = 0;
-        const vk::DeviceSize cie_offset      = align_up(this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t), 16);
-        const vk::DeviceSize zero_offset     = align_up(cie_offset + cie_table.size(), 16);
-        const vk::DeviceSize sampling_offset = align_up(zero_offset + sizeof(std::uint32_t) * 4u, 16);
+        const vk::DeviceSize cie_offset      = align_device_size(this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t), 16);
+        const vk::DeviceSize zero_offset     = align_device_size(cie_offset + cie_table.size(), 16);
+        const vk::DeviceSize sampling_offset = align_device_size(zero_offset + sizeof(std::uint32_t) * 4u, 16);
         const vk::DeviceSize total_size      = sampling_offset + sampling_table_size;
         GpuBuffer staging                    = runtime.resources.create_buffer(total_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         std::memcpy(static_cast<std::byte*>(staging.mapped) + rgb_offset, this->rgb_to_spectrum_table_data.data(), this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t));
@@ -269,6 +261,10 @@ namespace spectra {
     PathTracerResources::~PathTracerResources() {
         if (this->shader_preparation.valid()) this->shader_preparation.wait();
         this->runtime.frames.defer_destruction([static_data = std::move(this->static_data), zero_volume_field_descriptor = std::move(this->zero_volume_field_descriptor), cie_spectra_descriptor = std::move(this->cie_spectra_descriptor), rgb_to_spectrum_tables_descriptor = std::move(this->rgb_to_spectrum_tables_descriptor), sampling_tables_descriptor = std::move(this->sampling_tables_descriptor), compute_shaders = std::move(this->compute_shaders), pipeline = std::move(this->pipeline), shader_binding_table = std::move(this->shader_binding_table)]() mutable {});
+    }
+
+    const vk::raii::ShaderEXT& PathTracerResources::shader(const PathTracerComputeShader shader) const noexcept {
+        return this->compute_shaders[std::to_underlying(shader)];
     }
 
     bool PathTracerResources::complete_preparation() {

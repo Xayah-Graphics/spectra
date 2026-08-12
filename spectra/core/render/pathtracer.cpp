@@ -1,7 +1,6 @@
 module spectra.render.pathtracer;
 
 import spectra.render.pathtracer.abi;
-import spectra.render.capture;
 import spectra.render.pathtracer.scene;
 import std;
 import vulkan;
@@ -9,6 +8,66 @@ import vulkan;
 namespace spectra {
     namespace {
         constexpr std::uint32_t invalid_path_index = std::numeric_limits<std::uint32_t>::max();
+
+        struct PathGBufferSnapshot {
+            vk::Extent2D extent{};
+            std::uint32_t accumulated_samples{};
+            GpuBuffer buffer{};
+        };
+
+        [[nodiscard]] RenderGBufferReadback materialize_gbuffer_readback(const PathGBufferSnapshot& snapshot) {
+            RenderGBufferReadback result{
+                .extent              = snapshot.extent,
+                .accumulated_samples = snapshot.accumulated_samples,
+            };
+            const std::size_t pixel_count = static_cast<std::size_t>(snapshot.extent.width) * snapshot.extent.height;
+            result.radiance.resize(pixel_count);
+            result.albedo.resize(pixel_count);
+            result.shading_normals.resize(pixel_count);
+            result.geometric_normals.resize(pixel_count);
+            result.positions.resize(pixel_count);
+            result.depths.resize(pixel_count);
+            result.texture_coordinates.resize(pixel_count);
+            result.object_ids.resize(pixel_count);
+            result.primitive_ids.resize(pixel_count);
+            result.material_ids.resize(pixel_count);
+            if (snapshot.accumulated_samples == 0) return result;
+
+            const vk::DeviceSize buffer_size = static_cast<vk::DeviceSize>(pixel_count) * sizeof(math::Float4);
+            const auto float_buffer = [&](const std::size_t index) {
+                return std::span<const math::Float4>{reinterpret_cast<const math::Float4*>(static_cast<const std::byte*>(snapshot.buffer.mapped) + buffer_size * index), pixel_count};
+            };
+            const auto integer_buffer = [&](const std::size_t index) {
+                return std::span<const std::array<std::uint32_t, 4>>{reinterpret_cast<const std::array<std::uint32_t, 4>*>(static_cast<const std::byte*>(snapshot.buffer.mapped) + buffer_size * index), pixel_count};
+            };
+            std::ranges::copy(float_buffer(0), result.radiance.begin());
+            const std::span<const math::Float4> albedo_sums                = float_buffer(1);
+            const std::span<const math::Float4> shading_normal_sums        = float_buffer(2);
+            const std::span<const math::Float4> geometric_normal_sums      = float_buffer(3);
+            const std::span<const math::Float4> position_depth_sums        = float_buffer(4);
+            const std::span<const math::Float4> uv_weight_sums             = float_buffer(5);
+            const std::span<const std::array<std::uint32_t, 4>> identity_0 = integer_buffer(6);
+            const std::span<const std::array<std::uint32_t, 4>> identity_1 = integer_buffer(7);
+            const auto normalize                                           = [](const math::Float4 value) {
+                const float length = std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+                return length == 0.0f ? math::Float3{} : math::Float3{value.x / length, value.y / length, value.z / length};
+            };
+            for (std::size_t index = 0; index != pixel_count; ++index) {
+                const float weight = uv_weight_sums[index].z;
+                if (weight != 0.0f) {
+                    result.albedo[index]              = {albedo_sums[index].x / weight, albedo_sums[index].y / weight, albedo_sums[index].z / weight};
+                    result.shading_normals[index]     = normalize(shading_normal_sums[index]);
+                    result.geometric_normals[index]   = normalize(geometric_normal_sums[index]);
+                    result.positions[index]           = {position_depth_sums[index].x / weight, position_depth_sums[index].y / weight, position_depth_sums[index].z / weight};
+                    result.depths[index]               = position_depth_sums[index].w / weight;
+                    result.texture_coordinates[index] = {uv_weight_sums[index].x / weight, uv_weight_sums[index].y / weight};
+                }
+                result.object_ids[index]    = static_cast<std::uint64_t>(identity_0[index][0]) | static_cast<std::uint64_t>(identity_0[index][1]) << 32;
+                result.primitive_ids[index] = identity_0[index][2];
+                result.material_ids[index]  = static_cast<std::uint64_t>(identity_0[index][3]) | static_cast<std::uint64_t>(identity_1[index][0]) << 32;
+            }
+            return result;
+        }
 
         [[nodiscard]] GpuBuffer create_storage_buffer(VulkanRuntime& runtime, const vk::DeviceSize size, const vk::BufferUsageFlags additional_usage = {}) {
             return runtime.resources.create_buffer(size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress | additional_usage, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
@@ -34,7 +93,149 @@ namespace spectra {
             command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 1, &dependency});
             return destination;
         }
+        static_assert(sizeof(vk::TraceRaysIndirectCommand2KHR) == 104);
+        constexpr vk::DeviceSize indirect_width_offset = sizeof(vk::DeviceAddress) * 11;
+
     } // namespace
+
+    PathTracer::PathTracer(VulkanRuntime& runtime, GpuScene& gpu_scene, PathTracerResources& pathtracer, const scene::SceneView scene_view) : context{runtime, gpu_scene, pathtracer} {
+        this->begin_scene_preparation(scene_view);
+    }
+
+    PathTracer::~PathTracer() {
+        this->release_scene_preparation();
+        this->destroy_session();
+        this->destroy_scene();
+    }
+
+    bool PathTracer::complete_preparation(const scene::SceneView scene_view, const vk::raii::CommandBuffer& command_buffer) {
+        if (this->session.initialized) return true;
+        if (this->scene_preparation_task.wait_for(std::chrono::seconds{0}) != std::future_status::ready) return false;
+        this->scene_preparation_task.get();
+        if (this->scene_preparation->gpu.structure_revision != this->context.gpu_scene.view().structure_revision) {
+            this->release_scene_preparation();
+            this->destroy_scene();
+            this->begin_scene_preparation(scene_view);
+            return false;
+        }
+
+        this->scene_preparation->progress.report(PathTracerPreparationStage::UploadingScene);
+        this->commit_sampler(std::move(this->scene_preparation->sampler), command_buffer);
+        this->commit_filter(std::move(this->scene_preparation->filter), command_buffer);
+        this->commit_scene(std::move(this->scene_preparation->prepared), command_buffer);
+        this->scene.camera             = scene_view.camera;
+        this->scene.transport_settings = scene_view.transport;
+        this->scene_preparation->progress.report(PathTracerPreparationStage::AllocatingRenderSession);
+        this->initialize_session();
+        this->scene_preparation->progress.report(PathTracerPreparationStage::Ready);
+        this->release_scene_preparation();
+        return true;
+    }
+
+    void PathTracer::wait_for_preparation() {
+        if (this->scene_preparation_task.valid()) this->scene_preparation_task.get();
+    }
+
+    PathTracerPreparationProgress PathTracer::preparation_progress() const {
+        return this->scene_preparation->progress.snapshot();
+    }
+
+    void PathTracer::invalidate(const scene::SceneChange changes, const GpuSceneUpdate gpu_update) noexcept {
+        constexpr scene::SceneChange relevant        = scene::SceneChange::Geometry | scene::SceneChange::Transform | scene::SceneChange::Texture | scene::SceneChange::Material | scene::SceneChange::Light | scene::SceneChange::Medium | scene::SceneChange::Volume | scene::SceneChange::Camera | scene::SceneChange::Film | scene::SceneChange::Sampler | scene::SceneChange::Transport;
+        this->control.pending_changes                = this->control.pending_changes | (changes & relevant);
+        this->control.pending_gpu_changes            = this->control.pending_gpu_changes | gpu_update.gpu_changes;
+        this->control.pending_gpu_structure_revision = std::max(this->control.pending_gpu_structure_revision, gpu_update.structure_revision);
+    }
+
+    void PathTracer::prepare(scene::SceneView scene_view, const RenderView& view, const vk::raii::CommandBuffer& command_buffer) {
+        bool reset_required{};
+        if (this->control.pending_changes != scene::SceneChange::None) {
+            scene_view.revision.changes = this->control.pending_changes;
+            this->synchronize_scene(scene_view, command_buffer);
+            this->control.pending_changes = scene::SceneChange::None;
+            reset_required                = true;
+        }
+        if (this->control.pending_gpu_changes != GpuSceneChange::None) {
+            if ((this->control.pending_gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None && this->scene.compiled_gpu_structure_revision != this->control.pending_gpu_structure_revision)
+                this->compile_scene(scene_view, command_buffer);
+            else if ((this->control.pending_gpu_changes & GpuSceneChange::Volume) != GpuSceneChange::None)
+                this->update_volumes(scene_view, command_buffer);
+            if ((this->control.pending_gpu_changes & (GpuSceneChange::Geometry | GpuSceneChange::Transform)) != GpuSceneChange::None) this->update_dynamic_lights(command_buffer);
+            this->control.pending_gpu_changes = GpuSceneChange::None;
+            reset_required                    = true;
+        }
+        if (this->control.camera_revision != view.camera_revision) {
+            this->scene.camera            = view.camera;
+            this->control.camera_revision = view.camera_revision;
+            reset_required                = true;
+        }
+        this->resize_session(view.extent, this->scene.texture_stack_size, this->scene.material_texture_value_count);
+        if (reset_required) this->reset();
+    }
+
+    void PathTracer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index) {
+        if (this->control.paused || this->session.sample_index >= this->scene.sampler.sampler.samples_per_pixel) return;
+        this->record_integrator(command_buffer, frame_slot_index);
+    }
+
+    RenderProgress PathTracer::progress() const noexcept {
+        return {this->session.sample_index, this->scene.sampler.sampler.samples_per_pixel, this->control.paused};
+    }
+
+    void PathTracer::set_paused(const bool paused) noexcept {
+        this->control.paused = paused;
+    }
+
+    void PathTracer::reset() noexcept {
+        this->session.sample_index = 0;
+    }
+
+    RenderGBufferReadback PathTracer::readback() {
+        PathGBufferSnapshot snapshot{};
+        this->context.runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
+            constexpr std::size_t arena_buffer_count = 7;
+            constexpr std::size_t buffer_count       = arena_buffer_count + 1;
+            const vk::DeviceSize buffer_size         = static_cast<vk::DeviceSize>(this->session.pixel_capacity) * sizeof(math::Float4);
+            const vk::DeviceSize required_size       = buffer_size * buffer_count;
+            if (snapshot.buffer.size < required_size) snapshot.buffer = this->context.runtime.resources.create_buffer(required_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+            snapshot.extent              = this->session.render_extent;
+            snapshot.accumulated_samples = this->session.sample_index;
+            const std::array<vk::DeviceSize, arena_buffer_count> source_offsets{
+                this->session.gbuffer_albedo_sums.offset,
+                this->session.gbuffer_shading_normal_sums.offset,
+                this->session.gbuffer_geometric_normal_sums.offset,
+                this->session.gbuffer_position_depth_sums.offset,
+                this->session.gbuffer_uv_weight_sums.offset,
+                this->session.gbuffer_identity_0.offset,
+                this->session.gbuffer_identity_1.offset,
+            };
+            const vk::ImageMemoryBarrier2 image_to_transfer{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferSrcOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+            const vk::MemoryBarrier2 buffers_to_transfer{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead};
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &buffers_to_transfer, {}, {}, 1, &image_to_transfer});
+            command_buffer.copyImageToBuffer(*this->session.output_image.image, vk::ImageLayout::eTransferSrcOptimal, *snapshot.buffer.buffer, vk::BufferImageCopy{0, 0, 0, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {0, 0, 0}, {this->session.render_extent.width, this->session.render_extent.height, 1}});
+            for (std::size_t index = 0; index != source_offsets.size(); ++index) command_buffer.copyBuffer(*this->session.arena.buffer, *snapshot.buffer.buffer, vk::BufferCopy{source_offsets[index], buffer_size * (index + 1u), buffer_size});
+            const vk::ImageMemoryBarrier2 image_to_general{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+            const vk::MemoryBarrier2 host_barrier{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostRead};
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_barrier, {}, {}, 1, &image_to_general});
+        });
+        return materialize_gbuffer_readback(snapshot);
+    }
+
+    RenderOutput PathTracer::output() const noexcept {
+        return {
+            this->session.output_image,
+            this->session.sampled_output_descriptor,
+            vk::ImageLayout::eGeneral,
+            vk::PipelineStageFlagBits2::eComputeShader,
+            vk::AccessFlagBits2::eShaderStorageWrite,
+            this->scene.filter.film.color_space,
+            this->scene.filter.film.exposure,
+        };
+    }
+
+    DepthBufferView PathTracer::depth_buffer() noexcept {
+        return {this->session.depth_image, this->session.sampled_depth_descriptor, this->session.depth_layout};
+    }
 
     void PathTracer::begin_scene_preparation(const scene::SceneView scene) {
         this->scene.primitives.descriptor              = this->context.runtime.frames.allocate_resource_descriptor();
@@ -758,65 +959,6 @@ namespace spectra {
         this->session.indirect_commands_configured = false;
     }
 
-    void PathTracer::reset() noexcept {
-        this->session.sample_index = 0;
-    }
-
-    void PathTracer::record_readback(const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot) {
-        constexpr std::size_t arena_buffer_count = 7;
-        constexpr std::size_t buffer_count       = arena_buffer_count + 1;
-        const vk::DeviceSize buffer_size         = static_cast<vk::DeviceSize>(this->session.pixel_capacity) * sizeof(math::Float4);
-        const vk::DeviceSize required_size       = buffer_size * buffer_count;
-        if (snapshot.buffer.size < required_size) snapshot.buffer = this->context.runtime.resources.create_buffer(required_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-        snapshot.extent              = this->session.render_extent;
-        snapshot.accumulated_samples = this->session.sample_index;
-        const std::array<vk::DeviceSize, arena_buffer_count> source_offsets{
-            this->session.gbuffer_albedo_sums.offset,
-            this->session.gbuffer_shading_normal_sums.offset,
-            this->session.gbuffer_geometric_normal_sums.offset,
-            this->session.gbuffer_position_depth_sums.offset,
-            this->session.gbuffer_uv_weight_sums.offset,
-            this->session.gbuffer_identity_0.offset,
-            this->session.gbuffer_identity_1.offset,
-        };
-        const vk::ImageMemoryBarrier2 image_to_transfer{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferSrcOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-        const vk::MemoryBarrier2 buffers_to_transfer{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead};
-        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &buffers_to_transfer, {}, {}, 1, &image_to_transfer});
-        command_buffer.copyImageToBuffer(*this->session.output_image.image, vk::ImageLayout::eTransferSrcOptimal, *snapshot.buffer.buffer, vk::BufferImageCopy{0, 0, 0, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {0, 0, 0}, {this->session.render_extent.width, this->session.render_extent.height, 1}});
-        for (std::size_t index = 0; index != source_offsets.size(); ++index) command_buffer.copyBuffer(*this->session.arena.buffer, *snapshot.buffer.buffer, vk::BufferCopy{source_offsets[index], buffer_size * (index + 1u), buffer_size});
-        const vk::ImageMemoryBarrier2 image_to_general{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-        const vk::MemoryBarrier2 host_barrier{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostRead};
-        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_barrier, {}, {}, 1, &image_to_general});
-    }
-
-    RenderGBufferReadback PathTracer::readback() {
-        RenderGBufferSnapshot snapshot{};
-        this->context.runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) { this->record_readback(command_buffer, snapshot); });
-        return materialize_gbuffer_readback(snapshot);
-    }
-
-    RenderOutput PathTracer::output() const noexcept {
-        return {
-            this->session.output_image,
-            this->session.sampled_output_descriptor,
-            vk::ImageLayout::eGeneral,
-            vk::PipelineStageFlagBits2::eComputeShader,
-            vk::AccessFlagBits2::eShaderStorageWrite,
-            this->scene.filter.film.color_space,
-            this->scene.filter.film.exposure,
-        };
-    }
-
-    DepthBufferView PathTracer::depth_buffer() noexcept {
-        return {this->session.depth_image, this->session.sampled_depth_descriptor, this->session.depth_layout};
-    }
-
-    namespace {
-        static_assert(sizeof(vk::TraceRaysIndirectCommand2KHR) == 104);
-        constexpr vk::DeviceSize indirect_width_offset = sizeof(vk::DeviceAddress) * 11;
-
-    } // namespace
-
     void PathTracer::configure_indirect_commands() {
         const std::array commands{
             vk::TraceRaysIndirectCommand2KHR{this->context.pathtracer.surface_ray_generation_region.deviceAddress, this->context.pathtracer.surface_ray_generation_region.size, this->context.pathtracer.miss_region.deviceAddress, this->context.pathtracer.miss_region.size, this->context.pathtracer.miss_region.stride, this->context.pathtracer.hit_region.deviceAddress, this->context.pathtracer.hit_region.size, this->context.pathtracer.hit_region.stride, 0, 0, 0, 0, 1, 1},
@@ -1070,94 +1212,6 @@ namespace spectra {
         this->session.output_layout = vk::ImageLayout::eGeneral;
         this->session.depth_layout  = vk::ImageLayout::eShaderReadOnlyOptimal;
         ++this->session.sample_index;
-    }
-
-    PathTracer::PathTracer(VulkanRuntime& runtime, GpuScene& gpu_scene, PathTracerResources& pathtracer, const scene::SceneView scene_view) : context{runtime, gpu_scene, pathtracer} {
-        this->begin_scene_preparation(scene_view);
-    }
-
-    PathTracer::~PathTracer() {
-        this->release_scene_preparation();
-        this->destroy_session();
-        this->destroy_scene();
-    }
-
-    bool PathTracer::complete_preparation(const scene::SceneView scene_view, const vk::raii::CommandBuffer& command_buffer) {
-        if (this->session.initialized) return true;
-        if (this->scene_preparation_task.wait_for(std::chrono::seconds{0}) != std::future_status::ready) return false;
-        this->scene_preparation_task.get();
-        if (this->scene_preparation->gpu.structure_revision != this->context.gpu_scene.view().structure_revision) {
-            this->release_scene_preparation();
-            this->destroy_scene();
-            this->begin_scene_preparation(scene_view);
-            return false;
-        }
-
-        this->scene_preparation->progress.report(PathTracerPreparationStage::UploadingScene);
-        this->commit_sampler(std::move(this->scene_preparation->sampler), command_buffer);
-        this->commit_filter(std::move(this->scene_preparation->filter), command_buffer);
-        this->commit_scene(std::move(this->scene_preparation->prepared), command_buffer);
-        this->scene.camera             = scene_view.camera;
-        this->scene.transport_settings = scene_view.transport;
-        this->scene_preparation->progress.report(PathTracerPreparationStage::AllocatingRenderSession);
-        this->initialize_session();
-        this->scene_preparation->progress.report(PathTracerPreparationStage::Ready);
-        this->release_scene_preparation();
-        return true;
-    }
-
-    void PathTracer::wait_for_preparation() {
-        if (this->scene_preparation_task.valid()) this->scene_preparation_task.get();
-    }
-
-    PathTracerPreparationProgress PathTracer::preparation_progress() const {
-        return this->scene_preparation->progress.snapshot();
-    }
-
-    void PathTracer::invalidate(const scene::SceneChange changes, const GpuSceneUpdate gpu_update) noexcept {
-        constexpr scene::SceneChange relevant        = scene::SceneChange::Geometry | scene::SceneChange::Transform | scene::SceneChange::Texture | scene::SceneChange::Material | scene::SceneChange::Light | scene::SceneChange::Medium | scene::SceneChange::Volume | scene::SceneChange::Camera | scene::SceneChange::Film | scene::SceneChange::Sampler | scene::SceneChange::Transport;
-        this->control.pending_changes                = this->control.pending_changes | (changes & relevant);
-        this->control.pending_gpu_changes            = this->control.pending_gpu_changes | gpu_update.gpu_changes;
-        this->control.pending_gpu_structure_revision = std::max(this->control.pending_gpu_structure_revision, gpu_update.structure_revision);
-    }
-
-    void PathTracer::prepare(scene::SceneView scene_view, const RenderView& view, const vk::raii::CommandBuffer& command_buffer) {
-        bool reset_required{};
-        if (this->control.pending_changes != scene::SceneChange::None) {
-            scene_view.revision.changes = this->control.pending_changes;
-            this->synchronize_scene(scene_view, command_buffer);
-            this->control.pending_changes = scene::SceneChange::None;
-            reset_required                = true;
-        }
-        if (this->control.pending_gpu_changes != GpuSceneChange::None) {
-            if ((this->control.pending_gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None && this->scene.compiled_gpu_structure_revision != this->control.pending_gpu_structure_revision)
-                this->compile_scene(scene_view, command_buffer);
-            else if ((this->control.pending_gpu_changes & GpuSceneChange::Volume) != GpuSceneChange::None)
-                this->update_volumes(scene_view, command_buffer);
-            if ((this->control.pending_gpu_changes & (GpuSceneChange::Geometry | GpuSceneChange::Transform)) != GpuSceneChange::None) this->update_dynamic_lights(command_buffer);
-            this->control.pending_gpu_changes = GpuSceneChange::None;
-            reset_required                    = true;
-        }
-        if (this->control.camera_revision != view.camera_revision) {
-            this->scene.camera            = view.camera;
-            this->control.camera_revision = view.camera_revision;
-            reset_required                = true;
-        }
-        this->resize_session(view.extent, this->scene.texture_stack_size, this->scene.material_texture_value_count);
-        if (reset_required) this->reset();
-    }
-
-    void PathTracer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index) {
-        if (this->control.paused || this->session.sample_index >= this->scene.sampler.sampler.samples_per_pixel) return;
-        this->record_integrator(command_buffer, frame_slot_index);
-    }
-
-    RenderProgress PathTracer::progress() const noexcept {
-        return {this->session.sample_index, this->scene.sampler.sampler.samples_per_pixel, this->control.paused};
-    }
-
-    void PathTracer::set_paused(const bool paused) noexcept {
-        this->control.paused = paused;
     }
 
 } // namespace spectra

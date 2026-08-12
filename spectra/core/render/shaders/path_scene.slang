@@ -157,25 +157,19 @@ public static const uint texture_checkerboard = SPECTRA_TEXTURE_CHECKERBOARD;
 public static const uint texture_scale = SPECTRA_TEXTURE_SCALE;
 public static const uint texture_mix = SPECTRA_TEXTURE_MIX;
 public static const uint texture_direction_mix = SPECTRA_TEXTURE_DIRECTION_MIX;
-public static const uint texture_bilerp = SPECTRA_TEXTURE_BILERP;
 
 public static const uint mapping_uv = SPECTRA_MAPPING_UV;
 public static const uint mapping_planar = SPECTRA_MAPPING_PLANAR;
 public static const uint mapping_spherical = SPECTRA_MAPPING_SPHERICAL;
-public static const uint mapping_cylindrical = SPECTRA_MAPPING_CYLINDRICAL;
 public static const uint mapping_checkerboard_3d = SPECTRA_MAPPING_CHECKERBOARD_3D;
 
 public static const uint area_source_triangle = SPECTRA_AREA_SOURCE_TRIANGLE;
 public static const uint area_source_sphere_set = SPECTRA_AREA_SOURCE_SPHERE_SET;
-public static const uint area_source_analytic = SPECTRA_AREA_SOURCE_ANALYTIC;
 
 public static const uint spectrum_rgb = SPECTRA_SPECTRUM_RGB;
 public static const uint spectrum_constant = SPECTRA_SPECTRUM_CONSTANT;
 public static const uint spectrum_blackbody = SPECTRA_SPECTRUM_BLACKBODY;
-public static const uint spectrum_piecewise_linear = SPECTRA_SPECTRUM_PIECEWISE_LINEAR;
-public static const uint illuminant_none = SPECTRA_ILLUMINANT_NONE;
 public static const uint illuminant_d65 = SPECTRA_ILLUMINANT_D65;
-public static const uint illuminant_d60 = SPECTRA_ILLUMINANT_D60;
 
 public struct PathTextureHeader {
     public uint kind;

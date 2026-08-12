@@ -6,8 +6,6 @@ module;
 
 export module spectra.editor.ui;
 
-import spectra.editor.output.capture;
-import spectra.editor.output.frozen_scene;
 import spectra.editor.ui.imgui;
 import spectra.editor.viewport.interaction;
 import spectra.editor.viewport.picker;
@@ -25,19 +23,17 @@ namespace spectra {
         bool reload_scene{};
         bool save_scene{};
         bool save_scene_as{};
-        bool export_frozen_scene{};
         bool show_axes{};
-        std::optional<CaptureFormat> capture_format{};
         std::optional<std::string> renderer{};
         std::optional<RasterDisplayMode> raster_display_mode{};
         std::array<std::array<float, 4>, 2> window_drag_regions{};
     };
 
     export struct EditorUi {
-        EditorUi(SceneDocument& document, SceneDiagnosticSettings& diagnostic_settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, FrozenSceneExporter& frozen_export, ImGuiBackend& imgui) noexcept;
+        EditorUi(SceneDocument& document, SceneDiagnosticSettings& diagnostic_settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, ImGuiBackend& imgui) noexcept;
 
-        [[nodiscard]] EditorActions draw_editor_ui();
         void notify(std::string message, bool error = false);
+        [[nodiscard]] EditorActions draw_editor_ui();
 
         struct {
             SceneDocument& document;
@@ -46,7 +42,6 @@ namespace spectra {
             RenderEngine& render_engine;
             ViewportInteraction& viewport;
             ViewportPicker& picker;
-            FrozenSceneExporter& frozen_export;
             ImGuiBackend& imgui;
         } context;
 

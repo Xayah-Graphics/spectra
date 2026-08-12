@@ -72,7 +72,6 @@ target_sources(
         spectra/core/scene/document.ixx
         spectra/core/dynamics/contract.ixx
         spectra/core/dynamics/gpu.ixx
-        spectra/core/dynamics/frozen.ixx
         spectra/core/dynamics/runtime.ixx
         spectra/core/render/contract.ixx
         spectra/core/render/gpu_scene.ixx
@@ -120,7 +119,6 @@ target_sources(
         spectra/core/scene/format.cpp
         spectra/core/scene/document.cpp
         spectra/core/dynamics/runtime.cpp
-        spectra/core/dynamics/frozen.cpp
         spectra/core/render/contract.cpp
         spectra/core/render/gpu_scene.cpp
         spectra/core/render/capture.cpp
@@ -175,8 +173,6 @@ if (SPECTRA_BUILD_UI)
             spectra/editor/viewport/picker.ixx
             spectra/editor/ui/imgui.ixx
             spectra/editor/ui/ui.ixx
-            spectra/editor/output/capture.ixx
-            spectra/editor/output/frozen_scene.ixx
             PRIVATE
             spectra/editor/editor.cpp
             spectra/editor/platform/window.cpp
@@ -186,8 +182,6 @@ if (SPECTRA_BUILD_UI)
             spectra/editor/viewport/picker.cpp
             spectra/editor/ui/imgui.cpp
             spectra/editor/ui/ui.cpp
-            spectra/editor/output/capture.cpp
-            spectra/editor/output/frozen_scene.cpp
     )
     target_compile_definitions(
             spectra_editor

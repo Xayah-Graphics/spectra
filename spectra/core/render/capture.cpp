@@ -135,23 +135,6 @@ namespace spectra {
         }
     } // namespace
 
-    void write_png(const std::filesystem::path& path, const std::span<const std::uint8_t> bgra, const vk::Extent2D extent) {
-        if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
-        std::vector<std::uint8_t> rgba(bgra.size());
-        for (std::size_t pixel = 0; pixel != bgra.size() / 4u; ++pixel) {
-            rgba[pixel * 4u + 0u] = bgra[pixel * 4u + 2u];
-            rgba[pixel * 4u + 1u] = bgra[pixel * 4u + 1u];
-            rgba[pixel * 4u + 2u] = bgra[pixel * 4u + 0u];
-            rgba[pixel * 4u + 3u] = bgra[pixel * 4u + 3u];
-        }
-        std::vector<std::uint8_t> encoded{};
-        const unsigned error = lodepng::encode(encoded, rgba, extent.width, extent.height);
-        if (error != 0) throw std::runtime_error(std::format("Failed to encode PNG: {}", lodepng_error_text(error)));
-        std::ofstream stream{path, std::ios::binary};
-        stream.write(reinterpret_cast<const char*>(encoded.data()), static_cast<std::streamsize>(encoded.size()));
-        if (!stream) throw std::runtime_error(std::format("Failed to write PNG file: {}", path.string()));
-    }
-
     void record_linear_readback(VulkanRuntime& runtime, const vk::raii::CommandBuffer& command_buffer, const RenderOutput render_output, GpuBuffer& readback_buffer) {
         const vk::Extent2D extent          = render_output.image.extent;
         const vk::DeviceSize required_size = static_cast<vk::DeviceSize>(extent.width) * extent.height * sizeof(float) * 4u;
@@ -177,58 +160,21 @@ namespace spectra {
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_barrier, {}, {}, 1, &restore});
     }
 
-    RenderGBufferReadback materialize_gbuffer_readback(const RenderGBufferSnapshot& snapshot) {
-        RenderGBufferReadback result{
-            .extent              = snapshot.extent,
-            .accumulated_samples = snapshot.accumulated_samples,
-        };
-        const std::size_t pixel_count = static_cast<std::size_t>(snapshot.extent.width) * snapshot.extent.height;
-        result.radiance.resize(pixel_count);
-        result.albedo.resize(pixel_count);
-        result.shading_normals.resize(pixel_count);
-        result.geometric_normals.resize(pixel_count);
-        result.positions.resize(pixel_count);
-        result.depths.resize(pixel_count);
-        result.texture_coordinates.resize(pixel_count);
-        result.object_ids.resize(pixel_count);
-        result.primitive_ids.resize(pixel_count);
-        result.material_ids.resize(pixel_count);
-        if (snapshot.accumulated_samples == 0) return result;
-
-        const vk::DeviceSize buffer_size = static_cast<vk::DeviceSize>(pixel_count) * sizeof(math::Float4);
-        const auto float_buffer = [&](const std::size_t index) {
-            return std::span<const math::Float4>{reinterpret_cast<const math::Float4*>(static_cast<const std::byte*>(snapshot.buffer.mapped) + buffer_size * index), pixel_count};
-        };
-        const auto integer_buffer = [&](const std::size_t index) {
-            return std::span<const std::array<std::uint32_t, 4>>{reinterpret_cast<const std::array<std::uint32_t, 4>*>(static_cast<const std::byte*>(snapshot.buffer.mapped) + buffer_size * index), pixel_count};
-        };
-        std::ranges::copy(float_buffer(0), result.radiance.begin());
-        const std::span<const math::Float4> albedo_sums                = float_buffer(1);
-        const std::span<const math::Float4> shading_normal_sums        = float_buffer(2);
-        const std::span<const math::Float4> geometric_normal_sums      = float_buffer(3);
-        const std::span<const math::Float4> position_depth_sums        = float_buffer(4);
-        const std::span<const math::Float4> uv_weight_sums             = float_buffer(5);
-        const std::span<const std::array<std::uint32_t, 4>> identity_0 = integer_buffer(6);
-        const std::span<const std::array<std::uint32_t, 4>> identity_1 = integer_buffer(7);
-        const auto normalize                                           = [](const math::Float4 value) {
-            const float length = std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
-            return length == 0.0f ? math::Float3{} : math::Float3{value.x / length, value.y / length, value.z / length};
-        };
-        for (std::size_t index = 0; index != pixel_count; ++index) {
-            const float weight = uv_weight_sums[index].z;
-            if (weight != 0.0f) {
-                result.albedo[index] = {albedo_sums[index].x / weight, albedo_sums[index].y / weight, albedo_sums[index].z / weight};
-                result.shading_normals[index]   = normalize(shading_normal_sums[index]);
-                result.geometric_normals[index] = normalize(geometric_normal_sums[index]);
-                result.positions[index]         = {position_depth_sums[index].x / weight, position_depth_sums[index].y / weight, position_depth_sums[index].z / weight};
-                result.depths[index]             = position_depth_sums[index].w / weight;
-                result.texture_coordinates[index] = {uv_weight_sums[index].x / weight, uv_weight_sums[index].y / weight};
-            }
-            result.object_ids[index]    = static_cast<std::uint64_t>(identity_0[index][0]) | static_cast<std::uint64_t>(identity_0[index][1]) << 32;
-            result.primitive_ids[index] = identity_0[index][2];
-            result.material_ids[index]  = static_cast<std::uint64_t>(identity_0[index][3]) | static_cast<std::uint64_t>(identity_1[index][0]) << 32;
+    void write_png(const std::filesystem::path& path, const std::span<const std::uint8_t> bgra, const vk::Extent2D extent) {
+        if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+        std::vector<std::uint8_t> rgba(bgra.size());
+        for (std::size_t pixel = 0; pixel != bgra.size() / 4u; ++pixel) {
+            rgba[pixel * 4u + 0u] = bgra[pixel * 4u + 2u];
+            rgba[pixel * 4u + 1u] = bgra[pixel * 4u + 1u];
+            rgba[pixel * 4u + 2u] = bgra[pixel * 4u + 0u];
+            rgba[pixel * 4u + 3u] = bgra[pixel * 4u + 3u];
         }
-        return result;
+        std::vector<std::uint8_t> encoded{};
+        const unsigned error = lodepng::encode(encoded, rgba, extent.width, extent.height);
+        if (error != 0) throw std::runtime_error(std::format("Failed to encode PNG: {}", lodepng_error_text(error)));
+        std::ofstream stream{path, std::ios::binary};
+        stream.write(reinterpret_cast<const char*>(encoded.data()), static_cast<std::streamsize>(encoded.size()));
+        if (!stream) throw std::runtime_error(std::format("Failed to write PNG file: {}", path.string()));
     }
 
     void write_linear_exr(const std::filesystem::path& path, const std::span<const float> rgba, const vk::Extent2D extent, const scene::SpectrumColorSpace color_space) {

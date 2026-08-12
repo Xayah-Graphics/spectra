@@ -9,13 +9,6 @@ module spectra.editor.ui;
 import std;
 
 namespace spectra {
-    EditorUi::EditorUi(SceneDocument& document, SceneDiagnosticSettings& diagnostic_settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, FrozenSceneExporter& frozen_export, ImGuiBackend& imgui) noexcept : context{document, diagnostic_settings, dynamics, render_engine, viewport, picker, frozen_export, imgui} {}
-
-    void EditorUi::notify(std::string message, const bool error) {
-        this->controls.status       = std::move(message);
-        this->controls.status_error = error;
-    }
-
     namespace {
         constexpr float top_strip_height       = 36.0f;
         constexpr float transform_tools_left   = 10.0f;
@@ -32,7 +25,6 @@ namespace spectra {
             Translate,
             Rotate,
             Scale,
-            Capture,
             Close,
             Play,
             Pause,
@@ -195,10 +187,6 @@ namespace spectra {
                     draw_list->AddLine(ImVec2{icon_center.x - 6.0f, icon_center.y + 6.0f}, ImVec2{icon_center.x + 6.0f, icon_center.y - 6.0f}, color, 1.7f);
                     draw_list->AddRectFilled(ImVec2{icon_center.x - 9.0f, icon_center.y + 3.0f}, ImVec2{icon_center.x - 3.0f, icon_center.y + 9.0f}, color, 1.0f);
                     draw_list->AddRectFilled(ImVec2{icon_center.x + 3.0f, icon_center.y - 9.0f}, ImVec2{icon_center.x + 9.0f, icon_center.y - 3.0f}, color, 1.0f);
-                } else if (icon == Icon::Capture) {
-                    draw_list->AddRect(ImVec2{icon_center.x - 9.0f, icon_center.y - 6.0f}, ImVec2{icon_center.x + 9.0f, icon_center.y + 7.0f}, color, 2.0f, ImDrawFlags_None, 1.6f);
-                    draw_list->AddCircle(icon_center, 3.5f, color, 16, 1.5f);
-                    draw_list->AddRectFilled(ImVec2{icon_center.x - 5.0f, icon_center.y - 9.0f}, ImVec2{icon_center.x + 1.0f, icon_center.y - 6.0f}, color, 1.0f);
                 } else if (icon == Icon::Close) {
                     draw_list->AddLine(ImVec2{icon_center.x - 6.0f, icon_center.y - 6.0f}, ImVec2{icon_center.x + 6.0f, icon_center.y + 6.0f}, color, 1.6f);
                     draw_list->AddLine(ImVec2{icon_center.x + 6.0f, icon_center.y - 6.0f}, ImVec2{icon_center.x - 6.0f, icon_center.y + 6.0f}, color, 1.6f);
@@ -227,6 +215,47 @@ namespace spectra {
         }
     } // namespace
 
+    EditorUi::EditorUi(SceneDocument& document, SceneDiagnosticSettings& diagnostic_settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, ImGuiBackend& imgui) noexcept : context{document, diagnostic_settings, dynamics, render_engine, viewport, picker, imgui} {}
+
+    void EditorUi::notify(std::string message, const bool error) {
+        this->controls.status       = std::move(message);
+        this->controls.status_error = error;
+    }
+
+    EditorActions EditorUi::draw_editor_ui() {
+        ImGuizmo::BeginFrame();
+        EditorActions actions{};
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 position         = viewport->Pos;
+        const ImVec2 size             = viewport->Size;
+        const float aspect            = size.x / size.y;
+        const ImGuiIO& io             = ImGui::GetIO();
+        if (!this->context.document.content.loaded) {
+            this->controls.inspector_open = false;
+            this->controls.parameter_drafts.clear();
+            this->controls.reset_pending = false;
+            this->handle_shortcuts(actions, aspect, false);
+            this->draw_top_strip(position, size, actions);
+            this->draw_status_toast(position, size);
+            return actions;
+        }
+        actions.show_axes                  = ImGui::IsKeyDown(ImGuiKey_G) && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper && !io.WantTextInput;
+        const SceneEntityReference* entity = active_entity(*this);
+        const bool transform_visible       = entity && entity_transform(this->context.document.content.source, *entity).has_value();
+        const bool editable                = entity && transform_editable(*this, *entity);
+
+        this->synchronize_transform();
+        this->handle_shortcuts(actions, aspect, true);
+        this->draw_viewport(position, size, actions.show_axes, editable);
+        this->draw_top_strip(position, size, actions);
+        if (transform_visible) {
+            this->draw_transform_tools(position, size, editable);
+            this->draw_transform_hud(position, size, editable);
+        }
+        if (this->controls.inspector_open) this->draw_inspector(position, size);
+        this->draw_status_toast(position, size);
+        return actions;
+    }
     void EditorUi::apply_dynamic_parameters(std::vector<scene::DynamicParameterSetting> parameters, const bool reset) {
         try {
             this->context.document.update_dynamic_system_parameters(this->context.document.content.source, this->controls.selected_dynamic_system, std::move(parameters));
@@ -362,10 +391,7 @@ namespace spectra {
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) actions.open_scene_file = true;
         if (!this->context.document.content.loaded) return;
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) actions.save_scene = true;
-        if (io.KeyCtrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false) && !this->context.frozen_export.in_progress())
-            actions.export_frozen_scene = true;
-        else if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
-            actions.save_scene_as = true;
+        if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) actions.save_scene_as = true;
         const bool no_modifiers = !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper;
         if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_1, false)) actions.renderer = std::string{rasterizer_descriptor.id};
         if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_2, false)) actions.renderer = std::string{pathtracer_descriptor.id};
@@ -682,9 +708,6 @@ namespace spectra {
             ImGui::Separator();
             if (ImGui::MenuItem("Save", "Ctrl+S")) actions.save_scene = true;
             if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) actions.save_scene_as = true;
-            ImGui::BeginDisabled(this->context.frozen_export.in_progress());
-            if (ImGui::MenuItem("Export Frozen Scene...", "Ctrl+Alt+S")) actions.export_frozen_scene = true;
-            ImGui::EndDisabled();
             ImGui::EndPopup();
         }
 
@@ -704,9 +727,8 @@ namespace spectra {
         }
 
         constexpr float exposure_width = 84.0f;
-        constexpr float capture_width  = 28.0f;
         constexpr float edge_margin    = 4.0f;
-        const float exposure_start     = right - edge_margin - capture_width - ImGui::GetStyle().ItemSpacing.x - exposure_width;
+        const float exposure_start     = right - edge_margin - exposure_width;
         const float status_start       = this->draw_render_status(exposure_start, render_progress, pathtracer_preparation);
         ImGui::SameLine(exposure_start);
         const FlatButtonInteraction exposure = flat_button("##Exposure", ImVec2{exposure_width, 27.0f});
@@ -720,18 +742,6 @@ namespace spectra {
         };
         ImGui::GetWindowDrawList()->AddText(ImVec2{exposure_text_position.x + 1.0f, exposure_text_position.y + 1.0f}, exposure.shadow, exposure_text.c_str());
         ImGui::GetWindowDrawList()->AddText(exposure_text_position, exposure.color, exposure_text.c_str());
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!this->context.render_engine.ready());
-        if (icon_button("##Capture", ImVec2{capture_width, 27.0f}, Icon::Capture)) ImGui::OpenPopup("##CaptureMenu");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capture");
-        if (ImGui::BeginPopup("##CaptureMenu")) {
-            if (ImGui::MenuItem("Viewport PNG")) actions.capture_format = CaptureFormat::Png;
-            if (ImGui::MenuItem("Linear EXR")) actions.capture_format = CaptureFormat::LinearExr;
-            if (ImGui::MenuItem("GBuffer EXR", nullptr, false, this->context.render_engine.gbuffer_available() && this->context.document.content.source.film().gbuffer)) actions.capture_format = CaptureFormat::GBufferExr;
-            ImGui::EndPopup();
-        }
-        ImGui::EndDisabled();
-
         const float strip_offset_x      = ImGui::GetWindowPos().x - position.x;
         const float left_drag_start     = strip_offset_x + source_end + 4.0f;
         const float mode_client_start   = strip_offset_x + mode_start;
@@ -1114,38 +1124,4 @@ namespace spectra {
         ImGui::PopStyleVar(2);
     }
 
-    EditorActions EditorUi::draw_editor_ui() {
-        ImGuizmo::BeginFrame();
-        EditorActions actions{};
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        const ImVec2 position         = viewport->Pos;
-        const ImVec2 size             = viewport->Size;
-        const float aspect            = size.x / size.y;
-        const ImGuiIO& io             = ImGui::GetIO();
-        if (!this->context.document.content.loaded) {
-            this->controls.inspector_open = false;
-            this->controls.parameter_drafts.clear();
-            this->controls.reset_pending = false;
-            this->handle_shortcuts(actions, aspect, false);
-            this->draw_top_strip(position, size, actions);
-            this->draw_status_toast(position, size);
-            return actions;
-        }
-        actions.show_axes                  = ImGui::IsKeyDown(ImGuiKey_G) && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper && !io.WantTextInput;
-        const SceneEntityReference* entity = active_entity(*this);
-        const bool transform_visible       = entity && entity_transform(this->context.document.content.source, *entity).has_value();
-        const bool editable                = entity && transform_editable(*this, *entity);
-
-        this->synchronize_transform();
-        this->handle_shortcuts(actions, aspect, true);
-        this->draw_viewport(position, size, actions.show_axes, editable);
-        this->draw_top_strip(position, size, actions);
-        if (transform_visible) {
-            this->draw_transform_tools(position, size, editable);
-            this->draw_transform_hud(position, size, editable);
-        }
-        if (this->controls.inspector_open) this->draw_inspector(position, size);
-        this->draw_status_toast(position, size);
-        return actions;
-    }
 } // namespace spectra

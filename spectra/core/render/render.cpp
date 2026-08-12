@@ -56,17 +56,8 @@ namespace spectra {
         if (this->backends.pathtracer) this->backends.pathtracer->wait_for_preparation();
     }
 
-    RendererDescriptor RenderEngine::active_descriptor() const {
-        if (!this->backends.active) throw std::runtime_error("No active Scene Renderer");
-        return std::visit([](const auto active) { return std::remove_cvref_t<decltype(active.get())>::descriptor; }, *this->backends.active);
-    }
-
     RendererDescriptor RenderEngine::selected_descriptor() const noexcept {
         return this->backends.selected_id == pathtracer_descriptor.id ? pathtracer_descriptor : rasterizer_descriptor;
-    }
-
-    bool RenderEngine::ready() const noexcept {
-        return this->backends.active.has_value();
     }
 
     std::optional<PathTracerPreparationProgress> RenderEngine::pathtracer_preparation() const {
@@ -79,13 +70,7 @@ namespace spectra {
     std::optional<DepthBufferView> RenderEngine::depth_buffer() noexcept {
         if (!this->backends.active) return std::nullopt;
         return std::visit(
-            [](const auto active) -> DepthBufferView {
-                auto& renderer = active.get();
-                if constexpr (std::same_as<std::remove_cvref_t<decltype(renderer)>, Rasterizer>)
-                    return {renderer.renderer.depth_image, renderer.renderer.sampled_depth_descriptor, renderer.renderer.depth_layout};
-                else
-                    return renderer.depth_buffer();
-            },
+            [](const auto active) -> DepthBufferView { return active.get().depth_buffer(); },
             *this->backends.active);
     }
 
@@ -120,7 +105,7 @@ namespace spectra {
         return std::visit(
             [](const auto active_reference) -> std::optional<RenderProgress> {
                 const auto& active = active_reference.get();
-                if constexpr (ProgressiveSceneRenderer<std::remove_cvref_t<decltype(active)>>)
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(active)>, PathTracer>)
                     return active.progress();
                 else
                     return std::nullopt;
@@ -133,7 +118,7 @@ namespace spectra {
         std::visit(
             [paused](const auto active_reference) {
                 auto& active = active_reference.get();
-                if constexpr (ProgressiveSceneRenderer<std::remove_cvref_t<decltype(active)>>)
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(active)>, PathTracer>)
                     active.set_paused(paused);
                 else
                     throw std::runtime_error("The active Scene Renderer is not progressive");
@@ -146,28 +131,10 @@ namespace spectra {
         std::visit(
             [](const auto active_reference) {
                 auto& active = active_reference.get();
-                if constexpr (ProgressiveSceneRenderer<std::remove_cvref_t<decltype(active)>>)
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(active)>, PathTracer>)
                     active.reset();
                 else
                     throw std::runtime_error("The active Scene Renderer is not progressive");
-            },
-            *this->backends.active);
-    }
-
-    bool RenderEngine::gbuffer_available() const noexcept {
-        if (!this->backends.active) return false;
-        return std::visit([](const auto active) { return GBufferSceneRenderer<std::remove_cvref_t<decltype(active.get())>>; }, *this->backends.active);
-    }
-
-    void RenderEngine::record_gbuffer_readback(const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot) {
-        if (!this->backends.active) throw std::runtime_error("No active Scene Renderer");
-        std::visit(
-            [&](const auto active_reference) {
-                auto& active = active_reference.get();
-                if constexpr (GBufferSceneRenderer<std::remove_cvref_t<decltype(active)>>)
-                    active.record_readback(command_buffer, snapshot);
-                else
-                    throw std::runtime_error("The active Scene Renderer does not expose a GBuffer");
             },
             *this->backends.active);
     }
@@ -177,7 +144,7 @@ namespace spectra {
         return std::visit(
             [](const auto active_reference) -> RenderGBufferReadback {
                 auto& active = active_reference.get();
-                if constexpr (GBufferSceneRenderer<std::remove_cvref_t<decltype(active)>>)
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(active)>, PathTracer>)
                     return active.readback();
                 else
                     throw std::runtime_error("The active Scene Renderer does not expose a GBuffer");

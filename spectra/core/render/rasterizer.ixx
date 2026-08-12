@@ -35,8 +35,10 @@ namespace spectra {
         void prepare(scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer);
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         [[nodiscard]] RenderOutput output() const noexcept;
+        [[nodiscard]] DepthBufferView depth_buffer() noexcept;
         void set_display_mode(RasterDisplayMode mode) noexcept;
 
+    private:
         struct {
             VulkanRuntime& runtime;
             GpuScene& gpu_scene;
@@ -93,7 +95,6 @@ namespace spectra {
             GpuSceneChange pending_gpu_changes{GpuSceneChange::None};
         } renderer;
 
-    private:
         void initialize_scene(scene::SceneView scene);
         void upload_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_area_emitters(const vk::raii::CommandBuffer& command_buffer);
@@ -105,5 +106,4 @@ namespace spectra {
         void destroy() noexcept;
     };
 
-    static_assert(SceneRenderer<Rasterizer>);
 } // namespace spectra

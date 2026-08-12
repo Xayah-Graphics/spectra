@@ -46,6 +46,7 @@ namespace spectra {
         [[nodiscard]] std::optional<PresentedFrameContext> begin_frame();
         void present_frame();
 
+    private:
         struct {
             WindowPlatform& platform;
             VulkanSurface& surface;
@@ -65,7 +66,6 @@ namespace spectra {
             bool acquired_suboptimal{};
         } presentation;
 
-    private:
         void recreate_swapchain();
     };
 } // namespace spectra

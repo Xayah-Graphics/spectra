@@ -40,12 +40,6 @@ namespace spectra {
         std::vector<std::uint64_t> material_ids{};
     };
 
-    export struct RenderGBufferSnapshot {
-        vk::Extent2D extent{};
-        std::uint32_t accumulated_samples{};
-        GpuBuffer buffer{};
-    };
-
     export struct RendererDescriptor {
         std::string_view id{};
         std::string_view name{};
@@ -62,6 +56,7 @@ namespace spectra {
     };
 
     export [[nodiscard]] RasterDisplayMode parse_raster_display_mode(std::string_view identifier);
+    export void set_basic_graphics_state(const vk::raii::CommandBuffer& command_buffer);
 
     export struct RenderView {
         scene::Camera camera{};
@@ -114,25 +109,4 @@ namespace spectra {
         scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
     };
 
-    export template <typename Type>
-    concept SceneRenderer = requires(Type& renderer, const Type& constant_renderer, scene::SceneView scene, scene::SceneChange changes, GpuSceneUpdate gpu_update, const RenderView& view, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot) {
-        { Type::descriptor } -> std::convertible_to<RendererDescriptor>;
-        { renderer.invalidate(changes, gpu_update) } -> std::same_as<void>;
-        { renderer.prepare(scene, view, command_buffer) } -> std::same_as<void>;
-        { renderer.record(command_buffer, frame_slot) } -> std::same_as<void>;
-        { constant_renderer.output() } -> std::same_as<RenderOutput>;
-    };
-
-    export template <typename Type>
-    concept ProgressiveSceneRenderer = SceneRenderer<Type> && requires(Type& renderer, const Type& constant_renderer) {
-        { constant_renderer.progress() } -> std::same_as<RenderProgress>;
-        { renderer.set_paused(true) } -> std::same_as<void>;
-        { renderer.reset() } -> std::same_as<void>;
-    };
-
-    export template <typename Type>
-    concept GBufferSceneRenderer = SceneRenderer<Type> && requires(Type& renderer, const vk::raii::CommandBuffer& command_buffer, RenderGBufferSnapshot& snapshot) {
-        { renderer.record_readback(command_buffer, snapshot) } -> std::same_as<void>;
-        { renderer.readback() } -> std::same_as<RenderGBufferReadback>;
-    };
 } // namespace spectra

@@ -30,6 +30,7 @@ namespace spectra {
         void destroy() noexcept;
         void record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const scene::Camera& camera, const ViewportOverlayState& state);
 
+    private:
         struct {
             VulkanRuntime& runtime;
             GpuScene& gpu_scene;
@@ -48,10 +49,9 @@ namespace spectra {
             vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
         } overlay;
 
-    private:
+        void configure_mask_render_state(const vk::raii::CommandBuffer& command_buffer, vk::Rect2D render_region, vk::CompareOp depth_compare, bool depth_write);
         void initialize_overlay();
         void create_overlay_images(vk::Extent2D extent);
-        void configure_mask_render_state(const vk::raii::CommandBuffer& command_buffer, vk::Rect2D render_region, vk::CompareOp depth_compare, bool depth_write);
         void record_impl(const vk::raii::CommandBuffer& command_buffer, vk::Image target_image, vk::ImageView target_view, vk::ImageLayout target_layout, vk::Extent2D extent, vk::Rect2D render_region, const scene::Camera& camera, std::span<const std::uint32_t> selected_instances, std::span<const std::uint32_t> active_instances, std::span<const std::uint32_t> hovered_instances, std::uint32_t axes_plane, bool axes_visible, bool outline_visible);
     };
 } // namespace spectra
