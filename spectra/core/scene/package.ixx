@@ -12,7 +12,7 @@ namespace spectra::scene {
     export struct PackageReferences {
         std::vector<std::optional<PackageResourceReference>> geometries{};
         std::vector<AssetReference> sphere_sets{};
-        std::vector<std::optional<AssetReference>> volumes{};
+        std::vector<std::optional<PackageResourceReference>> volumes{};
         std::vector<std::optional<PackageResourceReference>> textures{};
         std::optional<AssetReference> frozen_dynamic_frame{};
     };

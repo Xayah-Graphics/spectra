@@ -166,6 +166,7 @@ namespace spectra::scene {
     export struct DensityGridVolume {
         math::UInt3 resolution{};
         AssetReference asset{};
+        SourceReference source{};
         std::vector<float> density{};
         std::vector<float> temperature{};
         std::vector<float> emission_scale{};
@@ -175,6 +176,7 @@ namespace spectra::scene {
         math::UInt3 resolution{};
         SpectrumColorSpace color_space{SpectrumColorSpace::Srgb};
         AssetReference asset{};
+        SourceReference source{};
         std::vector<math::Float3> sigma_a{};
         std::vector<math::Float3> sigma_s{};
         std::vector<math::Float3> emission{};

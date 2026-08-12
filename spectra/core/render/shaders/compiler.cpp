@@ -1,20 +1,7 @@
-#include <cerrno>
-#if defined(_WIN32)
-#include <process.h>
-#elif defined(__linux__)
-#include <spawn.h>
-#include <sys/wait.h>
-#else
-#error Unsupported platform
-#endif
 #include <slang-com-ptr.h>
 #include <slang.h>
 
 import std;
-
-#if defined(__linux__)
-extern char** environ;
-#endif
 
 namespace {
     struct ReflectedField {
@@ -167,6 +154,25 @@ namespace {
         return std::move(output).str();
     }
 
+    [[nodiscard]] std::string generate_shader_entries_module(const std::vector<ShaderEntry>& entries) {
+        std::ostringstream output{};
+        output << "export module spectra.render.pathtracer.shader_entries;\n\n"
+               << "import std;\n\n"
+               << "namespace spectra {\n"
+               << "    export struct PathTracerShaderEntry {\n"
+               << "        std::string_view file;\n"
+               << "        std::string_view entry;\n"
+               << "    };\n\n"
+               << "    export inline constexpr std::array path_compute_shader_entries{\n";
+        for (const ShaderEntry& entry : entries) if (entry.category == "path-compute") output << "        PathTracerShaderEntry{\"" << entry.output_name << ".spv\", \"" << entry.entry_point << "\"},\n";
+        output << "    };\n\n"
+               << "    export inline constexpr std::array path_ray_shader_entries{\n";
+        for (const ShaderEntry& entry : entries) if (entry.category == "path-ray") output << "        PathTracerShaderEntry{\"" << entry.output_name << ".spv\", \"" << entry.entry_point << "\"},\n";
+        output << "    };\n"
+               << "} // namespace spectra\n";
+        return std::move(output).str();
+    }
+
     void write_if_different(const std::filesystem::path& path, const void* contents, const std::size_t size, std::string_view description) {
         std::ifstream existing_stream{path, std::ios::binary};
         const std::string existing{std::istreambuf_iterator<char>{existing_stream}, std::istreambuf_iterator<char>{}};
@@ -177,7 +183,7 @@ namespace {
         if (!stream) throw std::runtime_error(std::format("Cannot write {}: {}", description, path.string()));
     }
 
-    void compile_shader(slang::ISession& session, const ShaderEntry& entry, const std::filesystem::path& output_directory, const std::filesystem::path& spirv_validator) {
+    void compile_shader(slang::ISession& session, const ShaderEntry& entry, const std::filesystem::path& output_directory) {
         Slang::ComPtr<slang::IBlob> diagnostic_blob{};
         slang::IModule* module = session.loadModule(entry.module_name.c_str(), diagnostic_blob.writeRef());
         if (!module) throw std::runtime_error(std::format("Loading Slang module '{}' failed\n{}", entry.module_name, diagnostic_text(diagnostic_blob)));
@@ -196,51 +202,13 @@ namespace {
         require_slang_success(linked->getEntryPointCode(0, 0, code.writeRef(), diagnostic_blob.writeRef()), std::format("Generating SPIR-V for '{}.{}'", entry.module_name, entry.entry_point), diagnostic_blob);
         if (diagnostic_blob && diagnostic_blob->getBufferSize() != 0) std::print(std::cerr, "{}", diagnostic_text(diagnostic_blob));
 
-        const std::filesystem::path output_path = output_directory / (entry.output_name + ".spv");
+        const std::filesystem::path output_path = output_directory / (entry.category.starts_with("path-") ? "pathtracer" : "runtime") / (entry.output_name + ".spv");
         write_if_different(output_path, code->getBufferPointer(), code->getBufferSize(), "SPIR-V shader");
-
-#if defined(_WIN32)
-        const std::wstring validator = spirv_validator.wstring();
-        std::vector<std::wstring> arguments{
-            validator,
-            L"--target-env",
-            L"vulkan1.4",
-            output_path.wstring(),
-        };
-        std::vector<const wchar_t*> argument_pointers{};
-        argument_pointers.reserve(arguments.size() + 1);
-        for (const std::wstring& argument : arguments) argument_pointers.push_back(argument.c_str());
-        argument_pointers.push_back(nullptr);
-        const std::intptr_t validation_result = _wspawnv(_P_WAIT, validator.c_str(), argument_pointers.data());
-        if (validation_result == -1) throw std::runtime_error(std::format("Starting SPIR-V validator failed for '{}': {}", output_path.string(), std::strerror(errno)));
-#elif defined(__linux__)
-        const std::string validator = spirv_validator.string();
-        std::vector<std::string> arguments{
-            validator,
-            "--target-env",
-            "vulkan1.4",
-            output_path.string(),
-        };
-        std::vector<char*> argument_pointers{};
-        argument_pointers.reserve(arguments.size() + 1);
-        for (std::string& argument : arguments) argument_pointers.push_back(argument.data());
-        argument_pointers.push_back(nullptr);
-        pid_t process{};
-        const int spawn_result = posix_spawn(&process, validator.c_str(), nullptr, nullptr, argument_pointers.data(), environ);
-        if (spawn_result != 0) throw std::runtime_error(std::format("Starting SPIR-V validator failed for '{}': {}", output_path.string(), std::strerror(spawn_result)));
-        int process_status{};
-        if (waitpid(process, &process_status, 0) == -1) throw std::runtime_error(std::format("Waiting for SPIR-V validator failed for '{}': {}", output_path.string(), std::strerror(errno)));
-        if (!WIFEXITED(process_status)) throw std::runtime_error(std::format("SPIR-V validator terminated abnormally for '{}'", output_path.string()));
-        const int validation_result = WEXITSTATUS(process_status);
-#endif
-        if (validation_result != 0) throw std::runtime_error(std::format("SPIR-V validation failed for '{}' with exit code {}", output_path.string(), validation_result));
     }
 } // namespace
 
 int main(const int argument_count, const char* const* arguments) {
     try {
-        if (argument_count < 11) throw std::runtime_error("Usage: spectra_shader_compiler <path-abi.types> <path-abi.ixx> <raster-abi.types> <raster-abi.ixx> <plugin-abi.types> <plugin-abi.ixx> <shader_entries.txt> <output-directory> <spirv-val> <shader-search-path>...");
-
         Slang::ComPtr<slang::IGlobalSession> global_session{};
         require_slang_success(slang::createGlobalSession(global_session.writeRef()), "Creating Slang global session");
 
@@ -256,8 +224,8 @@ int main(const int argument_count, const char* const* arguments) {
             "-spirv-unified-descriptor-heap-stride",
         };
         std::vector<const char*> search_paths{};
-        search_paths.reserve(argument_count - 10);
-        for (int index = 10; index != argument_count; ++index) search_paths.push_back(arguments[index]);
+        search_paths.reserve(argument_count - 13);
+        for (int index = 13; index != argument_count; ++index) search_paths.push_back(arguments[index]);
         slang::TargetDesc target_description{
             .format  = SLANG_SPIRV,
             .profile = global_session->findProfile("sm_6_6"),
@@ -291,8 +259,12 @@ int main(const int argument_count, const char* const* arguments) {
         const std::string plugin_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[5]), "spectra.plugin.abi", "spectra::plugin_abi");
         write_if_different(arguments[6], plugin_abi_module.data(), plugin_abi_module.size(), "generated Plugin shader ABI module");
 
-        const std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[7]);
-        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.optimized ? *optimized_session : *default_session, entry, arguments[8], arguments[9]);
+        std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[9]);
+        shader_entries.append_range(load_shader_entries(arguments[10]));
+        if (std::string_view{arguments[12]} == "ON") shader_entries.append_range(load_shader_entries(arguments[11]));
+        const std::string shader_entries_module = generate_shader_entries_module(shader_entries);
+        write_if_different(arguments[7], shader_entries_module.data(), shader_entries_module.size(), "generated Path Tracer shader entry module");
+        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.optimized ? *optimized_session : *default_session, entry, arguments[8]);
     } catch (const std::exception& error) {
         std::println(std::cerr, "{}", error.what());
         return 1;

@@ -260,7 +260,7 @@ namespace spectra::scene {
                         else
                             kind = "procedural-cloud";
                         std::string line = std::format("{} {} {}", kind, volume.id.value, kdl_string(volume.name));
-                        if constexpr (!std::same_as<std::remove_cvref_t<decltype(data)>, ProceduralCloudVolume>) kdl_string_property(line, "asset", reference->content_hash);
+                        if constexpr (!std::same_as<std::remove_cvref_t<decltype(data)>, ProceduralCloudVolume>) write_resource_reference(line, reference->asset, reference->source);
                         writer.begin(line);
                         if (volume.bounds != math::Bounds3{}) write_bounds(writer, volume.bounds);
                         if (volume.transform != math::Transform{}) write_transform(writer, "transform", volume.transform);
@@ -1261,17 +1261,16 @@ namespace spectra::scene {
                 };
                 if (node.name() == u8"density-grid") {
                     const kdl::Node& resolution = *kdl_child(node, u8"resolution");
-                    volume.data                 = DensityGridVolume{
-                                        .resolution = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])},
-                                        .asset      = {.content_hash = kdl_string_property(node, u8"asset")},
-                    };
+                    DensityGridVolume data{.resolution = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])}};
+                    read_resource_reference(node, data.asset, data.source);
+                    volume.data = std::move(data);
                 } else if (node.name() == u8"rgb-grid") {
                     const kdl::Node& resolution = *kdl_child(node, u8"resolution");
                     RgbGridVolume data{
                         .resolution  = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])},
                         .color_space = SpectrumColorSpace::Srgb,
-                        .asset       = {.content_hash = kdl_string_property(node, u8"asset")},
                     };
+                    read_resource_reference(node, data.asset, data.source);
                     if (const kdl::Node* color_space = kdl_child(node, u8"color-space")) data.color_space = read_spectrum_color_space(kdl_value_text(color_space->args()[0]));
                     volume.data = data;
                 } else if (node.name() == u8"nanovdb") {

@@ -237,10 +237,9 @@ namespace spectra::scene {
             return package_root / "assets" / std::format("{}{}", reference.content_hash, extension);
         }
 
-        [[nodiscard]] std::filesystem::path source_path(const std::filesystem::path& package_root, const SourceReference& reference, const std::string_view extension) {
+        [[nodiscard]] std::filesystem::path source_path(const std::filesystem::path& package_root, const SourceReference& reference) {
             const std::filesystem::path relative = std::filesystem::path{reference.path}.lexically_normal();
             if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") throw std::runtime_error(std::format("Spectra source path must stay inside the scene package: {}", reference.path));
-            if (relative.extension().generic_string() != extension) throw std::runtime_error(std::format("Spectra source {} must use the {} format", reference.path, extension));
             return package_root / relative;
         }
 
@@ -488,10 +487,10 @@ namespace spectra::scene {
             std::filesystem::copy_file(source, target, std::filesystem::copy_options::none);
         }
 
-        void copy_source(const SourceReference& reference, const std::string_view extension, const std::filesystem::path& source_root, const std::filesystem::path& target_root, AssetTransaction& transaction) {
+        void copy_source(const SourceReference& reference, const std::filesystem::path& source_root, const std::filesystem::path& target_root, AssetTransaction& transaction) {
             if (std::filesystem::absolute(source_root).lexically_normal() == std::filesystem::absolute(target_root).lexically_normal()) return;
-            const std::filesystem::path source = source_path(source_root, reference, extension);
-            const std::filesystem::path target = source_path(target_root, reference, extension);
+            const std::filesystem::path source = source_path(source_root, reference);
+            const std::filesystem::path target = source_path(target_root, reference);
             std::filesystem::create_directories(target.parent_path());
             if (std::filesystem::exists(target)) {
                 if (content_hash::sha256_file(source) != content_hash::sha256_file(target)) throw std::runtime_error(std::format("Spectra source already exists with different content: {}", target.string()));
@@ -532,15 +531,21 @@ namespace spectra::scene {
                 if (mesh->source.path.empty())
                     load_geometry_asset(*mesh, package_root);
                 else
-                    load_triangle_mesh_source(*mesh, source_path(package_root, mesh->source, ".ply"));
+                    load_triangle_mesh_source(*mesh, source_path(package_root, mesh->source));
             }
         for (SphereSet& spheres : scene.resources.sphere_sets) load_sphere_set_asset(spheres, package_root);
         for (Volume& volume : scene.resources.volumes) {
-            if (DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data))
-                load_volume_asset(*density, package_root);
-            else if (RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data))
-                load_volume_asset(*rgb, package_root);
-            else if (NanoVdbVolume* nanovdb = std::get_if<NanoVdbVolume>(&volume.data))
+            if (DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data)) {
+                if (density->source.path.empty())
+                    load_volume_asset(*density, package_root);
+                else
+                    load_volume_source(*density, source_path(package_root, density->source));
+            } else if (RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data)) {
+                if (rgb->source.path.empty())
+                    load_volume_asset(*rgb, package_root);
+                else
+                    load_volume_source(*rgb, source_path(package_root, rgb->source));
+            } else if (NanoVdbVolume* nanovdb = std::get_if<NanoVdbVolume>(&volume.data))
                 load_volume_asset(*nanovdb, package_root);
         }
         for (Texture& texture : scene.resources.textures)
@@ -548,7 +553,7 @@ namespace spectra::scene {
                 if (image->source.path.empty())
                     load_texture_asset(*image, package_root);
                 else
-                    load_image_source(*image, texture.color_space, source_path(package_root, image->source, ".png"));
+                    load_image_source(*image, texture.color_space, source_path(package_root, image->source));
             }
         if (scene.frozen_dynamic_frame) load_frozen_dynamic_frame_asset(*scene.frozen_dynamic_frame, package_root);
     }
@@ -560,7 +565,7 @@ namespace spectra::scene {
             if (const TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&scene.resources.geometries[index].data)) {
                 PackageResourceReference reference{};
                 if (!mesh->source.path.empty() && preserve_sources) {
-                    copy_source(mesh->source, ".ply", source_root, package_root, transaction);
+                    copy_source(mesh->source, source_root, package_root, transaction);
                     reference.source = mesh->source;
                 } else
                     reference.asset = write_geometry_asset(*mesh, package_root, transaction);
@@ -571,17 +576,31 @@ namespace spectra::scene {
         references.volumes.resize(scene.resources.volumes.size());
         for (std::size_t index = 0; index != scene.resources.volumes.size(); ++index) {
             const Volume& volume = scene.resources.volumes[index];
-            if (const DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data))
-                references.volumes[index] = write_volume_asset(*density, package_root, transaction);
-            else if (const RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data))
-                references.volumes[index] = write_volume_asset(*rgb, package_root, transaction);
-            else if (const NanoVdbVolume* nanovdb = std::get_if<NanoVdbVolume>(&volume.data)) {
+            if (const DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data)) {
+                PackageResourceReference reference{};
+                if (!density->source.path.empty() && preserve_sources) {
+                    copy_source(density->source, source_root, package_root, transaction);
+                    reference.source = density->source;
+                } else
+                    reference.asset = write_volume_asset(*density, package_root, transaction);
+                references.volumes[index] = std::move(reference);
+            } else if (const RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data)) {
+                PackageResourceReference reference{};
+                if (!rgb->source.path.empty() && preserve_sources) {
+                    copy_source(rgb->source, source_root, package_root, transaction);
+                    reference.source = rgb->source;
+                } else
+                    reference.asset = write_volume_asset(*rgb, package_root, transaction);
+                references.volumes[index] = std::move(reference);
+            } else if (const NanoVdbVolume* nanovdb = std::get_if<NanoVdbVolume>(&volume.data)) {
+                PackageResourceReference reference{};
                 if (!nanovdb->density_data.empty())
-                    references.volumes[index] = write_volume_asset(*nanovdb, package_root, transaction);
+                    reference.asset = write_volume_asset(*nanovdb, package_root, transaction);
                 else {
                     copy_asset(nanovdb->asset, ".volume", source_root, package_root, transaction);
-                    references.volumes[index] = nanovdb->asset;
+                    reference.asset = nanovdb->asset;
                 }
+                references.volumes[index] = std::move(reference);
             }
         }
         references.textures.resize(scene.resources.textures.size());
@@ -589,7 +608,7 @@ namespace spectra::scene {
             if (const ImageTexture* image = std::get_if<ImageTexture>(&scene.resources.textures[index].data)) {
                 PackageResourceReference reference{};
                 if (!image->source.path.empty() && preserve_sources) {
-                    copy_source(image->source, ".png", source_root, package_root, transaction);
+                    copy_source(image->source, source_root, package_root, transaction);
                     reference.source = image->source;
                 } else if (!image->texels.empty())
                     reference.asset = write_texture_asset(*image, package_root, transaction);
