@@ -4,6 +4,7 @@ module;
 
 module spectra.render.pathtracer.scene;
 
+import spectra.render.contract;
 import spectra.render.pathtracer.abi;
 import std;
 import vulkan;
