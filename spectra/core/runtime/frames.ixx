@@ -63,6 +63,7 @@ namespace spectra {
         VulkanFrames& operator=(const VulkanFrames&) = delete;
         VulkanFrames& operator=(VulkanFrames&&)      = delete;
 
+        void retire_frame();
         [[nodiscard]] FrameContext begin_frame();
         [[nodiscard]] std::uint32_t submit_frame();
         void wait_frame(std::uint32_t frame_slot_index) const;
@@ -98,6 +99,7 @@ namespace spectra {
             std::uint64_t next_submission_serial{1};
             std::uint64_t completed_serial{};
             std::uint32_t current_slot_index{};
+            bool retired{};
             bool recording{};
         } frame;
 

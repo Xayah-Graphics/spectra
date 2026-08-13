@@ -53,6 +53,7 @@ namespace spectra {
             GpuBuffer material_factor_buffer{};
             GpuBuffer face_material_buffer{};
             GpuBuffer area_light_buffer{};
+            GpuBuffer light_buffer{};
             GpuBuffer volume_buffer{};
             GpuBuffer zero_volume_field_buffer{};
             std::array<GpuBuffer, 9> texture_buffers{};
@@ -63,13 +64,16 @@ namespace spectra {
             DescriptorLease material_factor_descriptor{};
             DescriptorLease face_material_descriptor{};
             DescriptorLease area_light_descriptor{};
+            DescriptorLease light_descriptor{};
             DescriptorLease zero_volume_field_descriptor{};
             std::array<DescriptorLease, 9> texture_descriptors{};
             scene::SceneRevision uploaded_revision{};
             DescriptorLease primitives_descriptor{};
             DescriptorLease bindings_descriptor{};
             DescriptorLease volumes_descriptor{};
+            std::uint32_t light_count{};
             std::uint32_t volume_count{};
+            math::Float3 environment_radiance{};
             std::vector<RasterAreaEmitterRange> area_emitters{};
             vk::raii::ShaderEXT area_emission_shader{nullptr};
         } scene;
@@ -77,6 +81,9 @@ namespace spectra {
         struct {
             scene::Camera camera{};
             float film_exposure{};
+            float film_iso{100.0f};
+            scene::SpectrumColorSpace film_color_space{scene::SpectrumColorSpace::Srgb};
+            std::optional<float> film_maximum_component_value{};
             std::array<std::uint32_t, 2> film_resolution{};
             std::array<std::uint32_t, 2> film_pixel_minimum{};
             std::array<std::uint32_t, 2> film_pixel_maximum{};

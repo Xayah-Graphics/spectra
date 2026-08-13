@@ -36,6 +36,7 @@ namespace spectra {
         [[nodiscard]] bool controls(scene::VolumeId volume_id) const noexcept;
 
         [[nodiscard]] bool running() const noexcept;
+        [[nodiscard]] bool faulted() const noexcept;
         [[nodiscard]] dynamics::SimulationTimeline timeline() const noexcept;
         void start();
         void pause();
@@ -46,8 +47,8 @@ namespace spectra {
         void reset();
         void apply_parameter_changes(std::size_t system_index, std::span<const scene::DynamicParameterSetting> parameters, bool reset);
 
-        [[nodiscard]] const dynamics::DynamicSnapshot* acquire_snapshot() noexcept;
-        void consume_snapshot() noexcept;
+        [[nodiscard]] const dynamics::DynamicSnapshot* acquire_snapshot();
+        void consume_snapshot();
         void record_telemetry(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         void resolve_telemetry(std::uint32_t frame_slot_index);
 
@@ -144,6 +145,7 @@ namespace spectra {
         struct {
             const scene::Scene* source_scene{};
             scene::DynamicSetup setup{};
+            bool faulted{};
         } configuration;
 
         struct {
@@ -167,6 +169,7 @@ namespace spectra {
             std::vector<PendingTelemetryCommit> telemetry_commits{};
             std::string callback_error{};
             bool snapshot_pending{};
+            bool snapshot_acquired{};
         } publication;
 
         struct {
@@ -183,7 +186,7 @@ namespace spectra {
         void configure_telemetry(DynamicSystemRuntime& system);
         [[nodiscard]] DynamicDatasetRuntime& dataset_runtime(DynamicSystemRuntime& system, std::uint64_t dataset_index);
         void consume_telemetry(DynamicSystemRuntime& system, const SpectraPluginTelemetryGpuValue* values, std::uint64_t simulation_step, double simulation_seconds, std::string phase, std::string headline, std::string message);
-        void apply_parameters(DynamicSystemRuntime& system);
+        void apply_parameters(DynamicSystemRuntime& system, std::span<const scene::DynamicParameterValue> values);
         void append_dataset(const PendingDatasetCommit& pending, dynamics::DynamicSnapshot& snapshot) const;
         void abort_publication();
         void commit_publication(dynamics::DynamicSnapshot& snapshot, std::uint64_t simulation_step);

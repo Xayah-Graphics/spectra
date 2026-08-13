@@ -12,5 +12,6 @@ raster_scene RasterCompositeTexture
 raster_scene RasterDirectionMixTexture
 raster_scene RasterBilerpTexture
 raster_scene RasterAreaLight
+raster_scene RasterLight
 raster_scene RasterSceneBindings
 raster_scene RasterVolume

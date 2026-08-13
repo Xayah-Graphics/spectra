@@ -471,6 +471,7 @@ namespace spectra::scene {
         if (exr_reader_num_parts(reader.value) != 1) throw std::runtime_error(std::format("EXR texture source must contain exactly one part: {}", path.string()));
         const exr_header& header = *exr_reader_part_header(reader.value, 0);
         if (header.part_type == EXR_PART_DEEP_SCANLINE || header.part_type == EXR_PART_DEEP_TILED || header.level_mode == EXR_TILE_RIPMAP_LEVELS) throw std::runtime_error(std::format("EXR texture source must be a flat image or mipmap: {}", path.string()));
+        if (header.level_mode == EXR_TILE_MIPMAP_LEVELS && header.rounding_mode == EXR_TILE_ROUND_UP) throw std::runtime_error(std::format("EXR texture mipmaps require round-down level dimensions: {}", path.string()));
 
         std::array<std::int32_t, 4> channel_indices{-1, -1, -1, -1};
         constexpr std::array<std::string_view, 4> channel_names{"R", "G", "B", "A"};
@@ -489,17 +490,30 @@ namespace spectra::scene {
             maximum_level = std::max(maximum_level, static_cast<std::uint32_t>(blocks[block].level_x));
         }
 
-        image.width  = static_cast<std::uint32_t>(header.data_window.max_x - header.data_window.min_x + 1);
-        image.height = static_cast<std::uint32_t>(header.data_window.max_y - header.data_window.min_y + 1);
+        std::vector<std::int32_t> level_minimum_x(maximum_level + 1u, std::numeric_limits<std::int32_t>::max());
+        std::vector<std::int32_t> level_minimum_y(maximum_level + 1u, std::numeric_limits<std::int32_t>::max());
+        std::vector<std::int64_t> level_maximum_x(maximum_level + 1u, std::numeric_limits<std::int64_t>::lowest());
+        std::vector<std::int64_t> level_maximum_y(maximum_level + 1u, std::numeric_limits<std::int64_t>::lowest());
+        for (const exr_block_info& block : blocks) {
+            const std::uint32_t level = static_cast<std::uint32_t>(block.level_x);
+            level_minimum_x[level]    = std::min(level_minimum_x[level], block.x0);
+            level_minimum_y[level]    = std::min(level_minimum_y[level], block.y0);
+            level_maximum_x[level]    = std::max(level_maximum_x[level], static_cast<std::int64_t>(block.x0) + block.width);
+            level_maximum_y[level]    = std::max(level_maximum_y[level], static_cast<std::int64_t>(block.y0) + block.height);
+        }
+        std::vector<std::uint32_t> level_widths(maximum_level + 1u);
+        std::vector<std::uint32_t> level_heights(maximum_level + 1u);
+        for (std::uint32_t level = 0; level <= maximum_level; ++level) {
+            level_widths[level]  = static_cast<std::uint32_t>(level_maximum_x[level] - level_minimum_x[level]);
+            level_heights[level] = static_cast<std::uint32_t>(level_maximum_y[level] - level_minimum_y[level]);
+        }
+        image.width  = level_widths[0];
+        image.height = level_heights[0];
         image.mip_offsets.clear();
         image.texels.clear();
-        const auto level_dimension = [&header](const std::uint32_t base, const std::uint32_t level) {
-            const std::uint32_t divisor = 1u << level;
-            return header.rounding_mode == EXR_TILE_ROUND_UP ? std::max(1u, (base + divisor - 1u) / divisor) : std::max(1u, base / divisor);
-        };
         for (std::uint32_t level = 0; level <= maximum_level; ++level) {
             image.mip_offsets.push_back(image.texels.size());
-            image.texels.resize(image.texels.size() + static_cast<std::size_t>(level_dimension(image.width, level)) * level_dimension(image.height, level));
+            image.texels.resize(image.texels.size() + static_cast<std::size_t>(level_widths[level]) * level_heights[level]);
         }
 
         for (std::uint32_t block_index = 0; block_index != block_count; ++block_index) {
@@ -513,12 +527,12 @@ namespace spectra::scene {
                 check_exr(exr_block_extract_channel(&header, &info, decoded.data(), decoded.size(), channel_indices[component], channels[component].data()), "extract an EXR channel");
             }
             const std::uint32_t level       = static_cast<std::uint32_t>(info.level_x);
-            const std::uint32_t level_width = level_dimension(image.width, level);
+            const std::uint32_t level_width = level_widths[level];
             const std::uint64_t mip_offset  = image.mip_offsets[level];
             for (std::int32_t y = 0; y != info.height; ++y)
                 for (std::int32_t x = 0; x != info.width; ++x) {
                     const std::size_t source_index = static_cast<std::size_t>(y) * info.width + x;
-                    const std::size_t target_index = mip_offset + static_cast<std::size_t>(info.y0 - header.data_window.min_y + y) * level_width + static_cast<std::size_t>(info.x0 - header.data_window.min_x + x);
+                    const std::size_t target_index = mip_offset + static_cast<std::size_t>(info.y0 - level_minimum_y[level] + y) * level_width + static_cast<std::size_t>(info.x0 - level_minimum_x[level] + x);
                     image.texels[target_index]     = {channels[0][source_index], channels[1][source_index], channels[2][source_index], channels[3][source_index]};
                 }
         }

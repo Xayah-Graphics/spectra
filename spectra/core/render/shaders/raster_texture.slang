@@ -294,6 +294,22 @@ public float3 raster_to_linear_srgb(
     return value;
 }
 
+public float3 raster_from_linear_srgb(
+    float3 value,
+    uint color_space) {
+    if (color_space == 1)
+        return float3(
+            0.627404 * value.x + 0.329283 * value.y + 0.043313 * value.z,
+            0.069097 * value.x + 0.919540 * value.y + 0.011362 * value.z,
+            0.016391 * value.x + 0.088013 * value.y + 0.895595 * value.z);
+    if (color_space == 2)
+        return float3(
+            0.439701 * value.x + 0.382978 * value.y + 0.177335 * value.z,
+            0.089792 * value.x + 0.813423 * value.y + 0.096762 * value.z,
+            0.017544 * value.x + 0.111544 * value.y + 0.870704 * value.z);
+    return value;
+}
+
 float4 raster_image_value(
     RasterImageTexture texture,
     RasterTextureMapping mapping,

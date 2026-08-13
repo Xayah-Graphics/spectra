@@ -195,8 +195,8 @@ namespace spectra {
         command_buffer.setColorBlendEquationEXT(0, vk::ColorBlendEquationEXT{vk::BlendFactor::eSrcAlpha, vk::BlendFactor::eOneMinusSrcAlpha, vk::BlendOp::eAdd, vk::BlendFactor::eOne, vk::BlendFactor::eOneMinusSrcAlpha, vk::BlendOp::eAdd});
         constexpr vk::ColorComponentFlags color_components = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
         command_buffer.setColorWriteMaskEXT(0, color_components);
-        const std::array stages{vk::ShaderStageFlagBits::eTaskEXT, vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
-        const std::array handles{vk::ShaderEXT{}, vk::ShaderEXT{}, *this->shaders[0], *this->shaders[1]};
+        const std::array stages{vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
+        const std::array handles{vk::ShaderEXT{}, *this->shaders[0], *this->shaders[1]};
         command_buffer.bindShadersEXT(stages, handles);
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
 

@@ -54,7 +54,8 @@ namespace spectra {
             if (candidate_properties.apiVersion < vk::ApiVersion14) continue;
             const std::vector<vk::ExtensionProperties> available_extensions = candidate.enumerateDeviceExtensionProperties();
             if (!std::ranges::all_of(base_extensions, [&available_extensions](const char* required) { return std::ranges::contains(available_extensions, std::string_view{required}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); })) continue;
-            if (this->context.surface && !std::ranges::contains(available_extensions, std::string_view{vk::KHRSwapchainExtensionName}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; })) continue;
+            if (this->context.surface && (!std::ranges::contains(available_extensions, std::string_view{vk::KHRSwapchainExtensionName}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }) || !std::ranges::contains(available_extensions, std::string_view{vk::KHRSwapchainMaintenance1ExtensionName}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }))) continue;
+            if (this->context.surface && !candidate.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR>().get<vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR>().swapchainMaintenance1) continue;
 
             const auto features = candidate.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorHeapFeaturesEXT, vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR, vk::PhysicalDeviceAccelerationStructureFeaturesKHR, vk::PhysicalDeviceRayTracingPipelineFeaturesKHR, vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR, vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR, vk::PhysicalDeviceRayQueryFeaturesKHR, vk::PhysicalDeviceShaderObjectFeaturesEXT, vk::PhysicalDeviceMeshShaderFeaturesEXT, vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT>();
             if (!features.get<vk::PhysicalDeviceFeatures2>().features.shaderInt64 || !features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy) continue;
@@ -99,7 +100,7 @@ namespace spectra {
             this->queue_family_index    = graphics_family_index;
             this->ray_tracing_supported = ray_tracing_available;
         }
-        if (!*this->physical_device) throw std::runtime_error("Spectra requires a Vulkan 1.4 GPU with Descriptor Heap, Shader Untyped Pointers, Shader Object, Mesh Shader, and shader buffer float atomics");
+        if (!*this->physical_device) throw std::runtime_error(this->context.surface ? "Spectra editor requires a Vulkan 1.4 GPU with Descriptor Heap, Shader Untyped Pointers, Shader Object, Mesh Shader, shader buffer float atomics, and Swapchain Maintenance 1" : "Spectra requires a Vulkan 1.4 GPU with Descriptor Heap, Shader Untyped Pointers, Shader Object, Mesh Shader, and shader buffer float atomics");
     }
 
     void VulkanGraphics::create_device() {
@@ -109,7 +110,10 @@ namespace spectra {
             constexpr std::array ray_tracing_extensions = ray_tracing_device_extensions();
             enabled_extensions.insert(enabled_extensions.end(), ray_tracing_extensions.begin(), ray_tracing_extensions.end());
         }
-        if (this->context.surface) enabled_extensions.push_back(vk::KHRSwapchainExtensionName);
+        if (this->context.surface) {
+            enabled_extensions.push_back(vk::KHRSwapchainExtensionName);
+            enabled_extensions.push_back(vk::KHRSwapchainMaintenance1ExtensionName);
+        }
         constexpr std::array queue_priorities{1.0f};
         const vk::DeviceQueueCreateInfo queue_create_info{{}, this->queue_family_index, 1, queue_priorities.data()};
         const auto enable_base = [](auto& features) {
@@ -130,6 +134,8 @@ namespace spectra {
         if (this->ray_tracing_supported) {
             vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorHeapFeaturesEXT, vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR, vk::PhysicalDeviceAccelerationStructureFeaturesKHR, vk::PhysicalDeviceRayTracingPipelineFeaturesKHR, vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR, vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR, vk::PhysicalDeviceRayQueryFeaturesKHR, vk::PhysicalDeviceShaderObjectFeaturesEXT, vk::PhysicalDeviceMeshShaderFeaturesEXT, vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT> features{};
             enable_base(features);
+            vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchain_maintenance{vk::True, features.get<vk::PhysicalDeviceFeatures2>().pNext};
+            if (this->context.surface) features.get<vk::PhysicalDeviceFeatures2>().pNext = &swapchain_maintenance;
             features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure                 = vk::True;
             features.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline                       = vk::True;
             features.get<vk::PhysicalDeviceRayTracingMaintenance1FeaturesKHR>().rayTracingMaintenance1               = vk::True;
@@ -140,6 +146,8 @@ namespace spectra {
         } else {
             vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceDescriptorHeapFeaturesEXT, vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR, vk::PhysicalDeviceShaderObjectFeaturesEXT, vk::PhysicalDeviceMeshShaderFeaturesEXT, vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT> features{};
             enable_base(features);
+            vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchain_maintenance{vk::True, features.get<vk::PhysicalDeviceFeatures2>().pNext};
+            if (this->context.surface) features.get<vk::PhysicalDeviceFeatures2>().pNext = &swapchain_maintenance;
             this->device = vk::raii::Device{this->physical_device, vk::DeviceCreateInfo{{}, 1, &queue_create_info, 0, nullptr, static_cast<std::uint32_t>(enabled_extensions.size()), enabled_extensions.data(), nullptr, &features.get<vk::PhysicalDeviceFeatures2>()}};
         }
         this->queue = vk::raii::Queue{this->device, this->queue_family_index, 0};
@@ -150,6 +158,7 @@ namespace spectra {
         std::ranges::copy(device_identity.deviceUUID, this->identity.uuid.begin());
         std::ranges::copy(device_identity.deviceLUID, this->identity.luid.begin());
         this->identity.node_mask = device_identity.deviceNodeMask;
+        this->identity.luid_valid = device_identity.deviceLUIDValid;
         if (this->ray_tracing_supported) {
             const auto ray_tracing_properties       = this->physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceAccelerationStructurePropertiesKHR, vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
             this->acceleration_structure_properties = ray_tracing_properties.get<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>();

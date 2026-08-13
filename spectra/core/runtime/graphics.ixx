@@ -8,6 +8,7 @@ namespace spectra {
         std::array<std::uint8_t, 16> uuid{};
         std::array<std::uint8_t, 8> luid{};
         std::uint32_t node_mask{};
+        bool luid_valid{};
     };
 
     export struct VulkanInstance {

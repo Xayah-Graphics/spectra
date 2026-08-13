@@ -254,6 +254,7 @@ export namespace spectra {
             scene::Sampler sampler{};
             scene::TransportSettings transport{};
             scene::SceneRevision revision{};
+            math::Bounds3 bounds{};
 
             [[nodiscard]] scene::SceneView view() const noexcept {
                 return {this->resources, this->camera, this->film, this->sampler, this->transport, this->revision};
@@ -272,5 +273,5 @@ export namespace spectra {
     [[nodiscard]] PathSceneGpuSnapshot snapshot_path_scene_gpu(GpuScene& gpu_scene, scene::SceneView scene);
     [[nodiscard]] std::unique_ptr<PreparedPathFilter> prepare_path_filter(const scene::Film& film, const PathTracerResources& resources);
     [[nodiscard]] std::unique_ptr<PreparedPathSampler> prepare_path_sampler(const scene::Sampler& sampler, const PathTracerResources& resources);
-    [[nodiscard]] std::unique_ptr<PreparedPathScene> prepare_path_scene(scene::SceneView scene, const PathSceneGpuSnapshot& gpu, const PathTracerResources& resources, PathTracerPreparationState* progress);
+    [[nodiscard]] std::unique_ptr<PreparedPathScene> prepare_path_scene(scene::SceneView scene, math::Bounds3 bounds, const PathSceneGpuSnapshot& gpu, const PathTracerResources& resources, PathTracerPreparationState* progress);
 } // namespace spectra

@@ -18,7 +18,8 @@ namespace spectra {
     }
 
     VulkanPresentation::~VulkanPresentation() {
-        this->context.frames.defer_destruction([swapchain = std::move(this->presentation.swapchain), views = std::move(this->presentation.views), image_available = std::move(this->presentation.image_available), render_finished = std::move(this->presentation.render_finished)]() mutable { views.clear(); });
+        this->context.graphics.device.waitIdle();
+        this->wait_presentations();
     }
 
     std::optional<PresentedFrameContext> VulkanPresentation::begin_frame() {
@@ -29,6 +30,7 @@ namespace spectra {
         const vk::Extent2D framebuffer_extent{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
         if (this->presentation.extent != framebuffer_extent) this->recreate_swapchain();
 
+        this->context.frames.retire_frame();
         const std::uint32_t frame_slot_index = this->context.frames.frame.current_slot_index;
         vk::ResultValue<std::uint32_t> acquired{vk::Result::eSuccess, 0};
         try {
@@ -36,6 +38,10 @@ namespace spectra {
         } catch (const vk::OutOfDateKHRError&) {
             this->recreate_swapchain();
             return std::nullopt;
+        }
+        if (this->presentation.present_pending[acquired.value]) {
+            if (this->context.graphics.device.waitForFences(*this->presentation.present_fences[acquired.value], vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra presentation fence wait failed");
+            this->presentation.present_pending[acquired.value] = false;
         }
         const FrameContext frame                = this->context.frames.begin_frame();
         this->presentation.acquired_image_index = acquired.value;
@@ -51,17 +57,23 @@ namespace spectra {
 
         const vk::Semaphore render_finished = *this->presentation.render_finished[this->presentation.acquired_image_index];
         const vk::SwapchainKHR swapchain    = *this->presentation.swapchain;
-        vk::Result present_result{};
-        try {
-            present_result = this->context.graphics.queue.presentKHR(vk::PresentInfoKHR{1, &render_finished, 1, &swapchain, &this->presentation.acquired_image_index});
-        } catch (const vk::OutOfDateKHRError&) {
+        const vk::Fence present_fence       = *this->presentation.present_fences[this->presentation.acquired_image_index];
+        this->context.graphics.device.resetFences(present_fence);
+        const vk::SwapchainPresentFenceInfoKHR present_fence_info{1, &present_fence};
+        const vk::PresentInfoKHR present_info{1, &render_finished, 1, &swapchain, &this->presentation.acquired_image_index, nullptr, &present_fence_info};
+        const vk::Result present_result = static_cast<vk::Result>(this->context.graphics.queue.getDispatcher()->vkQueuePresentKHR(static_cast<VkQueue>(*this->context.graphics.queue), reinterpret_cast<const VkPresentInfoKHR*>(&present_info)));
+        const bool presentation_enqueued = present_result == vk::Result::eSuccess || present_result == vk::Result::eSuboptimalKHR || present_result == vk::Result::eErrorOutOfDateKHR || present_result == vk::Result::eErrorSurfaceLostKHR || present_result == vk::Result::eErrorFullScreenExclusiveModeLostEXT || present_result == vk::Result::eErrorPresentTimingQueueFullEXT;
+        this->presentation.present_pending[this->presentation.acquired_image_index] = presentation_enqueued;
+        if (present_result == vk::Result::eErrorOutOfDateKHR) {
             this->recreate_swapchain();
             return;
         }
+        if (present_result != vk::Result::eSuccess && present_result != vk::Result::eSuboptimalKHR) throw std::runtime_error(std::format("Spectra presentation failed: {}", vk::to_string(present_result)));
         if (this->presentation.acquired_suboptimal || present_result == vk::Result::eSuboptimalKHR) this->recreate_swapchain();
     }
     void VulkanPresentation::recreate_swapchain() {
         this->context.graphics.device.waitIdle();
+        this->wait_presentations();
         int width{};
         int height{};
         glfwGetFramebufferSize(this->context.platform.window, &width, &height);
@@ -89,10 +101,22 @@ namespace spectra {
         this->presentation.images    = this->presentation.swapchain.getImages();
         this->presentation.layouts.assign(this->presentation.images.size(), vk::ImageLayout::eUndefined);
         this->presentation.render_finished.clear();
+        this->presentation.present_fences.clear();
+        this->presentation.present_pending.assign(this->presentation.images.size(), false);
         this->presentation.render_finished.reserve(this->presentation.images.size());
+        this->presentation.present_fences.reserve(this->presentation.images.size());
         for (const vk::Image image : this->presentation.images) {
             this->presentation.views.emplace_back(this->context.graphics.device, vk::ImageViewCreateInfo{{}, image, vk::ImageViewType::e2D, required_format.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}});
             this->presentation.render_finished.emplace_back(this->context.graphics.device, vk::SemaphoreCreateInfo{});
+            this->presentation.present_fences.emplace_back(this->context.graphics.device, vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
+        }
+    }
+
+    void VulkanPresentation::wait_presentations() {
+        for (std::uint32_t index = 0; index < this->presentation.present_pending.size(); ++index) {
+            if (!this->presentation.present_pending[index]) continue;
+            if (this->context.graphics.device.waitForFences(*this->presentation.present_fences[index], vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra presentation fence wait failed");
+            this->presentation.present_pending[index] = false;
         }
     }
 

@@ -321,8 +321,8 @@ namespace spectra {
         constexpr vk::ColorComponentFlags color_components = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
         const std::array color_masks{color_components, color_components};
         command_buffer.setColorWriteMaskEXT(0, color_masks);
-        const std::array stages{vk::ShaderStageFlagBits::eTaskEXT, vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
-        const std::array handles{vk::ShaderEXT{}, vk::ShaderEXT{}, *this->renderer.draw_shaders[0], *this->renderer.draw_shaders[1]};
+        const std::array stages{vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
+        const std::array handles{vk::ShaderEXT{}, *this->renderer.draw_shaders[0], *this->renderer.draw_shaders[1]};
         command_buffer.bindShadersEXT(stages, handles);
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
         const std::array<float, 16>& view_projection = camera.matrices().view_projection;

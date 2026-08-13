@@ -180,7 +180,7 @@ namespace spectra {
         void synchronize_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void initialize_session();
         void destroy_session() noexcept;
-        void resize_session(vk::Extent2D extent, std::uint32_t texture_evaluation_stack_size, std::uint32_t material_texture_value_count);
+        void resize_session(vk::Extent2D extent, std::uint32_t texture_evaluation_stack_size, std::uint32_t material_texture_value_count, const vk::raii::CommandBuffer& command_buffer);
         void configure_indirect_commands();
         void record_integrator(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
     };

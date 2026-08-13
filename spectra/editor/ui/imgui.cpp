@@ -91,6 +91,7 @@ namespace spectra {
     }
 
     void ImGuiBackend::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const vk::Image target_image, const vk::ImageView target_view, const vk::Extent2D extent, const vk::ImageLayout target_layout, const vk::ImageLayout final_layout) {
+        this->context.display.prepare_sampling(command_buffer);
         ImDrawData& draw_data = *ImGui::GetDrawData();
         FrameResources& frame = this->renderer.frames[frame_slot_index];
         if (draw_data.Textures != nullptr)
@@ -419,13 +420,11 @@ namespace spectra {
         command_buffer.setColorWriteMaskEXT(0, color_components);
 
         const std::array stages{
-            vk::ShaderStageFlagBits::eTaskEXT,
             vk::ShaderStageFlagBits::eMeshEXT,
             vk::ShaderStageFlagBits::eVertex,
             vk::ShaderStageFlagBits::eFragment,
         };
         const std::array shader_handles{
-            vk::ShaderEXT{},
             vk::ShaderEXT{},
             *this->renderer.shaders[0],
             *this->renderer.shaders[1],

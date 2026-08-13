@@ -61,11 +61,14 @@ namespace spectra {
             std::vector<vk::ImageLayout> layouts{};
             std::vector<vk::raii::Semaphore> image_available{};
             std::vector<vk::raii::Semaphore> render_finished{};
+            std::vector<vk::raii::Fence> present_fences{};
+            std::vector<bool> present_pending{};
             vk::Extent2D extent{};
             std::uint32_t acquired_image_index{};
             bool acquired_suboptimal{};
         } presentation;
 
         void recreate_swapchain();
+        void wait_presentations();
     };
 } // namespace spectra

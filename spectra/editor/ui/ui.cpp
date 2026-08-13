@@ -258,8 +258,8 @@ namespace spectra {
     }
     void EditorUi::apply_dynamic_parameters(std::vector<scene::DynamicParameterSetting> parameters, const bool reset) {
         try {
+            this->context.dynamics.apply_parameter_changes(this->controls.selected_dynamic_system, parameters, reset);
             this->context.document.update_dynamic_system_parameters(this->context.document.content.source, this->controls.selected_dynamic_system, std::move(parameters));
-            this->context.dynamics.apply_parameter_changes(this->controls.selected_dynamic_system, this->context.document.content.source.dynamic_setup->systems[this->controls.selected_dynamic_system].parameters, reset);
             this->controls.status                    = reset ? "Parameters applied and Dynamic Setup reset" : "Parameter applied";
             this->controls.status_error              = false;
             this->controls.observed_dynamic_revision = this->context.document.content.source.revision().number;
@@ -415,11 +415,15 @@ namespace spectra {
             this->context.viewport.view.overlays_visible = !this->context.viewport.view.overlays_visible;
             this->context.diagnostic_settings.enabled    = this->context.viewport.view.overlays_visible;
         }
-        if (this->context.dynamics.initialized() && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
-            if (this->context.dynamics.running())
-                this->context.dynamics.pause();
-            else
-                this->context.dynamics.start();
+        if (this->context.dynamics.initialized() && !this->context.dynamics.faulted() && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+            try {
+                if (this->context.dynamics.running())
+                    this->context.dynamics.pause();
+                else
+                    this->context.dynamics.start();
+            } catch (const std::exception& error) {
+                this->notify(error.what(), true);
+            }
         }
     }
 
@@ -605,7 +609,8 @@ namespace spectra {
         }
 
         const dynamics::SimulationTimeline timeline = dynamic ? this->context.dynamics.timeline() : dynamics::SimulationTimeline{};
-        const std::string status                    = dynamic ? std::format("step {}  ·  {:.3f} s{}", timeline.step, timeline.seconds, pathtracer_preparation ? std::format("  ·  {}", preparation_status(*pathtracer_preparation)) : std::string{}) : std::format("{} / {} spp", render_progress->completed, render_progress->target);
+        const bool simulation_faulted               = dynamic && this->context.dynamics.faulted();
+        const std::string status                    = dynamic ? std::format("step {}  ·  {:.3f} s{}{}", timeline.step, timeline.seconds, simulation_faulted ? "  ·  Provider stopped" : "", pathtracer_preparation ? std::format("  ·  {}", preparation_status(*pathtracer_preparation)) : std::string{}) : std::format("{} / {} spp", render_progress->completed, render_progress->target);
         const bool simulation_playing               = dynamic && this->context.dynamics.running();
         const char* playback_label                  = dynamic ? simulation_playing ? "Pause" : "Play" : render_progress->paused ? "Resume" : "Pause";
         const char* secondary_label                 = dynamic ? "Step" : "Reset";
@@ -619,19 +624,37 @@ namespace spectra {
         ImGui::SameLine(status_start);
 
         if (dynamic) {
+            ImGui::BeginDisabled(simulation_faulted);
             if (icon_button("##SimulationPlayback", playback_size, simulation_playing ? Icon::Pause : Icon::Play, playback_label, simulation_playing ? ImVec4{0.35f, 0.84f, 0.55f, 1.0f} : ImVec4{})) {
-                if (simulation_playing)
-                    this->context.dynamics.pause();
-                else
-                    this->context.dynamics.start();
+                try {
+                    if (simulation_playing)
+                        this->context.dynamics.pause();
+                    else
+                        this->context.dynamics.start();
+                } catch (const std::exception& error) {
+                    this->notify(error.what(), true);
+                }
             }
             ImGui::SameLine();
             ImGui::BeginDisabled(simulation_playing);
-            if (icon_button("##SimulationStep", secondary_size, Icon::Step, secondary_label)) this->context.dynamics.step();
+            if (icon_button("##SimulationStep", secondary_size, Icon::Step, secondary_label)) {
+                try {
+                    this->context.dynamics.step();
+                } catch (const std::exception& error) {
+                    this->notify(error.what(), true);
+                }
+            }
             ImGui::EndDisabled();
             ImGui::SameLine();
             ImGui::BeginDisabled(simulation_playing);
-            if (icon_button("##SimulationReset", reset_size, Icon::Reset, reset_label)) this->context.dynamics.reset();
+            if (icon_button("##SimulationReset", reset_size, Icon::Reset, reset_label)) {
+                try {
+                    this->context.dynamics.reset();
+                } catch (const std::exception& error) {
+                    this->notify(error.what(), true);
+                }
+            }
+            ImGui::EndDisabled();
             ImGui::EndDisabled();
             ImGui::SameLine();
             draw_status_text(status);
@@ -836,8 +859,11 @@ namespace spectra {
         const scene::DynamicSetup* setup = this->context.document.content.source.dynamic_setup ? &*this->context.document.content.source.dynamic_setup : nullptr;
         std::vector<std::size_t> parameter_systems{};
         if (setup)
-            for (std::size_t index = 0; index < setup->systems.size(); ++index)
-                if (const dynamics::ProviderDescriptor& provider = this->context.dynamics.provider_descriptor(setup->systems[index].provider_id); setup->systems[index].enabled && (!provider.parameters.empty() || !provider.telemetry.empty())) parameter_systems.emplace_back(index);
+            for (std::size_t index = 0; index < setup->systems.size(); ++index) {
+                if (!setup->systems[index].enabled) continue;
+                const dynamics::ProviderDescriptor& provider = this->context.dynamics.provider_descriptor(setup->systems[index].provider_id);
+                if (!provider.parameters.empty() || !provider.telemetry.empty()) parameter_systems.emplace_back(index);
+            }
         if (!parameter_systems.empty() && std::ranges::find(parameter_systems, this->controls.selected_dynamic_system) == parameter_systems.end()) this->controls.selected_dynamic_system = parameter_systems.front();
 
         const SceneEntityReference* entity = active_entity(*this);

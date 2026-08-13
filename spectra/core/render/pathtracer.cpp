@@ -169,7 +169,7 @@ namespace spectra {
             this->control.camera_revision = view.camera_revision;
             reset_required                = true;
         }
-        this->resize_session(view.extent, this->scene.texture_stack_size, this->scene.material_texture_value_count);
+        this->resize_session(view.extent, this->scene.texture_stack_size, this->scene.material_texture_value_count, command_buffer);
         if (reset_required) this->reset();
     }
 
@@ -192,14 +192,15 @@ namespace spectra {
 
     RenderGBufferReadback PathTracer::readback() {
         PathGBufferSnapshot snapshot{};
+        snapshot.extent              = this->session.render_extent;
+        snapshot.accumulated_samples = this->session.sample_index;
+        if (snapshot.accumulated_samples == 0) return materialize_gbuffer_readback(snapshot);
         this->context.runtime.resources.submit_immediate([&](const vk::raii::CommandBuffer& command_buffer) {
             constexpr std::size_t arena_buffer_count = 7;
             constexpr std::size_t buffer_count       = arena_buffer_count + 1;
             const vk::DeviceSize buffer_size         = static_cast<vk::DeviceSize>(this->session.pixel_capacity) * sizeof(math::Float4);
             const vk::DeviceSize required_size       = buffer_size * buffer_count;
             if (snapshot.buffer.size < required_size) snapshot.buffer = this->context.runtime.resources.create_buffer(required_size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-            snapshot.extent              = this->session.render_extent;
-            snapshot.accumulated_samples = this->session.sample_index;
             const std::array<vk::DeviceSize, arena_buffer_count> source_offsets{
                 this->session.gbuffer_albedo_sums.offset,
                 this->session.gbuffer_shading_normal_sums.offset,
@@ -209,25 +210,26 @@ namespace spectra {
                 this->session.gbuffer_identity_0.offset,
                 this->session.gbuffer_identity_1.offset,
             };
-            const vk::ImageMemoryBarrier2 image_to_transfer{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferSrcOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+            const vk::ImageMemoryBarrier2 image_to_transfer{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, this->session.output_layout, vk::ImageLayout::eTransferSrcOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
             const vk::MemoryBarrier2 buffers_to_transfer{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead};
             command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &buffers_to_transfer, {}, {}, 1, &image_to_transfer});
             command_buffer.copyImageToBuffer(*this->session.output_image.image, vk::ImageLayout::eTransferSrcOptimal, *snapshot.buffer.buffer, vk::BufferImageCopy{0, 0, 0, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {0, 0, 0}, {this->session.render_extent.width, this->session.render_extent.height, 1}});
             for (std::size_t index = 0; index != source_offsets.size(); ++index) command_buffer.copyBuffer(*this->session.arena.buffer, *snapshot.buffer.buffer, vk::BufferCopy{source_offsets[index], buffer_size * (index + 1u), buffer_size});
-            const vk::ImageMemoryBarrier2 image_to_general{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+            const vk::ImageMemoryBarrier2 image_to_output{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite, vk::ImageLayout::eTransferSrcOptimal, this->session.output_layout, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
             const vk::MemoryBarrier2 host_barrier{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostRead};
-            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_barrier, {}, {}, 1, &image_to_general});
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &host_barrier, {}, {}, 1, &image_to_output});
         });
         return materialize_gbuffer_readback(snapshot);
     }
 
     RenderOutput PathTracer::output() const noexcept {
+        const bool freshly_cleared = this->session.output_layout == vk::ImageLayout::eTransferDstOptimal;
         return {
             this->session.output_image,
             this->session.sampled_output_descriptor,
-            vk::ImageLayout::eGeneral,
-            vk::PipelineStageFlagBits2::eComputeShader,
-            vk::AccessFlagBits2::eShaderStorageWrite,
+            this->session.output_layout,
+            freshly_cleared ? vk::PipelineStageFlagBits2::eClear : vk::PipelineStageFlagBits2::eComputeShader,
+            freshly_cleared ? vk::AccessFlagBits2::eTransferWrite : vk::AccessFlagBits2::eShaderStorageWrite,
             this->scene.filter.film.color_space,
             this->scene.filter.film.exposure,
         };
@@ -263,7 +265,7 @@ namespace spectra {
         this->scene.initialized = true;
 
         std::shared_ptr<PathTracerScenePreparation> preparation = std::make_shared<PathTracerScenePreparation>();
-        preparation->scene                                      = std::make_shared<const PathTracerScenePreparation::SceneSnapshot>(PathTracerScenePreparation::SceneSnapshot{snapshot_path_scene_resources(scene.resources), scene.camera, scene.film, scene.sampler, scene.transport, scene.revision});
+        preparation->scene                                      = std::make_shared<const PathTracerScenePreparation::SceneSnapshot>(PathTracerScenePreparation::SceneSnapshot{snapshot_path_scene_resources(scene.resources), scene.camera, scene.film, scene.sampler, scene.transport, scene.revision, scene.bounds()});
         preparation->gpu                                        = snapshot_path_scene_gpu(this->context.gpu_scene, scene);
         preparation->progress.report(PathTracerPreparationStage::CompilingSampler);
         this->scene_preparation      = preparation;
@@ -272,7 +274,7 @@ namespace spectra {
             preparation->progress.report(PathTracerPreparationStage::CompilingFilter);
             preparation->filter = prepare_path_filter(preparation->scene->film, this->context.pathtracer);
             preparation->progress.report(PathTracerPreparationStage::CompilingTextures, 0, static_cast<std::uint32_t>(preparation->scene->resources.textures.size()));
-            preparation->prepared = prepare_path_scene(preparation->scene->view(), preparation->gpu, this->context.pathtracer, &preparation->progress);
+            preparation->prepared = prepare_path_scene(preparation->scene->view(), preparation->scene->bounds, preparation->gpu, this->context.pathtracer, &preparation->progress);
         }).share();
     }
 
@@ -507,7 +509,7 @@ namespace spectra {
 
     void PathTracer::compile_scene(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         const PathSceneGpuSnapshot gpu = snapshot_path_scene_gpu(this->context.gpu_scene, scene);
-        this->commit_scene(prepare_path_scene(scene, gpu, this->context.pathtracer, nullptr), command_buffer);
+        this->commit_scene(prepare_path_scene(scene, scene.bounds(), gpu, this->context.pathtracer, nullptr), command_buffer);
     }
 
     void PathTracer::update_volumes(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
@@ -871,7 +873,7 @@ namespace spectra {
         this->session.initialized                  = false;
     }
 
-    void PathTracer::resize_session(const vk::Extent2D extent, const std::uint32_t texture_evaluation_stack_size, const std::uint32_t material_texture_value_count) {
+    void PathTracer::resize_session(const vk::Extent2D extent, const std::uint32_t texture_evaluation_stack_size, const std::uint32_t material_texture_value_count, const vk::raii::CommandBuffer& command_buffer) {
         const std::uint32_t texture_stack_size  = std::max(texture_evaluation_stack_size, 1u);
         const std::uint32_t texture_value_count = std::max(material_texture_value_count, 1u);
         if (this->session.render_extent == extent && this->session.texture_stack_size == texture_stack_size && this->session.texture_value_count == texture_value_count) return;
@@ -883,12 +885,24 @@ namespace spectra {
         this->session.texture_stack_size  = texture_stack_size;
         this->session.texture_value_count = texture_value_count;
         this->session.pixel_capacity      = static_cast<std::uint64_t>(extent.width) * extent.height;
-        this->session.output_image        = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled);
-        this->session.depth_image         = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled);
+        this->session.output_image        = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled);
+        this->session.depth_image         = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled);
         this->context.runtime.resources.write_storage_image_descriptor(this->session.output_descriptor, this->session.output_image, vk::ImageLayout::eGeneral);
         this->context.runtime.resources.write_sampled_image_descriptor(this->session.sampled_output_descriptor, this->session.output_image, vk::ImageLayout::eShaderReadOnlyOptimal);
         this->context.runtime.resources.write_storage_image_descriptor(this->session.storage_depth_descriptor, this->session.depth_image, vk::ImageLayout::eGeneral);
         this->context.runtime.resources.write_sampled_image_descriptor(this->session.sampled_depth_descriptor, this->session.depth_image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        const std::array to_clear{
+            vk::ImageMemoryBarrier2{vk::PipelineStageFlagBits2::eNone, {}, vk::PipelineStageFlagBits2::eClear, vk::AccessFlagBits2::eTransferWrite, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.output_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+            vk::ImageMemoryBarrier2{vk::PipelineStageFlagBits2::eNone, {}, vk::PipelineStageFlagBits2::eClear, vk::AccessFlagBits2::eTransferWrite, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.depth_image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+        };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, static_cast<std::uint32_t>(to_clear.size()), to_clear.data()});
+        constexpr vk::ImageSubresourceRange color_range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+        command_buffer.clearColorImage(*this->session.output_image.image, vk::ImageLayout::eTransferDstOptimal, vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 0.0f}}, color_range);
+        command_buffer.clearColorImage(*this->session.depth_image.image, vk::ImageLayout::eTransferDstOptimal, vk::ClearColorValue{std::array{1.0f, 0.0f, 0.0f, 0.0f}}, color_range);
+        const vk::ImageMemoryBarrier2 depth_initialized{vk::PipelineStageFlagBits2::eClear, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->session.depth_image.image, color_range};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &depth_initialized});
+        this->session.output_layout = vk::ImageLayout::eTransferDstOptimal;
+        this->session.depth_layout  = vk::ImageLayout::eShaderReadOnlyOptimal;
         const std::array allocations{
             std::pair{&this->session.queue_counts, static_cast<vk::DeviceSize>(sizeof(std::uint32_t) * 3u)},
             std::pair{&this->session.ray_queue_0, static_cast<vk::DeviceSize>(sizeof(std::uint32_t) * this->session.pixel_capacity)},
@@ -954,7 +968,6 @@ namespace spectra {
         this->session.arena = create_storage_buffer(this->context.runtime, arena_size, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst);
         for (const auto& [slice, size] : allocations) this->context.runtime.resources.write_buffer_descriptor(slice->descriptor, vk::DescriptorType::eStorageBuffer, this->session.arena.address + slice->offset, size);
         this->session.indirect_commands            = this->context.runtime.resources.create_buffer(sizeof(vk::TraceRaysIndirectCommand2KHR) * 2u, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
-        this->session.output_layout                = vk::ImageLayout::eUndefined;
         this->session.sample_index                 = 0;
         this->session.indirect_commands_configured = false;
     }
@@ -1048,8 +1061,12 @@ namespace spectra {
             vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite | vk::AccessFlagBits2::eAccelerationStructureReadKHR,
         };
         const vk::ImageMemoryBarrier2 to_general{
-            this->session.output_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eComputeShader,
-            this->session.output_layout == vk::ImageLayout::eUndefined ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderStorageWrite,
+            this->session.output_layout == vk::ImageLayout::eUndefined          ? vk::PipelineStageFlagBits2::eNone
+            : this->session.output_layout == vk::ImageLayout::eTransferDstOptimal ? vk::PipelineStageFlagBits2::eClear
+                                                                                : vk::PipelineStageFlagBits2::eComputeShader,
+            this->session.output_layout == vk::ImageLayout::eUndefined          ? vk::AccessFlags2{}
+            : this->session.output_layout == vk::ImageLayout::eTransferDstOptimal ? vk::AccessFlagBits2::eTransferWrite
+                                                                                : vk::AccessFlagBits2::eShaderStorageWrite,
             vk::PipelineStageFlagBits2::eComputeShader,
             vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite,
             this->session.output_layout,
@@ -1181,7 +1198,7 @@ namespace spectra {
         this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
         command_buffer.dispatch(group_count, 1, 1);
         const vk::ImageMemoryBarrier2 depth_to_general{
-            this->session.depth_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eComputeShader,
+            this->session.depth_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader,
             this->session.depth_layout == vk::ImageLayout::eUndefined ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderSampledRead,
             vk::PipelineStageFlagBits2::eComputeShader,
             vk::AccessFlagBits2::eShaderStorageWrite,

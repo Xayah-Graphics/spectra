@@ -14,6 +14,7 @@ public static const uint raster_material_interface = SPECTRA_RASTER_MATERIAL_INT
 public static const uint raster_material_diffuse = SPECTRA_RASTER_MATERIAL_DIFFUSE;
 public static const uint raster_material_diffuse_transmission = SPECTRA_RASTER_MATERIAL_DIFFUSE_TRANSMISSION;
 public static const uint raster_material_conductor = SPECTRA_RASTER_MATERIAL_CONDUCTOR;
+public static const uint raster_material_dielectric = SPECTRA_RASTER_MATERIAL_DIELECTRIC;
 public static const uint raster_material_coated_diffuse = SPECTRA_RASTER_MATERIAL_COATED_DIFFUSE;
 public static const uint raster_material_coated_conductor = SPECTRA_RASTER_MATERIAL_COATED_CONDUCTOR;
 
@@ -35,6 +36,11 @@ public static const uint area_source_sphere_set = SPECTRA_AREA_SOURCE_SPHERE_SET
 public static const uint volume_density_grid = SPECTRA_VOLUME_DENSITY_GRID;
 public static const uint volume_rgb_grid = SPECTRA_VOLUME_RGB_GRID;
 public static const uint volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
+
+public static const uint light_point = SPECTRA_LIGHT_POINT;
+public static const uint light_spot = SPECTRA_LIGHT_SPOT;
+public static const uint light_distant = SPECTRA_LIGHT_DISTANT;
+public static const uint light_infinite = SPECTRA_LIGHT_INFINITE;
 
 public static const uint raster_display_wireframe = 1;
 
@@ -248,6 +254,14 @@ public struct RasterAreaLight {
     public uint4 metadata;
 }
 
+public struct RasterLight {
+    public uint4 metadata;
+    public float4 radiance;
+    public float4 position;
+    public float4 direction;
+    public float4 parameters;
+}
+
 public struct RasterSceneBindings {
     public DescriptorHandle<StructuredBuffer<RasterPrimitive>> primitives;
     public DescriptorHandle<StructuredBuffer<RasterTransform>> transforms;
@@ -257,6 +271,7 @@ public struct RasterSceneBindings {
     public DescriptorHandle<StructuredBuffer<RasterMaterialFactor>> material_factors;
     public DescriptorHandle<StructuredBuffer<uint>> face_materials;
     public DescriptorHandle<StructuredBuffer<RasterAreaLight>> area_lights;
+    public DescriptorHandle<StructuredBuffer<RasterLight>> lights;
     public DescriptorHandle<StructuredBuffer<RasterTextureHeader>> texture_headers;
     public DescriptorHandle<StructuredBuffer<RasterTextureMapping>> texture_mappings;
     public DescriptorHandle<StructuredBuffer<RasterConstantTexture>> constant_textures;
@@ -277,7 +292,7 @@ public struct RasterPushData {
     public DescriptorHandle<StructuredBuffer<RasterSceneBindings>> bindings;
     public uint scene_primitive_index;
     public uint element_count;
-    public uint2 attributes;
+    public uint4 attributes;
     public float4 view_projection_row_0;
     public float4 view_projection_row_1;
     public float4 view_projection_row_2;
@@ -286,6 +301,7 @@ public struct RasterPushData {
     public float4 camera_right;
     public float4 camera_up;
     public float4 camera_forward;
+    public float4 film;
 }
 
 public struct RasterVolume {

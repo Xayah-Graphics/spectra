@@ -37,9 +37,19 @@ namespace spectra {
         document.content.path   = request.scene_path;
         document.content.loaded = true;
 
-        scene::Film& film     = *std::ranges::find(document.content.source.resources.films, document.content.source.active_film, &scene::Film::id);
-        scene::Camera& camera = *std::ranges::find(document.content.source.resources.cameras, document.content.source.active_camera, &scene::Camera::id);
+        scene::Film& film    = *std::ranges::find(document.content.source.resources.films, document.content.source.active_film, &scene::Film::id);
+        scene::Camera camera = *std::ranges::find(document.content.source.resources.cameras, document.content.source.active_camera, &scene::Camera::id);
         if (request.gbuffer_output_path) film.gbuffer = true;
+        const float aspect = static_cast<float>(film.resolution[0]) / static_cast<float>(film.resolution[1]);
+        std::visit(
+            [aspect](auto& data) {
+                const float center_x         = (data.screen_window.minimum.x + data.screen_window.maximum.x) * 0.5f;
+                const float half_height      = (data.screen_window.maximum.y - data.screen_window.minimum.y) * 0.5f;
+                const float half_width       = half_height * aspect;
+                data.screen_window.minimum.x = center_x - half_width;
+                data.screen_window.maximum.x = center_x + half_width;
+            },
+            camera.data);
         document.content.evaluated = document.content.source;
 
         DynamicsRuntime dynamics{runtime};
@@ -50,10 +60,14 @@ namespace spectra {
 
         const auto consume_dynamic_snapshot = [&]() {
             const FrameContext frame = runtime.frames.begin_frame();
+            gpu_scene.retire_frame(frame.slot_index);
             static_cast<void>(gpu_scene.apply(*dynamics.acquire_snapshot(), document.content.evaluated.view(), frame.command_buffer));
             dynamics.record_telemetry(frame.command_buffer, frame.slot_index);
             dynamics.consume_snapshot();
-            static_cast<void>(runtime.frames.submit_frame());
+            const std::uint32_t submitted_slot = runtime.frames.submit_frame();
+            runtime.frames.wait_frame(submitted_slot);
+            gpu_scene.retire_frame(submitted_slot);
+            dynamics.resolve_telemetry(submitted_slot);
         };
         if (dynamics.initialized()) {
             consume_dynamic_snapshot();
@@ -99,7 +113,8 @@ namespace spectra {
         std::uint32_t next_progress_report{1};
         bool complete{};
         while (!complete) {
-            const FrameContext frame = runtime.frames.begin_frame();
+            const FrameContext frame       = runtime.frames.begin_frame();
+            gpu_scene.retire_frame(frame.slot_index);
             scene::SceneView current_scene = document.content.evaluated.view();
             static_cast<void>(render_engine.prepare(current_scene, view, frame.command_buffer));
             render_engine.record(frame.command_buffer, frame.slot_index);
@@ -148,8 +163,6 @@ namespace spectra {
             final_frame_slot = runtime.frames.submit_frame();
         }
         runtime.frames.wait_frame(final_frame_slot);
-        if (dynamics.initialized())
-            for (std::uint32_t slot = 0; slot != VulkanFrames::frames_in_flight; ++slot) dynamics.resolve_telemetry(slot);
 
         const std::size_t pixel_count = static_cast<std::size_t>(extent.width) * extent.height;
         if (output_layer != RenderOutputLayer::RendererLinear) write_png(request.png_output_path, std::span{static_cast<const std::uint8_t*>(display_readback.mapped), pixel_count * 4u}, extent);

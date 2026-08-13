@@ -68,13 +68,15 @@ namespace spectra {
                 throw std::runtime_error(std::format("{}; provider rollback failed: {}", error.what(), std::ranges::fold_left_first(rollback_errors, [](std::string left, const std::string& right) { return std::move(left) + "; " + right; }).value()));
             }
         }
+        this->content.path     = scene_path;
+        this->content.modified = false;
+        std::vector<std::string> cleanup_errors{};
         for (const ProviderReplacement& replacement : replacements) {
             std::error_code cleanup_error{};
             if (replacement.previous_moved) std::filesystem::remove(replacement.backup, cleanup_error);
-            if (cleanup_error) throw std::runtime_error(std::format("Saved the Scene but failed to remove provider backup {}: {}", replacement.backup.string(), cleanup_error.message()));
+            if (cleanup_error) cleanup_errors.emplace_back(std::format("{}: {}", replacement.backup.string(), cleanup_error.message()));
         }
-        this->content.path     = scene_path;
-        this->content.modified = false;
+        if (!cleanup_errors.empty()) throw std::runtime_error(std::format("Saved the Scene but failed to remove provider backups: {}", std::ranges::fold_left_first(cleanup_errors, [](std::string left, const std::string& right) { return std::move(left) + "; " + right; }).value()));
     }
 
     void SceneDocument::mark_change(scene::Scene& target_scene, const scene::SceneChange changes) noexcept {

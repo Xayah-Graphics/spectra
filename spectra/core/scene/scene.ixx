@@ -606,7 +606,7 @@ namespace spectra::scene {
         std::variant<PerspectiveCameraData, OrthographicCameraData> data{};
 
         [[nodiscard]] CameraFrame frame() const noexcept;
-        [[nodiscard]] CameraMatrices matrices() const noexcept;
+        [[nodiscard]] CameraMatrices matrices() const;
     };
 
     export enum class FilterKind : std::uint8_t {
@@ -778,7 +778,6 @@ namespace spectra::scene {
 
     export struct DynamicSceneBinding {
         std::string dataset_id{};
-        DynamicSceneResourceKind resource_kind{DynamicSceneResourceKind::Geometry};
         std::uint64_t resource_id{};
         friend auto operator<=>(const DynamicSceneBinding&, const DynamicSceneBinding&) = default;
     };

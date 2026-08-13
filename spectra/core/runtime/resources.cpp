@@ -42,6 +42,10 @@ namespace spectra {
 
     GpuBuffer::GpuBuffer(GpuBuffer&& other) noexcept : buffer(std::move(other.buffer)), address(std::exchange(other.address, 0)), size(std::exchange(other.size, 0)), mapped(std::exchange(other.mapped, nullptr)), allocation(std::move(other.allocation)), external_memory(std::move(other.external_memory)) {}
 
+    GpuBuffer::~GpuBuffer() {
+        this->buffer = nullptr;
+    }
+
     GpuBuffer& GpuBuffer::operator=(GpuBuffer&& other) noexcept {
         if (this == &other) return *this;
         this->buffer          = nullptr;
@@ -55,6 +59,11 @@ namespace spectra {
     }
 
     GpuImage::GpuImage(GpuImage&& other) noexcept : image(std::move(other.image)), view(std::move(other.view)), extent(std::exchange(other.extent, {})), format(std::exchange(other.format, {})), aspect(std::exchange(other.aspect, {})), mip_levels(std::exchange(other.mip_levels, 1)), allocation(std::move(other.allocation)) {}
+
+    GpuImage::~GpuImage() {
+        this->view  = nullptr;
+        this->image = nullptr;
+    }
 
     GpuImage& GpuImage::operator=(GpuImage&& other) noexcept {
         if (this == &other) return *this;
@@ -518,6 +527,7 @@ namespace spectra {
                 merged.emplace_back(range);
         }
         block.free_ranges = std::move(merged);
+        if (block.free_ranges.size() == 1 && block.free_ranges.front().offset == 0 && block.free_ranges.front().size == block.size) this->allocation.blocks[block_index].reset();
     }
 
     std::uint32_t GpuResources::find_memory_type(const std::uint32_t type_bits, const vk::MemoryPropertyFlags properties) const {

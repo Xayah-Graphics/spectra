@@ -4,8 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
-inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 22;
-inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_22";
+inline constexpr std::uint32_t SPECTRA_PLUGIN_API_VERSION = 23;
+inline constexpr char SPECTRA_PLUGIN_ENTRY_NAME[]         = "spectra_plugin_api_23";
 
 #if defined(_WIN32)
 #define SPECTRA_PLUGIN_EXPORT __declspec(dllexport)
@@ -399,6 +399,8 @@ struct SpectraPluginDatasetConfiguration {
     SpectraPluginExternalHandle timeline_semaphore_handle;
     std::uint8_t vulkan_device_uuid[16];
     std::uint8_t vulkan_device_luid[8];
+    std::uint8_t vulkan_device_luid_valid;
+    std::uint8_t reserved[3];
     std::uint32_t vulkan_device_node_mask;
 };
 
@@ -408,9 +410,22 @@ struct SpectraPluginTelemetryConfiguration {
     SpectraPluginExternalHandle timeline_semaphore_handle;
     std::uint8_t vulkan_device_uuid[16];
     std::uint8_t vulkan_device_luid[8];
+    std::uint8_t vulkan_device_luid_valid;
+    std::uint8_t reserved[3];
     std::uint32_t vulkan_device_node_mask;
 };
 
+// Each configured timeline semaphore starts at zero and uses a serialized
+// Provider/Host handshake. The Provider first signals 1 after completing every
+// write referenced by a commit, and places 1 in signal_value. Host waits for that
+// value before reading the slot and signals signal_value + 1 after its final GPU
+// access. Subsequent Provider signals on the same timeline are the next odd values
+// (3, 5, ...), and must not be submitted until the preceding Host release value is
+// reached. A committed slot must not be accessed or reused before its Host release.
+// signal_value must never be UINT64_MAX. Host also completes this release handshake
+// for every commit accepted before publication is aborted or the runtime is torn
+// down. The Provider must destroy all imported objects from a failed configuration
+// before returning its error.
 struct SpectraPluginDatasetCommit {
     std::uint32_t slot_index;
     std::uint32_t active_count;
@@ -458,13 +473,17 @@ static_assert(sizeof(SpectraPluginTriangleMeshDatasetDescriptor) == 16);
 static_assert(sizeof(SpectraPluginSphereSetDatasetDescriptor) == 4);
 static_assert(sizeof(SpectraPluginTelemetryDescriptor) == 72);
 static_assert(offsetof(SpectraPluginTelemetryDescriptor, plot) == 68);
+static_assert(sizeof(SpectraPluginDatasetConfiguration) == 72);
+static_assert(offsetof(SpectraPluginDatasetConfiguration, vulkan_device_luid_valid) == 64);
+static_assert(sizeof(SpectraPluginTelemetryConfiguration) == 64);
+static_assert(offsetof(SpectraPluginTelemetryConfiguration, vulkan_device_luid_valid) == 56);
 static_assert(sizeof(SpectraPluginDatasetCommit) == 48);
 static_assert(offsetof(SpectraPluginDatasetCommit, signal_value) == 16);
 static_assert(sizeof(SpectraPluginSnapshotSink) == 24);
 static_assert(sizeof(SpectraPluginApi) == 80);
 
 extern "C" {
-SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_22() noexcept;
+SPECTRA_PLUGIN_EXPORT const SpectraPluginApi* spectra_plugin_api_23() noexcept;
 }
 
 #endif

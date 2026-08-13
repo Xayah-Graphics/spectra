@@ -49,7 +49,7 @@ namespace spectra {
     bool DisplayPass::resize(const vk::Extent2D extent) {
         if (*this->image.image && extent == this->image.extent) return false;
         GpuImage next_linear_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
-        GpuImage next_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eB8G8R8A8Srgb, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc);
+        GpuImage next_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eB8G8R8A8Srgb, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst);
         DescriptorLease next_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         this->context.runtime.resources.write_sampled_image_descriptor(next_descriptor, next_linear_image, vk::ImageLayout::eShaderReadOnlyOptimal);
         if (*this->image.image) {
@@ -61,6 +61,41 @@ namespace spectra {
         this->linear_layout = vk::ImageLayout::eUndefined;
         this->layout = vk::ImageLayout::eUndefined;
         return true;
+    }
+
+    void DisplayPass::prepare_sampling(const vk::raii::CommandBuffer& command_buffer) {
+        if (!*this->image.image || this->layout == vk::ImageLayout::eShaderReadOnlyOptimal) return;
+        if (this->layout == vk::ImageLayout::eUndefined) {
+            const vk::ImageMemoryBarrier2 to_clear{
+                vk::PipelineStageFlagBits2::eNone,
+                {},
+                vk::PipelineStageFlagBits2::eClear,
+                vk::AccessFlagBits2::eTransferWrite,
+                vk::ImageLayout::eUndefined,
+                vk::ImageLayout::eTransferDstOptimal,
+                vk::QueueFamilyIgnored,
+                vk::QueueFamilyIgnored,
+                *this->image.image,
+                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            };
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_clear});
+            command_buffer.clearColorImage(*this->image.image, vk::ImageLayout::eTransferDstOptimal, vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 1.0f}}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+            this->layout = vk::ImageLayout::eTransferDstOptimal;
+        }
+        const vk::ImageMemoryBarrier2 to_sampling{
+            this->layout == vk::ImageLayout::eTransferDstOptimal ? vk::PipelineStageFlagBits2::eClear : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            this->layout == vk::ImageLayout::eTransferDstOptimal ? vk::AccessFlagBits2::eTransferWrite : vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits2::eFragmentShader,
+            vk::AccessFlagBits2::eShaderSampledRead,
+            this->layout,
+            vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            *this->image.image,
+            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_sampling});
+        this->layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 
     void DisplayPass::prepare_linear_composition(const vk::raii::CommandBuffer& command_buffer, const RenderOutput render_output) {
@@ -150,8 +185,8 @@ namespace spectra {
         constexpr vk::ColorComponentFlags color_components = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
         command_buffer.setColorWriteMaskEXT(0, color_components);
 
-        const std::array stages{vk::ShaderStageFlagBits::eTaskEXT, vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
-        const std::array shader_handles{vk::ShaderEXT{}, vk::ShaderEXT{}, *this->shaders[0], *this->shaders[1]};
+        const std::array stages{vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
+        const std::array shader_handles{vk::ShaderEXT{}, *this->shaders[0], *this->shaders[1]};
         command_buffer.bindShadersEXT(stages, shader_handles);
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
         struct alignas(16) DisplayPushData {

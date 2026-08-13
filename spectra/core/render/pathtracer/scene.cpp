@@ -594,7 +594,7 @@ namespace spectra {
     }
 
 
-    std::unique_ptr<PreparedPathScene> prepare_path_scene(const scene::SceneView scene, const PathSceneGpuSnapshot& gpu, const PathTracerResources& resources, PathTracerPreparationState* progress) {
+    std::unique_ptr<PreparedPathScene> prepare_path_scene(const scene::SceneView scene, const math::Bounds3 bounds, const PathSceneGpuSnapshot& gpu, const PathTracerResources& resources, PathTracerPreparationState* progress) {
         const RgbToSpectrumTables spectrum_tables{resources.rgb_to_spectrum_table_data};
         std::vector<CompiledSpectrum> spectra{};
         std::vector<math::Float2> piecewise_spectra{};
@@ -1153,7 +1153,6 @@ namespace spectra {
         if (media.empty()) media.emplace_back();
         if (volumes.empty()) volumes.emplace_back();
 
-        const math::Bounds3 bounds      = scene.bounds();
         const math::Float3 scene_center = bounds.center();
         const float scene_radius        = bounds.radius();
         std::vector<pathtracer::PathLight> lights{};

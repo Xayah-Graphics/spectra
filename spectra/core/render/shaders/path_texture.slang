@@ -629,7 +629,7 @@ float4 image_texture_value(
                         sampler,
                         coordinates.st,
                         integer_level);
-            else if (integer_level == 0)
+            else if (level <= 0.0)
                 value =
                     image_bilerp(
                         image,

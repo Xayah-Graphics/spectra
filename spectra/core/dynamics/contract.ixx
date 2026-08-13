@@ -111,6 +111,7 @@ namespace spectra::dynamics {
 
     export struct DatasetDescriptor {
         std::string id{};
+        std::optional<scene::DynamicSceneResourceKind> resource_kind{};
         std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, PointDataset, SegmentDataset, CurveDataset, VectorDataset, FieldDataset, ImageDataset, CameraObservationDataset, TransformDataset> details{TriangleMeshDataset{}};
     };
 

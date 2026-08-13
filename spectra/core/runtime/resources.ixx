@@ -44,6 +44,7 @@ namespace spectra {
         void* mapped{};
 
         GpuBuffer() = default;
+        ~GpuBuffer();
         GpuBuffer(GpuBuffer&& other) noexcept;
         GpuBuffer& operator=(GpuBuffer&& other) noexcept;
         GpuBuffer(const GpuBuffer&)            = delete;
@@ -65,6 +66,7 @@ namespace spectra {
         std::uint32_t mip_levels{1};
 
         GpuImage() = default;
+        ~GpuImage();
         GpuImage(GpuImage&& other) noexcept;
         GpuImage& operator=(GpuImage&& other) noexcept;
         GpuImage(const GpuImage&)            = delete;

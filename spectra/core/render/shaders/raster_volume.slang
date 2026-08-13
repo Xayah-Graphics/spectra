@@ -9,9 +9,10 @@ struct RasterVolumePushData {
     DescriptorHandle<RWTexture2D<float4>> output;
     DescriptorHandle<Texture2D<float>> depth;
     DescriptorHandle<StructuredBuffer<RasterVolume>> volumes;
-    uint2 reserved;
+    DescriptorHandle<StructuredBuffer<RasterSceneBindings>> bindings;
     uint4 metadata;
     uint4 film_bounds;
+    float4 film;
     float4 inverse_view_projection_row_0;
     float4 inverse_view_projection_row_1;
     float4 inverse_view_projection_row_2;
@@ -105,157 +106,79 @@ bool intersect_bounds(
     return maximum > max(minimum, 0.0);
 }
 
+float scalar_grid_value(
+    StructuredBuffer<float> values,
+    uint3 resolution,
+    int3 coordinate) {
+    if (any(coordinate < int3(0)) || any(coordinate >= int3(resolution))) return 0.0;
+    return values[(uint(coordinate.z) * resolution.y + uint(coordinate.y)) * resolution.x + uint(coordinate.x)];
+}
+
 float sample_scalar(
     StructuredBuffer<float> values,
     uint3 resolution,
     float3 coordinate) {
-    const float3 grid =
-        saturate(coordinate) *
-            float3(resolution - 1) +
-        0.5;
-    const uint3 lower =
-        uint3(
-            floor(grid));
-    const uint3 upper =
-        min(
-            lower + 1,
-            resolution - 1);
-    const float3 amount =
-        frac(grid);
-    const uint lower_000 =
-        (
-            lower.z *
-                resolution.y +
-            lower.y
-        ) *
-            resolution.x +
-        lower.x;
-    const uint lower_100 =
-        (
-            lower.z *
-                resolution.y +
-            lower.y
-        ) *
-            resolution.x +
-        upper.x;
-    const uint lower_010 =
-        (
-            lower.z *
-                resolution.y +
-            upper.y
-        ) *
-            resolution.x +
-        lower.x;
-    const uint lower_110 =
-        (
-            lower.z *
-                resolution.y +
-            upper.y
-        ) *
-            resolution.x +
-        upper.x;
-    const uint upper_000 =
-        (
-            upper.z *
-                resolution.y +
-            lower.y
-        ) *
-            resolution.x +
-        lower.x;
-    const uint upper_100 =
-        (
-            upper.z *
-                resolution.y +
-            lower.y
-        ) *
-            resolution.x +
-        upper.x;
-    const uint upper_010 =
-        (
-            upper.z *
-                resolution.y +
-            upper.y
-        ) *
-            resolution.x +
-        lower.x;
-    const uint upper_110 =
-        (
-            upper.z *
-                resolution.y +
-            upper.y
-        ) *
-            resolution.x +
-        upper.x;
+    const float3 sample_position = coordinate * float3(resolution) - 0.5;
+    const int3 base = int3(floor(sample_position));
+    const float3 amount = sample_position - float3(base);
     return lerp(
         lerp(
             lerp(
-                values[lower_000],
-                values[lower_100],
+                scalar_grid_value(values, resolution, base),
+                scalar_grid_value(values, resolution, base + int3(1, 0, 0)),
                 amount.x),
             lerp(
-                values[lower_010],
-                values[lower_110],
+                scalar_grid_value(values, resolution, base + int3(0, 1, 0)),
+                scalar_grid_value(values, resolution, base + int3(1, 1, 0)),
                 amount.x),
             amount.y),
         lerp(
             lerp(
-                values[upper_000],
-                values[upper_100],
+                scalar_grid_value(values, resolution, base + int3(0, 0, 1)),
+                scalar_grid_value(values, resolution, base + int3(1, 0, 1)),
                 amount.x),
             lerp(
-                values[upper_010],
-                values[upper_110],
+                scalar_grid_value(values, resolution, base + int3(0, 1, 1)),
+                scalar_grid_value(values, resolution, base + int3(1, 1, 1)),
                 amount.x),
             amount.y),
         amount.z);
+}
+
+float3 vector_grid_value(
+    StructuredBuffer<float3> values,
+    uint3 resolution,
+    int3 coordinate) {
+    if (any(coordinate < int3(0)) || any(coordinate >= int3(resolution))) return float3(0.0);
+    return values[(uint(coordinate.z) * resolution.y + uint(coordinate.y)) * resolution.x + uint(coordinate.x)];
 }
 
 float3 sample_vector(
     StructuredBuffer<float3> values,
     uint3 resolution,
     float3 coordinate) {
-    const float3 grid =
-        saturate(coordinate) *
-            float3(resolution - 1) +
-        0.5;
-    const uint3 lower =
-        uint3(
-            floor(grid));
-    const uint3 upper =
-        min(
-            lower + 1,
-            resolution - 1);
-    const float3 amount =
-        frac(grid);
-    const uint indices[8] = {
-        (lower.z * resolution.y + lower.y) * resolution.x + lower.x,
-        (lower.z * resolution.y + lower.y) * resolution.x + upper.x,
-        (lower.z * resolution.y + upper.y) * resolution.x + lower.x,
-        (lower.z * resolution.y + upper.y) * resolution.x + upper.x,
-        (upper.z * resolution.y + lower.y) * resolution.x + lower.x,
-        (upper.z * resolution.y + lower.y) * resolution.x + upper.x,
-        (upper.z * resolution.y + upper.y) * resolution.x + lower.x,
-        (upper.z * resolution.y + upper.y) * resolution.x + upper.x,
-    };
+    const float3 sample_position = coordinate * float3(resolution) - 0.5;
+    const int3 base = int3(floor(sample_position));
+    const float3 amount = sample_position - float3(base);
     return lerp(
         lerp(
             lerp(
-                values[indices[0]],
-                values[indices[1]],
+                vector_grid_value(values, resolution, base),
+                vector_grid_value(values, resolution, base + int3(1, 0, 0)),
                 amount.x),
             lerp(
-                values[indices[2]],
-                values[indices[3]],
+                vector_grid_value(values, resolution, base + int3(0, 1, 0)),
+                vector_grid_value(values, resolution, base + int3(1, 1, 0)),
                 amount.x),
             amount.y),
         lerp(
             lerp(
-                values[indices[4]],
-                values[indices[5]],
+                vector_grid_value(values, resolution, base + int3(0, 0, 1)),
+                vector_grid_value(values, resolution, base + int3(1, 0, 1)),
                 amount.x),
             lerp(
-                values[indices[6]],
-                values[indices[7]],
+                vector_grid_value(values, resolution, base + int3(0, 1, 1)),
+                vector_grid_value(values, resolution, base + int3(1, 1, 1)),
                 amount.x),
             amount.y),
         amount.z);
@@ -480,7 +403,6 @@ float phase_henyey_greenstein(
 float volume_density(
     RasterVolume volume,
     float3 world_position,
-    out float temperature,
     out float3 sigma_a,
     out float3 sigma_s,
     out float3 emission) {
@@ -498,7 +420,6 @@ float volume_density(
             volume.bounds_minimum.xyz
         );
     if (any(coordinate < 0.0) || any(coordinate > 1.0)) {
-        temperature = 0.0;
         sigma_a = float3(0.0);
         sigma_s = float3(0.0);
         emission = float3(0.0);
@@ -514,13 +435,12 @@ float volume_density(
                 coordinate) *
             volume.scales.x;
         if (density <= 0.0) {
-            temperature = 0.0;
             sigma_a = float3(0.0);
             sigma_s = float3(0.0);
             emission = float3(0.0);
             return 0.0;
         }
-        temperature = 0.0;
+        float temperature = 0.0;
         if (
             volume.temperature.z != 0.0 &&
             (
@@ -562,7 +482,7 @@ float volume_density(
                     coordinate);
         }
         emission =
-            density *
+            sigma_a *
             volume.emission.xyz *
             volume.scales.y *
             emission_multiplier;
@@ -571,7 +491,7 @@ float volume_density(
             temperature >=
                 volume.temperature.y)
             emission +=
-                density *
+                sigma_a *
                 blackbody(temperature) *
                 volume.scales.y *
                 emission_multiplier;
@@ -597,9 +517,8 @@ float volume_density(
                 : float3(1.0),
             color_space) * volume.scales.x;
         emission = (flags & 4) != 0
-            ? raster_to_linear_srgb(sample_vector(emission_field, volume.metadata.yzw, coordinate), color_space) * volume.scales.y
+            ? sigma_a * raster_to_linear_srgb(sample_vector(emission_field, volume.metadata.yzw, coordinate), color_space) * volume.scales.y
             : float3(0.0);
-        temperature = 0.0;
         return
             max(
                 sigma_a.x +
@@ -615,7 +534,6 @@ float volume_density(
             coordinate,
             volume.procedural_parameters) *
         volume.scales.x;
-    temperature = 0.0;
     sigma_a =
         density *
         volume.sigma_a.xyz;
@@ -623,7 +541,7 @@ float volume_density(
         density *
         volume.sigma_s.xyz;
     emission =
-        density *
+        sigma_a *
         volume.emission.xyz *
         volume.scales.y;
     return density;
@@ -646,6 +564,10 @@ void raster_volume(
         push_data.depth;
     StructuredBuffer<RasterVolume> volumes =
         push_data.volumes;
+    StructuredBuffer<RasterSceneBindings> binding_table =
+        push_data.bindings;
+    StructuredBuffer<RasterLight> lights =
+        binding_table[0].lights;
     const float2 coordinate =
         (
             float2(pixel) +
@@ -774,7 +696,6 @@ void raster_volume(
     const float step = (maximum - minimum) / float(preview_step_count);
     float3 radiance = float3(0.0);
     float3 transmittance = float3(1.0);
-    const float3 incoming_direction = normalize(float3(-0.35, 0.8, 0.45));
     for (uint sample_index = 0; sample_index != preview_step_count; ++sample_index) {
         const float distance = minimum + (float(sample_index) + 0.5) * step;
         const float3 position =
@@ -792,7 +713,6 @@ void raster_volume(
         for (uint volume_index = 0;
              volume_index != push_data.metadata.z;
              ++volume_index) {
-            float temperature;
             float3 local_sigma_a;
             float3 local_sigma_s;
             float3 local_emission;
@@ -800,7 +720,6 @@ void raster_volume(
                 volume_density(
                     volumes[volume_index],
                     position,
-                    temperature,
                     local_sigma_a,
                     local_sigma_s,
                     local_emission);
@@ -818,7 +737,26 @@ void raster_volume(
         }
         if (weight == 0.0) continue;
         anisotropy /= weight;
-        const float direct = 0.12 + 2.5 * phase_henyey_greenstein(dot(-ray_direction, incoming_direction), anisotropy);
+        float3 direct = float3(0.0);
+        for (uint light_index = 0; light_index != push_data.metadata.w; ++light_index) {
+            const RasterLight light = lights[light_index];
+            if (light.metadata.x == light_infinite) {
+                direct += light.radiance.xyz;
+                continue;
+            }
+            float3 incoming;
+            float3 light_radiance = light.radiance.xyz;
+            if (light.metadata.x == light_point || light.metadata.x == light_spot) {
+                const float3 vector = light.position.xyz - position;
+                const float distance_squared = dot(vector, vector);
+                if (distance_squared == 0.0) continue;
+                incoming = vector / sqrt(distance_squared);
+                light_radiance /= distance_squared;
+                if (light.metadata.x == light_spot) light_radiance *= smoothstep(light.parameters.x, light.direction.w, dot(-incoming, light.direction.xyz));
+            } else
+                incoming = light.direction.xyz;
+            direct += light_radiance * phase_henyey_greenstein(dot(-ray_direction, incoming), anisotropy);
+        }
         const float3 source =
             emission +
             sigma_s *
@@ -853,10 +791,24 @@ void raster_volume(
     }
     const float4 surface =
         output[pixel];
+    float3 color =
+        radiance +
+        transmittance *
+            raster_to_linear_srgb(
+                surface.xyz,
+                uint(push_data.film.z));
+    const float maximum_component =
+        max(
+            color.x,
+            max(
+                color.y,
+                color.z));
+    if (push_data.film.y != 0.0 && maximum_component > push_data.film.x)
+        color *= push_data.film.x / maximum_component;
     output[pixel] =
         float4(
-            radiance +
-                transmittance *
-                    surface.xyz,
+            raster_from_linear_srgb(
+                color,
+                uint(push_data.film.z)),
             surface.w);
 }

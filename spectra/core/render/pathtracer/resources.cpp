@@ -96,25 +96,29 @@ namespace spectra {
         }
 
         [[nodiscard]] std::uint32_t query_stack_size(const vk::raii::Pipeline& pipeline) {
-            const std::array general{
+            const vk::DeviceSize ray_generation = std::max(
                 pipeline.getRayTracingShaderGroupStackSizeKHR(0, vk::ShaderGroupShaderKHR::eGeneral),
-                pipeline.getRayTracingShaderGroupStackSizeKHR(1, vk::ShaderGroupShaderKHR::eGeneral),
-            };
-            const std::array shaders{
+                pipeline.getRayTracingShaderGroupStackSizeKHR(1, vk::ShaderGroupShaderKHR::eGeneral));
+            const vk::DeviceSize miss = std::max(
                 pipeline.getRayTracingShaderGroupStackSizeKHR(2, vk::ShaderGroupShaderKHR::eGeneral),
-                pipeline.getRayTracingShaderGroupStackSizeKHR(3, vk::ShaderGroupShaderKHR::eGeneral),
+                pipeline.getRayTracingShaderGroupStackSizeKHR(3, vk::ShaderGroupShaderKHR::eGeneral));
+            const vk::DeviceSize closest_hit = std::ranges::max(std::array{
                 pipeline.getRayTracingShaderGroupStackSizeKHR(4, vk::ShaderGroupShaderKHR::eClosestHit),
-                pipeline.getRayTracingShaderGroupStackSizeKHR(4, vk::ShaderGroupShaderKHR::eAnyHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(5, vk::ShaderGroupShaderKHR::eClosestHit),
-                pipeline.getRayTracingShaderGroupStackSizeKHR(5, vk::ShaderGroupShaderKHR::eIntersection),
-                pipeline.getRayTracingShaderGroupStackSizeKHR(5, vk::ShaderGroupShaderKHR::eAnyHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(6, vk::ShaderGroupShaderKHR::eClosestHit),
-                pipeline.getRayTracingShaderGroupStackSizeKHR(6, vk::ShaderGroupShaderKHR::eAnyHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(7, vk::ShaderGroupShaderKHR::eClosestHit),
-                pipeline.getRayTracingShaderGroupStackSizeKHR(7, vk::ShaderGroupShaderKHR::eIntersection),
+            });
+            const vk::DeviceSize any_hit = std::ranges::max(std::array{
+                pipeline.getRayTracingShaderGroupStackSizeKHR(4, vk::ShaderGroupShaderKHR::eAnyHit),
+                pipeline.getRayTracingShaderGroupStackSizeKHR(5, vk::ShaderGroupShaderKHR::eAnyHit),
+                pipeline.getRayTracingShaderGroupStackSizeKHR(6, vk::ShaderGroupShaderKHR::eAnyHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(7, vk::ShaderGroupShaderKHR::eAnyHit),
-            };
-            return static_cast<std::uint32_t>(*std::ranges::max_element(general) + *std::ranges::max_element(shaders));
+            });
+            const vk::DeviceSize intersection = std::ranges::max(std::array{
+                pipeline.getRayTracingShaderGroupStackSizeKHR(5, vk::ShaderGroupShaderKHR::eIntersection),
+                pipeline.getRayTracingShaderGroupStackSizeKHR(7, vk::ShaderGroupShaderKHR::eIntersection),
+            });
+            return static_cast<std::uint32_t>(ray_generation + std::max({closest_hit, miss, intersection + any_hit}));
         }
 
         void join_deferred_operation(const vk::raii::DeferredOperationKHR& operation) {

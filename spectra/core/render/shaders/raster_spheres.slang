@@ -11,7 +11,7 @@ struct RasterSpherePushData {
     DescriptorHandle<StructuredBuffer<RasterSceneBindings>> bindings;
     uint scene_primitive_index;
     uint element_count;
-    uint2 attributes;
+    uint4 attributes;
     float4 view_projection_row_0;
     float4 view_projection_row_1;
     float4 view_projection_row_2;
@@ -20,6 +20,7 @@ struct RasterSpherePushData {
     float4 camera_right;
     float4 camera_up;
     float4 camera_forward;
+    float4 film;
 }
 
 [vk::push_constant]

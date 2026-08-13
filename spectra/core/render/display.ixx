@@ -18,6 +18,7 @@ namespace spectra {
 
         void initialize();
         [[nodiscard]] bool resize(vk::Extent2D extent);
+        void prepare_sampling(const vk::raii::CommandBuffer& command_buffer);
         void prepare_linear_composition(const vk::raii::CommandBuffer& command_buffer, RenderOutput render_output);
         [[nodiscard]] ColorCompositionTarget linear_target() noexcept;
         [[nodiscard]] RenderOutput linear_output(RenderOutput renderer_output) const noexcept;

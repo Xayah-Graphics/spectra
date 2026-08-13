@@ -706,7 +706,10 @@ evaluate_medium(
                     resolution,
                     normalized_point);
         }
+        result.emission *=
+            emission_scale;
         if (
+            medium.temperature.z != 0.0 &&
             (
                 volume.majorant_metadata.w &
                 1
@@ -720,19 +723,14 @@ evaluate_medium(
                     normalized_point) *
                     medium.scales.w +
                 medium.temperature.x;
-            result.emission =
-                value >=
-                    medium.temperature.y
-                    ? emission_scale *
-                        medium.scales.y *
-                        normalized_blackbody(
-                            value,
-                            wavelengths)
-                    : float4(0.0);
+            if (value >= medium.temperature.y)
+                result.emission +=
+                    emission_scale *
+                    medium.scales.y *
+                    normalized_blackbody(
+                        value,
+                        wavelengths);
         }
-        else
-            result.emission *=
-                emission_scale;
         return result;
     }
     if (volume.metadata.x == volume_rgb_grid) {
@@ -798,13 +796,11 @@ evaluate_medium(
     const float density =
         cloud_density(
             volume,
-            point);
+            normalized_point);
     result.sigma_a *=
         density;
     result.sigma_s *=
         density;
-    result.emission =
-        float4(0.0);
     return result;
 }
 
@@ -1217,8 +1213,6 @@ public PathMediumSample sample_path_medium(
                 return result;
             }
             if (
-                depth <
-                    maximum_depth &&
                 spectrum_nonzero(
                     properties.emission)) {
                 const float pdf =

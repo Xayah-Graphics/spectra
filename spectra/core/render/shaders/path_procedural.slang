@@ -636,8 +636,30 @@ void procedural_closest_hit(
         geometric_normal;
     payload.geometric_normal =
         geometric_normal;
+    const float3 tangent_candidate =
+        dpdu -
+        geometric_normal *
+            dot(
+                dpdu,
+                geometric_normal);
     payload.tangent =
-        normalize(dpdu);
+        dot(
+            tangent_candidate,
+            tangent_candidate) >
+                1.0e-20
+            ? normalize(
+                  tangent_candidate)
+            : normalize(
+                  abs(geometric_normal.x) >
+                          abs(geometric_normal.z)
+                      ? float3(
+                            -geometric_normal.y,
+                            geometric_normal.x,
+                            0.0)
+                      : float3(
+                            0.0,
+                            -geometric_normal.z,
+                            geometric_normal.y));
     payload.dpdu = dpdu;
     payload.dpdv = dpdv;
     payload.dndu =

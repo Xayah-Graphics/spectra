@@ -241,6 +241,7 @@ namespace spectra {
     }
 
     void GpuScene::initialize(const scene::Scene& source_scene, const std::span<const dynamics::MeshOutputBinding> mesh_bindings, const std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings) {
+        this->context.runtime.frames.retire_frame();
         GpuScene next{this->context.runtime, this->context.shader_directory};
         next.initialize_resources(source_scene.view(), mesh_bindings, sphere_set_bindings, nullptr);
         this->destroy();
@@ -249,13 +250,14 @@ namespace spectra {
 
     void GpuScene::destroy() noexcept {
         this->context.runtime.frames.defer_destruction([attribute_clear_shader = std::move(this->resources.attribute_clear_shader), attribute_accumulation_shader = std::move(this->resources.attribute_accumulation_shader), attribute_normalization_shader = std::move(this->resources.attribute_normalization_shader), bounds_clear_shader = std::move(this->resources.bounds_clear_shader), bounds_accumulation_shader = std::move(this->resources.bounds_accumulation_shader), sphere_unpack_shader = std::move(this->resources.sphere_unpack_shader), instance_apply_shader = std::move(this->resources.instance_apply_shader), texture_images = std::move(this->resources.texture_images), acceleration_instances = std::move(this->resources.acceleration_structure_instances), primitive_transforms = std::move(this->resources.primitive_transforms), instance_bindings = std::move(this->resources.dynamic_instance_bindings), instance_bounds = std::move(this->resources.instance_bounds),
-                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), immediate_scratch = std::move(this->resources.immediate_scratch), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), volumes = std::move(this->resources.volumes), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
+                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), volumes = std::move(this->resources.volumes), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
         this->resources.texture_image_indices.clear();
         this->resources.acceleration_structure_instances_descriptor = {};
         this->resources.primitive_transforms_descriptor             = {};
         this->resources.dynamic_instance_bindings_descriptor        = {};
         this->resources.instance_bounds_descriptor                  = {};
         this->resources.instance_bounds_readback_counts             = {};
+        this->resources.instance_bounds_readback_pending            = {};
         this->resources.resolved_instance_bounds.clear();
         this->resources.resolved_scene_bounds = math::Bounds3::empty();
         this->resources.scratch_offsets       = {};
@@ -299,11 +301,31 @@ namespace spectra {
         };
     }
 
+    void GpuScene::retire_frame(const std::uint32_t frame_slot_index) {
+        if (!std::exchange(this->resources.instance_bounds_readback_pending[frame_slot_index], false)) return;
+        const std::uint32_t instance_count = std::exchange(this->resources.instance_bounds_readback_counts[frame_slot_index], 0);
+        if (instance_count == 0) {
+            this->resources.resolved_instance_bounds.clear();
+            this->resources.resolved_scene_bounds = math::Bounds3::empty();
+            return;
+        }
+        const auto* source = static_cast<const GpuDerivedBounds*>(this->resources.instance_bounds_readbacks[frame_slot_index].mapped);
+        this->resources.resolved_instance_bounds.assign(instance_count, math::Bounds3::empty());
+        this->resources.resolved_scene_bounds = math::Bounds3::empty();
+        for (std::uint32_t index = 0; index != instance_count; ++index) {
+            if (source[index].minimum[0] == 0xffffffffu) continue;
+            math::Bounds3& bounds = this->resources.resolved_instance_bounds[index];
+            bounds.minimum        = {ordered_float(source[index].minimum[0]), ordered_float(source[index].minimum[1]), ordered_float(source[index].minimum[2])};
+            bounds.maximum        = {ordered_float(source[index].maximum[0]), ordered_float(source[index].maximum[1]), ordered_float(source[index].maximum[2])};
+            this->resources.resolved_scene_bounds.include(bounds);
+        }
+    }
+
     GpuSceneUpdate GpuScene::apply(const dynamics::DynamicSnapshot& snapshot, const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         this->resources.resource_binding_changes = scene::SceneChange::None;
         this->resources.dynamic_changes          = GpuSceneChange::None;
         const std::uint32_t frame_slot_index     = this->context.runtime.frames.frame.current_slot_index;
-        this->resolve_instance_bounds(frame_slot_index);
+        this->resources.scratch_offsets[frame_slot_index] = 0;
         std::vector<scene::GeometryId> external_geometries{};
         std::vector<scene::SphereSetId> external_sphere_sets{};
         std::vector<scene::VolumeId> external_volumes{};
@@ -385,7 +407,7 @@ namespace spectra {
         this->resources.resource_binding_changes = scene::SceneChange::None;
         this->resources.dynamic_changes          = GpuSceneChange::None;
         const std::uint32_t frame_slot_index     = this->context.runtime.frames.frame.current_slot_index;
-        this->resolve_instance_bounds(frame_slot_index);
+        this->resources.scratch_offsets[frame_slot_index] = 0;
         this->synchronize_scene(scene, command_buffer);
         if (std::exchange(this->resources.instance_bounds_dirty, false)) this->update_instance_bounds(scene, command_buffer, frame_slot_index);
         return {
@@ -464,7 +486,7 @@ namespace spectra {
             record(*command_buffer);
         else
             this->context.runtime.resources.submit_immediate(record);
-        if (!command_buffer) this->resolve_instance_bounds(0);
+        if (!command_buffer) this->retire_frame(0);
         this->resources.instance_bounds_dirty = false;
         this->resources.synchronized_revision = scene.revision;
     }
@@ -653,22 +675,22 @@ namespace spectra {
         }
         return instances;
     }
-    vk::DeviceAddress GpuScene::acquire_acceleration_scratch(const vk::DeviceSize size, const bool immediate) {
+    vk::DeviceAddress GpuScene::acquire_acceleration_scratch(const vk::DeviceSize size) {
+        const std::uint32_t frame_slot_index = this->context.runtime.frames.frame.current_slot_index;
         const vk::DeviceSize alignment      = this->context.runtime.graphics.acceleration_structure_properties.minAccelerationStructureScratchOffsetAlignment;
-        GpuBuffer* buffer                   = immediate ? &this->resources.immediate_scratch : &this->resources.frame_scratch[this->context.runtime.frames.frame.current_slot_index];
-        vk::DeviceSize* offset              = immediate ? nullptr : &this->resources.scratch_offsets[this->context.runtime.frames.frame.current_slot_index];
-        const vk::DeviceSize current_offset = offset ? *offset : 0;
-        vk::DeviceAddress address           = buffer->address + current_offset;
+        GpuBuffer& buffer                   = this->resources.frame_scratch[frame_slot_index];
+        vk::DeviceSize& offset              = this->resources.scratch_offsets[frame_slot_index];
+        vk::DeviceAddress address           = buffer.address + offset;
         address                             = (address + alignment - 1u) & ~(alignment - 1u);
-        const bool available                = buffer->buffer != nullptr && address + size <= buffer->address + buffer->size;
+        const bool available                = buffer.buffer != nullptr && address + size <= buffer.address + buffer.size;
         if (!available) {
-            GpuBuffer replacement = this->context.runtime.resources.create_buffer(std::max(size + alignment - 1u, buffer->size * 2u), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            if (!immediate && buffer->buffer != nullptr) this->context.runtime.frames.defer_destruction([previous = std::move(*buffer)]() mutable {});
-            *buffer = std::move(replacement);
-            if (offset) *offset = 0;
-            address = (buffer->address + alignment - 1u) & ~(alignment - 1u);
+            GpuBuffer replacement = this->context.runtime.resources.create_buffer(std::max(size + alignment - 1u, buffer.size * 2u), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
+            if (buffer.buffer != nullptr) this->context.runtime.frames.defer_destruction([previous = std::move(buffer)]() mutable {});
+            buffer  = std::move(replacement);
+            offset  = 0;
+            address = (buffer.address + alignment - 1u) & ~(alignment - 1u);
         }
-        if (offset) *offset = address - buffer->address + size;
+        offset = address - buffer.address + size;
         return address;
     }
 
@@ -762,7 +784,7 @@ namespace spectra {
             const std::uint32_t primitive_count                 = gpu_geometry.acceleration_primitive_count;
             vk::AccelerationStructureBuildGeometryInfoKHR build_info{vk::AccelerationStructureTypeKHR::eBottomLevel, vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace | vk::BuildAccelerationStructureFlagBitsKHR::eAllowDataAccess | vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate, vk::BuildAccelerationStructureModeKHR::eUpdate, *gpu_geometry.bottom_level_acceleration_structure.acceleration_structure, *gpu_geometry.bottom_level_acceleration_structure.acceleration_structure, 1, &geometry};
             const vk::AccelerationStructureBuildSizesInfoKHR sizes = this->context.runtime.graphics.device.getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, build_info, primitive_count);
-            build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize, false)};
+            build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize)};
             const vk::AccelerationStructureBuildRangeInfoKHR range{primitive_count, 0, 0, 0};
             const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
             command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
@@ -814,7 +836,6 @@ namespace spectra {
     }
 
     void GpuScene::synchronize_external_geometry(const scene::GeometryId geometry_id, const GpuBuffer* positions, const GpuBuffer* normals, const GpuBuffer* tangents, const GpuBuffer* texture_coordinates, const GpuBuffer* indices, const std::uint32_t vertex_count, const std::uint32_t index_count, const vk::raii::CommandBuffer& command_buffer) {
-        if (this->resources.external_geometries.empty()) this->resources.scratch_offsets[this->context.runtime.frames.frame.current_slot_index] = 0;
         GpuGeometry& mesh                           = *std::ranges::find(this->resources.geometries, geometry_id, &GpuGeometry::geometry_id);
         const std::uint32_t previous_attribute_mask = mesh.attribute_mask;
         if (mesh.update_mode == GpuMeshUpdateMode::Immutable) throw std::runtime_error("Dynamic Geometry requires a dynamic update mode");
@@ -913,7 +934,7 @@ namespace spectra {
             &geometry,
         };
         const vk::AccelerationStructureBuildSizesInfoKHR sizes = this->context.runtime.graphics.device.getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, build_info, mesh.acceleration_primitive_count);
-        build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize, false)};
+        build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize)};
         const vk::AccelerationStructureBuildRangeInfoKHR range{mesh.acceleration_primitive_count, 0, 0, 0};
         const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
         command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
@@ -958,7 +979,7 @@ namespace spectra {
             &geometry,
         };
         const vk::AccelerationStructureBuildSizesInfoKHR sizes = this->context.runtime.graphics.device.getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, build_info, spheres.sphere_capacity);
-        build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize, false)};
+        build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize)};
         const vk::AccelerationStructureBuildRangeInfoKHR range{spheres.sphere_count, 0, 0, 0};
         const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
         command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
@@ -1085,19 +1106,7 @@ namespace spectra {
         const vk::MemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader | (this->context.runtime.graphics.ray_tracing_supported ? vk::PipelineStageFlagBits2::eRayTracingShaderKHR : vk::PipelineStageFlags2{}), vk::AccessFlagBits2::eShaderStorageRead};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &dependency});
         if (!std::ranges::contains(this->resources.external_volumes, volume_id)) this->resources.external_volumes.push_back(volume_id);
-        if (volume.dirty_region) {
-            volume.dirty_region->minimum = {
-                std::min(volume.dirty_region->minimum.x, dirty_region.minimum.x),
-                std::min(volume.dirty_region->minimum.y, dirty_region.minimum.y),
-                std::min(volume.dirty_region->minimum.z, dirty_region.minimum.z),
-            };
-            volume.dirty_region->maximum = {
-                std::max(volume.dirty_region->maximum.x, dirty_region.maximum.x),
-                std::max(volume.dirty_region->maximum.y, dirty_region.maximum.y),
-                std::max(volume.dirty_region->maximum.z, dirty_region.maximum.z),
-            };
-        } else
-            volume.dirty_region = dirty_region;
+        volume.dirty_region = dirty_region;
         ++volume.revision.content;
         volume.cpu_data_stale = true;
     }
@@ -1143,7 +1152,8 @@ namespace spectra {
     void GpuScene::update_instance_bounds(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index) {
         const std::uint32_t instance_count = static_cast<std::uint32_t>(scene.resources.instances.size());
         if (instance_count == 0) {
-            this->resources.instance_bounds_readback_counts[frame_slot_index] = 0;
+            this->resources.instance_bounds_readback_counts[frame_slot_index]  = 0;
+            this->resources.instance_bounds_readback_pending[frame_slot_index] = true;
             return;
         }
         struct alignas(16) GpuSceneBoundsPushData {
@@ -1184,26 +1194,8 @@ namespace spectra {
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &output_dependency});
         GpuBuffer& readback = this->resources.instance_bounds_readbacks[frame_slot_index];
         command_buffer.copyBuffer(*this->resources.instance_bounds.buffer, *readback.buffer, vk::BufferCopy{0, 0, static_cast<vk::DeviceSize>(instance_count) * sizeof(GpuDerivedBounds)});
-        this->resources.instance_bounds_readback_counts[frame_slot_index] = instance_count;
-    }
-
-    void GpuScene::resolve_instance_bounds(const std::uint32_t frame_slot_index) {
-        const std::uint32_t instance_count = std::exchange(this->resources.instance_bounds_readback_counts[frame_slot_index], 0);
-        if (instance_count == 0) {
-            this->resources.resolved_instance_bounds.clear();
-            this->resources.resolved_scene_bounds = math::Bounds3::empty();
-            return;
-        }
-        const auto* source = static_cast<const GpuDerivedBounds*>(this->resources.instance_bounds_readbacks[frame_slot_index].mapped);
-        this->resources.resolved_instance_bounds.assign(instance_count, math::Bounds3::empty());
-        this->resources.resolved_scene_bounds = math::Bounds3::empty();
-        for (std::uint32_t index = 0; index != instance_count; ++index) {
-            if (source[index].minimum[0] == 0xffffffffu) continue;
-            math::Bounds3& bounds = this->resources.resolved_instance_bounds[index];
-            bounds.minimum        = {ordered_float(source[index].minimum[0]), ordered_float(source[index].minimum[1]), ordered_float(source[index].minimum[2])};
-            bounds.maximum        = {ordered_float(source[index].maximum[0]), ordered_float(source[index].maximum[1]), ordered_float(source[index].maximum[2])};
-            this->resources.resolved_scene_bounds.include(bounds);
-        }
+        this->resources.instance_bounds_readback_counts[frame_slot_index]  = instance_count;
+        this->resources.instance_bounds_readback_pending[frame_slot_index] = true;
     }
 
     void GpuScene::update_top_level_from_gpu(const std::uint32_t instance_count, const vk::raii::CommandBuffer& command_buffer) {
@@ -1212,7 +1204,7 @@ namespace spectra {
         const vk::AccelerationStructureGeometryKHR geometry{vk::GeometryTypeKHR::eInstances, vk::AccelerationStructureGeometryDataKHR{instance_data}};
         vk::AccelerationStructureBuildGeometryInfoKHR build_info{vk::AccelerationStructureTypeKHR::eTopLevel, vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace | vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate, vk::BuildAccelerationStructureModeKHR::eUpdate, *this->resources.top_level_acceleration_structure.acceleration_structure, *this->resources.top_level_acceleration_structure.acceleration_structure, 1, &geometry};
         const vk::AccelerationStructureBuildSizesInfoKHR sizes = this->context.runtime.graphics.device.getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, build_info, instance_count);
-        build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize, false)};
+        build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize)};
         const vk::AccelerationStructureBuildRangeInfoKHR range{instance_count, 0, 0, 0};
         const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
         const vk::BufferMemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR, vk::AccessFlagBits2::eAccelerationStructureReadKHR, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *this->resources.acceleration_structure_instances.buffer, 0, this->resources.acceleration_structure_instances.size};
@@ -1241,7 +1233,7 @@ namespace spectra {
             &geometry,
         };
         const vk::AccelerationStructureBuildSizesInfoKHR sizes = this->context.runtime.graphics.device.getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, build_info, primitive_count);
-        build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize, false)};
+        build_info.scratchData                                 = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.updateScratchSize)};
         const vk::AccelerationStructureBuildRangeInfoKHR range{primitive_count, 0, 0, 0};
         const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
         const vk::MemoryBarrier2 bottom_level_dependency{
@@ -1287,7 +1279,6 @@ namespace spectra {
             return;
         }
         this->cache_texture_images(scene, command_buffer);
-        if (this->resources.external_geometries.empty()) this->resources.scratch_offsets[this->context.runtime.frames.frame.current_slot_index] = 0;
         bool rebuilt_bottom_level = std::exchange(this->resources.external_bottom_level_rebuilt, false);
         if ((scene.revision.changes & scene::SceneChange::Geometry) != scene::SceneChange::None) {
             this->resources.instance_bounds_dirty = true;
@@ -1371,7 +1362,7 @@ namespace spectra {
             vk::AccelerationStructureCreateInfoKHR{{}, *result.storage.buffer, 0, sizes.accelerationStructureSize, vk::AccelerationStructureTypeKHR::eBottomLevel},
         };
         build_info.dstAccelerationStructure = *result.acceleration_structure;
-        build_info.scratchData              = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.buildScratchSize, false)};
+        build_info.scratchData              = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.buildScratchSize)};
         const vk::AccelerationStructureBuildRangeInfoKHR range{primitive_count, 0, 0, 0};
         const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
         command_buffer.buildAccelerationStructuresKHR(build_info, ranges);
@@ -1407,7 +1398,7 @@ namespace spectra {
             vk::AccelerationStructureCreateInfoKHR{{}, *result.storage.buffer, 0, sizes.accelerationStructureSize, vk::AccelerationStructureTypeKHR::eTopLevel},
         };
         build_info.dstAccelerationStructure = *result.acceleration_structure;
-        build_info.scratchData              = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.buildScratchSize, false)};
+        build_info.scratchData              = vk::DeviceOrHostAddressKHR{this->acquire_acceleration_scratch(sizes.buildScratchSize)};
         const vk::AccelerationStructureBuildRangeInfoKHR range{primitive_count, 0, 0, 0};
         const std::array<const vk::AccelerationStructureBuildRangeInfoKHR*, 1> ranges{&range};
         const vk::MemoryBarrier2 blas_build_dependency{

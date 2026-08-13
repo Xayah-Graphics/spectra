@@ -86,11 +86,6 @@ void update_raster_area_emission(uint3 group_thread_id : SV_GroupThreadID) {
         const float3 normal = normalize(float3(radial * cos(phi), radial * sin(phi), z));
         area = radius * push_data.geometry_parameters.w * (push_data.geometry_parameters.z - push_data.geometry_parameters.y) * area_scale(transform, normal) / float(raster_preview_area_threads);
     } else if (geometry_kind == geometry_disk) {
-        const uint radial_index = thread & 7;
-        const uint angular_index = thread >> 3;
-        const float radius_squared = lerp(push_data.geometry_parameters.z * push_data.geometry_parameters.z, push_data.geometry_parameters.y * push_data.geometry_parameters.y, (float(radial_index) + 0.5) / 8.0);
-        const float phi = push_data.geometry_parameters.w * (float(angular_index) + 0.5) / 8.0;
-        const float3 position = float3(sqrt(radius_squared) * cos(phi), sqrt(radius_squared) * sin(phi), push_data.geometry_parameters.x);
         area = 0.5 * push_data.geometry_parameters.w * (push_data.geometry_parameters.y * push_data.geometry_parameters.y - push_data.geometry_parameters.z * push_data.geometry_parameters.z) * area_scale(transform, float3(0.0, 0.0, 1.0)) / float(raster_preview_area_threads);
     } else {
         const uint height_index = thread & 7;

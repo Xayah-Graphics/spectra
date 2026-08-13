@@ -375,10 +375,6 @@ void surface_ray_generation() {
                 beta =
                     roulette.throughput;
                 path_flags[path_id] =
-                    (
-                        path_flags[path_id] &
-                        any_non_specular_bounce
-                    ) |
                     any_non_specular_bounce;
                 bindings
                     .light_context_normals[

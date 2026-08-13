@@ -109,7 +109,12 @@ namespace spectra {
             this->imgui.end_frame();
 
             if (this->document.content.loaded) {
-                if (this->dynamics.initialized()) this->dynamics.advance();
+                if (this->dynamics.initialized())
+                    try {
+                        this->dynamics.advance();
+                    } catch (const std::exception& error) {
+                        this->ui.notify(error.what(), true);
+                    }
                 this->imgui.resize_viewport(frame->presentation_target.extent);
                 const vk::Extent2D viewport_extent = this->display.image.extent;
                 if (this->prepare_rendering(frame->frame.command_buffer, viewport_extent)) {
@@ -227,12 +232,13 @@ namespace spectra {
     }
 
     void EditorApplication::begin_frame(const std::uint32_t frame_slot_index) {
+        this->gpu_scene.retire_frame(frame_slot_index);
         if (this->dynamics.initialized()) this->dynamics.resolve_telemetry(frame_slot_index);
         const ViewportPicker::PickResult pick = this->picker.take_pick_result(frame_slot_index);
         if (!pick.ready) return;
         std::optional<SceneEntityReference> entity{};
         if (pick.diagnostic_pick_index) entity = this->diagnostics.pick_entity(frame_slot_index, *pick.diagnostic_pick_index);
-        if (!entity && pick.acceleration_instance_index) entity = SceneEntityReference{SceneEntityKind::Instance, this->gpu_scene.view().acceleration_instance_ids[*pick.acceleration_instance_index].value};
+        if (!entity && pick.instance_id) entity = SceneEntityReference{SceneEntityKind::Instance, pick.instance_id->value};
         if (!pick.select) {
             this->viewport.view.selection.hovered = entity;
             return;

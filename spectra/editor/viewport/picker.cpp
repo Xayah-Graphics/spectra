@@ -87,9 +87,10 @@ namespace spectra {
         if (!slot.submitted_request) return {};
         const std::uint32_t* values = static_cast<const std::uint32_t*>(slot.result_buffer.mapped);
         const PickRequest request   = *std::exchange(slot.submitted_request, std::nullopt);
+        const std::uint32_t acceleration_instance_index = values[0];
         return {
             true,
-            values[0] == std::numeric_limits<std::uint32_t>::max() ? std::nullopt : std::optional{values[0]},
+            acceleration_instance_index == std::numeric_limits<std::uint32_t>::max() ? std::nullopt : std::optional{slot.acceleration_instance_ids[acceleration_instance_index]},
             values[4] == 0 ? std::nullopt : std::optional{values[4]},
             request.select,
             request.additive,
@@ -103,6 +104,7 @@ namespace spectra {
         std::ranges::fill(std::span{result, 8}, std::numeric_limits<std::uint32_t>::max());
         result[4]              = 0;
         slot.submitted_request = std::exchange(this->picking.pending_request, std::nullopt);
+        slot.acceleration_instance_ids.assign(this->context.gpu_scene.view().acceleration_instance_ids.begin(), this->context.gpu_scene.view().acceleration_instance_ids.end());
 
         struct alignas(16) PickPushData {
             vk::DeviceAddress acceleration_structure_address;

@@ -281,8 +281,8 @@ namespace spectra {
             &color_attachment,
             &depth_attachment,
         });
-        const std::array mask_stages{vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eFragment};
-        const std::array mask_handles{*this->overlay.mask_shaders[0], *this->overlay.mask_shaders[1]};
+        const std::array mask_stages{vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
+        const std::array mask_handles{*this->overlay.mask_shaders[0], vk::ShaderEXT{}, *this->overlay.mask_shaders[1]};
         command_buffer.bindShadersEXT(mask_stages, mask_handles);
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
         const scene::CameraMatrices matrices = camera.matrices();
@@ -406,13 +406,11 @@ namespace spectra {
             command_buffer.setDepthWriteEnable(vk::False);
             command_buffer.setDepthCompareOp(vk::CompareOp::eLess);
             const std::array axes_stages{
-                vk::ShaderStageFlagBits::eTaskEXT,
                 vk::ShaderStageFlagBits::eMeshEXT,
                 vk::ShaderStageFlagBits::eVertex,
                 vk::ShaderStageFlagBits::eFragment,
             };
             const std::array axes_handles{
-                vk::ShaderEXT{},
                 vk::ShaderEXT{},
                 *this->overlay.axes_shaders[0],
                 *this->overlay.axes_shaders[1],
@@ -438,13 +436,11 @@ namespace spectra {
             command_buffer.setPrimitiveTopology(vk::PrimitiveTopology::eTriangleList);
             command_buffer.setPrimitiveRestartEnable(vk::False);
             const std::array outline_stages{
-                vk::ShaderStageFlagBits::eTaskEXT,
                 vk::ShaderStageFlagBits::eMeshEXT,
                 vk::ShaderStageFlagBits::eVertex,
                 vk::ShaderStageFlagBits::eFragment,
             };
             const std::array outline_handles{
-                vk::ShaderEXT{},
                 vk::ShaderEXT{},
                 *this->overlay.outline_shaders[0],
                 *this->overlay.outline_shaders[1],

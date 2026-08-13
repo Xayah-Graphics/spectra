@@ -46,7 +46,7 @@ int main(int argument_count, char** raw_arguments) {
         std::optional<std::string> composition{};
         bool axes{};
         std::optional<std::string> axes_plane_text{};
-        std::uint64_t outlined_instance{std::numeric_limits<std::uint64_t>::max()};
+        std::optional<std::string> outlined_instance_text{};
         std::optional<std::string> simulation_step_text{};
         std::optional<std::string> simulation_seconds_text{};
         std::filesystem::path output_base{};
@@ -58,8 +58,8 @@ int main(int argument_count, char** raw_arguments) {
 
         xayah::util::Command command{"Spectra scene visualization and physically based rendering."};
         command | xayah::util::positional({.name = "scene", .description = "Scene file to open or render.", .required = false}, scene_path) | xayah::util::option({.long_name = "renderer", .value_name = "RENDERER", .description = "Select rasterizer or pathtracer.", .show_default = false}, renderer) | xayah::util::option({.long_name = "raster-mode", .value_name = "MODE", .description = "Select material or wireframe Raster display.", .show_default = false}, raster_display_mode) | xayah::util::option({.long_name = "output-layer", .value_name = "LAYER", .description = "Select renderer-linear, renderer-display, or composed-display."}, output_layer) | xayah::util::option({.long_name = "composition", .value_name = "CONTENT", .description = "Select all, diagnostics, visualizations, overlays, or none for composed output."}, composition) | xayah::util::option({.long_name = "axes", .description = "Include the world axes overlay in composed output."}, axes)
-            | xayah::util::option({.long_name = "axes-plane", .value_name = "PLANE", .description = "Select the axes grid plane."}, axes_plane_text) | xayah::util::option({.long_name = "outline-instance", .value_name = "ID", .description = "Outline one Scene Instance ID in composed output.", .show_default = false}, outlined_instance) | xayah::util::option({.long_name = "simulation-step", .value_name = "STEP", .description = "Evaluate a dynamic scene at an exact simulation step.", .show_default = false}, simulation_step_text) | xayah::util::option({.long_name = "simulation-time", .value_name = "SECONDS", .description = "Evaluate a dynamic scene at an exact simulation time.", .show_default = false}, simulation_seconds_text)
-            | xayah::util::option({.long_name = "output", .value_name = "BASE", .description = "Override the default renders/<scene>/<renderer> basename.", .show_default = false}, output_base) | xayah::util::option({.long_name = "gbuffer-output", .value_name = "IMAGE", .description = "Optional GBuffer EXR output.", .show_default = false}, gbuffer_output_path) | xayah::util::option({.long_name = "telemetry-output", .value_name = "CSV", .description = "Optional current Telemetry CSV output.", .show_default = false}, telemetry_output_path);
+            | xayah::util::option({.long_name = "axes-plane", .value_name = "PLANE", .description = "Select the axes grid plane."}, axes_plane_text) | xayah::util::option({.long_name = "outline-instance", .value_name = "ID", .description = "Outline one Scene Instance ID in composed output.", .show_default = false}, outlined_instance_text) | xayah::util::option({.long_name = "simulation-step", .value_name = "STEP", .description = "Evaluate a dynamic scene at an exact simulation step.", .show_default = false}, simulation_step_text) | xayah::util::option({.long_name = "simulation-time", .value_name = "SECONDS", .description = "Evaluate the fixed simulation step at or immediately before this time.", .show_default = false}, simulation_seconds_text) | xayah::util::option({.long_name = "output", .value_name = "BASE", .description = "Override the default renders/<scene>/<renderer> basename.", .show_default = false}, output_base)
+            | xayah::util::option({.long_name = "gbuffer-output", .value_name = "IMAGE", .description = "Optional GBuffer EXR output.", .show_default = false}, gbuffer_output_path) | xayah::util::option({.long_name = "telemetry-output", .value_name = "CSV", .description = "Optional current Telemetry CSV output.", .show_default = false}, telemetry_output_path);
 #if defined(SPECTRA_HAS_EDITOR)
         command | xayah::util::option({.long_name = "gui", .description = "Open the visualization UI."}, gui);
 #endif
@@ -71,9 +71,10 @@ int main(int argument_count, char** raw_arguments) {
             return 0;
         }
 
-        const std::optional<std::uint64_t> simulation_step    = numeric_option<std::uint64_t>(simulation_step_text, "simulation step");
-        const std::optional<double> simulation_seconds        = numeric_option<double>(simulation_seconds_text, "simulation time");
-        const std::optional<std::uint32_t> axes_plane         = numeric_option<std::uint32_t>(axes_plane_text, "axes plane");
+        const std::optional<std::uint64_t> simulation_step   = numeric_option<std::uint64_t>(simulation_step_text, "simulation step");
+        const std::optional<double> simulation_seconds       = numeric_option<double>(simulation_seconds_text, "simulation time");
+        const std::optional<std::uint32_t> axes_plane        = numeric_option<std::uint32_t>(axes_plane_text, "axes plane");
+        const std::optional<std::uint64_t> outlined_instance = numeric_option<std::uint64_t>(outlined_instance_text, "outlined instance");
 
         const std::filesystem::path application_directory = executable_directory();
         const std::filesystem::path resource_directory    = (application_directory / SPECTRA_RESOURCE_DIRECTORY).lexically_normal();
@@ -82,7 +83,7 @@ int main(int argument_count, char** raw_arguments) {
 
 #if defined(SPECTRA_HAS_EDITOR)
         if (gui) {
-            if (output_layer || composition || axes || axes_plane || outlined_instance != std::numeric_limits<std::uint64_t>::max() || simulation_step || simulation_seconds || !output_base.empty() || gbuffer_output_path || telemetry_output_path) throw std::runtime_error("Headless-only options cannot be used with --gui");
+            if (output_layer || composition || axes || axes_plane || outlined_instance || simulation_step || simulation_seconds || !output_base.empty() || gbuffer_output_path || telemetry_output_path) throw std::runtime_error("Headless-only options cannot be used with --gui");
             const std::optional<std::filesystem::path> initial_scene = scene_path.empty() ? std::nullopt : std::optional{scene_path};
             spectra::run_editor({.scene_path = initial_scene, .renderer = std::move(renderer), .raster_display_mode = raster_display_mode.value_or("material")}, shader_directory, pathtracer_directory);
             return 0;
@@ -97,8 +98,6 @@ int main(int argument_count, char** raw_arguments) {
             const std::string output_name = selected_renderer == "rasterizer" && selected_raster_display_mode != "material" ? std::format("{}-{}", selected_renderer, selected_raster_display_mode) : selected_renderer;
             output_base                   = std::filesystem::current_path() / "renders" / scene_path.stem() / output_name;
         }
-        if (!output_base.parent_path().empty()) std::filesystem::create_directories(output_base.parent_path());
-        if (gbuffer_output_path && !gbuffer_output_path->parent_path().empty()) std::filesystem::create_directories(gbuffer_output_path->parent_path());
         std::filesystem::path png_output_path = output_base;
         png_output_path += ".png";
         std::filesystem::path linear_output_path = output_base;
@@ -114,7 +113,7 @@ int main(int argument_count, char** raw_arguments) {
                 .composition           = composition.value_or("all"),
                 .gbuffer_output_path   = gbuffer_output_path,
                 .telemetry_output_path = telemetry_output_path,
-                .outlined_instance     = outlined_instance == std::numeric_limits<std::uint64_t>::max() ? std::nullopt : std::optional{outlined_instance},
+                .outlined_instance     = outlined_instance,
                 .simulation_step       = simulation_step,
                 .simulation_seconds    = simulation_seconds,
                 .axes_plane            = axes_plane.value_or(2u),

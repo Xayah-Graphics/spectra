@@ -16,7 +16,7 @@ static const float3 raster_wire_light_color = float3(0.55, 0.65, 0.72);
 uniform RasterPushData push_data;
 
 RasterFragmentOutput raster_wireframe_output(float fragment_depth, float alpha) {
-    return {float4(raster_wire_light_color, alpha), fragment_depth};
+    return {float4(raster_from_linear_srgb(raster_wire_light_color, push_data.attributes.w), alpha), fragment_depth};
 }
 
 float raster_float_parameter(float value, uint texture, RasterSceneBindings bindings, RasterTextureContext context) {
@@ -91,7 +91,10 @@ float microfacet_scale(float3 outgoing, float3 incoming, float3 half_vector, flo
 
 void raster_preview_frame(RasterMaterial material, RasterSceneBindings bindings, RasterTextureContext context, float3 world_tangent, float3 outgoing, out float3 normal, out float3 tangent, out float3 bitangent) {
     normal = context.normal;
-    tangent = normalize(world_tangent - dot(world_tangent, normal) * normal);
+    const float3 base_tangent_candidate = world_tangent - dot(world_tangent, normal) * normal;
+    tangent = dot(base_tangent_candidate, base_tangent_candidate) > 1.0e-12
+        ? normalize(base_tangent_candidate)
+        : normalize(abs(normal.x) > abs(normal.z) ? float3(-normal.y, normal.x, 0.0) : float3(0.0, -normal.z, normal.y));
     bitangent = normalize(cross(normal, tangent));
     if (material.metadata.y != 0xffffffff) {
         const float3 tangent_normal = normalize(2.0 * evaluate_raster_normal_map(bindings, material.metadata.y, context) - 1.0);
@@ -112,7 +115,10 @@ void raster_preview_frame(RasterMaterial material, RasterSceneBindings bindings,
         const float displacement_v = evaluate_raster_texture(bindings, material.metadata.z, v_context).x;
         normal = normalize(normal - tangent * (displacement_u - displacement) / du - bitangent * (displacement_v - displacement) / dv);
     }
-    tangent = normalize(tangent - dot(tangent, normal) * normal);
+    const float3 tangent_candidate = tangent - dot(tangent, normal) * normal;
+    tangent = dot(tangent_candidate, tangent_candidate) > 1.0e-12
+        ? normalize(tangent_candidate)
+        : normalize(abs(normal.x) > abs(normal.z) ? float3(-normal.y, normal.x, 0.0) : float3(0.0, -normal.z, normal.y));
     bitangent = normalize(cross(normal, tangent));
     if (dot(normal, outgoing) < 0.0) {
         normal = -normal;
@@ -199,7 +205,9 @@ RasterFragmentOutput raster_fragment(RasterVertex input) {
         const float half_b = dot(offset, object_ray_direction);
         const float discriminant = half_b * half_b - direction_length_squared * (dot(offset, offset) - input.sphere_radius * input.sphere_radius);
         if (discriminant < 0.0) discard;
-        const float distance = (-half_b - sqrt(discriminant)) / direction_length_squared;
+        const float root = sqrt(discriminant);
+        float distance = (-half_b - root) / direction_length_squared;
+        if (distance <= 0.0) distance = (-half_b + root) / direction_length_squared;
         if (distance <= 0.0) discard;
         input.world_position = ray_origin + distance * ray_direction;
         const float3 object_normal = normalize(raster_inverse_transform_position(sphere_transform, input.world_position) - input.sphere_center);
@@ -236,7 +244,7 @@ RasterFragmentOutput raster_fragment(RasterVertex input) {
     StructuredBuffer<RasterMaterialTerm> material_terms = bindings.material_terms;
     StructuredBuffer<RasterMaterialFactor> material_factors = bindings.material_factors;
     const RasterMaterialRange material_range = material_ranges[input.material];
-    if (material_range.range.y == 0) {
+    if (material_range.range.y == 0 && input.area_light == 0xffffffff) {
         if (wire_coverage <= 0.0) discard;
         return raster_wireframe_output(fragment_depth, 1.0);
     }
@@ -262,8 +270,11 @@ RasterFragmentOutput raster_fragment(RasterVertex input) {
             weight *= amount;
         }
         const RasterMaterial material = materials[term.data.x];
-        if (material.metadata.x != raster_material_interface) color += weight * raster_preview_leaf(material, bindings, texture_context, input.world_tangent, outgoing);
+        if (material.metadata.x == raster_material_interface) continue;
+        color += weight * raster_preview_leaf(material, bindings, texture_context, input.world_tangent, outgoing);
     }
-
-    return {float4(max(color, float3(0.0)), 1.0), fragment_depth};
+    color = max(color, float3(0.0));
+    const float maximum_component = max(color.x, max(color.y, color.z));
+    if (push_data.film.y != 0.0 && maximum_component > push_data.film.x) color *= push_data.film.x / maximum_component;
+    return {float4(raster_from_linear_srgb(color, push_data.attributes.w), 1.0), fragment_depth};
 }

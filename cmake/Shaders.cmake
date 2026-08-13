@@ -16,6 +16,33 @@ set(SPECTRA_SHADER_PATH_TRACER_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core
 set(SPECTRA_SHADER_EDITOR_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/entries_editor.txt")
 set(SPECTRA_SHADER_ENTRY_FILES "${SPECTRA_SHADER_RUNTIME_ENTRIES}" "${SPECTRA_SHADER_PATH_TRACER_ENTRIES}")
 
+function(spectra_collect_shader_spv_outputs entry_file output_variable)
+    file(STRINGS "${entry_file}" shader_entries)
+    set(shader_outputs)
+    foreach (shader_entry IN LISTS shader_entries)
+        string(STRIP "${shader_entry}" shader_entry)
+        if (shader_entry STREQUAL "" OR shader_entry MATCHES "^#")
+            continue()
+        endif ()
+        separate_arguments(shader_entry_fields UNIX_COMMAND "${shader_entry}")
+        list(GET shader_entry_fields 0 shader_output_name)
+        list(GET shader_entry_fields 4 shader_category)
+        if (shader_category MATCHES "^path-")
+            list(APPEND shader_outputs "${SPECTRA_PATH_TRACER_SHADER_OUTPUT_DIR}/${shader_output_name}.spv")
+        elseif (shader_category STREQUAL "runtime" OR shader_category STREQUAL "editor")
+            list(APPEND shader_outputs "${SPECTRA_RUNTIME_SHADER_OUTPUT_DIR}/${shader_output_name}.spv")
+        else ()
+            message(FATAL_ERROR "Unknown shader category '${shader_category}' in ${entry_file}")
+        endif ()
+    endforeach ()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${entry_file}")
+    set(${output_variable} ${shader_outputs} PARENT_SCOPE)
+endfunction()
+
+spectra_collect_shader_spv_outputs("${SPECTRA_SHADER_RUNTIME_ENTRIES}" SPECTRA_RUNTIME_SHADER_SPV_OUTPUTS)
+spectra_collect_shader_spv_outputs("${SPECTRA_SHADER_PATH_TRACER_ENTRIES}" SPECTRA_PATH_TRACER_SHADER_SPV_OUTPUTS)
+set(SPECTRA_SHADER_SPV_OUTPUTS ${SPECTRA_RUNTIME_SHADER_SPV_OUTPUTS} ${SPECTRA_PATH_TRACER_SHADER_SPV_OUTPUTS})
+
 file(
         GLOB
         SPECTRA_SHADER_SOURCES
@@ -34,6 +61,8 @@ if (SPECTRA_BUILD_UI)
     list(APPEND SPECTRA_SHADER_ENTRY_FILES "${SPECTRA_SHADER_EDITOR_ENTRIES}")
     list(APPEND SPECTRA_SHADER_SOURCES ${SPECTRA_EDITOR_SHADER_SOURCES})
     list(PREPEND SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders")
+    spectra_collect_shader_spv_outputs("${SPECTRA_SHADER_EDITOR_ENTRIES}" SPECTRA_EDITOR_SHADER_SPV_OUTPUTS)
+    list(APPEND SPECTRA_SHADER_SPV_OUTPUTS ${SPECTRA_EDITOR_SHADER_SPV_OUTPUTS})
 endif ()
 
 add_custom_command(
@@ -43,6 +72,7 @@ add_custom_command(
         "${SPECTRA_RASTER_ABI_MODULE}"
         "${SPECTRA_PLUGIN_ABI_MODULE}"
         "${SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE}"
+        ${SPECTRA_SHADER_SPV_OUTPUTS}
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_SHADER_OUTPUT_DIR}"
         COMMAND
         "${CMAKE_COMMAND}" -E env --modify "PATH=path_list_prepend:$<TARGET_FILE_DIR:spectra::slang>"

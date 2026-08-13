@@ -196,32 +196,15 @@ namespace spectra::scene {
         const std::array<float, 16>& matrix = this->transform.matrix;
         return {
             {matrix[3], matrix[7], matrix[11]},
-            {matrix[0], matrix[4], matrix[8]},
-            {matrix[1], matrix[5], matrix[9]},
-            {-matrix[2], -matrix[6], -matrix[10]},
+            math::Float3{matrix[0], matrix[4], matrix[8]}.normalized(),
+            math::Float3{matrix[1], matrix[5], matrix[9]}.normalized(),
+            math::Float3{-matrix[2], -matrix[6], -matrix[10]}.normalized(),
         };
     }
 
-    CameraMatrices Camera::matrices() const noexcept {
-        const std::array<float, 16>& transform = this->transform.matrix;
-        const std::array<float, 16> view{
-            transform[0],
-            transform[4],
-            transform[8],
-            -(transform[0] * transform[3] + transform[4] * transform[7] + transform[8] * transform[11]),
-            transform[1],
-            transform[5],
-            transform[9],
-            -(transform[1] * transform[3] + transform[5] * transform[7] + transform[9] * transform[11]),
-            transform[2],
-            transform[6],
-            transform[10],
-            -(transform[2] * transform[3] + transform[6] * transform[7] + transform[10] * transform[11]),
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-        };
+    CameraMatrices Camera::matrices() const {
+        const math::Transform view_transform = this->transform.inverse();
+        const std::array<float, 16>& view    = view_transform.matrix;
         std::array<float, 16> projection{};
         std::array<float, 16> inverse_projection{};
         if (const PerspectiveCameraData* perspective = std::get_if<PerspectiveCameraData>(&this->data)) {
@@ -305,7 +288,6 @@ namespace spectra::scene {
                 1.0f,
             };
         }
-        const math::Transform view_transform{view};
         const math::Transform projection_transform{projection};
         const math::Transform inverse_projection_transform{inverse_projection};
         return {

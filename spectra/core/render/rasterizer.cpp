@@ -1,5 +1,6 @@
 module;
 
+#include <cstddef>
 #include "shaders/shader_semantics.h"
 
 module spectra.render.rasterizer;
@@ -15,6 +16,12 @@ namespace spectra {
         [[nodiscard]] math::Float3 raster_linear_srgb(const math::Float3 value, const scene::SpectrumColorSpace color_space) noexcept {
             if (color_space == scene::SpectrumColorSpace::Rec2020) return {1.660491f * value.x - 0.587641f * value.y - 0.072850f * value.z, -0.124550f * value.x + 1.132900f * value.y - 0.008349f * value.z, -0.018151f * value.x - 0.100579f * value.y + 1.118730f * value.z};
             if (color_space == scene::SpectrumColorSpace::Aces2065_1) return {2.521686f * value.x - 1.134130f * value.y - 0.387556f * value.z, -0.276479f * value.x + 1.372719f * value.y - 0.096240f * value.z, -0.015378f * value.x - 0.152975f * value.y + 1.168353f * value.z};
+            return value;
+        }
+
+        [[nodiscard]] math::Float3 raster_output_rgb(const math::Float3 value, const scene::SpectrumColorSpace color_space) noexcept {
+            if (color_space == scene::SpectrumColorSpace::Rec2020) return {0.627404f * value.x + 0.329283f * value.y + 0.043313f * value.z, 0.069097f * value.x + 0.919540f * value.y + 0.011362f * value.z, 0.016391f * value.x + 0.088013f * value.y + 0.895595f * value.z};
+            if (color_space == scene::SpectrumColorSpace::Aces2065_1) return {0.439701f * value.x + 0.382978f * value.y + 0.177335f * value.z, 0.089792f * value.x + 0.813423f * value.y + 0.096762f * value.z, 0.017544f * value.x + 0.111544f * value.y + 0.870704f * value.z};
             return value;
         }
 
@@ -174,6 +181,7 @@ namespace spectra {
             }
             const std::uint32_t root_count = static_cast<std::uint32_t>(result.headers.size());
             std::vector<RasterTextureHeader> program{};
+            std::uint32_t approximation_index{invalid_raster_index};
             for (std::uint32_t texture = 0; texture != root_count; ++texture) {
                 const std::size_t program_begin = program.size();
                 std::vector<std::uint32_t> registers(texture_count, invalid_raster_index);
@@ -202,7 +210,17 @@ namespace spectra {
                 root.program[0]           = root_count + static_cast<std::uint32_t>(program_begin);
                 emit(order[texture]);
                 root.program[1] = root_count + static_cast<std::uint32_t>(program.size()) - root.program[0];
-                if (root.program[1] > 32) throw std::runtime_error(std::format("Raster Texture '{}' requires {} registers; the real-time Texture program limit is 32", scene.resources.textures[order[texture]].name, root.program[1]));
+                if (root.program[1] > 32) {
+                    program.resize(program_begin);
+                    if (approximation_index == invalid_raster_index) {
+                        approximation_index = static_cast<std::uint32_t>(result.constants.size());
+                        result.constants.push_back(RasterConstantTexture{{0.5f, 0.5f, 0.5f, 0.5f}});
+                    }
+                    RasterTextureHeader approximation{};
+                    approximation.metadata = {shader_semantics::texture_constant, approximation_index, static_cast<std::uint32_t>(scene.resources.textures[order[texture]].value_kind), static_cast<std::uint32_t>(scene.resources.textures[order[texture]].spectrum_type)};
+                    program.push_back(approximation);
+                    root.program[1] = 1;
+                }
             }
             result.headers.insert(result.headers.end(), program.begin(), program.end());
             if (result.headers.empty()) result.headers.emplace_back();
@@ -253,7 +271,10 @@ namespace spectra {
                                           data.normal_map;
                                           data.bump_map;
                                       }) {
-                            compiled.metadata[1] = texture_handle(data.normal_map);
+                            if (data.normal_map.value != 0) {
+                                const scene::Texture& texture = *std::ranges::find(scene.resources.textures, data.normal_map, &scene::Texture::id);
+                                if (std::holds_alternative<scene::ImageTexture>(texture.data)) compiled.metadata[1] = texture_handle(data.normal_map);
+                            }
                             compiled.metadata[2] = texture_handle(data.bump_map);
                         }
                         if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::InterfaceMaterialData>)
@@ -396,16 +417,20 @@ namespace spectra {
             return destination;
         }
 
-
-        [[nodiscard]] float raster_emission_texture_luminance(const scene::SceneView scene, const scene::TextureId id) {
-            if (id.value == 0) return 1.0f;
-            const scene::Texture& texture    = *std::ranges::find(scene.resources.textures, id, &scene::Texture::id);
-            const scene::ImageTexture& image = std::get<scene::ImageTexture>(texture.data);
-            if (image.invert) throw std::runtime_error(std::format("Light Texture {} cannot use inversion", texture.name));
-            math::Float3 luminance{};
-            for (std::size_t index = 0; index != static_cast<std::size_t>(image.width) * image.height; ++index) luminance = luminance + raster_linear_srgb({image.texels[index].x, image.texels[index].y, image.texels[index].z}, texture.color_space == scene::TextureColorSpace::Rec2020 ? scene::SpectrumColorSpace::Rec2020 : texture.color_space == scene::TextureColorSpace::Aces2065_1 ? scene::SpectrumColorSpace::Aces2065_1 : scene::SpectrumColorSpace::Srgb);
-            luminance = luminance / static_cast<float>(image.width * image.height) * image.scale;
-            return 0.2126f * luminance.x + 0.7152f * luminance.y + 0.0722f * luminance.z;
+        [[nodiscard]] math::Float3 raster_emission_texture_average(const scene::SceneView scene, const scene::TextureId id) {
+            if (id.value == 0) return {1.0f, 1.0f, 1.0f};
+            const scene::Texture& texture     = *std::ranges::find(scene.resources.textures, id, &scene::Texture::id);
+            const scene::ImageTexture* image = std::get_if<scene::ImageTexture>(&texture.data);
+            if (!image) return {1.0f, 1.0f, 1.0f};
+            const std::size_t pixel_count = static_cast<std::size_t>(image->width) * image->height;
+            const scene::SpectrumColorSpace color_space = texture.color_space == scene::TextureColorSpace::Rec2020 ? scene::SpectrumColorSpace::Rec2020 : texture.color_space == scene::TextureColorSpace::Aces2065_1 ? scene::SpectrumColorSpace::Aces2065_1 : scene::SpectrumColorSpace::Srgb;
+            math::Float3 average{};
+            for (std::size_t index = 0; index != pixel_count; ++index) {
+                math::Float3 value{image->texels[index].x * image->scale, image->texels[index].y * image->scale, image->texels[index].z * image->scale};
+                if (image->invert) value = {std::max(0.0f, 1.0f - value.x), std::max(0.0f, 1.0f - value.y), std::max(0.0f, 1.0f - value.z)};
+                average = average + raster_linear_srgb(value, color_space);
+            }
+            return average / static_cast<float>(pixel_count);
         }
 
         void compile_raster_emitters(const GpuSceneView gpu_scene, const scene::SceneView scene, const RasterTextureCompilation& textures, std::vector<RasterAreaLight>& surface_lights, std::vector<RasterAreaEmitterRange>& area_emitters) {
@@ -419,7 +444,8 @@ namespace spectra {
                 if (primitive.area_light.value == 0) continue;
                 const scene::DiffuseAreaLight& source = std::get<scene::DiffuseAreaLight>(std::ranges::find(scene.resources.lights, primitive.area_light, &scene::Light::id)->data);
                 const math::Float3 radiance           = raster_spectrum_rgb(source.radiance);
-                const float texture_luminance         = raster_emission_texture_luminance(scene, source.emission_texture);
+                const math::Float3 texture_average    = raster_emission_texture_average(scene, source.emission_texture);
+                const float texture_luminance         = 0.2126f * texture_average.x + 0.7152f * texture_average.y + 0.0722f * texture_average.z;
                 const std::uint32_t flags             = (source.sidedness == scene::EmissionSidedness::Both ? 1u : 0u) | (primitive.reverse_orientation ? 2u : 0u);
                 surface_lights.back()                 = RasterAreaLight{{radiance.x * source.scale, radiance.y * source.scale, radiance.z * source.scale, 0.0f}, {texture_handle(source.emission_texture), flags, 0, 0}};
                 std::uint32_t range_kind{shader_semantics::area_source_triangle};
@@ -491,8 +517,8 @@ namespace spectra {
             this->renderer.output_layout,
             this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::PipelineStageFlagBits2::eComputeShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             this->renderer.output_layout == vk::ImageLayout::eGeneral ? vk::AccessFlagBits2::eShaderStorageWrite : vk::AccessFlagBits2::eColorAttachmentWrite,
-            scene::SpectrumColorSpace::Srgb,
-            this->renderer.film_exposure,
+            this->renderer.film_color_space,
+            this->renderer.film_exposure + std::log2(this->renderer.camera.exposure_time * this->renderer.film_iso / 100.0f),
         };
     }
 
@@ -505,21 +531,14 @@ namespace spectra {
     }
 
     void Rasterizer::initialize_scene(const scene::SceneView scene) {
-        if (scene.camera.medium.value != 0) throw std::runtime_error("Rasterizer does not support camera media; use Path Tracer");
-        for (const scene::Instance& instance : scene.resources.instances) {
-            if (!instance.visible) continue;
-            const scene::Prototype& prototype = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
-            for (const scene::Primitive& primitive : prototype.primitives)
-                for (const scene::MediumId medium_id : {primitive.media.inside, primitive.media.outside}) {
-                    if (medium_id.value == 0) continue;
-                    const scene::Medium& medium = *std::ranges::find(scene.resources.media, medium_id, &scene::Medium::id);
-                    if (std::holds_alternative<scene::HomogeneousMedium>(medium.data)) throw std::runtime_error("Rasterizer does not support homogeneous boundary media; use Path Tracer");
-                }
-        }
+        this->context.runtime.frames.retire_frame();
         this->scene.zero_volume_field_descriptor            = this->context.runtime.frames.allocate_resource_descriptor();
         this->scene.uploaded_revision                       = scene.revision;
         this->renderer.camera                               = scene.camera;
         this->renderer.film_exposure                        = scene.film.exposure;
+        this->renderer.film_iso                             = scene.film.iso;
+        this->renderer.film_color_space                     = scene.film.color_space;
+        this->renderer.film_maximum_component_value         = scene.film.maximum_component_value;
         this->renderer.film_resolution                      = scene.film.resolution;
         this->renderer.film_pixel_minimum                   = scene.film.pixel_minimum;
         this->renderer.film_pixel_maximum                   = scene.film.pixel_maximum;
@@ -542,6 +561,59 @@ namespace spectra {
         compile_raster_emitters(this->context.gpu_scene.view(), scene, textures, area_lights, area_emitters);
         if (area_lights.empty()) area_lights.emplace_back();
 
+        std::vector<RasterLight> lights{};
+        math::Float3 environment_radiance{};
+        for (const scene::Light& source : scene.resources.lights)
+            std::visit(
+                [&lights, &environment_radiance, &scene](const auto& light) {
+                    if constexpr (std::same_as<std::remove_cvref_t<decltype(light)>, scene::DiffuseAreaLight>)
+                        return;
+                    else if constexpr (std::same_as<std::remove_cvref_t<decltype(light)>, scene::PointLight>) {
+                        const math::Float3 radiance = raster_spectrum_rgb(light.intensity) * light.scale;
+                        const math::Float3 position = light.transform.transform_point({});
+                        RasterLight record{};
+                        record.metadata[0]          = shader_semantics::light_point;
+                        record.radiance             = {radiance.x, radiance.y, radiance.z, 0.0f};
+                        record.position             = {position.x, position.y, position.z, 0.0f};
+                        lights.push_back(record);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(light)>, scene::SpotLight>) {
+                        const math::Float3 radiance  = raster_spectrum_rgb(light.intensity) * light.scale;
+                        const math::Float3 position  = light.transform.transform_point({});
+                        const math::Float3 direction = light.transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
+                        RasterLight record{};
+                        record.metadata[0]           = shader_semantics::light_spot;
+                        record.radiance              = {radiance.x, radiance.y, radiance.z, 0.0f};
+                        record.position              = {position.x, position.y, position.z, 0.0f};
+                        record.direction             = {direction.x, direction.y, direction.z, std::cos((light.cone_angle - light.cone_delta) * std::numbers::pi_v<float> / 180.0f)};
+                        record.parameters[0]         = std::cos(light.cone_angle * std::numbers::pi_v<float> / 180.0f);
+                        lights.push_back(record);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(light)>, scene::DistantLight>) {
+                        const math::Float3 radiance  = raster_spectrum_rgb(light.radiance) * light.scale;
+                        const math::Float3 direction = light.transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
+                        RasterLight record{};
+                        record.metadata[0]           = shader_semantics::light_distant;
+                        record.radiance              = {radiance.x, radiance.y, radiance.z, 0.0f};
+                        record.direction             = {direction.x, direction.y, direction.z, 0.0f};
+                        lights.push_back(record);
+                    } else {
+                        const scene::InfiniteLight& environment = [&light]() -> const scene::InfiniteLight& {
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(light)>, scene::InfiniteLight>) return light;
+                            else return light.environment;
+                        }();
+                        math::Float3 radiance              = raster_spectrum_rgb(environment.radiance) * environment.scale;
+                        const math::Float3 texture_average = raster_emission_texture_average(scene, environment.emission_texture);
+                        radiance                           = {radiance.x * texture_average.x, radiance.y * texture_average.y, radiance.z * texture_average.z};
+                        RasterLight record{};
+                        record.metadata[0]         = shader_semantics::light_infinite;
+                        record.radiance            = {radiance.x, radiance.y, radiance.z, 0.0f};
+                        lights.push_back(record);
+                        environment_radiance = environment_radiance + radiance;
+                    }
+                },
+                source.data);
+        const std::uint32_t light_count = static_cast<std::uint32_t>(lights.size());
+        if (lights.empty()) lights.emplace_back();
+
         std::vector<RasterPrimitive> primitives{};
         std::vector<std::uint32_t> face_materials{};
         primitives.reserve(this->context.gpu_scene.view().primitives.size());
@@ -557,16 +629,12 @@ namespace spectra {
             }
             const std::vector<scene::Material>::const_iterator material = std::ranges::find(scene.resources.materials, primitive.material, &scene::Material::id);
             std::uint32_t area_light                                    = std::numeric_limits<std::uint32_t>::max();
-            if (primitive.area_light.value != 0) {
-                area_light = static_cast<std::uint32_t>(primitives.size());
-            }
+            if (primitive.area_light.value != 0) area_light = static_cast<std::uint32_t>(primitives.size());
             const std::uint32_t transform_index = static_cast<std::uint32_t>(primitives.size());
             const std::uint32_t alpha_texture   = primitive.alpha.value == 0 ? invalid_raster_index : textures.handles[raster_texture_source_index(scene, primitive.alpha)];
             primitives.push_back(RasterPrimitive{transform_index, static_cast<std::uint32_t>(material - scene.resources.materials.begin()), area_light, primitive.reverse_orientation ? 1u : 0u, face_material_offset, static_cast<std::uint32_t>(sphere_draw ? 0 : primitive.face_materials.size()), alpha_texture, 0});
         }
-        if (primitives.empty()) {
-            primitives.emplace_back();
-        }
+        if (primitives.empty()) primitives.emplace_back();
         if (face_materials.empty()) face_materials.emplace_back();
 
         GpuBuffer new_primitives         = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const RasterPrimitive>{primitives}, vk::BufferUsageFlagBits::eStorageBuffer);
@@ -576,6 +644,7 @@ namespace spectra {
         GpuBuffer new_material_factors   = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const RasterMaterialFactor>{materials.factors}, vk::BufferUsageFlagBits::eStorageBuffer);
         GpuBuffer new_face_materials     = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const std::uint32_t>{face_materials}, vk::BufferUsageFlagBits::eStorageBuffer);
         GpuBuffer new_area_lights        = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const RasterAreaLight>{area_lights}, vk::BufferUsageFlagBits::eStorageBuffer);
+        GpuBuffer new_lights             = upload_raster_buffer(this->context.runtime, command_buffer, std::span<const RasterLight>{lights}, vk::BufferUsageFlagBits::eStorageBuffer);
         const auto upload_texture_buffer = [this, &command_buffer]<typename Element>(const std::span<const Element> elements) { return upload_raster_buffer(this->context.runtime, command_buffer, elements, vk::BufferUsageFlagBits::eStorageBuffer); };
         std::vector<RasterVolume> raster_volumes{};
         raster_volumes.reserve(scene.resources.volumes.size());
@@ -656,6 +725,7 @@ namespace spectra {
         DescriptorLease material_factor_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         DescriptorLease face_material_descriptor   = this->context.runtime.frames.allocate_resource_descriptor();
         DescriptorLease area_light_descriptor      = this->context.runtime.frames.allocate_resource_descriptor();
+        DescriptorLease light_descriptor           = this->context.runtime.frames.allocate_resource_descriptor();
         DescriptorLease volumes_descriptor         = this->context.runtime.frames.allocate_resource_descriptor();
         this->context.runtime.resources.write_buffer_descriptor(primitives_descriptor, vk::DescriptorType::eStorageBuffer, new_primitives);
         this->context.runtime.resources.write_buffer_descriptor(material_descriptor, vk::DescriptorType::eStorageBuffer, new_materials);
@@ -664,17 +734,18 @@ namespace spectra {
         this->context.runtime.resources.write_buffer_descriptor(material_factor_descriptor, vk::DescriptorType::eStorageBuffer, new_material_factors);
         this->context.runtime.resources.write_buffer_descriptor(face_material_descriptor, vk::DescriptorType::eStorageBuffer, new_face_materials);
         this->context.runtime.resources.write_buffer_descriptor(area_light_descriptor, vk::DescriptorType::eStorageBuffer, new_area_lights);
+        this->context.runtime.resources.write_buffer_descriptor(light_descriptor, vk::DescriptorType::eStorageBuffer, new_lights);
         this->context.runtime.resources.write_buffer_descriptor(volumes_descriptor, vk::DescriptorType::eStorageBuffer, new_volume_buffer);
         std::array<DescriptorLease, 9> texture_descriptors{};
         for (std::size_t index = 0; index != texture_descriptors.size(); ++index) {
             texture_descriptors[index] = this->context.runtime.frames.allocate_resource_descriptor();
             this->context.runtime.resources.write_buffer_descriptor(texture_descriptors[index], vk::DescriptorType::eStorageBuffer, new_texture_buffers[index]);
         }
-        const RasterSceneBindings bindings{primitives_descriptor, this->context.gpu_scene.view().primitive_transforms, material_descriptor, material_range_descriptor, material_term_descriptor, material_factor_descriptor, face_material_descriptor, area_light_descriptor, texture_descriptors[0], texture_descriptors[1], texture_descriptors[2], texture_descriptors[3], texture_descriptors[4], texture_descriptors[5], texture_descriptors[6], texture_descriptors[7], texture_descriptors[8]};
+        const RasterSceneBindings bindings{primitives_descriptor, this->context.gpu_scene.view().primitive_transforms, material_descriptor, material_range_descriptor, material_term_descriptor, material_factor_descriptor, face_material_descriptor, area_light_descriptor, light_descriptor, texture_descriptors[0], texture_descriptors[1], texture_descriptors[2], texture_descriptors[3], texture_descriptors[4], texture_descriptors[5], texture_descriptors[6], texture_descriptors[7], texture_descriptors[8]};
         new_binding_buffer                  = upload_texture_buffer(std::span{&bindings, 1});
         DescriptorLease bindings_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         this->context.runtime.resources.write_buffer_descriptor(bindings_descriptor, vk::DescriptorType::eStorageBuffer, new_binding_buffer);
-        this->context.runtime.frames.defer_destruction([primitives = std::move(this->scene.primitive_buffer), materials = std::move(this->scene.material_buffer), material_ranges = std::move(this->scene.material_range_buffer), material_terms = std::move(this->scene.material_term_buffer), material_factors = std::move(this->scene.material_factor_buffer), face_materials = std::move(this->scene.face_material_buffer), area_lights = std::move(this->scene.area_light_buffer)]() mutable {});
+        this->context.runtime.frames.defer_destruction([primitives = std::move(this->scene.primitive_buffer), materials = std::move(this->scene.material_buffer), material_ranges = std::move(this->scene.material_range_buffer), material_terms = std::move(this->scene.material_term_buffer), material_factors = std::move(this->scene.material_factor_buffer), face_materials = std::move(this->scene.face_material_buffer), area_lights = std::move(this->scene.area_light_buffer), fixed_lights = std::move(this->scene.light_buffer)]() mutable {});
         this->context.runtime.frames.defer_destruction([texture_buffers = std::move(this->scene.texture_buffers), bindings = std::move(this->scene.scene_binding_buffer)]() mutable {});
         this->scene.primitives_descriptor      = std::move(primitives_descriptor);
         this->scene.material_descriptor        = std::move(material_descriptor);
@@ -683,6 +754,7 @@ namespace spectra {
         this->scene.material_factor_descriptor = std::move(material_factor_descriptor);
         this->scene.face_material_descriptor   = std::move(face_material_descriptor);
         this->scene.area_light_descriptor      = std::move(area_light_descriptor);
+        this->scene.light_descriptor           = std::move(light_descriptor);
         this->scene.volumes_descriptor         = std::move(volumes_descriptor);
         this->scene.texture_descriptors        = std::move(texture_descriptors);
         this->scene.bindings_descriptor        = std::move(bindings_descriptor);
@@ -693,11 +765,14 @@ namespace spectra {
         this->scene.material_factor_buffer     = std::move(new_material_factors);
         this->scene.face_material_buffer       = std::move(new_face_materials);
         this->scene.area_light_buffer          = std::move(new_area_lights);
+        this->scene.light_buffer               = std::move(new_lights);
         this->context.runtime.frames.defer_destruction([volumes = std::move(this->scene.volume_buffer)]() mutable {});
         this->scene.volume_buffer        = std::move(new_volume_buffer);
         this->scene.texture_buffers      = std::move(new_texture_buffers);
         this->scene.scene_binding_buffer = std::move(new_binding_buffer);
+        this->scene.light_count          = light_count;
         this->scene.volume_count         = volume_count;
+        this->scene.environment_radiance = environment_radiance;
         this->scene.area_emitters        = std::move(area_emitters);
         this->update_area_emitters(command_buffer);
     }
@@ -751,10 +826,13 @@ namespace spectra {
         if (recompiled) this->upload_scene(scene, command_buffer);
         if ((scene.revision.changes & scene::SceneChange::Camera) != scene::SceneChange::None) this->renderer.camera = scene.camera;
         if ((scene.revision.changes & scene::SceneChange::Film) != scene::SceneChange::None) {
-            this->renderer.film_exposure      = scene.film.exposure;
-            this->renderer.film_resolution    = scene.film.resolution;
-            this->renderer.film_pixel_minimum = scene.film.pixel_minimum;
-            this->renderer.film_pixel_maximum = scene.film.pixel_maximum;
+            this->renderer.film_exposure                = scene.film.exposure;
+            this->renderer.film_iso                     = scene.film.iso;
+            this->renderer.film_color_space             = scene.film.color_space;
+            this->renderer.film_maximum_component_value = scene.film.maximum_component_value;
+            this->renderer.film_resolution              = scene.film.resolution;
+            this->renderer.film_pixel_minimum           = scene.film.pixel_minimum;
+            this->renderer.film_pixel_maximum           = scene.film.pixel_maximum;
         }
         this->scene.uploaded_revision = scene.revision;
     }
@@ -774,7 +852,7 @@ namespace spectra {
             vk::ShaderCreateInfoEXT{
                 vk::ShaderCreateFlagBitsEXT::eDescriptorHeap | vk::ShaderCreateFlagBitsEXT::eNoTaskShader,
                 vk::ShaderStageFlagBits::eMeshEXT,
-                {},
+                vk::ShaderStageFlagBits::eFragment,
                 vk::ShaderCodeTypeEXT::eSpirv,
                 mesh_code.size() * sizeof(std::uint32_t),
                 mesh_code.data(),
@@ -791,7 +869,7 @@ namespace spectra {
             },
         };
         this->renderer.shaders                       = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, create_infos};
-        this->renderer.sphere_shader                 = vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap | vk::ShaderCreateFlagBitsEXT::eNoTaskShader, vk::ShaderStageFlagBits::eMeshEXT, {}, vk::ShaderCodeTypeEXT::eSpirv, sphere_code.size() * sizeof(std::uint32_t), sphere_code.data(), "raster_spheres"}};
+        this->renderer.sphere_shader                 = vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap | vk::ShaderCreateFlagBitsEXT::eNoTaskShader, vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eFragment, vk::ShaderCodeTypeEXT::eSpirv, sphere_code.size() * sizeof(std::uint32_t), sphere_code.data(), "raster_spheres"}};
         const std::vector<std::uint32_t> volume_code = load_spirv(this->context.shader_directory / "raster_volume.spv");
         this->renderer.volume_shader                 = vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, volume_code.size() * sizeof(std::uint32_t), volume_code.data(), "raster_volume"}};
     }
@@ -818,6 +896,12 @@ namespace spectra {
 
     void Rasterizer::record_commands(const vk::raii::CommandBuffer& command_buffer) {
         const bool wireframe_only = this->renderer.display_mode == RasterDisplayMode::Wireframe;
+        const float imaging_ratio = this->renderer.camera.exposure_time * this->renderer.film_iso / 100.0f;
+        const float maximum_component_value = this->renderer.film_maximum_component_value.value_or(0.0f) / imaging_ratio;
+        math::Float3 background = this->scene.environment_radiance;
+        const float background_maximum = std::max(background.x, std::max(background.y, background.z));
+        if (this->renderer.film_maximum_component_value && background_maximum > maximum_component_value) background = background * (maximum_component_value / background_maximum);
+        background = raster_output_rgb(background, this->renderer.film_color_space);
         const std::array<std::uint32_t, 4> film_bounds{
             static_cast<std::uint32_t>(static_cast<std::uint64_t>(this->renderer.film_pixel_minimum[0]) * this->renderer.output_image.extent.width / this->renderer.film_resolution[0]),
             static_cast<std::uint32_t>(static_cast<std::uint64_t>(this->renderer.film_pixel_minimum[1]) * this->renderer.output_image.extent.height / this->renderer.film_resolution[1]),
@@ -868,7 +952,7 @@ namespace spectra {
             vk::ImageLayout::eUndefined,
             vk::AttachmentLoadOp::eClear,
             vk::AttachmentStoreOp::eStore,
-            vk::ClearValue{vk::ClearColorValue{std::array{0.01f, 0.015f, 0.025f, 1.0f}}},
+            vk::ClearValue{vk::ClearColorValue{std::array{background.x, background.y, background.z, 1.0f}}},
         };
         const vk::RenderingAttachmentInfo depth_attachment{
             *this->renderer.depth_image.view,
@@ -921,8 +1005,8 @@ namespace spectra {
         constexpr vk::ColorComponentFlags color_components = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
         command_buffer.setColorWriteMaskEXT(0, color_components);
 
-        const std::array stages{vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eFragment};
-        const std::array shader_handles{*this->renderer.shaders[0], *this->renderer.shaders[1]};
+        const std::array stages{vk::ShaderStageFlagBits::eMeshEXT, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment};
+        const std::array shader_handles{*this->renderer.shaders[0], vk::ShaderEXT{}, *this->renderer.shaders[1]};
         command_buffer.bindShadersEXT(stages, shader_handles);
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
 
@@ -935,7 +1019,7 @@ namespace spectra {
             DescriptorHandle bindings;
             std::uint32_t scene_primitive_index;
             std::uint32_t element_count;
-            std::array<std::uint32_t, 2> attributes;
+            std::array<std::uint32_t, 4> attributes;
             std::array<float, 4> view_projection_row_0;
             std::array<float, 4> view_projection_row_1;
             std::array<float, 4> view_projection_row_2;
@@ -944,8 +1028,12 @@ namespace spectra {
             std::array<float, 4> camera_right;
             std::array<float, 4> camera_up;
             std::array<float, 4> camera_forward;
+            std::array<float, 4> film;
         };
-        static_assert(sizeof(RasterPushData) == 192);
+        static_assert(sizeof(RasterPushData) == 224);
+        static_assert(offsetof(RasterPushData, attributes) == 56);
+        static_assert(offsetof(RasterPushData, view_projection_row_0) == 72);
+        static_assert(offsetof(RasterPushData, film) == 200);
         const std::array<float, 16> view_projection = this->renderer.camera.matrices().view_projection;
         const scene::CameraFrame camera             = this->renderer.camera.frame();
         for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.view().primitives) {
@@ -960,7 +1048,7 @@ namespace spectra {
                 this->scene.bindings_descriptor,
                 gpu_primitive.scene_primitive_index,
                 mesh.index_count / 3u,
-                {mesh.attribute_mask, static_cast<std::uint32_t>(this->renderer.display_mode)},
+                {mesh.attribute_mask, static_cast<std::uint32_t>(this->renderer.display_mode), 0, std::to_underlying(this->renderer.film_color_space)},
                 {view_projection[0], view_projection[1], view_projection[2], view_projection[3]},
                 {view_projection[4], view_projection[5], view_projection[6], view_projection[7]},
                 {view_projection[8], view_projection[9], view_projection[10], view_projection[11]},
@@ -969,12 +1057,13 @@ namespace spectra {
                 {camera.right.x, camera.right.y, camera.right.z, 0.0f},
                 {camera.up.x, camera.up.y, camera.up.z, 0.0f},
                 {camera.forward.x, camera.forward.y, camera.forward.z, 0.0f},
+                {maximum_component_value, this->renderer.film_maximum_component_value.has_value() ? 1.0f : 0.0f, 0.0f, 0.0f},
             };
             this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
             command_buffer.drawMeshTasksEXT((push_data.element_count + 31u) / 32u, 1, 1);
         }
         if (!wireframe_only) {
-            const std::array sphere_shader_handles{*this->renderer.sphere_shader, *this->renderer.shaders[1]};
+            const std::array sphere_shader_handles{*this->renderer.sphere_shader, vk::ShaderEXT{}, *this->renderer.shaders[1]};
             command_buffer.bindShadersEXT(stages, sphere_shader_handles);
             for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.view().primitives) {
                 if (gpu_primitive.kind != GpuScenePrimitiveKind::SphereSet) continue;
@@ -988,7 +1077,7 @@ namespace spectra {
                     this->scene.bindings_descriptor,
                     gpu_primitive.scene_primitive_index,
                     spheres.sphere_count,
-                    {0, static_cast<std::uint32_t>(this->renderer.display_mode)},
+                    {0, static_cast<std::uint32_t>(this->renderer.display_mode), 0, std::to_underlying(this->renderer.film_color_space)},
                     {view_projection[0], view_projection[1], view_projection[2], view_projection[3]},
                     {view_projection[4], view_projection[5], view_projection[6], view_projection[7]},
                     {view_projection[8], view_projection[9], view_projection[10], view_projection[11]},
@@ -997,6 +1086,7 @@ namespace spectra {
                     {camera.right.x, camera.right.y, camera.right.z, 0.0f},
                     {camera.up.x, camera.up.y, camera.up.z, 0.0f},
                     {camera.forward.x, camera.forward.y, camera.forward.z, 0.0f},
+                    {maximum_component_value, this->renderer.film_maximum_component_value.has_value() ? 1.0f : 0.0f, 0.0f, 0.0f},
                 };
                 this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
                 command_buffer.drawMeshTasksEXT((push_data.element_count + 31u) / 32u, 1, 1);
@@ -1017,17 +1107,18 @@ namespace spectra {
             DescriptorHandle output;
             DescriptorHandle depth;
             DescriptorHandle volumes;
-            std::uint64_t reserved;
+            DescriptorHandle bindings;
             std::array<std::uint32_t, 4> metadata;
             std::array<std::uint32_t, 4> film_bounds;
+            std::array<float, 4> film;
             std::array<float, 4> inverse_view_projection_row_0;
             std::array<float, 4> inverse_view_projection_row_1;
             std::array<float, 4> inverse_view_projection_row_2;
             std::array<float, 4> inverse_view_projection_row_3;
         };
-        static_assert(sizeof(VolumePushData) == 128);
+        static_assert(sizeof(VolumePushData) == 144);
         const std::array<float, 16> inverse_view_projection = this->renderer.camera.matrices().inverse_view_projection;
-        const VolumePushData volume_push_data{this->renderer.storage_output_descriptor, this->renderer.sampled_depth_descriptor, this->scene.volumes_descriptor, {}, {this->renderer.output_image.extent.width, this->renderer.output_image.extent.height, this->scene.volume_count, 0}, film_bounds, {inverse_view_projection[0], inverse_view_projection[1], inverse_view_projection[2], inverse_view_projection[3]}, {inverse_view_projection[4], inverse_view_projection[5], inverse_view_projection[6], inverse_view_projection[7]}, {inverse_view_projection[8], inverse_view_projection[9], inverse_view_projection[10], inverse_view_projection[11]}, {inverse_view_projection[12], inverse_view_projection[13], inverse_view_projection[14], inverse_view_projection[15]}};
+        const VolumePushData volume_push_data{this->renderer.storage_output_descriptor, this->renderer.sampled_depth_descriptor, this->scene.volumes_descriptor, this->scene.bindings_descriptor, {this->renderer.output_image.extent.width, this->renderer.output_image.extent.height, this->scene.volume_count, this->scene.light_count}, film_bounds, {maximum_component_value, this->renderer.film_maximum_component_value.has_value() ? 1.0f : 0.0f, static_cast<float>(std::to_underlying(this->renderer.film_color_space)), 0.0f}, {inverse_view_projection[0], inverse_view_projection[1], inverse_view_projection[2], inverse_view_projection[3]}, {inverse_view_projection[4], inverse_view_projection[5], inverse_view_projection[6], inverse_view_projection[7]}, {inverse_view_projection[8], inverse_view_projection[9], inverse_view_projection[10], inverse_view_projection[11]}, {inverse_view_projection[12], inverse_view_projection[13], inverse_view_projection[14], inverse_view_projection[15]}};
         command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->renderer.volume_shader);
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
         this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&volume_push_data, 1}));
@@ -1037,7 +1128,7 @@ namespace spectra {
     }
 
     void Rasterizer::destroy() noexcept {
-        this->context.runtime.frames.defer_destruction([primitive_buffer = std::move(this->scene.primitive_buffer), material_buffer = std::move(this->scene.material_buffer), material_range_buffer = std::move(this->scene.material_range_buffer), material_term_buffer = std::move(this->scene.material_term_buffer), material_factor_buffer = std::move(this->scene.material_factor_buffer), face_material_buffer = std::move(this->scene.face_material_buffer), area_light_buffer = std::move(this->scene.area_light_buffer), volume_buffer = std::move(this->scene.volume_buffer), zero_volume_field_buffer = std::move(this->scene.zero_volume_field_buffer), texture_buffers = std::move(this->scene.texture_buffers), binding_buffer = std::move(this->scene.scene_binding_buffer), area_emission_shader = std::move(this->scene.area_emission_shader), output_image = std::move(this->renderer.output_image), depth_image = std::move(this->renderer.depth_image), shaders = std::move(this->renderer.shaders),
+        this->context.runtime.frames.defer_destruction([primitive_buffer = std::move(this->scene.primitive_buffer), material_buffer = std::move(this->scene.material_buffer), material_range_buffer = std::move(this->scene.material_range_buffer), material_term_buffer = std::move(this->scene.material_term_buffer), material_factor_buffer = std::move(this->scene.material_factor_buffer), face_material_buffer = std::move(this->scene.face_material_buffer), area_light_buffer = std::move(this->scene.area_light_buffer), light_buffer = std::move(this->scene.light_buffer), volume_buffer = std::move(this->scene.volume_buffer), zero_volume_field_buffer = std::move(this->scene.zero_volume_field_buffer), texture_buffers = std::move(this->scene.texture_buffers), binding_buffer = std::move(this->scene.scene_binding_buffer), area_emission_shader = std::move(this->scene.area_emission_shader), output_image = std::move(this->renderer.output_image), depth_image = std::move(this->renderer.depth_image), shaders = std::move(this->renderer.shaders),
                                                            sphere_shader = std::move(this->renderer.sphere_shader), volume_shader = std::move(this->renderer.volume_shader)]() mutable {});
     }
 

@@ -16,7 +16,7 @@ import std;
 
 namespace spectra::scene {
     namespace {
-        constexpr std::uint32_t current_scene_format_version = 32;
+        constexpr std::uint32_t current_scene_format_version = 33;
 
         struct KdlWriter {
             std::string content{};
@@ -794,15 +794,6 @@ namespace spectra::scene {
             std::unreachable();
         }
 
-        [[nodiscard]] std::string dynamic_scene_resource_kind_name(const DynamicSceneResourceKind kind) {
-            switch (kind) {
-            case DynamicSceneResourceKind::Geometry: return "geometry";
-            case DynamicSceneResourceKind::SphereSet: return "sphere-set";
-            case DynamicSceneResourceKind::Volume: return "volume";
-            }
-            std::unreachable();
-        }
-
         [[nodiscard]] std::string visualization_view_kind_name(const VisualizationViewKind kind) {
             switch (kind) {
             case VisualizationViewKind::Points: return "points";
@@ -904,7 +895,7 @@ namespace spectra::scene {
                         parameter_line += std::format(" {} {} {}", parameter.value.floating[0], parameter.value.floating[1], parameter.value.floating[2]);
                     writer.line(parameter_line);
                 }
-                for (const DynamicSceneBinding& binding : system.scene_bindings) writer.line(std::format("scene-bind {} {} {}", kdl_string(binding.dataset_id), dynamic_scene_resource_kind_name(binding.resource_kind), binding.resource_id));
+                for (const DynamicSceneBinding& binding : system.scene_bindings) writer.line(std::format("scene-bind {} {}", kdl_string(binding.dataset_id), binding.resource_id));
                 for (const DynamicVisualizationView& view : system.visualizations) {
                     std::string view_line = std::format("visualize {} {} kind={} depth={}", kdl_string(view.dataset_id), kdl_string(view.name), kdl_string(visualization_view_kind_name(visualization_view_kind(view))), kdl_string(depth_buffer_mode_name(view.depth_mode)));
                     if (view.composition_domain != VisualizationCompositionDomain::DisplayReferred) kdl_string_property(view_line, "domain", visualization_composition_domain_name(view.composition_domain));
@@ -1689,13 +1680,6 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("Unknown Dynamic parameter kind {}", value));
         }
 
-        [[nodiscard]] DynamicSceneResourceKind read_dynamic_scene_resource_kind(const std::string_view value) {
-            if (value == "geometry") return DynamicSceneResourceKind::Geometry;
-            if (value == "sphere-set") return DynamicSceneResourceKind::SphereSet;
-            if (value == "volume") return DynamicSceneResourceKind::Volume;
-            throw std::runtime_error(std::format("Unknown Dynamic resource kind {}", value));
-        }
-
         [[nodiscard]] VisualizationViewKind read_visualization_view_kind(const std::string_view value) {
             if (value == "points") return VisualizationViewKind::Points;
             if (value == "segments") return VisualizationViewKind::Segments;
@@ -1786,9 +1770,8 @@ namespace spectra::scene {
                         system.parameters.push_back(std::move(parameter));
                     } else if (child.name() == u8"scene-bind")
                         system.scene_bindings.push_back({
-                            .dataset_id    = kdl_value_text(child.args()[0]),
-                            .resource_kind = read_dynamic_scene_resource_kind(kdl_value_text(child.args()[1])),
-                            .resource_id   = kdl_number<std::uint64_t>(child.args()[2]),
+                            .dataset_id  = kdl_value_text(child.args()[0]),
+                            .resource_id = kdl_number<std::uint64_t>(child.args()[1]),
                         });
                     else if (child.name() == u8"visualize") {
                         DynamicVisualizationView view{
@@ -1841,7 +1824,7 @@ namespace spectra::scene {
             const std::string text{std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
             const kdl::Document document = kdl::parse({reinterpret_cast<const char8_t*>(text.data()), text.size()}, kdl::KdlVersion::Kdl_2);
             if (document.nodes().empty()) throw std::runtime_error(std::format("Spectra scene has no root node: {}", path.string()));
-            const kdl::Node& root = document.nodes()[0];
+            const kdl::Node& root              = document.nodes()[0];
             const std::uint32_t format_version = kdl_number<std::uint32_t>(root.args()[0]);
             if (format_version != current_scene_format_version) throw std::runtime_error(std::format("Unsupported Spectra scene format {}", format_version));
             Scene scene{.name = kdl_value_text(root.args()[1])};
@@ -1909,8 +1892,6 @@ namespace spectra::scene {
     Scene load_scene(const std::filesystem::path& path) {
         Scene scene = parse_scene(path);
         load_scene_sources(scene, path.parent_path());
-        scene.mark_all_changed();
-        scene.acknowledge_changes();
         return scene;
     }
 
