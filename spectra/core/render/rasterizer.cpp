@@ -11,7 +11,6 @@ import vulkan;
 namespace spectra {
     namespace {
         constexpr std::uint32_t invalid_raster_index = std::numeric_limits<std::uint32_t>::max();
-        constexpr float cie_y_integral               = 106.856895f;
 
         [[nodiscard]] math::Float3 raster_linear_srgb(const math::Float3 value, const scene::SpectrumColorSpace color_space) noexcept {
             if (color_space == scene::SpectrumColorSpace::Rec2020) return {1.660491f * value.x - 0.587641f * value.y - 0.072850f * value.z, -0.124550f * value.x + 1.132900f * value.y - 0.008349f * value.z, -0.018151f * value.x - 0.100579f * value.y + 1.118730f * value.z};
@@ -27,9 +26,7 @@ namespace spectra {
 
         [[nodiscard]] math::Float3 raster_spectrum_rgb(const scene::SpectrumParameter& parameter) {
             if (parameter.encoding == scene::SpectrumEncoding::RgbAlbedo || parameter.encoding == scene::SpectrumEncoding::RgbUnbounded || parameter.encoding == scene::SpectrumEncoding::RgbIlluminant) {
-                math::Float3 rgb = raster_linear_srgb(parameter.value, parameter.color_space);
-                if (parameter.encoding == scene::SpectrumEncoding::RgbIlluminant) rgb = rgb * cie_y_integral;
-                return rgb;
+                return raster_linear_srgb(parameter.value, parameter.color_space);
             }
             if (parameter.encoding == scene::SpectrumEncoding::Constant) return {parameter.scalar, parameter.scalar, parameter.scalar};
             if (parameter.encoding == scene::SpectrumEncoding::Blackbody) {

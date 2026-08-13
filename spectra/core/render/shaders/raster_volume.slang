@@ -3,8 +3,6 @@ module raster_volume;
 import raster_scene;
 import raster_texture;
 
-static const float cie_y_integral = 106.856895;
-
 struct RasterVolumePushData {
     DescriptorHandle<RWTexture2D<float4>> output;
     DescriptorHandle<Texture2D<float>> depth;
@@ -372,8 +370,7 @@ float3 blackbody(float temperature) {
     return float3(
         red,
         green,
-        blue) *
-        cie_y_integral;
+        blue);
 }
 
 float phase_henyey_greenstein(

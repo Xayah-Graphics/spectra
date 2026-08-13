@@ -202,6 +202,7 @@ namespace spectra {
         };
 
         constexpr std::uint32_t invalid_path_index = std::numeric_limits<std::uint32_t>::max();
+        constexpr float cie_y_integral             = 106.856895f;
         constexpr float path_pi                    = std::numbers::pi_v<float>;
 
         [[nodiscard]] float evaluate_compiled_spectrum(const CompiledSpectrum& spectrum, const std::span<const math::Float2> piecewise_spectra, const std::span<const float> cie_spectra, const float wavelength) noexcept {
@@ -546,6 +547,7 @@ namespace spectra {
         prepared->film                               = film;
         prepared->distribution                       = std::move(distribution);
         prepared->sensor_response.assign(sensor_response.begin(), sensor_response.end());
+        if (film.sensor_response.empty()) for (float& value : prepared->sensor_response) value /= cie_y_integral;
         prepared->resolution        = resolution;
         prepared->absolute_integral = absolute_integral;
         return prepared;
