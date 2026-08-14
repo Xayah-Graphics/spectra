@@ -15,6 +15,10 @@ cmake --install sdk/cmake-build-release
 A Provider is one exported C++23 struct with public `settings`, a compile-time `description`, and four lifecycle functions:
 
 ```cpp
+module;
+
+#include <spectra/sdk/cuda_types.h>
+
 export module project.visualization;
 
 import spectra.sdk;
@@ -99,6 +103,8 @@ void Provider::publish(spectra::sdk::cuda::Output& output) {
 ```
 
 `begin` queues the Vulkan-to-CUDA wait. `commit` queues the CUDA-to-Vulkan signal. Do not synchronize the stream around them.
+
+CUDA translation units include `<spectra/sdk/cuda_types.h>` and write the exact SDK element types directly. The header contains only standard-layout POD declarations and does not expose frame management or depend on the CUDA Runtime.
 
 ## CMake
 

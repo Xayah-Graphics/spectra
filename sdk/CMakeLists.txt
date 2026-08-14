@@ -24,6 +24,10 @@ set_target_properties(spectra_sdk PROPERTIES EXPORT_NAME sdk POSITION_INDEPENDEN
 target_sources(
         spectra_sdk
         PUBLIC
+        FILE_SET public_headers TYPE HEADERS
+        BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/spectra/sdk/cuda_types.h"
+        PUBLIC
         FILE_SET public_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/modules"
         FILES
@@ -54,6 +58,8 @@ install(
         TARGETS spectra_sdk
         EXPORT SpectraSDKTargets
         ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}" COMPONENT SDK
+        FILE_SET public_headers DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+        COMPONENT SDK
         FILE_SET public_modules DESTINATION "${CMAKE_INSTALL_DATADIR}/spectra-sdk/modules"
         COMPONENT SDK
 )

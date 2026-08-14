@@ -1,3 +1,7 @@
+module;
+
+#include <spectra/sdk/cuda_types.h>
+
 export module spectra.sdk.cuda;
 
 export import spectra.sdk;

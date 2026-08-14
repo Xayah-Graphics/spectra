@@ -1,6 +1,7 @@
 module;
 
 #include <cuda_runtime_api.h>
+#include <spectra/sdk/cuda_types.h>
 
 export module spectra.sdk.example;
 

@@ -1,6 +1,7 @@
 module;
 
 #include "@SpectraSDK_INTERNAL_ABI@"
+#include <spectra/sdk/cuda_types.h>
 
 export module spectra.sdk.provider.entry;
 

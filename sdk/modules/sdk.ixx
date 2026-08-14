@@ -1,3 +1,7 @@
+module;
+
+#include <spectra/sdk/cuda_types.h>
+
 export module spectra.sdk;
 
 import std;
@@ -17,78 +21,6 @@ export namespace spectra::sdk {
 
         friend constexpr bool operator==(const FixedString&, const FixedString&) = default;
     };
-
-    struct Float2 {
-        float x{};
-        float y{};
-    };
-
-    struct Float3 {
-        float x{};
-        float y{};
-        float z{};
-    };
-
-    struct Float4 {
-        float x{};
-        float y{};
-        float z{};
-        float w{};
-    };
-
-    struct UInt3 {
-        std::uint32_t x{};
-        std::uint32_t y{};
-        std::uint32_t z{};
-    };
-
-    struct Transform {
-        float matrix[16]{};
-    };
-
-    struct Sphere {
-        Float3 position{};
-        float radius{};
-    };
-
-    struct Instance {
-        std::uint64_t instance_id{};
-        Transform transform{};
-    };
-
-    struct Point {
-        Float3 position{};
-        float radius{};
-        Float4 color{};
-        float scalar{};
-    };
-
-    struct Line {
-        Float3 first_position{};
-        float width{};
-        Float3 second_position{};
-        Float4 color{};
-        float scalar{};
-    };
-
-    struct Vector {
-        Float3 origin{};
-        float width{};
-        Float3 vector{};
-        Float4 color{};
-        float scalar{};
-    };
-
-    static_assert(sizeof(Float2) == 8);
-    static_assert(sizeof(Float3) == 12);
-    static_assert(sizeof(Float4) == 16);
-    static_assert(sizeof(UInt3) == 12);
-    static_assert(sizeof(Transform) == 64);
-    static_assert(sizeof(Sphere) == 16);
-    static_assert(sizeof(Instance) == 72);
-    static_assert(sizeof(Point) == 36);
-    static_assert(sizeof(Line) == 48);
-    static_assert(sizeof(Vector) == 48);
 
     enum class ParameterApplication : std::uint32_t {
         Live,
