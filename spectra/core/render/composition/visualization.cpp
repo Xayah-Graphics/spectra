@@ -33,14 +33,12 @@ namespace spectra {
             const dynamics::VisualizationStyle* style{};
             DescriptorHandle primary{};
             DescriptorHandle secondary{};
-            DescriptorHandle scalar{};
+            DescriptorHandle attribute{};
             std::uint32_t active_count{};
             std::uint32_t secondary_count{};
             math::UInt3 resolution{};
             std::array<std::uint32_t, 2> image_extent{};
-            dynamics::ImageFormat image_format{dynamics::ImageFormat::Rgba8Unorm};
             scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
-            dynamics::TransferFunction transfer_function{dynamics::TransferFunction::Linear};
             dynamics::FieldChannelKind field_kind{dynamics::FieldChannelKind::Float};
             math::Transform transform{};
             scene::VisualizationViewKind kind{scene::VisualizationViewKind::Segments};
@@ -56,8 +54,6 @@ namespace spectra {
             float scalar_maximum{1.0f};
             std::uint32_t sampling{8};
             std::uint32_t slice_axis{2};
-            std::uint32_t distortion_iterations{8};
-            float distortion_tolerance{1.0e-6f};
             bool point{};
             bool image{};
         };
@@ -87,13 +83,7 @@ namespace spectra {
                                 result.slice_axis     = data.slice_axis;
                             } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::FieldVectorVisualization>)
                                 result.sampling = data.sampling;
-                            else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ImageVisualization>)
-                                result.screen_rect = data.screen_rect;
-                            else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::CameraObservationVisualization>) {
-                                result.screen_rect           = data.screen_rect;
-                                result.distortion_iterations = data.distortion_iterations;
-                                result.distortion_tolerance  = data.distortion_tolerance;
-                            }
+                            else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ImageVisualization>) result.screen_rect = data.screen_rect;
                         },
                         value.style.view.data);
                     if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuPointVisualization>) {
@@ -102,9 +92,6 @@ namespace spectra {
                         result.point        = true;
                     } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuSegmentVisualization>) {
                         result.primary      = value.segments.descriptor;
-                        result.active_count = value.count;
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuCurveVisualization>) {
-                        result.primary      = value.curves.descriptor;
                         result.active_count = value.count;
                     } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuVectorVisualization>) {
                         result.primary      = value.vectors.descriptor;
@@ -119,26 +106,15 @@ namespace spectra {
                         result.primary           = value.pixels.descriptor;
                         result.active_count      = 1;
                         result.image_extent      = value.image.extent;
-                        result.image_format      = value.image.format;
                         result.color_space       = value.image.color_space;
-                        result.transfer_function = value.image.transfer_function;
                         result.image             = true;
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuCameraObservationVisualization>) {
-                        result.primary           = value.observations.descriptor;
-                        result.secondary         = value.images.descriptor;
-                        result.active_count      = value.count;
-                        result.image_extent      = value.dataset.images.extent;
-                        result.image_format      = value.dataset.images.format;
-                        result.color_space       = value.dataset.images.color_space;
-                        result.transfer_function = value.dataset.images.transfer_function;
-                        result.image             = true;
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuTransformVisualization>) {
-                        result.primary      = value.transforms.descriptor;
-                        result.active_count = value.count;
                     } else {
                         result.primary = value.positions.descriptor;
                         if (value.indices) result.secondary = value.indices->descriptor;
-                        if (value.scalars) result.scalar = value.scalars->descriptor;
+                        if (result.color_source == scene::VisualizationColorSource::Element && value.colors) result.attribute = value.colors->descriptor;
+                        if (result.color_source == scene::VisualizationColorSource::Element && !value.colors) result.color_source = scene::VisualizationColorSource::Uniform;
+                        if (result.color_source == scene::VisualizationColorSource::Scalar && value.scalars) result.attribute = value.scalars->descriptor;
+                        if (result.color_source == scene::VisualizationColorSource::Scalar && !value.scalars) result.color_source = scene::VisualizationColorSource::Uniform;
                         result.active_count    = value.vertex_count;
                         result.secondary_count = value.index_count;
                     }
@@ -221,13 +197,12 @@ namespace spectra {
             std::array<float, 4> screen_rect{dataset.screen_rect.x, dataset.screen_rect.y, dataset.screen_rect.z, dataset.screen_rect.w};
             if (dataset.point) screen_rect = {camera_depth[0], camera_depth[1], camera_depth[2], 0.0f};
             if (dataset.kind == scene::VisualizationViewKind::FieldSlice || dataset.kind == scene::VisualizationViewKind::FieldVectors) screen_rect = {static_cast<float>(dataset.slice_axis), dataset.slice_position, static_cast<float>(dataset.field_kind), 0.0f};
-            if (dataset.kind == scene::VisualizationViewKind::CameraObservations) screen_rect = {dataset.distortion_tolerance, static_cast<float>(dataset.distortion_iterations), 0.0f, 0.0f};
             VisualizationPushData push{
                 dataset.primary,
                 dataset.secondary,
                 depth.descriptor,
-                dataset.image ? static_cast<std::uint32_t>(dataset.color_space) : dataset.scalar.slot_index,
-                dataset.image ? static_cast<std::uint32_t>(dataset.image_format) | (static_cast<std::uint32_t>(dataset.transfer_function) << 16) : dataset.scalar.reserved,
+                dataset.image ? static_cast<std::uint32_t>(dataset.color_space) : dataset.attribute.slot_index,
+                dataset.attribute.reserved,
                 {static_cast<std::uint32_t>(dataset.kind), dataset.active_count, dataset.secondary_count, static_cast<std::uint32_t>(view.depth_mode)},
                 {target.image.extent.width, target.image.extent.height, dataset.image ? dataset.image_extent[0] : dataset.resolution.x, dataset.image ? dataset.image_extent[1] : dataset.resolution.y},
                 detail,
@@ -248,18 +223,12 @@ namespace spectra {
                 command_buffer.draw(dataset.point_glyph == scene::PointGlyph::Cross ? 12u : 6u, dataset.active_count, 0, 0);
             else if (dataset.kind == scene::VisualizationViewKind::Segments)
                 command_buffer.draw(6, dataset.active_count, 0, 0);
-            else if (dataset.kind == scene::VisualizationViewKind::Curves)
-                command_buffer.draw(96, dataset.active_count, 0, 0);
             else if (dataset.kind == scene::VisualizationViewKind::Vectors)
                 command_buffer.draw(18, dataset.active_count, 0, 0);
             else if (dataset.kind == scene::VisualizationViewKind::FieldSlice || dataset.kind == scene::VisualizationViewKind::Image)
                 command_buffer.draw(6, 1, 0, 0);
             else if (dataset.kind == scene::VisualizationViewKind::FieldVectors)
                 command_buffer.draw(18, dataset.sampling * dataset.sampling * dataset.sampling, 0, 0);
-            else if (dataset.kind == scene::VisualizationViewKind::CameraObservations)
-                command_buffer.draw(54, dataset.active_count, 0, 0);
-            else if (dataset.kind == scene::VisualizationViewKind::Frames)
-                command_buffer.draw(18, dataset.active_count, 0, 0);
             else
                 command_buffer.draw(dataset.secondary_count != 0 ? dataset.secondary_count : dataset.active_count, 1, 0, 0);
         }

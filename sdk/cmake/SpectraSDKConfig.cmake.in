@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(CUDAToolkit 13)
+
+include("${CMAKE_CURRENT_LIST_DIR}/SpectraSDKTargets.cmake")
+
+set(SpectraSDK_INTERNAL_DIRECTORY "${PACKAGE_PREFIX_DIR}/@SPECTRA_SDK_INTERNAL_INSTALL_DIR@")
+include("${CMAKE_CURRENT_LIST_DIR}/SpectraSDKProvider.cmake")

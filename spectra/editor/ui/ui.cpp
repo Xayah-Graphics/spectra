@@ -234,6 +234,7 @@ namespace spectra {
             this->controls.inspector_open = false;
             this->controls.parameter_drafts.clear();
             this->controls.reset_pending = false;
+            this->controls.recreate_pending = false;
             this->handle_shortcuts(actions, aspect, false);
             this->draw_top_strip(position, size, actions);
             this->draw_status_toast(position, size);
@@ -253,19 +254,22 @@ namespace spectra {
             this->draw_transform_hud(position, size, editable);
         }
         if (this->controls.inspector_open) this->draw_inspector(position, size);
+        actions.rebuild_dynamic_rendering = std::exchange(this->controls.rebuild_dynamic_rendering, false);
         this->draw_status_toast(position, size);
         return actions;
     }
     void EditorUi::apply_dynamic_parameters(std::vector<scene::DynamicParameterSetting> parameters, const bool reset) {
         try {
-            this->context.dynamics.apply_parameter_changes(this->controls.selected_dynamic_system, parameters, reset);
+            const bool recreated = this->context.dynamics.apply_parameter_changes(this->controls.selected_dynamic_system, parameters, reset);
             this->context.document.update_dynamic_system_parameters(this->context.document.content.source, this->controls.selected_dynamic_system, std::move(parameters));
-            this->controls.status                    = reset ? "Parameters applied and Dynamic Setup reset" : "Parameter applied";
+            this->controls.rebuild_dynamic_rendering = this->controls.rebuild_dynamic_rendering || recreated;
+            this->controls.status                    = recreated ? "Parameters applied and Provider recreated" : reset ? "Parameters applied and Dynamic Setup reset" : "Parameter applied";
             this->controls.status_error              = false;
             this->controls.observed_dynamic_revision = this->context.document.content.source.revision().number;
             if (reset) {
                 this->controls.parameter_drafts.clear();
                 this->controls.reset_pending = false;
+                this->controls.recreate_pending = false;
             }
         } catch (const std::exception& error) {
             this->controls.status       = error.what();
@@ -854,6 +858,7 @@ namespace spectra {
             this->controls.observed_dynamic_revision = this->context.document.content.source.revision().number;
             this->controls.parameter_drafts.clear();
             this->controls.reset_pending = false;
+            this->controls.recreate_pending = false;
         }
 
         const scene::DynamicSetup* setup = this->context.document.content.source.dynamic_setup ? &*this->context.document.content.source.dynamic_setup : nullptr;
@@ -972,6 +977,7 @@ namespace spectra {
                         this->controls.selected_dynamic_system = index;
                         this->controls.parameter_drafts.clear();
                         this->controls.reset_pending = false;
+                        this->controls.recreate_pending = false;
                     }
                 ImGui::EndCombo();
             }
@@ -1014,9 +1020,8 @@ namespace spectra {
             scene::DynamicParameterValue& value            = this->controls.parameter_drafts[parameter_index].value;
             if (parameter.section_id != parameter_section) {
                 parameter_section  = parameter.section_id;
-                const auto section = std::ranges::find(provider.sections, parameter_section, &dynamics::SectionDescriptor::id);
                 ImGui::Spacing();
-                ImGui::TextDisabled("PARAMETERS / %s", section == provider.sections.end() ? parameter_section.c_str() : section->name.c_str());
+                ImGui::TextDisabled("PARAMETERS / %s", parameter_section.c_str());
             }
             ImGui::PushID(static_cast<int>(parameter_index));
             ImGui::Text("%s", parameter.name.c_str());
@@ -1049,10 +1054,13 @@ namespace spectra {
                 }
             }
 
-            if (parameter.application_mode == dynamics::ParameterApplication::ResetRequired) {
+            if (parameter.application_mode != dynamics::ParameterApplication::Live) {
                 ImGui::SameLine();
-                ImGui::TextDisabled("reset");
-                if (changed) this->controls.reset_pending = true;
+                ImGui::TextDisabled(parameter.application_mode == dynamics::ParameterApplication::Reset ? "reset" : "recreate");
+                if (changed) {
+                    this->controls.reset_pending = true;
+                    if (parameter.application_mode == dynamics::ParameterApplication::Recreate) this->controls.recreate_pending = true;
+                }
             } else if ((changed && !ImGui::IsItemActive()) || ImGui::IsItemDeactivatedAfterEdit()) {
                 std::vector<scene::DynamicParameterSetting> parameters = parameter_values(false);
                 this->apply_dynamic_parameters(std::move(parameters), false);
@@ -1070,9 +1078,8 @@ namespace spectra {
             const dynamics::TelemetryDescriptor& metric = provider.telemetry[metric_index];
             if (metric.section_id != telemetry_section) {
                 telemetry_section  = metric.section_id;
-                const auto section = std::ranges::find(provider.sections, telemetry_section, &dynamics::SectionDescriptor::id);
                 ImGui::Spacing();
-                ImGui::TextDisabled("TELEMETRY / %s", section == provider.sections.end() ? telemetry_section.c_str() : section->name.c_str());
+                ImGui::TextDisabled("TELEMETRY / %s", telemetry_section.c_str());
             }
             const dynamics::TelemetryValue& value = *telemetry.values[metric_index];
             std::string formatted{};
@@ -1104,7 +1111,7 @@ namespace spectra {
         }
 
         if (this->controls.reset_pending)
-            if (text_button("##ApplySystemReset", "Apply & Reset", ImVec2{124.0f, 27.0f})) {
+            if (text_button("##ApplySystemReset", this->controls.recreate_pending ? "Apply & Recreate" : "Apply & Reset", ImVec2{144.0f, 27.0f})) {
                 std::vector<scene::DynamicParameterSetting> parameters = parameter_values(true);
                 this->apply_dynamic_parameters(std::move(parameters), true);
             }

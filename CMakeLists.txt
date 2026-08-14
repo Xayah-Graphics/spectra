@@ -46,12 +46,6 @@ include(cmake/Shaders.cmake)
 
 
 # ============================================================================
-# Dynamic Provider SDK
-# ============================================================================
-add_subdirectory(sdk)
-
-
-# ============================================================================
 # Spectra Core
 # ============================================================================
 add_library(spectra_core STATIC)
@@ -96,7 +90,6 @@ target_sources(
         FILE_SET generated_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
         FILES
-        "${SPECTRA_PLUGIN_ABI_MODULE}"
         "${SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE}"
         PRIVATE
         FILE_SET internal_modules TYPE CXX_MODULES
@@ -133,7 +126,6 @@ target_link_libraries(
         spectra_core
         PUBLIC
         spectra::vulkan
-        spectra::plugin_contract
         PRIVATE
         spectra_ckdlpp
         spectra_lodepng

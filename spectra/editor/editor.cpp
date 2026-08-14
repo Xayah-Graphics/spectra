@@ -224,6 +224,10 @@ namespace spectra {
                     this->ui.notify("Scene saved");
                 }
             }
+            if (actions.rebuild_dynamic_rendering) {
+                this->destroy_rendering();
+                this->rebuild_rendering(this->document.content.source);
+            }
             if (actions.renderer) this->render_engine.activate(*actions.renderer, this->document.content.evaluated.view());
             if (actions.raster_display_mode) this->render_engine.set_raster_display_mode(*actions.raster_display_mode);
         } catch (const std::exception& error) {

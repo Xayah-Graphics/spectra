@@ -68,12 +68,6 @@ namespace spectra::dynamics {
         std::uint32_t count{};
     };
 
-    export struct GpuCurveVisualization {
-        VisualizationStyle style{};
-        GpuBufferView curves{};
-        std::uint32_t count{};
-    };
-
     export struct GpuVectorVisualization {
         VisualizationStyle style{};
         GpuBufferView vectors{};
@@ -93,31 +87,18 @@ namespace spectra::dynamics {
         GpuBufferView pixels{};
     };
 
-    export struct GpuCameraObservationVisualization {
-        VisualizationStyle style{};
-        CameraObservationDataset dataset{};
-        GpuBufferView observations{};
-        GpuBufferView images{};
-        std::uint32_t count{};
-    };
-
-    export struct GpuTransformVisualization {
-        VisualizationStyle style{};
-        GpuBufferView transforms{};
-        std::uint32_t count{};
-    };
-
     export struct GpuSurfaceVisualization {
         VisualizationStyle style{};
         GpuBufferView positions{};
         std::optional<GpuBufferView> indices{};
+        std::optional<GpuBufferView> colors{};
         std::optional<GpuBufferView> scalars{};
         std::uint32_t vertex_count{};
         std::uint32_t index_count{};
     };
 
     export struct GpuVisualization {
-        std::variant<GpuPointVisualization, GpuSegmentVisualization, GpuCurveVisualization, GpuVectorVisualization, GpuFieldVisualization, GpuImageVisualization, GpuCameraObservationVisualization, GpuTransformVisualization, GpuSurfaceVisualization> data{};
+        std::variant<GpuPointVisualization, GpuSegmentVisualization, GpuVectorVisualization, GpuFieldVisualization, GpuImageVisualization, GpuSurfaceVisualization> data{};
     };
 
     export struct MeshOutputBinding {

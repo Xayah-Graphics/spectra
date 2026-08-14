@@ -709,13 +709,11 @@ namespace spectra::scene {
     export enum class VisualizationViewKind : std::uint8_t {
         Points,
         Segments,
-        Curves,
+        Reserved,
         Vectors,
         FieldSlice,
         FieldVectors,
         Image,
-        CameraObservations,
-        Frames,
         Surface,
     };
 
@@ -803,15 +801,6 @@ namespace spectra::scene {
         friend auto operator<=>(const SegmentVisualization&, const SegmentVisualization&) = default;
     };
 
-    export struct CurveVisualization {
-        float width{1.0f};
-        float scalar_minimum{};
-        float scalar_maximum{1.0f};
-        VisualizationColorSource color_source{VisualizationColorSource::Element};
-        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
-        friend auto operator<=>(const CurveVisualization&, const CurveVisualization&) = default;
-    };
-
     export struct VectorVisualization {
         float width{1.0f};
         float scale{1.0f};
@@ -850,21 +839,6 @@ namespace spectra::scene {
         friend auto operator<=>(const ImageVisualization&, const ImageVisualization&) = default;
     };
 
-    export struct CameraObservationVisualization {
-        math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
-        float width{1.0f};
-        float scale{1.0f};
-        std::uint32_t distortion_iterations{8};
-        float distortion_tolerance{1.0e-6f};
-        friend auto operator<=>(const CameraObservationVisualization&, const CameraObservationVisualization&) = default;
-    };
-
-    export struct FrameVisualization {
-        float width{1.0f};
-        float scale{1.0f};
-        friend auto operator<=>(const FrameVisualization&, const FrameVisualization&) = default;
-    };
-
     export struct SurfaceVisualization {
         float scalar_minimum{};
         float scalar_maximum{1.0f};
@@ -881,15 +855,21 @@ namespace spectra::scene {
         InstanceId anchor{};
         math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
         bool visible{true};
-        std::variant<PointVisualization, SegmentVisualization, CurveVisualization, VectorVisualization, FieldSliceVisualization, FieldVectorVisualization, ImageVisualization, CameraObservationVisualization, FrameVisualization, SurfaceVisualization> data{SegmentVisualization{}};
+        std::variant<PointVisualization, SegmentVisualization, VectorVisualization, FieldSliceVisualization, FieldVectorVisualization, ImageVisualization, SurfaceVisualization> data{SegmentVisualization{}};
         friend auto operator<=>(const DynamicVisualizationView&, const DynamicVisualizationView&) = default;
     };
 
     export [[nodiscard]] constexpr VisualizationViewKind visualization_view_kind(const DynamicVisualizationView& view) noexcept {
-        return static_cast<VisualizationViewKind>(view.data.index());
+        return std::visit([]<typename Type>(const Type&) {
+            if constexpr (std::same_as<Type, PointVisualization>) return VisualizationViewKind::Points;
+            else if constexpr (std::same_as<Type, SegmentVisualization>) return VisualizationViewKind::Segments;
+            else if constexpr (std::same_as<Type, VectorVisualization>) return VisualizationViewKind::Vectors;
+            else if constexpr (std::same_as<Type, FieldSliceVisualization>) return VisualizationViewKind::FieldSlice;
+            else if constexpr (std::same_as<Type, FieldVectorVisualization>) return VisualizationViewKind::FieldVectors;
+            else if constexpr (std::same_as<Type, ImageVisualization>) return VisualizationViewKind::Image;
+            else return VisualizationViewKind::Surface;
+        }, view.data);
     }
-
-    static_assert(std::variant_size_v<decltype(DynamicVisualizationView::data)> == static_cast<std::size_t>(VisualizationViewKind::Surface) + 1);
 
     export struct DynamicSystem {
         DynamicSystemId id{};

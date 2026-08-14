@@ -1,6 +1,5 @@
 module spectra.scene.document;
 
-import spectra.dynamics;
 import spectra.scene.format;
 import std;
 
@@ -22,20 +21,24 @@ namespace spectra {
         if (!scene_path.parent_path().empty()) std::filesystem::create_directories(scene_path.parent_path());
         try {
             if (this->content.source.dynamic_setup && std::filesystem::absolute(scene_path.parent_path()).lexically_normal() != std::filesystem::absolute(this->content.path.parent_path()).lexically_normal()) {
-                std::vector<std::string> providers{};
-                for (const scene::DynamicSystem& system : this->content.source.dynamic_setup->systems)
-                    if (!std::ranges::contains(providers, system.provider_id)) providers.emplace_back(system.provider_id);
+                std::vector<std::filesystem::path> providers{};
+                for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator{this->content.path.parent_path()}) {
+#if defined(_WIN32)
+                    if (entry.is_regular_file() && entry.path().filename().string().ends_with(".spectra-provider.dll")) providers.emplace_back(entry.path());
+#else
+                    if (entry.is_regular_file() && entry.path().filename().string().ends_with(".spectra-provider.so")) providers.emplace_back(entry.path());
+#endif
+                }
+                std::ranges::sort(providers);
                 const auto transaction = std::chrono::steady_clock::now().time_since_epoch().count();
                 for (std::size_t index = 0; index != providers.size(); ++index) {
-                    const std::string& provider          = providers[index];
-                    const std::filesystem::path filename = dynamics::provider_library_filename(provider);
                     ProviderReplacement& replacement     = replacements.emplace_back();
-                    replacement.destination              = scene_path.parent_path() / filename;
+                    replacement.destination              = scene_path.parent_path() / providers[index].filename();
                     replacement.staged                   = replacement.destination;
                     replacement.staged += std::format(".spectra-save-{}-{}.tmp", transaction, index);
                     replacement.backup = replacement.destination;
                     replacement.backup += std::format(".spectra-save-{}-{}.bak", transaction, index);
-                    std::filesystem::copy_file(this->content.path.parent_path() / filename, replacement.staged);
+                    std::filesystem::copy_file(providers[index], replacement.staged);
                 }
                 for (ProviderReplacement& replacement : replacements) {
                     if (std::filesystem::exists(replacement.destination)) {

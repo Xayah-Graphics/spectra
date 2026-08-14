@@ -1,6 +1,6 @@
 module dataset_instance_apply;
 
-import plugin_dataset;
+import sdk_output;
 
 struct SceneTransform {
     float4 row_0;
@@ -17,7 +17,7 @@ struct InstanceBinding {
 }
 
 struct InstanceApplyPushData {
-    DescriptorHandle<StructuredBuffer<SpectraPluginInstanceTransform>> updates;
+    DescriptorHandle<StructuredBuffer<SdkInstance>> updates;
     DescriptorHandle<StructuredBuffer<InstanceBinding>> bindings;
     DescriptorHandle<RWStructuredBuffer<SceneTransform>> transforms;
     DescriptorHandle<RWByteAddressBuffer> acceleration_instances;
@@ -28,11 +28,11 @@ struct InstanceApplyPushData {
 [vk::push_constant]
 uniform InstanceApplyPushData push_data;
 
-float4 transform_row(SpectraPluginTransform transform, uint row) {
+float4 transform_row(SdkTransform transform, uint row) {
     return float4(transform.matrix[row * 4], transform.matrix[row * 4 + 1], transform.matrix[row * 4 + 2], transform.matrix[row * 4 + 3]);
 }
 
-SceneTransform multiply_transform(SpectraPluginTransform parent, SceneTransform child) {
+SceneTransform multiply_transform(SdkTransform parent, SceneTransform child) {
     const float4 parent_0 = transform_row(parent, 0);
     const float4 parent_1 = transform_row(parent, 1);
     const float4 parent_2 = transform_row(parent, 2);
@@ -54,11 +54,11 @@ SceneTransform multiply_transform(SpectraPluginTransform parent, SceneTransform 
 void apply_instance_transforms(uint3 dispatch_thread_id : SV_DispatchThreadID) {
     const uint primitive_index = dispatch_thread_id.x;
     if (primitive_index >= push_data.primitive_count) return;
-    StructuredBuffer<SpectraPluginInstanceTransform> updates = push_data.updates;
+    StructuredBuffer<SdkInstance> updates = push_data.updates;
     StructuredBuffer<InstanceBinding> bindings = push_data.bindings;
     const InstanceBinding binding = bindings[primitive_index];
     for (uint update_index = 0; update_index < push_data.update_count; ++update_index) {
-        const SpectraPluginInstanceTransform update = updates[update_index];
+        const SdkInstance update = updates[update_index];
         const uint2 update_id = uint2(uint(update.instance_id), uint(update.instance_id >> 32));
         if (any(update_id != binding.instance_id)) continue;
         const SceneTransform transform = multiply_transform(update.transform, binding.primitive_from_instance);

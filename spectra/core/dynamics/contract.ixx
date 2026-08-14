@@ -1,54 +1,22 @@
-module;
-
-#include <spectra/plugin_api.h>
-
 export module spectra.dynamics;
 
 import spectra.scene;
 import std;
 
 namespace spectra::dynamics {
-    export [[nodiscard]] inline std::filesystem::path provider_library_filename(const std::string_view provider_id) {
-#if defined(_WIN32)
-        return std::filesystem::path{std::string{provider_id} + ".spectra-plugin.dll"};
-#else
-        return std::filesystem::path{std::string{provider_id} + ".spectra-plugin.so"};
-#endif
-    }
-
     export enum class ParameterApplication : std::uint32_t {
-        Live          = static_cast<std::uint32_t>(SpectraPluginParameterApplication::Live),
-        ResetRequired = static_cast<std::uint32_t>(SpectraPluginParameterApplication::ResetRequired),
+        Live,
+        Reset,
+        Recreate,
     };
 
     export enum class FieldChannelKind : std::uint32_t {
-        Float  = static_cast<std::uint32_t>(SpectraPluginFieldChannelKind::Float),
-        Float3 = static_cast<std::uint32_t>(SpectraPluginFieldChannelKind::Float3),
-    };
-
-    export enum class ImageFormat : std::uint32_t {
-        Rgba8Unorm  = static_cast<std::uint32_t>(SpectraPluginImageFormat::Rgba8Unorm),
-        Rgba16Float = static_cast<std::uint32_t>(SpectraPluginImageFormat::Rgba16Float),
-        Rgba32Float = static_cast<std::uint32_t>(SpectraPluginImageFormat::Rgba32Float),
-    };
-
-    export [[nodiscard]] inline std::uint64_t image_element_size(const ImageFormat format) noexcept {
-        switch (format) {
-        case ImageFormat::Rgba8Unorm: return sizeof(std::uint32_t);
-        case ImageFormat::Rgba16Float: return sizeof(std::uint16_t) * 4;
-        case ImageFormat::Rgba32Float: return sizeof(float) * 4;
-        }
-        std::unreachable();
-    }
-
-    export enum class TransferFunction : std::uint32_t {
-        Linear = static_cast<std::uint32_t>(SpectraPluginTransferFunction::Linear),
-        Srgb   = static_cast<std::uint32_t>(SpectraPluginTransferFunction::Srgb),
+        Float,
+        Float3,
     };
 
     export enum class MeshUpdateMode : std::uint32_t {
-        Deformable       = static_cast<std::uint32_t>(SpectraPluginMeshUpdateMode::Deformable),
-        TopologyChanging = static_cast<std::uint32_t>(SpectraPluginMeshUpdateMode::TopologyChanging),
+        Deformable,
     };
 
     export struct FieldChannelDescriptor {
@@ -79,10 +47,6 @@ namespace spectra::dynamics {
         std::uint32_t capacity{};
     };
 
-    export struct CurveDataset {
-        std::uint32_t capacity{};
-    };
-
     export struct VectorDataset {
         std::uint32_t capacity{};
     };
@@ -95,24 +59,13 @@ namespace spectra::dynamics {
 
     export struct ImageDataset {
         std::array<std::uint32_t, 2> extent{};
-        ImageFormat format{ImageFormat::Rgba8Unorm};
         scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
-        TransferFunction transfer_function{TransferFunction::Linear};
-    };
-
-    export struct CameraObservationDataset {
-        std::uint32_t capacity{};
-        ImageDataset images{};
-    };
-
-    export struct TransformDataset {
-        std::uint32_t capacity{};
     };
 
     export struct DatasetDescriptor {
         std::string id{};
         std::optional<scene::DynamicSceneResourceKind> resource_kind{};
-        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, PointDataset, SegmentDataset, CurveDataset, VectorDataset, FieldDataset, ImageDataset, CameraObservationDataset, TransformDataset> details{TriangleMeshDataset{}};
+        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, PointDataset, SegmentDataset, VectorDataset, FieldDataset, ImageDataset> details{TriangleMeshDataset{}};
     };
 
     export struct ParameterDescriptor {
@@ -129,16 +82,11 @@ namespace spectra::dynamics {
         std::vector<std::string> enumerators{};
     };
 
-    export struct SectionDescriptor {
-        std::string id{};
-        std::string name{};
-    };
-
     export enum class TelemetryKind : std::uint32_t {
-        Boolean = static_cast<std::uint32_t>(SpectraPluginTelemetryKind::Boolean),
-        Integer = static_cast<std::uint32_t>(SpectraPluginTelemetryKind::Integer),
-        Float   = static_cast<std::uint32_t>(SpectraPluginTelemetryKind::Float),
-        Float3  = static_cast<std::uint32_t>(SpectraPluginTelemetryKind::Float3),
+        Boolean,
+        Integer,
+        Float,
+        Float3,
     };
 
     export struct TelemetryDescriptor {
@@ -174,7 +122,6 @@ namespace spectra::dynamics {
         std::string id{};
         std::vector<DatasetDescriptor> datasets{};
         std::vector<ParameterDescriptor> parameters{};
-        std::vector<SectionDescriptor> sections{};
         std::vector<TelemetryDescriptor> telemetry{};
     };
 

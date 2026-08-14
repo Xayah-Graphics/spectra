@@ -1,9 +1,0 @@
-plugin_dataset SpectraPluginTransform
-plugin_dataset SpectraPluginSphere
-plugin_dataset SpectraPluginInstanceTransform
-plugin_dataset SpectraPluginPoint
-plugin_dataset SpectraPluginSegment
-plugin_dataset SpectraPluginCurve
-plugin_dataset SpectraPluginVector
-plugin_dataset SpectraPluginCameraDistortion
-plugin_dataset SpectraPluginCameraObservation

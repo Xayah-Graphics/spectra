@@ -798,13 +798,11 @@ namespace spectra::scene {
             switch (kind) {
             case VisualizationViewKind::Points: return "points";
             case VisualizationViewKind::Segments: return "segments";
-            case VisualizationViewKind::Curves: return "curves";
+            case VisualizationViewKind::Reserved: break;
             case VisualizationViewKind::Vectors: return "vectors";
             case VisualizationViewKind::FieldSlice: return "field-slice";
             case VisualizationViewKind::FieldVectors: return "field-vectors";
             case VisualizationViewKind::Image: return "image";
-            case VisualizationViewKind::CameraObservations: return "camera-observations";
-            case VisualizationViewKind::Frames: return "frames";
             case VisualizationViewKind::Surface: return "surface";
             }
             std::unreachable();
@@ -902,9 +900,9 @@ namespace spectra::scene {
                     if (view.anchor.value != 0) kdl_number_property(view_line, "anchor", view.anchor.value);
                     std::visit(
                         [&view_line](const auto& data) {
-                            constexpr bool has_width  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CurveVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CameraObservationVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FrameVisualization>;
-                            constexpr bool has_scale  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CameraObservationVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FrameVisualization>;
-                            constexpr bool has_scalar = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CurveVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldSliceVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SurfaceVisualization>;
+                            constexpr bool has_width  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>;
+                            constexpr bool has_scale  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>;
+                            constexpr bool has_scalar = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldSliceVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SurfaceVisualization>;
                             if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, FieldSliceVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>)
                                 if (!data.channel_id.empty()) kdl_string_property(view_line, "channel", data.channel_id);
                             if constexpr (has_width)
@@ -925,9 +923,6 @@ namespace spectra::scene {
                                 if (data.slice_axis != 2) kdl_number_property(view_line, "slice-axis", data.slice_axis);
                             } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>) {
                                 if (data.sampling != 8) kdl_number_property(view_line, "sampling", data.sampling);
-                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, CameraObservationVisualization>) {
-                                if (data.distortion_iterations != 8) kdl_number_property(view_line, "distortion-iterations", data.distortion_iterations);
-                                if (data.distortion_tolerance != 1.0e-6f) kdl_number_property(view_line, "distortion-tolerance", data.distortion_tolerance);
                             }
                         },
                         view.data);
@@ -936,7 +931,7 @@ namespace spectra::scene {
                     if (view.color != math::Float4{1.0f, 1.0f, 1.0f, 1.0f}) writer.line(std::format("color {} {} {} {}", view.color.x, view.color.y, view.color.z, view.color.w));
                     std::visit(
                         [&writer](const auto& data) {
-                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, ImageVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, CameraObservationVisualization>)
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, ImageVisualization>)
                                 if (data.screen_rect != math::Float4{0.02f, 0.02f, 0.32f, 0.32f}) writer.line(std::format("screen-rect {} {} {} {}", data.screen_rect.x, data.screen_rect.y, data.screen_rect.z, data.screen_rect.w));
                         },
                         view.data);
@@ -1683,13 +1678,10 @@ namespace spectra::scene {
         [[nodiscard]] VisualizationViewKind read_visualization_view_kind(const std::string_view value) {
             if (value == "points") return VisualizationViewKind::Points;
             if (value == "segments") return VisualizationViewKind::Segments;
-            if (value == "curves") return VisualizationViewKind::Curves;
             if (value == "vectors") return VisualizationViewKind::Vectors;
             if (value == "field-slice") return VisualizationViewKind::FieldSlice;
             if (value == "field-vectors") return VisualizationViewKind::FieldVectors;
             if (value == "image") return VisualizationViewKind::Image;
-            if (value == "camera-observations") return VisualizationViewKind::CameraObservations;
-            if (value == "frames") return VisualizationViewKind::Frames;
             if (value == "surface") return VisualizationViewKind::Surface;
             throw std::runtime_error(std::format("Unknown Visualization view kind {}", value));
         }
@@ -1793,13 +1785,11 @@ namespace spectra::scene {
                         switch (read_visualization_view_kind(kdl_string_property(child, u8"kind"))) {
                         case VisualizationViewKind::Points: view.data = PointVisualization{width, scale, scalar_minimum, scalar_maximum, read_point_glyph(kdl_string_property(child, u8"glyph", "screen-disc")), read_point_shading(kdl_string_property(child, u8"shading", "unlit")), color_source, color_map}; break;
                         case VisualizationViewKind::Segments: view.data = SegmentVisualization{width, scalar_minimum, scalar_maximum, color_source, color_map}; break;
-                        case VisualizationViewKind::Curves: view.data = CurveVisualization{width, scalar_minimum, scalar_maximum, color_source, color_map}; break;
+                        case VisualizationViewKind::Reserved: std::unreachable();
                         case VisualizationViewKind::Vectors: view.data = VectorVisualization{width, scale, scalar_minimum, scalar_maximum, color_source, color_map}; break;
                         case VisualizationViewKind::FieldSlice: view.data = FieldSliceVisualization{kdl_string_property(child, u8"channel", ""), kdl_number_property<float>(child, u8"slice-position", 0.5f), scalar_minimum, scalar_maximum, kdl_number_property<std::uint32_t>(child, u8"slice-axis", 2), color_source, color_map}; break;
                         case VisualizationViewKind::FieldVectors: view.data = FieldVectorVisualization{kdl_string_property(child, u8"channel", ""), width, scale, scalar_minimum, scalar_maximum, kdl_number_property<std::uint32_t>(child, u8"sampling", 8), color_source, color_map}; break;
                         case VisualizationViewKind::Image: view.data = ImageVisualization{screen_rect}; break;
-                        case VisualizationViewKind::CameraObservations: view.data = CameraObservationVisualization{screen_rect, width, scale, kdl_number_property<std::uint32_t>(child, u8"distortion-iterations", 8), kdl_number_property<float>(child, u8"distortion-tolerance", 1.0e-6f)}; break;
-                        case VisualizationViewKind::Frames: view.data = FrameVisualization{width, scale}; break;
                         case VisualizationViewKind::Surface: view.data = SurfaceVisualization{scalar_minimum, scalar_maximum, color_source, color_map}; break;
                         }
                         if (const kdl::Node* color = kdl_child(child, u8"color")) view.color = {kdl_number<float>(color->args()[0]), kdl_number<float>(color->args()[1]), kdl_number<float>(color->args()[2]), kdl_number<float>(color->args()[3])};

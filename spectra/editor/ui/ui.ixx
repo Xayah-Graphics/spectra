@@ -23,6 +23,7 @@ namespace spectra {
         bool reload_scene{};
         bool save_scene{};
         bool save_scene_as{};
+        bool rebuild_dynamic_rendering{};
         bool show_axes{};
         std::optional<std::string> renderer{};
         std::optional<RasterDisplayMode> raster_display_mode{};
@@ -67,6 +68,8 @@ namespace spectra {
             std::uint64_t observed_dynamic_revision{};
             std::vector<scene::DynamicParameterSetting> parameter_drafts{};
             bool reset_pending{};
+            bool recreate_pending{};
+            bool rebuild_dynamic_rendering{};
         } controls;
 
     private:

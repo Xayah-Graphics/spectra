@@ -1,6 +1,6 @@
 module;
 
-#include <spectra/plugin_api.h>
+#include "../../../sdk/internal/abi.h"
 
 export module spectra.dynamics.runtime;
 
@@ -14,7 +14,7 @@ import vulkan;
 
 namespace spectra {
     export struct DynamicsRuntime {
-        DynamicsRuntime(VulkanRuntime& runtime) noexcept;
+        explicit DynamicsRuntime(VulkanRuntime& runtime) noexcept;
         ~DynamicsRuntime();
 
         DynamicsRuntime(const DynamicsRuntime&)            = delete;
@@ -45,7 +45,7 @@ namespace spectra {
         void evaluate(std::uint64_t simulation_step);
         void evaluate_time(double simulation_seconds);
         void reset();
-        void apply_parameter_changes(std::size_t system_index, std::span<const scene::DynamicParameterSetting> parameters, bool reset);
+        [[nodiscard]] bool apply_parameter_changes(std::size_t system_index, std::span<const scene::DynamicParameterSetting> parameters, bool reset);
 
         [[nodiscard]] const dynamics::DynamicSnapshot* acquire_snapshot();
         void consume_snapshot();
@@ -54,7 +54,7 @@ namespace spectra {
 
     private:
         struct ProviderLibrary {
-            ProviderLibrary(const std::filesystem::path& library_path, std::string_view expected_provider_id);
+            explicit ProviderLibrary(const std::filesystem::path& library_path);
             ~ProviderLibrary();
 
             ProviderLibrary(const ProviderLibrary&)            = delete;
@@ -63,79 +63,49 @@ namespace spectra {
             ProviderLibrary& operator=(ProviderLibrary&&)      = delete;
 
             void* library_handle{};
-            const SpectraPluginApi* plugin_api{};
-            SpectraPluginProviderDescriptor descriptor{};
+            const SpectraSdkApi* api{};
+            SpectraSdkProviderDescriptor descriptor{};
             dynamics::ProviderDescriptor provider{};
         };
 
-        struct DynamicDatasetBuffer {
-            SpectraPluginBufferSemantic semantic{};
-            std::uint32_t channel_index{};
+        struct OutputBuffer {
             GpuBuffer gpu_buffer{};
             DescriptorLease descriptor{};
             std::uint64_t byte_size{};
         };
 
-        struct DynamicDatasetRuntime {
+        struct OutputRuntime {
             dynamics::DatasetDescriptor descriptor{};
             std::optional<scene::DynamicSceneBinding> scene_binding{};
             std::vector<scene::DynamicVisualizationView> visualizations{};
-            std::vector<std::vector<DynamicDatasetBuffer>> buffer_slots{};
-            GpuExternalTimelineSemaphore timeline_semaphore{};
+            std::vector<OutputBuffer> static_buffers{};
+            std::vector<std::vector<OutputBuffer>> slots{};
             std::uint32_t capacity{};
             std::uint32_t secondary_capacity{};
-            std::uint64_t timeline_signal_value{};
-            bool output_pending{};
+            math::UInt3 resolution{};
+            SpectraSdkOutputKind kind{};
         };
 
         struct TelemetryReadbackSlot {
             GpuBuffer buffer{};
             std::uint64_t simulation_step{};
             double simulation_seconds{};
-            std::string phase{};
-            std::string headline{};
-            std::string message{};
             bool pending{};
         };
 
-        struct DynamicTelemetryRuntime {
-            std::vector<std::vector<DynamicDatasetBuffer>> buffer_slots{};
-            GpuExternalTimelineSemaphore timeline_semaphore{};
-            std::array<TelemetryReadbackSlot, VulkanFrames::frames_in_flight> readback_slots{};
-            std::uint64_t timeline_signal_value{};
-            std::uint64_t simulation_step{};
-            double simulation_seconds{};
-            std::uint32_t current_slot_index{};
-            std::string phase{};
-            std::string headline{};
-            std::string message{};
-            bool output_pending{};
-        };
-
-        struct DynamicSystemRuntime {
+        struct SystemRuntime {
             std::size_t scene_system_index{};
             const dynamics::ProviderDescriptor* provider_descriptor{};
-            const SpectraPluginApi* plugin_api{};
+            const SpectraSdkApi* api{};
             void* provider_instance{};
             std::vector<scene::DynamicParameterValue> parameter_values{};
-            std::vector<DynamicDatasetRuntime> datasets{};
-            DynamicTelemetryRuntime telemetry_gpu{};
-            dynamics::TelemetrySnapshot telemetry{};
-        };
-
-        struct PendingDatasetCommit {
-            DynamicSystemRuntime* system{};
-            DynamicDatasetRuntime* dataset{};
-            SpectraPluginDatasetCommit commit{};
-        };
-
-        struct PendingTelemetryCommit {
-            DynamicSystemRuntime* system{};
-            std::uint32_t slot_index{};
+            std::vector<OutputRuntime> outputs{};
+            GpuExternalTimelineSemaphore timeline{};
             std::uint64_t signal_value{};
-            std::string phase{};
-            std::string headline{};
-            std::string message{};
+            std::uint32_t current_slot{};
+            bool output_pending{};
+            std::array<TelemetryReadbackSlot, VulkanFrames::frames_in_flight> telemetry_readback{};
+            dynamics::TelemetrySnapshot telemetry{};
         };
 
         struct {
@@ -144,7 +114,9 @@ namespace spectra {
 
         struct {
             const scene::Scene* source_scene{};
+            std::filesystem::path assets{};
             scene::DynamicSetup setup{};
+            bool initialized{};
             bool faulted{};
         } configuration;
 
@@ -154,7 +126,7 @@ namespace spectra {
         } providers;
 
         struct {
-            std::vector<DynamicSystemRuntime> runtimes{};
+            std::vector<SystemRuntime> values{};
         } systems;
 
         struct {
@@ -164,12 +136,10 @@ namespace spectra {
 
         struct {
             dynamics::DynamicSnapshot snapshot{};
-            DynamicSystemRuntime* publishing_system{};
-            std::vector<PendingDatasetCommit> dataset_commits{};
-            std::vector<PendingTelemetryCommit> telemetry_commits{};
-            std::string callback_error{};
+            SystemRuntime* configuring_system{};
             bool snapshot_pending{};
             bool snapshot_acquired{};
+            std::string callback_error{};
         } publication;
 
         struct {
@@ -178,24 +148,19 @@ namespace spectra {
         } outputs;
 
         [[nodiscard]] ProviderLibrary& provider_library(std::string_view provider_id) const;
-        static SpectraPluginResult collect_dataset(void* context, std::uint64_t dataset_index, const SpectraPluginDatasetCommit* commit) noexcept;
-        static SpectraPluginResult collect_telemetry(void* context, const SpectraPluginTelemetryCommit* commit) noexcept;
-        void bind_dataset(DynamicDatasetRuntime& dataset, const scene::DynamicSystem& system) const;
-        void declare_scene_output(const DynamicDatasetRuntime& dataset);
-        void configure_dataset(DynamicSystemRuntime& system, std::size_t dataset_index);
-        void configure_telemetry(DynamicSystemRuntime& system);
-        [[nodiscard]] DynamicDatasetRuntime& dataset_runtime(DynamicSystemRuntime& system, std::uint64_t dataset_index);
-        void consume_telemetry(DynamicSystemRuntime& system, const SpectraPluginTelemetryGpuValue* values, std::uint64_t simulation_step, double simulation_seconds, std::string phase, std::string headline, std::string message);
-        void apply_parameters(DynamicSystemRuntime& system, std::span<const scene::DynamicParameterValue> values);
-        void append_dataset(const PendingDatasetCommit& pending, dynamics::DynamicSnapshot& snapshot) const;
-        void abort_publication();
-        void commit_publication(dynamics::DynamicSnapshot& snapshot, std::uint64_t simulation_step);
+        static SpectraSdkResult configure_output(void* context, const SpectraSdkOutputLayout* layout, SpectraSdkOutputRequest* request) noexcept;
+        static void release_output(void* lifetime) noexcept;
+        void bind_output(OutputRuntime& output, const scene::DynamicSystem& system) const;
+        void declare_scene_output(const OutputRuntime& output);
+        void create_system(SystemRuntime& system, const scene::DynamicSystem& declared);
+        void apply_parameters(SystemRuntime& system, std::span<const scene::DynamicParameterValue> values);
+        void append_output(const SystemRuntime& system, const OutputRuntime& output, const SpectraSdkOutputCommit& commit, dynamics::DynamicSnapshot& snapshot) const;
         void discard_pending_snapshot();
-        void publish_snapshot(std::uint64_t simulation_step);
+        void publish_snapshot();
         void step_to(std::uint64_t target_step);
         void reset_systems();
         void evaluate_frame(std::uint64_t target_step);
         void reset_simulation();
         void advance_one_step();
     };
-} // namespace spectra
+}
