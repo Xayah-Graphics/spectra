@@ -11,9 +11,9 @@ namespace spectra::dynamics {
         DescriptorHandle descriptor{};
     };
 
-    export struct GpuFieldChannelView {
-        FieldChannelDescriptor channel{};
-        GpuBufferView values{};
+    export struct GpuVolumeFieldView {
+        VolumeFieldDescriptor field{};
+        std::vector<GpuBufferView> values{};
     };
 
     export struct GpuTriangleMeshUpdate {
@@ -43,8 +43,7 @@ namespace spectra::dynamics {
         scene::VolumeId volume_id{};
         math::UInt3 resolution{};
         math::Transform local_from_grid{};
-        std::vector<GpuFieldChannelView> channels{};
-        std::optional<scene::VolumeRegion> dirty_region{};
+        std::vector<GpuVolumeFieldView> fields{};
     };
 
     export struct GpuSceneUpdate {
@@ -74,13 +73,6 @@ namespace spectra::dynamics {
         std::uint32_t count{};
     };
 
-    export struct GpuFieldVisualization {
-        VisualizationStyle style{};
-        math::UInt3 resolution{};
-        math::Transform local_from_grid{};
-        GpuFieldChannelView channel{};
-    };
-
     export struct GpuImageVisualization {
         VisualizationStyle style{};
         ImageDataset image{};
@@ -98,7 +90,7 @@ namespace spectra::dynamics {
     };
 
     export struct GpuVisualization {
-        std::variant<GpuPointVisualization, GpuSegmentVisualization, GpuVectorVisualization, GpuFieldVisualization, GpuImageVisualization, GpuSurfaceVisualization> data{};
+        std::variant<GpuPointVisualization, GpuSegmentVisualization, GpuVectorVisualization, GpuImageVisualization, GpuSurfaceVisualization> data{};
     };
 
     export struct MeshOutputBinding {

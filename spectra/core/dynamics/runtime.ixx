@@ -156,7 +156,7 @@ namespace spectra {
         void apply_parameters(SystemRuntime& system, std::span<const scene::DynamicParameterValue> values);
         void append_output(const SystemRuntime& system, const OutputRuntime& output, const SpectraSdkOutputCommit& commit, dynamics::DynamicSnapshot& snapshot) const;
         void discard_pending_snapshot();
-        void publish_snapshot();
+        void publish_frame();
         void step_to(std::uint64_t target_step);
         void reset_systems();
         void evaluate_frame(std::uint64_t target_step);

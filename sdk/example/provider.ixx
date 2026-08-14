@@ -23,7 +23,10 @@ export namespace spectra::sdk::example {
             spectra::sdk::parameter<"visible", &Settings::visible>("Visible"),
             spectra::sdk::mesh<"mesh">({.attributes = spectra::sdk::MeshAttribute::Normal | spectra::sdk::MeshAttribute::TextureCoordinate}),
             spectra::sdk::spheres<"spheres">(),
-            spectra::sdk::volume<"volume">(spectra::sdk::channel<"density", float>(), spectra::sdk::channel<"velocity", spectra::sdk::Float3>()),
+            spectra::sdk::volume<"volume">(
+                spectra::sdk::field<"density", float>("Density"),
+                spectra::sdk::field<"velocity", spectra::sdk::Float3>("Velocity")
+            ),
             spectra::sdk::instances<"instances">(),
             spectra::sdk::points<"points">(),
             spectra::sdk::lines<"lines">(),
@@ -66,8 +69,8 @@ export namespace spectra::sdk::example {
             auto image = frame.image<"image">();
             static_cast<void>(mesh.positions.data());
             static_cast<void>(spheres.data());
-            static_cast<void>(volume.channel<"density", float>().data());
-            static_cast<void>(volume.channel<"velocity", spectra::sdk::Float3>().data());
+            static_cast<void>(volume.field<"density", float>().data());
+            static_cast<void>(volume.field<"velocity", spectra::sdk::Float3>().data());
             static_cast<void>(instances.data());
             static_cast<void>(points.data());
             static_cast<void>(lines.data());

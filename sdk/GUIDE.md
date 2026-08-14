@@ -53,14 +53,20 @@ export namespace project {
 
 ## GPU outputs
 
-Declare only the resources a project publishes. SDK 1.0 provides `mesh`, `spheres`, `volume`, `instances`, `points`, `lines`, `vectors`, and `image`. A Volume declares its channels explicitly:
+Declare only the resources a project publishes. SDK 1.0 provides `mesh`, `spheres`, `volume`, `instances`, `points`, `lines`, `vectors`, and `image`. A Volume declares its fields explicitly:
 
 ```cpp
 spectra::sdk::volume<"smoke">(
-    spectra::sdk::channel<"density", float>(),
-    spectra::sdk::channel<"velocity", spectra::sdk::Float3>()
+    spectra::sdk::field<"density", float>("Density"),
+    spectra::sdk::field<"temperature", float>("Temperature", "K"),
+    spectra::sdk::field<"velocity", spectra::sdk::MacFloat3>(
+        "Velocity", "m/s",
+        {.sampling = spectra::sdk::VolumeFieldSampling::Cell, .vector_space = spectra::sdk::VolumeVectorSpace::World}
+    )
 )
 ```
+
+`float` and `Float3` fields contain `nx * ny * nz` values. Cell sampling places them at cell centers; vertex sampling spans the Volume bounds without changing the published element count. `MacFloat3` exposes staggered `x`, `y`, and `z` spans with resolutions `(nx + 1, ny, nz)`, `(nx, ny + 1, nz)`, and `(nx, ny, nz + 1)`. Spectra owns field selection, derived maps, slicing, ray marching, isosurfaces, glyphs, streamlines, and LIC; a Provider publishes only simulation data and field metadata.
 
 Allocate fixed capacities once in `setup`:
 

@@ -159,31 +159,54 @@ export namespace spectra::sdk {
         MeshAttribute attributes{};
     };
 
-    enum class VolumeChannelKind : std::uint32_t {
+    enum class VolumeFieldKind : std::uint32_t {
         Float,
         Float3,
+        MacFloat3,
+    };
+
+    enum class VolumeFieldSampling : std::uint32_t {
+        Cell,
+        Vertex,
+    };
+
+    enum class VolumeVectorSpace : std::uint32_t {
+        Grid,
+        Local,
+        World,
+    };
+
+    struct MacFloat3 {};
+
+    struct VolumeFieldOptions {
+        VolumeFieldSampling sampling{VolumeFieldSampling::Cell};
+        VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
     };
 
     template <FixedString Id, typename Type>
-    struct VolumeChannelDefinition {
-        static constexpr FixedString id            = Id;
-        static constexpr VolumeChannelKind kind    = std::same_as<Type, float> ? VolumeChannelKind::Float : VolumeChannelKind::Float3;
+    struct VolumeFieldDefinition {
+        static constexpr FixedString id         = Id;
+        static constexpr VolumeFieldKind kind   = std::same_as<Type, float> ? VolumeFieldKind::Float : std::same_as<Type, Float3> ? VolumeFieldKind::Float3 : VolumeFieldKind::MacFloat3;
+
+        std::string_view name{};
+        std::string_view unit{};
+        VolumeFieldOptions options{};
     };
 
     template <FixedString Id, typename Type>
-    [[nodiscard]] consteval auto channel() {
-        static_assert(std::same_as<Type, float> || std::same_as<Type, Float3>);
-        return VolumeChannelDefinition<Id, Type>{};
+    [[nodiscard]] consteval auto field(const std::string_view name, const std::string_view unit = {}, const VolumeFieldOptions options = {}) {
+        static_assert(std::same_as<Type, float> || std::same_as<Type, Float3> || std::same_as<Type, MacFloat3>);
+        return VolumeFieldDefinition<Id, Type>{name, unit, options};
     }
 
-    template <FixedString Id, OutputKind Kind, typename... Channels>
+    template <FixedString Id, OutputKind Kind, typename... Fields>
     struct OutputDefinition {
         static constexpr DefinitionCategory category = DefinitionCategory::Output;
         static constexpr FixedString id               = Id;
         static constexpr OutputKind kind              = Kind;
 
         MeshOptions mesh_options{};
-        std::tuple<Channels...> channels{};
+        std::tuple<Fields...> fields{};
     };
 
     template <FixedString Id>
@@ -196,10 +219,10 @@ export namespace spectra::sdk {
         return OutputDefinition<Id, OutputKind::Spheres>{};
     }
 
-    template <FixedString Id, typename... Channels>
-    [[nodiscard]] consteval auto volume(const Channels... channels) {
-        static_assert(sizeof...(Channels) != 0u);
-        return OutputDefinition<Id, OutputKind::Volume, Channels...>{{}, {channels...}};
+    template <FixedString Id, typename... Fields>
+    [[nodiscard]] consteval auto volume(const Fields... fields) {
+        static_assert(sizeof...(Fields) != 0u);
+        return OutputDefinition<Id, OutputKind::Volume, Fields...>{{}, {fields...}};
     }
 
     template <FixedString Id>

@@ -155,11 +155,17 @@ export namespace spectra {
         };
 
         struct Volume {
+            struct Field {
+                std::string id{};
+                scene::VolumeFieldKind kind{scene::VolumeFieldKind::Float};
+                std::vector<DescriptorHandle> descriptors{};
+            };
+
             scene::VolumeId id{};
             scene::ResourceRevision revision{};
             math::UInt3 resolution{};
-            std::array<DescriptorHandle, static_cast<std::size_t>(GpuVolumeField::Count)> descriptors{};
-            std::array<bool, static_cast<std::size_t>(GpuVolumeField::Count)> field_present{};
+            std::vector<Field> fields{};
+            bool cpu_data_stale{};
         };
 
         struct Geometry {

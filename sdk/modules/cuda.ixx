@@ -32,8 +32,15 @@ namespace spectra::sdk::cuda {
     struct RawVolumeView {
         void* state{};
         UInt3 resolution{};
-        std::uint32_t* region_minimum{};
-        std::uint32_t* region_maximum{};
+    };
+
+    struct RawMacFieldView {
+        RawView x{};
+        RawView y{};
+        RawView z{};
+        UInt3 x_resolution{};
+        UInt3 y_resolution{};
+        UInt3 z_resolution{};
     };
 
     struct MetricValue {
@@ -45,13 +52,14 @@ namespace spectra::sdk::cuda {
     void setup_collection_internal(void* state, std::string_view id, OutputKind kind, std::uint32_t capacity);
     void setup_volume_internal(void* state, std::string_view id, UInt3 resolution);
     void setup_image_internal(void* state, std::string_view id, UInt3 extent);
-    void register_output_internal(void* state, std::string_view id, OutputKind kind, MeshAttribute attributes, std::span<const std::string_view> channel_ids, std::span<const VolumeChannelKind> channel_kinds);
+    void register_output_internal(void* state, std::string_view id, OutputKind kind, MeshAttribute attributes, std::span<const std::string_view> field_ids, std::span<const VolumeFieldKind> field_kinds);
     void configure_metrics_internal(void* state, std::span<const std::string_view> ids);
     [[nodiscard]] RawMeshView frame_mesh_internal(void* state, std::string_view id);
     [[nodiscard]] RawView frame_collection_internal(void* state, std::string_view id, std::uint32_t active_count);
     [[nodiscard]] RawVolumeView frame_volume_internal(void* state, std::string_view id);
     [[nodiscard]] RawImageView frame_image_internal(void* state, std::string_view id);
-    [[nodiscard]] RawView volume_channel_internal(void* state, std::string_view id);
+    [[nodiscard]] RawView volume_field_internal(void* state, std::string_view id);
+    [[nodiscard]] RawMacFieldView volume_mac_field_internal(void* state, std::string_view id);
     void upload_metric_internal(void* state, std::string_view id, const MetricValue& value);
 
     export struct MeshSetup {
@@ -74,18 +82,43 @@ namespace spectra::sdk::cuda {
         UInt3 extent{};
     };
 
+    export struct MacField;
+
     export struct Volume {
         void* state{};
         UInt3 resolution{};
-        std::span<std::uint32_t, 3> region_minimum;
-        std::span<std::uint32_t, 3> region_maximum;
 
         template <FixedString Id, typename Type>
-        [[nodiscard]] std::span<Type> channel() const {
-            const RawView view = volume_channel_internal(state, Id.view());
+        [[nodiscard]] std::span<Type> field() const {
+            const RawView view = volume_field_internal(state, Id.view());
             return {static_cast<Type*>(view.data), view.count};
         }
+
+        template <FixedString Id>
+        [[nodiscard]] MacField field() const;
     };
+
+    export struct MacField {
+        std::span<float> x{};
+        std::span<float> y{};
+        std::span<float> z{};
+        UInt3 x_resolution{};
+        UInt3 y_resolution{};
+        UInt3 z_resolution{};
+    };
+
+    template <FixedString Id>
+    [[nodiscard]] MacField Volume::field() const {
+        const RawMacFieldView view = volume_mac_field_internal(state, Id.view());
+        return {
+            {static_cast<float*>(view.x.data), view.x.count},
+            {static_cast<float*>(view.y.data), view.y.count},
+            {static_cast<float*>(view.z.data), view.z.count},
+            view.x_resolution,
+            view.y_resolution,
+            view.z_resolution,
+        };
+    }
 
     export struct Metric {
         void* state{};
@@ -168,16 +201,16 @@ namespace spectra::sdk::cuda {
                 [this, &metric_ids](const auto&... definition) {
                     ([this, &metric_ids](const auto& value) {
                         if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Output) {
-                            std::vector<std::string_view> channel_ids{};
-                            std::vector<VolumeChannelKind> channel_kinds{};
+                            std::vector<std::string_view> field_ids{};
+                            std::vector<VolumeFieldKind> field_kinds{};
                             std::apply(
-                                [&channel_ids, &channel_kinds](const auto&... channel) {
-                                    (channel_ids.emplace_back(std::remove_cvref_t<decltype(channel)>::id.view()), ...);
-                                    (channel_kinds.emplace_back(std::remove_cvref_t<decltype(channel)>::kind), ...);
+                                [&field_ids, &field_kinds](const auto&... field) {
+                                    (field_ids.emplace_back(std::remove_cvref_t<decltype(field)>::id.view()), ...);
+                                    (field_kinds.emplace_back(std::remove_cvref_t<decltype(field)>::kind), ...);
                                 },
-                                value.channels
+                                value.fields
                             );
-                            register_output_internal(state, std::remove_cvref_t<decltype(value)>::id.view(), std::remove_cvref_t<decltype(value)>::kind, value.mesh_options.attributes, channel_ids, channel_kinds);
+                            register_output_internal(state, std::remove_cvref_t<decltype(value)>::id.view(), std::remove_cvref_t<decltype(value)>::kind, value.mesh_options.attributes, field_ids, field_kinds);
                         } else if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Metric)
                             metric_ids.emplace_back(std::remove_cvref_t<decltype(value)>::id.view());
                     }(definition), ...);
@@ -238,7 +271,7 @@ namespace spectra::sdk::cuda {
         template <FixedString Id>
         [[nodiscard]] Volume volume() const {
             const RawVolumeView view = frame_volume_internal(state, Id.view());
-            return {view.state, view.resolution, std::span<std::uint32_t, 3>{view.region_minimum, 3u}, std::span<std::uint32_t, 3>{view.region_maximum, 3u}};
+            return {view.state, view.resolution};
         }
 
         template <FixedString Id>

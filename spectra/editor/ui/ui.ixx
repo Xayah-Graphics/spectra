@@ -61,6 +61,7 @@ namespace spectra {
             std::array<float, 3> translation{};
             std::array<float, 3> rotation{};
             std::array<float, 3> scale{1.0f, 1.0f, 1.0f};
+            scene::VolumeId selected_volume{};
             std::string observed_status{};
             bool observed_status_error{};
             double status_since{};

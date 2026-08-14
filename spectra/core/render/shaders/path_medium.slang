@@ -415,11 +415,12 @@ float dense_float_value(
 float sample_dense_float(
     StructuredBuffer<float> values,
     uint3 resolution,
-    float3 point) {
+    float3 point,
+    bool vertex_sampled) {
     const float3 sample_position =
-        point *
-            float3(resolution) -
-        0.5;
+        vertex_sampled
+            ? point * float3(resolution - 1)
+            : point * float3(resolution) - 0.5;
     const int3 base =
         int3(
             floor(
@@ -512,11 +513,12 @@ float3 dense_rgb_value(
 float3 sample_dense_rgb(
     StructuredBuffer<PathPackedFloat3> values,
     uint3 resolution,
-    float3 point) {
+    float3 point,
+    bool vertex_sampled) {
     const float3 sample_position =
-        point *
-            float3(resolution) -
-        0.5;
+        vertex_sampled
+            ? point * float3(resolution - 1)
+            : point * float3(resolution) - 0.5;
     const int3 base =
         int3(
             floor(
@@ -686,7 +688,8 @@ evaluate_medium(
             sample_dense_float(
                 density,
                 resolution,
-                normalized_point);
+                normalized_point,
+                (volume.majorant_metadata.w & (1u << 16u)) != 0);
         result.sigma_a *=
             density_value;
         result.sigma_s *=
@@ -704,7 +707,8 @@ evaluate_medium(
                 sample_dense_float(
                     emission_scale_grid,
                     resolution,
-                    normalized_point);
+                    normalized_point,
+                    (volume.majorant_metadata.w & (1u << 18u)) != 0);
         }
         result.emission *=
             emission_scale;
@@ -720,7 +724,8 @@ evaluate_medium(
                 sample_dense_float(
                     temperature,
                     resolution,
-                    normalized_point) *
+                    normalized_point,
+                    (volume.majorant_metadata.w & (1u << 17u)) != 0) *
                     medium.scales.w +
                 medium.temperature.x;
             if (value >= medium.temperature.y)
@@ -736,12 +741,10 @@ evaluate_medium(
     if (volume.metadata.x == volume_rgb_grid) {
         const uint3 resolution =
             volume.metadata.yzw;
-        const uint flags =
-            volume.majorant_metadata.w &
-            255;
+        const uint all_flags = volume.majorant_metadata.w;
+        const uint flags = all_flags & 255;
         const uint color_space =
-            volume.majorant_metadata.w >>
-            8;
+            (all_flags >> 8) & 255;
         result.sigma_a =
             (
                 (flags & 1) != 0
@@ -749,7 +752,8 @@ evaluate_medium(
                           sample_dense_rgb(
                               volume.sigma_a,
                               resolution,
-                              normalized_point),
+                              normalized_point,
+                              (all_flags & (1u << 19u)) != 0),
                           1,
                           color_space,
                           bindings
@@ -766,7 +770,8 @@ evaluate_medium(
                           sample_dense_rgb(
                               volume.sigma_s,
                               resolution,
-                              normalized_point),
+                              normalized_point,
+                              (all_flags & (1u << 20u)) != 0),
                           1,
                           color_space,
                           bindings
@@ -782,7 +787,8 @@ evaluate_medium(
                       sample_dense_rgb(
                           volume.emission,
                           resolution,
-                          normalized_point),
+                          normalized_point,
+                          (all_flags & (1u << 21u)) != 0),
                       2,
                       color_space,
                       bindings

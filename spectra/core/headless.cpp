@@ -92,7 +92,7 @@ namespace spectra {
             display->initialize();
         }
         std::unique_ptr<VisualizationRenderer> visualization{};
-        if (output_layer == RenderOutputLayer::ComposedDisplay && compose_visualizations) visualization = std::make_unique<VisualizationRenderer>(runtime, shader_directory);
+        if (output_layer == RenderOutputLayer::ComposedDisplay && compose_visualizations) visualization = std::make_unique<VisualizationRenderer>(runtime, gpu_scene, shader_directory);
         std::unique_ptr<SceneDiagnosticRenderer> diagnostics{};
         if (output_layer == RenderOutputLayer::ComposedDisplay && compose_diagnostics) {
             diagnostics = std::make_unique<SceneDiagnosticRenderer>(runtime, gpu_scene, shader_directory);

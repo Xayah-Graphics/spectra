@@ -84,12 +84,6 @@ float4 element_visualization_color(float4 element_color, float scalar) {
     return element_color * push_data.color;
 }
 
-float4 field_color(float3 value) {
-    if ((uint)push_data.screen_rect.z != 0) return float4(max(value * push_data.parameters.y, 0.0), push_data.color.w);
-    const float scalar = value.x * push_data.parameters.y;
-    return float4(visualization_color_map((scalar - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z), push_data.detail.w), push_data.color.w);
-}
-
 float3 visualization_color_map(float value, uint color_map) {
     value = saturate(value);
     if (color_map == 1) {
@@ -111,10 +105,96 @@ float3 visualization_color_map(float value, uint color_map) {
     return value < 0.5 ? lerp(c0, c1, value * 2.0) : lerp(c1, c2, value * 2.0 - 1.0);
 }
 
-float3 load_field(ByteAddressBuffer field, uint3 coordinate) {
-    const uint index = (coordinate.z * push_data.dimensions.w + coordinate.y) * push_data.dimensions.z + coordinate.x;
-    if ((uint)push_data.screen_rect.z == 0) return float3(field.Load<float>(index * 4), 0.0, 0.0);
-    return field.Load<float3>(index * 12);
+uint volume_index(uint3 coordinate, uint3 resolution) {
+    return (coordinate.z * resolution.y + coordinate.y) * resolution.x + coordinate.x;
+}
+
+float sample_float_field(ByteAddressBuffer field, float3 position, uint3 resolution, float3 offset, bool vertex_sampled) {
+    const float3 coordinate = vertex_sampled
+        ? clamp(position * float3(resolution - 1), 0.0, float3(resolution - 1))
+        : clamp(position * float3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x) - offset, 0.0, float3(resolution - 1));
+    const uint3 lower = uint3(floor(coordinate));
+    const uint3 upper = min(lower + 1, resolution - 1);
+    const float3 weight = coordinate - float3(lower);
+    const float c000 = field.Load<float>(volume_index(lower, resolution) * 4);
+    const float c100 = field.Load<float>(volume_index(uint3(upper.x, lower.y, lower.z), resolution) * 4);
+    const float c010 = field.Load<float>(volume_index(uint3(lower.x, upper.y, lower.z), resolution) * 4);
+    const float c110 = field.Load<float>(volume_index(uint3(upper.x, upper.y, lower.z), resolution) * 4);
+    const float c001 = field.Load<float>(volume_index(uint3(lower.x, lower.y, upper.z), resolution) * 4);
+    const float c101 = field.Load<float>(volume_index(uint3(upper.x, lower.y, upper.z), resolution) * 4);
+    const float c011 = field.Load<float>(volume_index(uint3(lower.x, upper.y, upper.z), resolution) * 4);
+    const float c111 = field.Load<float>(volume_index(upper, resolution) * 4);
+    return lerp(lerp(lerp(c000, c100, weight.x), lerp(c010, c110, weight.x), weight.y), lerp(lerp(c001, c101, weight.x), lerp(c011, c111, weight.x), weight.y), weight.z);
+}
+
+float3 sample_float3_field(ByteAddressBuffer field, float3 position, bool vertex_sampled) {
+    const uint3 resolution = uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
+    const float3 coordinate = vertex_sampled
+        ? clamp(position * float3(resolution - 1), 0.0, float3(resolution - 1))
+        : clamp(position * float3(resolution) - 0.5, 0.0, float3(resolution - 1));
+    const uint3 lower = uint3(floor(coordinate));
+    const uint3 upper = min(lower + 1, resolution - 1);
+    const float3 weight = coordinate - float3(lower);
+    const float3 c000 = field.Load<float3>(volume_index(lower, resolution) * 12);
+    const float3 c100 = field.Load<float3>(volume_index(uint3(upper.x, lower.y, lower.z), resolution) * 12);
+    const float3 c010 = field.Load<float3>(volume_index(uint3(lower.x, upper.y, lower.z), resolution) * 12);
+    const float3 c110 = field.Load<float3>(volume_index(uint3(upper.x, upper.y, lower.z), resolution) * 12);
+    const float3 c001 = field.Load<float3>(volume_index(uint3(lower.x, lower.y, upper.z), resolution) * 12);
+    const float3 c101 = field.Load<float3>(volume_index(uint3(upper.x, lower.y, upper.z), resolution) * 12);
+    const float3 c011 = field.Load<float3>(volume_index(uint3(lower.x, upper.y, upper.z), resolution) * 12);
+    const float3 c111 = field.Load<float3>(volume_index(upper, resolution) * 12);
+    return lerp(lerp(lerp(c000, c100, weight.x), lerp(c010, c110, weight.x), weight.y), lerp(lerp(c001, c101, weight.x), lerp(c011, c111, weight.x), weight.y), weight.z);
+}
+
+float sample_volume_scalar(float3 position) {
+    ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+    return sample_float_field(primary, position, uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x), 0.5, (push_data.metadata.y >> 8) != 0);
+}
+
+float3 sample_volume_vector(float3 position) {
+    ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+    if ((push_data.metadata.y & 255) == 1) return sample_float3_field(primary, position, (push_data.metadata.y >> 8) != 0);
+    ByteAddressBuffer secondary = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
+    ByteAddressBuffer tertiary = DescriptorHandle<ByteAddressBuffer>(uint2(push_data.color_space, push_data.reserved));
+    const uint3 base_resolution = uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
+    return float3(
+        sample_float_field(primary, position, base_resolution + uint3(1, 0, 0), float3(0.0, 0.5, 0.5), false),
+        sample_float_field(secondary, position, base_resolution + uint3(0, 1, 0), float3(0.5, 0.0, 0.5), false),
+        sample_float_field(tertiary, position, base_resolution + uint3(0, 0, 1), float3(0.5, 0.5, 0.0), false));
+}
+
+float3 vector_to_grid(float3 vector) {
+    return float3(dot(push_data.transform_row_0.xyz, vector), dot(push_data.transform_row_1.xyz, vector), dot(push_data.transform_row_2.xyz, vector));
+}
+
+float volume_mapping(float3 position) {
+    if ((push_data.metadata.y & 255) == 0) return sample_volume_scalar(position);
+    const float3 value = sample_volume_vector(position);
+    if (push_data.metadata.z == 0 || push_data.metadata.z == 1) return length(value);
+    if (push_data.metadata.z == 2) return value.x;
+    if (push_data.metadata.z == 3) return value.y;
+    if (push_data.metadata.z == 4) return value.z;
+    const float3 delta = 1.0 / float3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
+    const float3 dx = (sample_volume_vector(position + float3(delta.x, 0.0, 0.0)) - sample_volume_vector(position - float3(delta.x, 0.0, 0.0))) / (2.0 * delta.x);
+    const float3 dy = (sample_volume_vector(position + float3(0.0, delta.y, 0.0)) - sample_volume_vector(position - float3(0.0, delta.y, 0.0))) / (2.0 * delta.y);
+    const float3 dz = (sample_volume_vector(position + float3(0.0, 0.0, delta.z)) - sample_volume_vector(position - float3(0.0, 0.0, delta.z))) / (2.0 * delta.z);
+    if (push_data.metadata.z == 5) return dx.x + dy.y + dz.z;
+    if (push_data.metadata.z == 6) return length(float3(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x));
+    const float3x3 gradient = float3x3(dx, dy, dz);
+    const float3x3 strain = 0.5 * (gradient + transpose(gradient));
+    const float3x3 rotation = 0.5 * (gradient - transpose(gradient));
+    return 0.5 * (dot(rotation[0], rotation[0]) + dot(rotation[1], rotation[1]) + dot(rotation[2], rotation[2]) - dot(strain[0], strain[0]) - dot(strain[1], strain[1]) - dot(strain[2], strain[2]));
+}
+
+float4 volume_color(float value) {
+    const float normalized = (value - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z);
+    return float4(visualization_color_map(normalized, (uint)push_data.screen_rect.w) * push_data.color.rgb, push_data.color.w);
+}
+
+float3 volume_slice_position(float2 uv) {
+    if (push_data.detail.y == 0) return float3(push_data.screen_rect.x, uv.x, uv.y);
+    if (push_data.detail.y == 1) return float3(uv.x, push_data.screen_rect.x, uv.y);
+    return float3(uv, push_data.screen_rect.x);
 }
 
 float4 wide_line_position(float4 first, float4 second, uint triangle_vertex, float width) {
@@ -156,6 +236,24 @@ VisualizationVertexOutput make_line(float3 first, float3 second, float width, fl
     return output;
 }
 
+VisualizationVertexOutput make_volume_line(float3 first, float3 second, float width, float4 color, uint triangle_vertex) {
+    VisualizationVertexOutput output;
+    output.position = wide_line_position(project_position(float4(first, 1.0)), project_position(float4(second, 1.0)), triangle_vertex, width);
+    output.color = color;
+    output.texture_coordinates = 0.0;
+    output.image_layer = 0;
+    output.sample_image = 0;
+    output.depth_data = 0.0;
+    return output;
+}
+
+float3 integrate_volume_vector(float3 position, float direction) {
+    const float step = push_data.parameters.y * direction;
+    const float3 first = vector_to_grid(sample_volume_vector(position));
+    const float3 middle = vector_to_grid(sample_volume_vector(clamp(position + first * step * 0.5, 0.0, 1.0)));
+    return clamp(position + middle * step, 0.0, 1.0);
+}
+
 [shader("vertex")]
 VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID) {
     const uint kind = push_data.metadata.x;
@@ -188,33 +286,14 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         const SdkLine line = lines[instance_id];
         return make_line(sdk_float3(line.first_position), sdk_float3(line.second_position), line.width * push_data.parameters.x, element_visualization_color(sdk_float4(line.color), line.scalar), vertex_id);
     }
-    if (kind == 3 || kind == 5) {
-        float3 origin;
-        float3 vector;
-        float width;
-        float4 color;
-        if (kind == 3) {
-            StructuredBuffer<SdkVector> vectors = DescriptorHandle<StructuredBuffer<SdkVector>>(push_data.primary);
-            const SdkVector element = vectors[instance_id];
-            origin = sdk_float3(element.origin);
-            vector = sdk_float3(element.vector) * push_data.parameters.y;
-            width = element.width * push_data.parameters.x;
-            color = element_visualization_color(sdk_float4(element.color), element.scalar);
-        } else {
-            ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
-            const uint sampling = push_data.detail.y;
-            const uint z = instance_id / (sampling * sampling);
-            const uint y = (instance_id / sampling) % sampling;
-            const uint x = instance_id % sampling;
-            const float3 normalized = (float3(x, y, z) + 0.5) / float(sampling);
-            const uint3 coordinate = min(uint3(normalized * float3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x)), uint3(push_data.dimensions.z - 1, push_data.dimensions.w - 1, push_data.detail.x - 1));
-            origin = normalized;
-            vector = load_field(primary, coordinate) * push_data.parameters.y;
-            width = push_data.parameters.x;
-            color = push_data.color;
-        }
+    if (kind == 2) {
+        StructuredBuffer<SdkVector> vectors = DescriptorHandle<StructuredBuffer<SdkVector>>(push_data.primary);
+        const SdkVector element = vectors[instance_id];
+        const float3 origin = sdk_float3(element.origin);
+        const float3 vector = sdk_float3(element.vector) * push_data.parameters.y;
+        const float width = element.width * push_data.parameters.x;
+        const float4 color = element_visualization_color(sdk_float4(element.color), element.scalar);
         const float length_value = length(vector);
-        if (kind == 5) color = element_visualization_color(float4(1.0), length_value);
         const float3 direction = length_value == 0.0 ? float3(1.0, 0.0, 0.0) : vector / length_value;
         const float3 reference = abs(direction.z) < 0.9 ? float3(0.0, 0.0, 1.0) : float3(0.0, 1.0, 0.0);
         const float3 side = normalize(cross(direction, reference)) * length_value * 0.18;
@@ -223,24 +302,56 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         const float3 second = part == 0 ? origin + vector : origin + vector - direction * length_value * 0.28 + (part == 1 ? side : -side);
         return make_line(first, second, width, color, vertex_id % 6);
     }
-    if (kind == 4) {
-        ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
-        const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
-        const float2 uv = corners[vertex_id];
-        float3 position;
-        if ((uint)push_data.screen_rect.x == 0) position = float3(push_data.screen_rect.y, uv.x, uv.y);
-        else if ((uint)push_data.screen_rect.x == 1) position = float3(uv.x, push_data.screen_rect.y, uv.y);
-        else position = float3(uv, push_data.screen_rect.y);
-        const uint3 coordinate = min(uint3(position * float3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x)), uint3(push_data.dimensions.z - 1, push_data.dimensions.w - 1, push_data.detail.x - 1));
-        VisualizationVertexOutput output = {project_position(transform_position(position)), field_color(load_field(primary, coordinate)), uv, 0, 0, 0.0};
-        return output;
-    }
-    if (kind == 6) {
+    if (kind == 3) {
         const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
         const float2 uv = corners[vertex_id];
         const float2 screen = push_data.screen_rect.xy + uv * push_data.screen_rect.zw;
         VisualizationVertexOutput output = {float4(screen.x * 2.0 - 1.0, 1.0 - screen.y * 2.0, 0.0, 1.0), push_data.color, uv, 0, 1, 0.0};
         return output;
+    }
+    if (kind == 8 || kind == 14) {
+        const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
+        const float2 uv = corners[vertex_id];
+        VisualizationVertexOutput output = {project_position(float4(volume_slice_position(uv), 1.0)), push_data.color, uv, 0, 0, 0.0};
+        return output;
+    }
+    if (kind >= 9 && kind <= 11) {
+        const float2 positions[3] = {float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0)};
+        const float2 ndc = positions[vertex_id];
+        VisualizationVertexOutput output = {float4(ndc, 0.0, 1.0), push_data.color, ndc * 0.5 + 0.5, 0, 0, 0.0};
+        return output;
+    }
+    if (kind == 12) {
+        const uint sampling = push_data.detail.z;
+        const uint z = instance_id / (sampling * sampling);
+        const uint y = (instance_id / sampling) % sampling;
+        const uint x = instance_id % sampling;
+        const float3 origin = (float3(x, y, z) + 0.5) / float(sampling);
+        const float3 vector = vector_to_grid(sample_volume_vector(origin)) * push_data.parameters.y;
+        const float length_value = length(vector);
+        const float3 direction = length_value == 0.0 ? float3(1.0, 0.0, 0.0) : vector / length_value;
+        const float3 reference = abs(direction.z) < 0.9 ? float3(0.0, 0.0, 1.0) : float3(0.0, 1.0, 0.0);
+        const float3 side = normalize(cross(direction, reference)) * length_value * 0.18;
+        const uint part = vertex_id / 6;
+        const float3 first = part == 0 ? origin : origin + vector;
+        const float3 second = part == 0 ? origin + vector : origin + vector - direction * length_value * 0.28 + (part == 1 ? side : -side);
+        return make_volume_line(first, second, push_data.parameters.x, volume_color(volume_mapping(origin)), vertex_id % 6);
+    }
+    if (kind == 13) {
+        const uint segment = instance_id % push_data.detail.w;
+        const uint seed_index = instance_id / push_data.detail.w;
+        const uint sampling = push_data.detail.z;
+        const uint z = seed_index / (sampling * sampling);
+        const uint y = (seed_index / sampling) % sampling;
+        const uint x = seed_index % sampling;
+        const float3 seed = (float3(x, y, z) + 0.5) / float(sampling);
+        const uint half_steps = push_data.detail.w / 2;
+        const float direction = segment < half_steps ? -1.0 : 1.0;
+        const uint offset = segment < half_steps ? half_steps - segment - 1 : segment - half_steps;
+        float3 first = seed;
+        for (uint step = 0; step != offset; ++step) first = integrate_volume_vector(first, direction);
+        const float3 second = integrate_volume_vector(first, direction);
+        return make_volume_line(first, second, push_data.parameters.x, volume_color(volume_mapping(first)), vertex_id);
     }
     ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
     ByteAddressBuffer indices = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
@@ -257,10 +368,132 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
     return surface;
 }
 
+float3 project_homogeneous(float4 value) {
+    const float4 transformed = project_position(value);
+    return transformed.xyz / transformed.w;
+}
+
+bool intersect_unit_volume(float3 origin, float3 direction, out float minimum, out float maximum) {
+    const float3 first = (0.0 - origin) / direction;
+    const float3 second = (1.0 - origin) / direction;
+    const float3 lower = min(first, second);
+    const float3 upper = max(first, second);
+    minimum = max(max(lower.x, lower.y), lower.z);
+    maximum = min(min(upper.x, upper.y), upper.z);
+    return maximum >= max(minimum, 0.0);
+}
+
+float volume_noise(float3 position) {
+    return frac(sin(dot(floor(position * float3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x)), float3(12.9898, 78.233, 37.719))) * 43758.5453);
+}
+
 [shader("fragment")]
 float4 visualization_fragment(VisualizationVertexOutput input) : SV_Target0 {
     float4 color = input.color;
     float visualization_depth = input.position.z;
+    const uint kind = push_data.metadata.x;
+    if (kind == 8) {
+        color = volume_color(volume_mapping(volume_slice_position(input.texture_coordinates)));
+        color.a *= push_data.screen_rect.y;
+    }
+    if (kind == 14) {
+        const float3 origin = volume_slice_position(input.texture_coordinates);
+        const float spacing = 1.0 / max(max(push_data.dimensions.z, push_data.dimensions.w), push_data.detail.x);
+        float convolution = volume_noise(origin);
+        float weight = 1.0;
+        for (int direction = -1; direction <= 1; direction += 2) {
+            float3 position = origin;
+            for (uint step = 1; step <= push_data.detail.w; ++step) {
+                float3 velocity = vector_to_grid(sample_volume_vector(position));
+                if (push_data.detail.y == 0) velocity.x = 0.0;
+                else if (push_data.detail.y == 1) velocity.y = 0.0;
+                else velocity.z = 0.0;
+                const float magnitude = length(velocity);
+                if (magnitude == 0.0) break;
+                position = clamp(position + velocity / magnitude * spacing * float(direction), 0.0, 1.0);
+                const float kernel = 0.5 + 0.5 * cos(3.14159265 * float(step) / float(push_data.detail.w + 1));
+                convolution += volume_noise(position) * kernel;
+                weight += kernel;
+            }
+        }
+        const float lic = convolution / weight;
+        const float4 mapped = volume_color(volume_mapping(origin));
+        color = float4(mapped.rgb * (0.25 + 0.75 * lic), mapped.a * push_data.screen_rect.y);
+    }
+    if (kind >= 9 && kind <= 11) {
+        const float2 ndc = input.texture_coordinates * 2.0 - 1.0;
+        const float3 near_grid = project_homogeneous(float4(ndc, 0.0, 1.0));
+        const float3 far_grid = project_homogeneous(float4(ndc, 1.0, 1.0));
+        const float3 direction = normalize(far_grid - near_grid);
+        float ray_minimum;
+        float ray_maximum;
+        if (!intersect_unit_volume(near_grid, direction, ray_minimum, ray_maximum)) discard;
+        ray_minimum = max(ray_minimum, 0.0);
+        float opaque_distance = ray_maximum;
+        if (push_data.metadata.w != 2) {
+            Texture2D<float> depth = push_data.depth;
+            const float scene_depth = depth.Load(int3(uint2(input.position.xy), 0));
+            const float3 opaque_grid = project_homogeneous(float4(ndc, scene_depth, 1.0));
+            opaque_distance = dot(opaque_grid - near_grid, direction);
+        }
+        if (push_data.metadata.w == 0) ray_maximum = min(ray_maximum, opaque_distance);
+        if (ray_maximum <= ray_minimum) discard;
+        const uint step_count = max(push_data.detail.w, 8u);
+        const float step_length = (ray_maximum - ray_minimum) / float(step_count);
+        if (kind == 9) {
+            float4 accumulated = 0.0;
+            for (uint step = 0; step != step_count; ++step) {
+                const float3 position = near_grid + direction * (ray_minimum + (float(step) + 0.5) * step_length);
+                const float value = volume_mapping(position);
+                float4 sample_color = volume_color(value);
+                const float normalized = saturate((value - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z));
+                sample_color.a = (1.0 - exp(-normalized * push_data.screen_rect.y * step_length * float(step_count))) * push_data.color.w;
+                if (push_data.metadata.w == 1 && ray_minimum + (float(step) + 0.5) * step_length > opaque_distance) sample_color.a *= 0.22;
+                accumulated.rgb += (1.0 - accumulated.a) * sample_color.a * sample_color.rgb;
+                accumulated.a += (1.0 - accumulated.a) * sample_color.a;
+                if (accumulated.a > 0.995) break;
+            }
+            color = accumulated;
+        } else if (kind == 10) {
+            float maximum = push_data.parameters.z;
+            float maximum_distance = ray_minimum;
+            for (uint step = 0; step != step_count; ++step) {
+                const float distance = ray_minimum + (float(step) + 0.5) * step_length;
+                const float value = volume_mapping(near_grid + direction * distance);
+                if (value > maximum) maximum = value, maximum_distance = distance;
+            }
+            color = volume_color(maximum);
+            color.a *= push_data.screen_rect.y * saturate((maximum - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z));
+            if (push_data.metadata.w == 1 && maximum_distance > opaque_distance) color.a *= 0.22;
+        } else {
+            bool hit = false;
+            float3 hit_position = 0.0;
+            float hit_distance = ray_minimum;
+            float previous = volume_mapping(near_grid + direction * ray_minimum) - push_data.screen_rect.z;
+            for (uint step = 1; step <= step_count; ++step) {
+                const float3 position = near_grid + direction * (ray_minimum + float(step) * step_length);
+                const float current = volume_mapping(position) - push_data.screen_rect.z;
+                if (previous * current <= 0.0) {
+                    hit = true;
+                    hit_position = position;
+                    hit_distance = ray_minimum + float(step) * step_length;
+                    break;
+                }
+                previous = current;
+            }
+            if (!hit) discard;
+            const float3 delta = 1.0 / float3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
+            const float3 normal = normalize(float3(
+                volume_mapping(hit_position + float3(delta.x, 0.0, 0.0)) - volume_mapping(hit_position - float3(delta.x, 0.0, 0.0)),
+                volume_mapping(hit_position + float3(0.0, delta.y, 0.0)) - volume_mapping(hit_position - float3(0.0, delta.y, 0.0)),
+                volume_mapping(hit_position + float3(0.0, 0.0, delta.z)) - volume_mapping(hit_position - float3(0.0, 0.0, delta.z))));
+            color = volume_color(push_data.screen_rect.z);
+            color.rgb *= 0.25 + 0.75 * abs(dot(normal, -direction));
+            color.a *= push_data.screen_rect.y;
+            if (push_data.metadata.w == 1 && hit_distance > opaque_distance) color.a *= 0.22;
+        }
+        if (color.a == 0.0) discard;
+    }
     if (input.sample_image == 1) {
         ByteAddressBuffer pixels = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
         const uint2 coordinate = min(uint2(input.texture_coordinates * float2(push_data.dimensions.z, push_data.dimensions.w)), uint2(push_data.dimensions.z - 1, push_data.dimensions.w - 1));
@@ -285,7 +518,7 @@ float4 visualization_fragment(VisualizationVertexOutput input) : SV_Target0 {
             visualization_depth = clip_z / clip_w;
         }
     }
-    if (push_data.metadata.w != 2) {
+    if (push_data.metadata.w != 2 && !(kind >= 9 && kind <= 11)) {
         Texture2D<float> depth = push_data.depth;
         const uint2 pixel = uint2(input.position.xy);
         const bool hidden = visualization_depth > depth.Load(int3(pixel, 0)) + 0.00001;

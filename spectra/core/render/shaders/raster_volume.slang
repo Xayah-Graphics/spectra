@@ -115,8 +115,9 @@ float scalar_grid_value(
 float sample_scalar(
     StructuredBuffer<float> values,
     uint3 resolution,
-    float3 coordinate) {
-    const float3 sample_position = coordinate * float3(resolution) - 0.5;
+    float3 coordinate,
+    bool vertex_sampled) {
+    const float3 sample_position = vertex_sampled ? coordinate * float3(resolution - 1) : coordinate * float3(resolution) - 0.5;
     const int3 base = int3(floor(sample_position));
     const float3 amount = sample_position - float3(base);
     return lerp(
@@ -154,8 +155,9 @@ float3 vector_grid_value(
 float3 sample_vector(
     StructuredBuffer<float3> values,
     uint3 resolution,
-    float3 coordinate) {
-    const float3 sample_position = coordinate * float3(resolution) - 0.5;
+    float3 coordinate,
+    bool vertex_sampled) {
+    const float3 sample_position = vertex_sampled ? coordinate * float3(resolution - 1) : coordinate * float3(resolution) - 0.5;
     const int3 base = int3(floor(sample_position));
     const float3 amount = sample_position - float3(base);
     return lerp(
@@ -422,6 +424,7 @@ float volume_density(
         emission = float3(0.0);
         return 0.0;
     }
+    const uint flags = asuint(volume.procedural_parameters.w);
     if (volume.metadata.x == volume_density_grid) {
         StructuredBuffer<float> density_field =
             volume.density;
@@ -429,7 +432,8 @@ float volume_density(
             sample_scalar(
                 density_field,
                 volume.metadata.yzw,
-                coordinate) *
+                coordinate,
+                (flags & (1u << 16u)) != 0) *
             volume.scales.x;
         if (density <= 0.0) {
             sigma_a = float3(0.0);
@@ -450,7 +454,8 @@ float volume_density(
                 sample_scalar(
                     temperature_field,
                     volume.metadata.yzw,
-                    coordinate) *
+                    coordinate,
+                    (flags & (1u << 17u)) != 0) *
                     volume.scales.w +
                 volume.temperature.x;
         }
@@ -476,7 +481,8 @@ float volume_density(
                 sample_scalar(
                     emission_scale_field,
                     volume.metadata.yzw,
-                    coordinate);
+                    coordinate,
+                    (flags & (1u << 18u)) != 0);
         }
         emission =
             sigma_a *
@@ -501,20 +507,19 @@ float volume_density(
             volume.sigma_s_field;
         StructuredBuffer<float3> emission_field =
             volume.emission_field;
-        const uint flags = asuint(volume.procedural_parameters.w);
-        const uint color_space = flags >> 8;
+        const uint color_space = (flags >> 8) & 255;
         sigma_a = raster_to_linear_srgb(
             (flags & 1) != 0
-                ? sample_vector(sigma_a_field, volume.metadata.yzw, coordinate)
+                ? sample_vector(sigma_a_field, volume.metadata.yzw, coordinate, (flags & (1u << 19u)) != 0)
                 : float3(1.0),
             color_space) * volume.scales.x;
         sigma_s = raster_to_linear_srgb(
             (flags & 2) != 0
-                ? sample_vector(sigma_s_field, volume.metadata.yzw, coordinate)
+                ? sample_vector(sigma_s_field, volume.metadata.yzw, coordinate, (flags & (1u << 20u)) != 0)
                 : float3(1.0),
             color_space) * volume.scales.x;
         emission = (flags & 4) != 0
-            ? sigma_a * raster_to_linear_srgb(sample_vector(emission_field, volume.metadata.yzw, coordinate), color_space) * volume.scales.y
+            ? sigma_a * raster_to_linear_srgb(sample_vector(emission_field, volume.metadata.yzw, coordinate, (flags & (1u << 21u)) != 0), color_space) * volume.scales.y
             : float3(0.0);
         return
             max(

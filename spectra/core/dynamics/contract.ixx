@@ -10,18 +10,19 @@ namespace spectra::dynamics {
         Recreate,
     };
 
-    export enum class FieldChannelKind : std::uint32_t {
-        Float,
-        Float3,
-    };
-
     export enum class MeshUpdateMode : std::uint32_t {
         Deformable,
     };
 
-    export struct FieldChannelDescriptor {
+    export struct VolumeFieldDescriptor {
         std::string id{};
-        FieldChannelKind kind{FieldChannelKind::Float};
+        std::string name{};
+        std::string unit{};
+        scene::VolumeFieldKind kind{scene::VolumeFieldKind::Float};
+        scene::VolumeFieldSampling sampling{scene::VolumeFieldSampling::Cell};
+        scene::VolumeVectorSpace vector_space{scene::VolumeVectorSpace::Local};
+        std::uint32_t buffer_offset{};
+        std::uint32_t buffer_count{1u};
     };
 
     export struct TriangleMeshDataset {
@@ -53,7 +54,7 @@ namespace spectra::dynamics {
 
     export struct FieldDataset {
         math::UInt3 resolution{};
-        std::vector<FieldChannelDescriptor> channels{};
+        std::vector<VolumeFieldDescriptor> fields{};
         math::Transform local_from_grid{};
     };
 

@@ -85,12 +85,12 @@ export namespace spectra::sdk::internal {
             std::array<SpectraSdkOutputDescriptor, outputs_size> outputs{};
             std::array<SpectraSdkMetricDescriptor, metrics_size> metrics{};
             std::vector<std::vector<SpectraSdkString>> enumerators{};
-            std::vector<std::vector<SpectraSdkVolumeChannelDescriptor>> channels{};
+            std::vector<std::vector<SpectraSdkVolumeFieldDescriptor>> fields{};
             SpectraSdkProviderDescriptor provider{};
 
             Storage() {
                 enumerators.resize(parameters_size);
-                channels.resize(outputs_size);
+                fields.resize(outputs_size);
                 std::size_t parameter_index{};
                 std::size_t output_index{};
                 std::size_t metric_index{};
@@ -116,15 +116,19 @@ export namespace spectra::sdk::internal {
                                     names.size(),
                                 };
                             } else if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Output) {
-                                std::vector<SpectraSdkVolumeChannelDescriptor>& values = channels[output_index];
+                                std::vector<SpectraSdkVolumeFieldDescriptor>& values = fields[output_index];
                                 std::apply(
-                                    [&values](const auto&... channel) {
+                                    [&values](const auto&... field) {
                                         (values.emplace_back(
-                                            abi_string(std::remove_cvref_t<decltype(channel)>::id.view()),
-                                            static_cast<SpectraSdkVolumeChannelKind>(std::remove_cvref_t<decltype(channel)>::kind)
+                                            abi_string(std::remove_cvref_t<decltype(field)>::id.view()),
+                                            abi_string(field.name),
+                                            abi_string(field.unit),
+                                            static_cast<SpectraSdkVolumeFieldKind>(std::remove_cvref_t<decltype(field)>::kind),
+                                            static_cast<SpectraSdkVolumeFieldSampling>(field.options.sampling),
+                                            static_cast<SpectraSdkVolumeVectorSpace>(field.options.vector_space)
                                         ), ...);
                                     },
-                                    value.channels
+                                    value.fields
                                 );
                                 outputs[output_index++] = {abi_string(std::remove_cvref_t<decltype(value)>::id.view()), static_cast<SpectraSdkOutputKind>(std::remove_cvref_t<decltype(value)>::kind), std::to_underlying(value.mesh_options.attributes), values.data(), values.size()};
                             } else {

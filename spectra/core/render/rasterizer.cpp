@@ -672,32 +672,36 @@ namespace spectra {
                 record.scales               = {medium->density_scale, medium->emission_scale, medium->anisotropy, medium->temperature_scale};
                 record.temperature          = {medium->temperature_offset, medium->minimum_emission_temperature, medium->blackbody_emission ? 1.0f : 0.0f, 0.0f};
             }
-            std::visit(
-                [&](const auto& data) {
-                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DensityGridVolume>) {
-                        record.metadata                 = {0, data.resolution.x, data.resolution.y, data.resolution.z};
-                        const std::uint32_t field_flags = (data.temperature.empty() ? 0u : 1u) | (data.emission_scale.empty() ? 0u : 2u);
-                        record.procedural_parameters[3] = std::bit_cast<float>(field_flags);
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::RgbGridVolume>) {
-                        record.metadata                 = {1, data.resolution.x, data.resolution.y, data.resolution.z};
-                        const std::uint32_t field_flags = (data.sigma_a.empty() ? 0u : 1u) | (data.sigma_s.empty() ? 0u : 2u) | (data.emission.empty() ? 0u : 4u) | (std::to_underlying(data.color_space) << 8);
-                        record.procedural_parameters[3] = std::bit_cast<float>(field_flags);
-                    } else {
-                        record.metadata              = {2, 0, 0, 0};
-                        record.procedural_parameters = {data.density, data.wispiness, data.frequency, 0.0f};
-                    }
-                },
-                volume.data);
-            const auto field = [this, &shared](const GpuVolumeField field) -> DescriptorHandle {
-                const std::size_t index = std::to_underlying(field);
-                return shared.field_present[index] ? shared.descriptors[index] : this->scene.zero_volume_field_descriptor;
+            const auto field = [this, &shared](const std::string_view id) -> DescriptorHandle {
+                const std::vector<GpuVolumeField>::const_iterator found = std::ranges::find(shared.fields, id, &GpuVolumeField::id);
+                return found == shared.fields.end() ? this->scene.zero_volume_field_descriptor : found->descriptors.front();
             };
-            record.density              = field(GpuVolumeField::Density);
-            record.temperature_field    = field(GpuVolumeField::Temperature);
-            record.sigma_a_field        = field(GpuVolumeField::SigmaA);
-            record.sigma_s_field        = field(GpuVolumeField::SigmaS);
-            record.emission_scale_field = field(GpuVolumeField::EmissionScale);
-            record.emission_field       = field(GpuVolumeField::Emission);
+            if (const auto* data = std::get_if<scene::GridVolume>(&volume.data)) {
+                const auto vertex_sampled = [data](const std::string_view id) {
+                    const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
+                    return found != data->fields.end() && found->sampling == scene::VolumeFieldSampling::Vertex ? 1u : 0u;
+                };
+                const bool rgb                   = medium && medium->density_field.empty() && (!medium->sigma_a_field.empty() || !medium->sigma_s_field.empty() || !medium->emission_field.empty());
+                record.metadata                 = {rgb ? 1u : 0u, data->resolution.x, data->resolution.y, data->resolution.z};
+                const std::uint32_t field_flags = (rgb ? (medium->sigma_a_field.empty() ? 0u : 1u) | (medium->sigma_s_field.empty() ? 0u : 2u) | (medium->emission_field.empty() ? 0u : 4u) | (std::to_underlying(medium->field_color_space) << 8) : (medium && !medium->temperature_field.empty() ? 1u : 0u) | (medium && !medium->emission_scale_field.empty() ? 2u : 0u))
+                    | (vertex_sampled(medium ? std::string_view{medium->density_field} : std::string_view{}) << 16u)
+                    | (vertex_sampled(medium ? std::string_view{medium->temperature_field} : std::string_view{}) << 17u)
+                    | (vertex_sampled(medium ? std::string_view{medium->emission_scale_field} : std::string_view{}) << 18u)
+                    | (vertex_sampled(medium ? std::string_view{medium->sigma_a_field} : std::string_view{}) << 19u)
+                    | (vertex_sampled(medium ? std::string_view{medium->sigma_s_field} : std::string_view{}) << 20u)
+                    | (vertex_sampled(medium ? std::string_view{medium->emission_field} : std::string_view{}) << 21u);
+                record.procedural_parameters[3] = std::bit_cast<float>(field_flags);
+            } else {
+                const scene::ProceduralCloudVolume& cloud = std::get<scene::ProceduralCloudVolume>(volume.data);
+                record.metadata                           = {2, 0, 0, 0};
+                record.procedural_parameters              = {cloud.density, cloud.wispiness, cloud.frequency, 0.0f};
+            }
+            record.density              = field(medium ? std::string_view{medium->density_field} : std::string_view{});
+            record.temperature_field    = field(medium ? std::string_view{medium->temperature_field} : std::string_view{});
+            record.sigma_a_field        = field(medium ? std::string_view{medium->sigma_a_field} : std::string_view{});
+            record.sigma_s_field        = field(medium ? std::string_view{medium->sigma_s_field} : std::string_view{});
+            record.emission_scale_field = field(medium ? std::string_view{medium->emission_scale_field} : std::string_view{});
+            record.emission_field       = field(medium ? std::string_view{medium->emission_field} : std::string_view{});
             raster_volumes.push_back(record);
         }
         const std::uint32_t volume_count = static_cast<std::uint32_t>(raster_volumes.size());

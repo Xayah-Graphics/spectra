@@ -80,11 +80,13 @@ namespace spectra {
 
         template <typename Element>
         [[nodiscard]] GpuBuffer upload_buffer(VulkanRuntime& runtime, const vk::raii::CommandBuffer& command_buffer, const std::span<const Element> elements, const vk::BufferUsageFlags usage, const std::size_t element_capacity = 0) {
-            const std::array<Element, 1> empty{};
-            const std::span<const Element> source = elements.empty() ? std::span<const Element>{empty} : elements;
-            GpuBuffer destination                 = runtime.resources.create_buffer(std::max(source.size(), element_capacity) * sizeof(Element), usage | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
-            const GpuUploadSlice upload           = runtime.frames.stage_upload(std::as_bytes(source));
-            command_buffer.copyBuffer(upload.buffer, *destination.buffer, vk::BufferCopy{upload.offset, 0, upload.size});
+            GpuBuffer destination = runtime.resources.create_buffer(std::max({elements.size(), element_capacity, std::size_t{1}}) * sizeof(Element), usage | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
+            if (elements.empty())
+                command_buffer.fillBuffer(*destination.buffer, 0, destination.size, 0u);
+            else {
+                const GpuUploadSlice upload = runtime.frames.stage_upload(std::as_bytes(elements));
+                command_buffer.copyBuffer(upload.buffer, *destination.buffer, vk::BufferCopy{upload.offset, 0, upload.size});
+            }
             const bool acceleration_structure = static_cast<bool>(usage & vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
             const vk::BufferMemoryBarrier2 dependency{
                 vk::PipelineStageFlagBits2::eCopy,
@@ -353,32 +355,7 @@ namespace spectra {
             }
             const auto* field = std::get_if<dynamics::GpuFieldUpdate>(&update.data);
             if (!field) continue;
-            const auto bound_volume = std::ranges::find(this->resources.volumes, field->volume_id, &GpuVolume::volume_id);
-            if (bound_volume == this->resources.volumes.end()) throw std::runtime_error("Dynamic field update references an unknown Scene Volume");
-            if (field->resolution != bound_volume->resolution) throw std::runtime_error("Dynamic field resolution differs from its bound Scene Volume");
-            if (field->local_from_grid != math::Transform{}) throw std::runtime_error("A dynamic field bound to a Scene Volume requires an identity local-from-grid transform");
-            std::array<const GpuBuffer*, static_cast<std::size_t>(GpuVolumeField::Count)> fields{};
-            for (const dynamics::GpuFieldChannelView& channel_view : field->channels) {
-                const std::string& channel = channel_view.channel.id;
-                if (channel == "density")
-                    fields[std::to_underlying(GpuVolumeField::Density)] = channel_view.values.buffer;
-                else if (channel == "temperature")
-                    fields[std::to_underlying(GpuVolumeField::Temperature)] = channel_view.values.buffer;
-                else if (channel == "emission-scale")
-                    fields[std::to_underlying(GpuVolumeField::EmissionScale)] = channel_view.values.buffer;
-                else if (channel == "sigma-a")
-                    fields[std::to_underlying(GpuVolumeField::SigmaA)] = channel_view.values.buffer;
-                else if (channel == "sigma-s")
-                    fields[std::to_underlying(GpuVolumeField::SigmaS)] = channel_view.values.buffer;
-                else if (channel == "emission")
-                    fields[std::to_underlying(GpuVolumeField::Emission)] = channel_view.values.buffer;
-                else
-                    throw std::runtime_error(std::format("Dynamic field update contains unknown channel {}", channel));
-            }
-            const scene::VolumeRegion region = field->dirty_region.value_or(scene::VolumeRegion{{}, field->resolution});
-            if (region.minimum.x >= region.maximum.x || region.minimum.y >= region.maximum.y || region.minimum.z >= region.maximum.z || region.maximum.x > field->resolution.x || region.maximum.y > field->resolution.y || region.maximum.z > field->resolution.z) throw std::runtime_error("Dynamic field dirty region is empty, reversed, or outside its resolution");
-            const std::uint64_t voxel_count = static_cast<std::uint64_t>(region.maximum.x - region.minimum.x) * (region.maximum.y - region.minimum.y) * (region.maximum.z - region.minimum.z);
-            this->synchronize_external_volume(field->volume_id, fields[std::to_underlying(GpuVolumeField::Density)], fields[std::to_underlying(GpuVolumeField::Temperature)], fields[std::to_underlying(GpuVolumeField::EmissionScale)], fields[std::to_underlying(GpuVolumeField::SigmaA)], fields[std::to_underlying(GpuVolumeField::SigmaS)], fields[std::to_underlying(GpuVolumeField::Emission)], voxel_count, region, command_buffer);
+            this->synchronize_external_volume(field->volume_id, field->fields, command_buffer);
             this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Volume;
         }
         this->end_external_updates(scene, command_buffer);
@@ -595,28 +572,31 @@ namespace spectra {
 
     GpuVolume GpuScene::create_volume(const scene::Volume& volume, const vk::raii::CommandBuffer& command_buffer) {
         GpuVolume result{};
-        result.volume_id  = volume.id;
-        result.revision   = volume.revision;
-        const auto upload = [this, &command_buffer, &result](const GpuVolumeField field, const auto values) {
-            if (values.empty()) return;
-            const std::size_t index   = std::to_underlying(field);
-            result.fields[index]      = upload_buffer(this->context.runtime, command_buffer, values, vk::BufferUsageFlagBits::eStorageBuffer);
-            result.descriptors[index] = this->context.runtime.frames.allocate_resource_descriptor();
-            this->context.runtime.resources.write_buffer_descriptor(result.descriptors[index], vk::DescriptorType::eStorageBuffer, result.fields[index]);
-            result.field_present[index] = true;
-        };
+        result.volume_id = volume.id;
+        result.revision  = volume.revision;
         std::visit(
-            [&result, &upload](const auto& data) {
-                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DensityGridVolume>) {
+            [this, &command_buffer, &result](const auto& data) {
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::GridVolume>) {
                     result.resolution = data.resolution;
-                    upload(GpuVolumeField::Density, std::span<const float>{data.density});
-                    upload(GpuVolumeField::Temperature, std::span<const float>{data.temperature});
-                    upload(GpuVolumeField::EmissionScale, std::span<const float>{data.emission_scale});
-                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::RgbGridVolume>) {
-                    result.resolution = data.resolution;
-                    upload(GpuVolumeField::SigmaA, std::span<const math::Float3>{data.sigma_a});
-                    upload(GpuVolumeField::SigmaS, std::span<const math::Float3>{data.sigma_s});
-                    upload(GpuVolumeField::Emission, std::span<const math::Float3>{data.emission});
+                    for (const scene::VolumeField& source : data.fields) {
+                        GpuVolumeField& field = result.fields.emplace_back(source.id, source.name, source.unit, source.kind, source.sampling, source.vector_space);
+                        if (source.kind == scene::VolumeFieldKind::Float) {
+                            field.buffers.emplace_back(upload_buffer(this->context.runtime, command_buffer, std::span<const float>{source.scalar_values}, vk::BufferUsageFlagBits::eStorageBuffer, static_cast<std::size_t>(data.resolution.x) * data.resolution.y * data.resolution.z));
+                        } else if (source.kind == scene::VolumeFieldKind::Float3) {
+                            field.buffers.emplace_back(upload_buffer(this->context.runtime, command_buffer, std::span<const math::Float3>{source.vector_values}, vk::BufferUsageFlagBits::eStorageBuffer, static_cast<std::size_t>(data.resolution.x) * data.resolution.y * data.resolution.z));
+                        } else {
+                            const std::array<std::size_t, 3> capacities{
+                                static_cast<std::size_t>(data.resolution.x + 1u) * data.resolution.y * data.resolution.z,
+                                static_cast<std::size_t>(data.resolution.x) * (data.resolution.y + 1u) * data.resolution.z,
+                                static_cast<std::size_t>(data.resolution.x) * data.resolution.y * (data.resolution.z + 1u),
+                            };
+                            for (std::size_t component = 0; component != 3u; ++component) field.buffers.emplace_back(upload_buffer(this->context.runtime, command_buffer, std::span<const float>{source.mac_values[component]}, vk::BufferUsageFlagBits::eStorageBuffer, capacities[component]));
+                        }
+                        for (GpuBuffer& buffer : field.buffers) {
+                            DescriptorLease& descriptor = field.descriptors.emplace_back(this->context.runtime.frames.allocate_resource_descriptor());
+                            this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, buffer);
+                        }
+                    }
                 }
             },
             volume.data);
@@ -1071,42 +1051,16 @@ namespace spectra {
         this->resources.instance_bounds_dirty = true;
     }
 
-    void GpuScene::synchronize_external_volume(const scene::VolumeId volume_id, const GpuBuffer* density, const GpuBuffer* temperature, const GpuBuffer* emission_scale, const GpuBuffer* sigma_a, const GpuBuffer* sigma_s, const GpuBuffer* emission, const std::uint64_t voxel_count, const scene::VolumeRegion dirty_region, const vk::raii::CommandBuffer& command_buffer) {
-        GpuVolume& volume                  = *std::ranges::find(this->resources.volumes, volume_id, &GpuVolume::volume_id);
-        const std::uint64_t expected_count = static_cast<std::uint64_t>(dirty_region.maximum.x - dirty_region.minimum.x) * (dirty_region.maximum.y - dirty_region.minimum.y) * (dirty_region.maximum.z - dirty_region.minimum.z);
-        if (voxel_count != expected_count) throw std::runtime_error("Dynamic Volume element count differs from its dirty region");
-        const auto copy = [&command_buffer, dirty_region, expected_count, &volume](const GpuBuffer* source, const GpuVolumeField field, const vk::DeviceSize element_size) {
-            if (!source) return;
-            const std::size_t index = std::to_underlying(field);
-            if (!volume.field_present[index]) throw std::runtime_error("Dynamic Volume published a field absent from its Scene resource");
-            if (dirty_region.minimum == math::UInt3{} && dirty_region.maximum == volume.resolution) {
-                const vk::DeviceSize bytes = expected_count * element_size;
-                if (source->size < bytes) throw std::runtime_error("Dynamic Volume field buffer is smaller than its dirty region");
-                command_buffer.copyBuffer(*source->buffer, *volume.fields[index].buffer, vk::BufferCopy{0, 0, bytes});
-                return;
-            }
-            std::vector<vk::BufferCopy> regions{};
-            const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(dirty_region.maximum.x - dirty_region.minimum.x) * element_size;
-            vk::DeviceSize source_offset{};
-            for (std::uint32_t z = dirty_region.minimum.z; z != dirty_region.maximum.z; ++z)
-                for (std::uint32_t y = dirty_region.minimum.y; y != dirty_region.maximum.y; ++y) {
-                    const vk::DeviceSize destination_offset = (static_cast<vk::DeviceSize>(z) * volume.resolution.y * volume.resolution.x + static_cast<vk::DeviceSize>(y) * volume.resolution.x + dirty_region.minimum.x) * element_size;
-                    regions.emplace_back(source_offset, destination_offset, bytes);
-                    source_offset += bytes;
-                }
-            if (source->size < source_offset) throw std::runtime_error("Dynamic Volume field buffer is smaller than its dirty region");
-            command_buffer.copyBuffer(*source->buffer, *volume.fields[index].buffer, regions);
-        };
-        copy(density, GpuVolumeField::Density, sizeof(float));
-        copy(temperature, GpuVolumeField::Temperature, sizeof(float));
-        copy(emission_scale, GpuVolumeField::EmissionScale, sizeof(float));
-        copy(sigma_a, GpuVolumeField::SigmaA, sizeof(math::Float3));
-        copy(sigma_s, GpuVolumeField::SigmaS, sizeof(math::Float3));
-        copy(emission, GpuVolumeField::Emission, sizeof(math::Float3));
+    void GpuScene::synchronize_external_volume(const scene::VolumeId volume_id, const std::span<const dynamics::GpuVolumeFieldView> fields, const vk::raii::CommandBuffer& command_buffer) {
+        GpuVolume& volume = *std::ranges::find(this->resources.volumes, volume_id, &GpuVolume::volume_id);
+        for (const dynamics::GpuVolumeFieldView& source : fields) {
+            GpuVolumeField& destination = *std::ranges::find(volume.fields, source.field.id, &GpuVolumeField::id);
+            for (std::size_t component = 0; component != source.values.size(); ++component) command_buffer.copyBuffer(*source.values[component].buffer->buffer, *destination.buffers[component].buffer, vk::BufferCopy{0, 0, destination.buffers[component].size});
+        }
         const vk::MemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader | (this->context.runtime.graphics.ray_tracing_supported ? vk::PipelineStageFlagBits2::eRayTracingShaderKHR : vk::PipelineStageFlags2{}), vk::AccessFlagBits2::eShaderStorageRead};
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &dependency});
         if (!std::ranges::contains(this->resources.external_volumes, volume_id)) this->resources.external_volumes.push_back(volume_id);
-        volume.dirty_region = dirty_region;
+        volume.dirty_region = scene::VolumeRegion{{}, volume.resolution};
         ++volume.revision.content;
         volume.cpu_data_stale = true;
     }

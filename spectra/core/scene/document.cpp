@@ -126,4 +126,9 @@ namespace spectra {
         ++resource.revision.content;
         this->mark_change(target_scene, scene::SceneChange::Volume);
     }
+
+    void SceneDocument::update_volume_diagnostics(scene::Scene& target_scene, const scene::VolumeId volume_id, scene::VolumeDiagnostics diagnostics) {
+        std::ranges::find(target_scene.resources.volumes, volume_id, &scene::Volume::id)->diagnostics = std::move(diagnostics);
+        this->mark_change(target_scene, scene::SceneChange::Metadata);
+    }
 } // namespace spectra

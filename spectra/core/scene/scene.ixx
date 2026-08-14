@@ -152,21 +152,99 @@ namespace spectra::scene {
 
     export [[nodiscard]] math::Bounds3 sphere_set_bounds(const SphereSet& spheres) noexcept;
 
-    export struct DensityGridVolume {
-        math::UInt3 resolution{};
-        std::string source{};
-        std::vector<float> density{};
-        std::vector<float> temperature{};
-        std::vector<float> emission_scale{};
+    export enum class VolumeFieldKind : std::uint8_t {
+        Float,
+        Float3,
+        MacFloat3,
     };
 
-    export struct RgbGridVolume {
+    export enum class VolumeFieldSampling : std::uint8_t {
+        Cell,
+        Vertex,
+    };
+
+    export enum class VolumeVectorSpace : std::uint8_t {
+        Grid,
+        Local,
+        World,
+    };
+
+    export enum class VisualizationDepthMode : std::uint8_t {
+        Tested,
+        XRay,
+        Overlay,
+    };
+
+    export enum class VisualizationCompositionDomain : std::uint8_t {
+        SceneLinear,
+        DisplayReferred,
+    };
+
+    export enum class VisualizationColorMap : std::uint8_t {
+        Viridis,
+        Turbo,
+        CoolWarm,
+        Grayscale,
+    };
+
+    export enum class VolumeDiagnosticMode : std::uint8_t {
+        Off,
+        Slice,
+        RayMarch,
+        MaximumIntensityProjection,
+        Isosurface,
+        Glyphs,
+        Streamlines,
+        Lic,
+    };
+
+    export enum class VolumeFieldMapping : std::uint8_t {
+        Value,
+        Magnitude,
+        X,
+        Y,
+        Z,
+        Divergence,
+        CurlMagnitude,
+        QCriterion,
+    };
+
+    export struct VolumeDiagnostics {
+        std::string field_id{};
+        VolumeDiagnosticMode mode{VolumeDiagnosticMode::Off};
+        VolumeFieldMapping mapping{VolumeFieldMapping::Value};
+        VisualizationDepthMode depth_mode{VisualizationDepthMode::Tested};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
+        float minimum{};
+        float maximum{1.0f};
+        float slice_position{0.5f};
+        float opacity{1.0f};
+        float threshold{0.5f};
+        float scale{0.1f};
+        float width{1.5f};
+        std::uint32_t axis{2};
+        std::uint32_t sampling{8};
+        std::uint32_t steps{32};
+        friend auto operator<=>(const VolumeDiagnostics&, const VolumeDiagnostics&) = default;
+    };
+
+    export struct VolumeField {
+        std::string id{};
+        std::string name{};
+        std::string unit{};
+        VolumeFieldKind kind{VolumeFieldKind::Float};
+        VolumeFieldSampling sampling{VolumeFieldSampling::Cell};
+        VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
+        std::vector<float> scalar_values{};
+        std::vector<math::Float3> vector_values{};
+        std::array<std::vector<float>, 3> mac_values{};
+    };
+
+    export struct GridVolume {
         math::UInt3 resolution{};
-        SpectrumColorSpace color_space{SpectrumColorSpace::Srgb};
         std::string source{};
-        std::vector<math::Float3> sigma_a{};
-        std::vector<math::Float3> sigma_s{};
-        std::vector<math::Float3> emission{};
+        std::vector<VolumeField> fields{};
     };
 
     export struct ProceduralCloudVolume {
@@ -189,7 +267,8 @@ namespace spectra::scene {
         math::Bounds3 bounds{};
         math::Transform transform{};
         std::optional<VolumeRegion> dirty_region{};
-        std::variant<DensityGridVolume, RgbGridVolume, ProceduralCloudVolume> data{};
+        std::variant<GridVolume, ProceduralCloudVolume> data{};
+        VolumeDiagnostics diagnostics{};
     };
 
     export enum class TextureValueKind : std::uint8_t {
@@ -475,6 +554,13 @@ namespace spectra::scene {
 
     export struct VolumeMedium {
         VolumeId volume{};
+        std::string density_field{};
+        std::string temperature_field{};
+        std::string emission_scale_field{};
+        std::string sigma_a_field{};
+        std::string sigma_s_field{};
+        std::string emission_field{};
+        SpectrumColorSpace field_color_space{SpectrumColorSpace::Srgb};
         SpectrumParameter sigma_a{{}, {}, SpectrumEncoding::RgbUnbounded};
         SpectrumParameter sigma_s{{}, {}, SpectrumEncoding::RgbUnbounded};
         SpectrumParameter emission{{}, {}, SpectrumEncoding::RgbIlluminant};
@@ -709,23 +795,9 @@ namespace spectra::scene {
     export enum class VisualizationViewKind : std::uint8_t {
         Points,
         Segments,
-        Reserved,
         Vectors,
-        FieldSlice,
-        FieldVectors,
         Image,
         Surface,
-    };
-
-    export enum class VisualizationDepthMode : std::uint8_t {
-        Tested,
-        XRay,
-        Overlay,
-    };
-
-    export enum class VisualizationCompositionDomain : std::uint8_t {
-        SceneLinear,
-        DisplayReferred,
     };
 
     export enum class PointGlyph : std::uint8_t {
@@ -744,13 +816,6 @@ namespace spectra::scene {
         Element,
         Uniform,
         Scalar,
-    };
-
-    export enum class VisualizationColorMap : std::uint8_t {
-        Viridis,
-        Turbo,
-        CoolWarm,
-        Grayscale,
     };
 
     export enum class DynamicParameterKind : std::uint8_t {
@@ -811,29 +876,6 @@ namespace spectra::scene {
         friend auto operator<=>(const VectorVisualization&, const VectorVisualization&) = default;
     };
 
-    export struct FieldSliceVisualization {
-        std::string channel_id{};
-        float slice_position{0.5f};
-        float scalar_minimum{};
-        float scalar_maximum{1.0f};
-        std::uint32_t slice_axis{2};
-        VisualizationColorSource color_source{VisualizationColorSource::Element};
-        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
-        friend auto operator<=>(const FieldSliceVisualization&, const FieldSliceVisualization&) = default;
-    };
-
-    export struct FieldVectorVisualization {
-        std::string channel_id{};
-        float width{1.0f};
-        float scale{1.0f};
-        float scalar_minimum{};
-        float scalar_maximum{1.0f};
-        std::uint32_t sampling{8};
-        VisualizationColorSource color_source{VisualizationColorSource::Element};
-        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
-        friend auto operator<=>(const FieldVectorVisualization&, const FieldVectorVisualization&) = default;
-    };
-
     export struct ImageVisualization {
         math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
         friend auto operator<=>(const ImageVisualization&, const ImageVisualization&) = default;
@@ -855,7 +897,7 @@ namespace spectra::scene {
         InstanceId anchor{};
         math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
         bool visible{true};
-        std::variant<PointVisualization, SegmentVisualization, VectorVisualization, FieldSliceVisualization, FieldVectorVisualization, ImageVisualization, SurfaceVisualization> data{SegmentVisualization{}};
+        std::variant<PointVisualization, SegmentVisualization, VectorVisualization, ImageVisualization, SurfaceVisualization> data{SegmentVisualization{}};
         friend auto operator<=>(const DynamicVisualizationView&, const DynamicVisualizationView&) = default;
     };
 
@@ -864,8 +906,6 @@ namespace spectra::scene {
             if constexpr (std::same_as<Type, PointVisualization>) return VisualizationViewKind::Points;
             else if constexpr (std::same_as<Type, SegmentVisualization>) return VisualizationViewKind::Segments;
             else if constexpr (std::same_as<Type, VectorVisualization>) return VisualizationViewKind::Vectors;
-            else if constexpr (std::same_as<Type, FieldSliceVisualization>) return VisualizationViewKind::FieldSlice;
-            else if constexpr (std::same_as<Type, FieldVectorVisualization>) return VisualizationViewKind::FieldVectors;
             else if constexpr (std::same_as<Type, ImageVisualization>) return VisualizationViewKind::Image;
             else return VisualizationViewKind::Surface;
         }, view.data);

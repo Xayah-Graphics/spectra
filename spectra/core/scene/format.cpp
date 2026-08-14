@@ -16,7 +16,7 @@ import std;
 
 namespace spectra::scene {
     namespace {
-        constexpr std::uint32_t current_scene_format_version = 33;
+        constexpr std::uint32_t current_scene_format_version = 34;
 
         struct KdlWriter {
             std::string content{};
@@ -245,33 +245,84 @@ namespace spectra::scene {
             writer.end();
         }
 
+        [[nodiscard]] std::string depth_buffer_mode_name(VisualizationDepthMode mode);
+        [[nodiscard]] std::string visualization_composition_domain_name(VisualizationCompositionDomain domain);
+        [[nodiscard]] std::string visualization_color_map_name(VisualizationColorMap map);
+
+        [[nodiscard]] std::string volume_diagnostic_mode_name(const VolumeDiagnosticMode mode) {
+            switch (mode) {
+            case VolumeDiagnosticMode::Off: return "off";
+            case VolumeDiagnosticMode::Slice: return "slice";
+            case VolumeDiagnosticMode::RayMarch: return "ray-march";
+            case VolumeDiagnosticMode::MaximumIntensityProjection: return "maximum-intensity-projection";
+            case VolumeDiagnosticMode::Isosurface: return "isosurface";
+            case VolumeDiagnosticMode::Glyphs: return "glyphs";
+            case VolumeDiagnosticMode::Streamlines: return "streamlines";
+            case VolumeDiagnosticMode::Lic: return "lic";
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] std::string volume_field_mapping_name(const VolumeFieldMapping mapping) {
+            switch (mapping) {
+            case VolumeFieldMapping::Value: return "value";
+            case VolumeFieldMapping::Magnitude: return "magnitude";
+            case VolumeFieldMapping::X: return "x";
+            case VolumeFieldMapping::Y: return "y";
+            case VolumeFieldMapping::Z: return "z";
+            case VolumeFieldMapping::Divergence: return "divergence";
+            case VolumeFieldMapping::CurlMagnitude: return "curl-magnitude";
+            case VolumeFieldMapping::QCriterion: return "q-criterion";
+            }
+            std::unreachable();
+        }
+
         void write_volumes(KdlWriter& writer, const std::vector<Volume>& volumes) {
             if (volumes.empty()) return;
             writer.begin("volumes");
             for (const Volume& volume : volumes) {
                 std::visit(
                     [&writer, &volume](const auto& data) {
-                        std::string kind{};
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DensityGridVolume>)
-                            kind = "density-grid";
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RgbGridVolume>)
-                            kind = "rgb-grid";
-                        else
-                            kind = "procedural-cloud";
+                        const std::string_view kind = std::same_as<std::remove_cvref_t<decltype(data)>, GridVolume> ? "grid" : "procedural-cloud";
                         std::string line = std::format("{} {} {}", kind, volume.id.value, kdl_string(volume.name));
-                        if constexpr (!std::same_as<std::remove_cvref_t<decltype(data)>, ProceduralCloudVolume>) write_source(line, data.source);
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, GridVolume>) write_source(line, data.source);
                         writer.begin(line);
                         if (volume.bounds != math::Bounds3{}) write_bounds(writer, volume.bounds);
                         if (volume.transform != math::Transform{}) write_transform(writer, "transform", volume.transform);
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DensityGridVolume>) {
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, GridVolume>) {
                             writer.line(std::format("resolution {} {} {}", data.resolution.x, data.resolution.y, data.resolution.z));
-                        } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RgbGridVolume>) {
-                            writer.line(std::format("resolution {} {} {}", data.resolution.x, data.resolution.y, data.resolution.z));
-                            if (data.color_space != SpectrumColorSpace::Srgb) writer.line(std::format("color-space {}", spectrum_color_space_name(data.color_space)));
+                            for (const VolumeField& field : data.fields) {
+                                const std::string_view field_kind = field.kind == VolumeFieldKind::Float ? "float" : field.kind == VolumeFieldKind::Float3 ? "float3" : "mac-float3";
+                                std::string field_line = std::format("field {} {} kind={}", kdl_string(field.id), kdl_string(field.name), kdl_string(field_kind));
+                                if (!field.unit.empty()) kdl_string_property(field_line, "unit", field.unit);
+                                if (field.sampling != VolumeFieldSampling::Cell) kdl_string_property(field_line, "sampling", "vertex");
+                                if (field.vector_space != VolumeVectorSpace::Local) kdl_string_property(field_line, "space", field.vector_space == VolumeVectorSpace::Grid ? "grid" : "world");
+                                writer.line(field_line);
+                            }
                         } else {
                             if (data.density != 1.0f) writer.line(std::format("density {}", data.density));
                             if (data.wispiness != 1.0f) writer.line(std::format("wispiness {}", data.wispiness));
                             if (data.frequency != 5.0f) writer.line(std::format("frequency {}", data.frequency));
+                        }
+                        const VolumeDiagnostics& diagnostics = volume.diagnostics;
+                        if (diagnostics.mode != VolumeDiagnosticMode::Off) {
+                            std::string diagnostics_line = std::format("diagnostics field={} mode={}", kdl_string(diagnostics.field_id), kdl_string(volume_diagnostic_mode_name(diagnostics.mode)));
+                            if (diagnostics.mapping != VolumeFieldMapping::Value) kdl_string_property(diagnostics_line, "mapping", volume_field_mapping_name(diagnostics.mapping));
+                            if (diagnostics.depth_mode != VisualizationDepthMode::Tested) kdl_string_property(diagnostics_line, "depth", depth_buffer_mode_name(diagnostics.depth_mode));
+                            if (diagnostics.color_map != VisualizationColorMap::Viridis) kdl_string_property(diagnostics_line, "color-map", visualization_color_map_name(diagnostics.color_map));
+                            if (diagnostics.minimum != 0.0f) kdl_number_property(diagnostics_line, "minimum", diagnostics.minimum);
+                            if (diagnostics.maximum != 1.0f) kdl_number_property(diagnostics_line, "maximum", diagnostics.maximum);
+                            if (diagnostics.slice_position != 0.5f) kdl_number_property(diagnostics_line, "slice", diagnostics.slice_position);
+                            if (diagnostics.opacity != 1.0f) kdl_number_property(diagnostics_line, "opacity", diagnostics.opacity);
+                            if (diagnostics.threshold != 0.5f) kdl_number_property(diagnostics_line, "threshold", diagnostics.threshold);
+                            if (diagnostics.scale != 0.1f) kdl_number_property(diagnostics_line, "scale", diagnostics.scale);
+                            if (diagnostics.width != 1.5f) kdl_number_property(diagnostics_line, "width", diagnostics.width);
+                            if (diagnostics.axis != 2u) kdl_number_property(diagnostics_line, "axis", diagnostics.axis);
+                            if (diagnostics.sampling != 8u) kdl_number_property(diagnostics_line, "sampling", diagnostics.sampling);
+                            if (diagnostics.steps != 32u) kdl_number_property(diagnostics_line, "steps", diagnostics.steps);
+                            writer.begin(diagnostics_line);
+                            if (diagnostics.color != math::Float4{1.0f, 1.0f, 1.0f, 1.0f}) writer.line(std::format("color {} {} {} {}", diagnostics.color.x, diagnostics.color.y, diagnostics.color.z, diagnostics.color.w));
+                            writer.end();
                         }
                         writer.end();
                     },
@@ -526,7 +577,15 @@ namespace spectra::scene {
                             if (data.anisotropy != 0.0f) writer.line(std::format("anisotropy {}", data.anisotropy));
                             writer.end();
                         } else {
-                            writer.begin(std::format("volume {} {} volume={}", medium.id.value, kdl_string(medium.name), data.volume.value));
+                            std::string line = std::format("volume {} {} volume={}", medium.id.value, kdl_string(medium.name), data.volume.value);
+                            if (!data.density_field.empty()) kdl_string_property(line, "density-field", data.density_field);
+                            if (!data.temperature_field.empty()) kdl_string_property(line, "temperature-field", data.temperature_field);
+                            if (!data.emission_scale_field.empty()) kdl_string_property(line, "emission-scale-field", data.emission_scale_field);
+                            if (!data.sigma_a_field.empty()) kdl_string_property(line, "sigma-a-field", data.sigma_a_field);
+                            if (!data.sigma_s_field.empty()) kdl_string_property(line, "sigma-s-field", data.sigma_s_field);
+                            if (!data.emission_field.empty()) kdl_string_property(line, "emission-field", data.emission_field);
+                            if (data.field_color_space != SpectrumColorSpace::Srgb) kdl_string_property(line, "field-color-space", spectrum_color_space_name(data.field_color_space));
+                            writer.begin(line);
                             write_spectrum(writer, "sigma-a", data.sigma_a);
                             write_spectrum(writer, "sigma-s", data.sigma_s);
                             write_spectrum(writer, "emission", data.emission);
@@ -798,10 +857,7 @@ namespace spectra::scene {
             switch (kind) {
             case VisualizationViewKind::Points: return "points";
             case VisualizationViewKind::Segments: return "segments";
-            case VisualizationViewKind::Reserved: break;
             case VisualizationViewKind::Vectors: return "vectors";
-            case VisualizationViewKind::FieldSlice: return "field-slice";
-            case VisualizationViewKind::FieldVectors: return "field-vectors";
             case VisualizationViewKind::Image: return "image";
             case VisualizationViewKind::Surface: return "surface";
             }
@@ -900,11 +956,9 @@ namespace spectra::scene {
                     if (view.anchor.value != 0) kdl_number_property(view_line, "anchor", view.anchor.value);
                     std::visit(
                         [&view_line](const auto& data) {
-                            constexpr bool has_width  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>;
-                            constexpr bool has_scale  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>;
-                            constexpr bool has_scalar = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldSliceVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SurfaceVisualization>;
-                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, FieldSliceVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>)
-                                if (!data.channel_id.empty()) kdl_string_property(view_line, "channel", data.channel_id);
+                            constexpr bool has_width  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization>;
+                            constexpr bool has_scale  = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization>;
+                            constexpr bool has_scalar = std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SegmentVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, VectorVisualization> || std::same_as<std::remove_cvref_t<decltype(data)>, SurfaceVisualization>;
                             if constexpr (has_width)
                                 if (data.width != 1.0f) kdl_number_property(view_line, "width", data.width);
                             if constexpr (has_scale)
@@ -918,11 +972,6 @@ namespace spectra::scene {
                             if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, PointVisualization>) {
                                 if (data.glyph != PointGlyph::ScreenDisc) kdl_string_property(view_line, "glyph", point_glyph_name(data.glyph));
                                 if (data.shading != PointShading::Unlit) kdl_string_property(view_line, "shading", point_shading_name(data.shading));
-                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, FieldSliceVisualization>) {
-                                if (data.slice_position != 0.5f) kdl_number_property(view_line, "slice-position", data.slice_position);
-                                if (data.slice_axis != 2) kdl_number_property(view_line, "slice-axis", data.slice_axis);
-                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, FieldVectorVisualization>) {
-                                if (data.sampling != 8) kdl_number_property(view_line, "sampling", data.sampling);
                             }
                         },
                         view.data);
@@ -1219,6 +1268,34 @@ namespace spectra::scene {
                 });
         }
 
+        [[nodiscard]] VisualizationDepthMode read_depth_buffer_mode(std::string_view value);
+        [[nodiscard]] VisualizationCompositionDomain read_visualization_composition_domain(std::string_view value);
+        [[nodiscard]] VisualizationColorMap read_visualization_color_map(std::string_view value);
+
+        [[nodiscard]] VolumeDiagnosticMode read_volume_diagnostic_mode(const std::string_view value) {
+            if (value == "off") return VolumeDiagnosticMode::Off;
+            if (value == "slice") return VolumeDiagnosticMode::Slice;
+            if (value == "ray-march") return VolumeDiagnosticMode::RayMarch;
+            if (value == "maximum-intensity-projection") return VolumeDiagnosticMode::MaximumIntensityProjection;
+            if (value == "isosurface") return VolumeDiagnosticMode::Isosurface;
+            if (value == "glyphs") return VolumeDiagnosticMode::Glyphs;
+            if (value == "streamlines") return VolumeDiagnosticMode::Streamlines;
+            if (value == "lic") return VolumeDiagnosticMode::Lic;
+            throw std::runtime_error(std::format("Unknown Volume diagnostic mode {}", value));
+        }
+
+        [[nodiscard]] VolumeFieldMapping read_volume_field_mapping(const std::string_view value) {
+            if (value == "value") return VolumeFieldMapping::Value;
+            if (value == "magnitude") return VolumeFieldMapping::Magnitude;
+            if (value == "x") return VolumeFieldMapping::X;
+            if (value == "y") return VolumeFieldMapping::Y;
+            if (value == "z") return VolumeFieldMapping::Z;
+            if (value == "divergence") return VolumeFieldMapping::Divergence;
+            if (value == "curl-magnitude") return VolumeFieldMapping::CurlMagnitude;
+            if (value == "q-criterion") return VolumeFieldMapping::QCriterion;
+            throw std::runtime_error(std::format("Unknown Volume Field mapping {}", value));
+        }
+
         void read_volumes(SceneResources& resources, const kdl::Node& group) {
             for (const kdl::Node& node : group.children()) {
                 Volume volume{
@@ -1227,22 +1304,28 @@ namespace spectra::scene {
                     .bounds    = read_bounds(node),
                     .transform = read_transform(node),
                 };
-                if (node.name() == u8"density-grid") {
+                if (node.name() == u8"grid") {
                     const kdl::Node& resolution = *kdl_child(node, u8"resolution");
-                    DensityGridVolume data{
+                    GridVolume data{
                         .resolution = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])},
                         .source     = kdl_string_property(node, u8"source"),
                     };
+                    for (const kdl::Node& field_node : node.children()) {
+                        if (field_node.name() != u8"field") continue;
+                        const std::string kind = kdl_string_property(field_node, u8"kind");
+                        const std::string sampling = kdl_string_property(field_node, u8"sampling", "cell");
+                        const std::string space = kdl_string_property(field_node, u8"space", "local");
+                        VolumeField field{
+                            .id           = kdl_value_text(field_node.args()[0]),
+                            .name         = kdl_value_text(field_node.args()[1]),
+                            .unit         = kdl_string_property(field_node, u8"unit"),
+                            .kind         = kind == "float" ? VolumeFieldKind::Float : kind == "float3" ? VolumeFieldKind::Float3 : kind == "mac-float3" ? VolumeFieldKind::MacFloat3 : throw std::runtime_error(std::format("Unknown Volume Field kind {}", kind)),
+                            .sampling     = sampling == "cell" ? VolumeFieldSampling::Cell : sampling == "vertex" ? VolumeFieldSampling::Vertex : throw std::runtime_error(std::format("Unknown Volume Field sampling {}", sampling)),
+                            .vector_space = space == "grid" ? VolumeVectorSpace::Grid : space == "local" ? VolumeVectorSpace::Local : space == "world" ? VolumeVectorSpace::World : throw std::runtime_error(std::format("Unknown Volume Field space {}", space)),
+                        };
+                        data.fields.emplace_back(std::move(field));
+                    }
                     volume.data = std::move(data);
-                } else if (node.name() == u8"rgb-grid") {
-                    const kdl::Node& resolution = *kdl_child(node, u8"resolution");
-                    RgbGridVolume data{
-                        .resolution  = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])},
-                        .color_space = SpectrumColorSpace::Srgb,
-                        .source      = kdl_string_property(node, u8"source"),
-                    };
-                    if (const kdl::Node* color_space = kdl_child(node, u8"color-space")) data.color_space = read_spectrum_color_space(kdl_value_text(color_space->args()[0]));
-                    volume.data = data;
                 } else if (node.name() == u8"procedural-cloud") {
                     ProceduralCloudVolume data{};
                     if (const kdl::Node* value = kdl_child(node, u8"density")) data.density = kdl_number<float>(value->args()[0]);
@@ -1251,6 +1334,26 @@ namespace spectra::scene {
                     volume.data = data;
                 } else
                     throw std::runtime_error(std::format("Unknown Volume {}", kdl_text(node.name())));
+                if (const kdl::Node* diagnostics_node = kdl_child(node, u8"diagnostics")) {
+                    volume.diagnostics = {
+                        .field_id       = kdl_string_property(*diagnostics_node, u8"field"),
+                        .mode           = read_volume_diagnostic_mode(kdl_string_property(*diagnostics_node, u8"mode")),
+                        .mapping        = read_volume_field_mapping(kdl_string_property(*diagnostics_node, u8"mapping", "value")),
+                        .depth_mode     = read_depth_buffer_mode(kdl_string_property(*diagnostics_node, u8"depth", "tested")),
+                        .color_map      = read_visualization_color_map(kdl_string_property(*diagnostics_node, u8"color-map", "viridis")),
+                        .minimum        = kdl_number_property<float>(*diagnostics_node, u8"minimum", 0.0f),
+                        .maximum        = kdl_number_property<float>(*diagnostics_node, u8"maximum", 1.0f),
+                        .slice_position = kdl_number_property<float>(*diagnostics_node, u8"slice", 0.5f),
+                        .opacity        = kdl_number_property<float>(*diagnostics_node, u8"opacity", 1.0f),
+                        .threshold      = kdl_number_property<float>(*diagnostics_node, u8"threshold", 0.5f),
+                        .scale          = kdl_number_property<float>(*diagnostics_node, u8"scale", 0.1f),
+                        .width          = kdl_number_property<float>(*diagnostics_node, u8"width", 1.5f),
+                        .axis           = kdl_number_property<std::uint32_t>(*diagnostics_node, u8"axis", 2u),
+                        .sampling       = kdl_number_property<std::uint32_t>(*diagnostics_node, u8"sampling", 8u),
+                        .steps          = kdl_number_property<std::uint32_t>(*diagnostics_node, u8"steps", 32u),
+                    };
+                    if (const kdl::Node* color = kdl_child(*diagnostics_node, u8"color")) volume.diagnostics.color = {kdl_number<float>(color->args()[0]), kdl_number<float>(color->args()[1]), kdl_number<float>(color->args()[2]), kdl_number<float>(color->args()[3])};
+                }
                 resources.volumes.push_back(std::move(volume));
             }
         }
@@ -1433,7 +1536,16 @@ namespace spectra::scene {
                     if (const kdl::Node* value = kdl_child(node, u8"anisotropy")) data.anisotropy = kdl_number<float>(value->args()[0]);
                     medium.data = std::move(data);
                 } else if (node.name() == u8"volume") {
-                    VolumeMedium data{.volume = {kdl_number_property<std::uint64_t>(node, u8"volume", 0)}};
+                    VolumeMedium data{
+                        .volume               = {kdl_number_property<std::uint64_t>(node, u8"volume", 0)},
+                        .density_field         = kdl_string_property(node, u8"density-field"),
+                        .temperature_field     = kdl_string_property(node, u8"temperature-field"),
+                        .emission_scale_field  = kdl_string_property(node, u8"emission-scale-field"),
+                        .sigma_a_field         = kdl_string_property(node, u8"sigma-a-field"),
+                        .sigma_s_field         = kdl_string_property(node, u8"sigma-s-field"),
+                        .emission_field        = kdl_string_property(node, u8"emission-field"),
+                        .field_color_space      = read_spectrum_color_space(kdl_string_property(node, u8"field-color-space", "srgb")),
+                    };
                     data.sigma_a  = read_spectrum(*kdl_child(node, u8"sigma-a"));
                     data.sigma_s  = read_spectrum(*kdl_child(node, u8"sigma-s"));
                     data.emission = read_spectrum(*kdl_child(node, u8"emission"));
@@ -1679,8 +1791,6 @@ namespace spectra::scene {
             if (value == "points") return VisualizationViewKind::Points;
             if (value == "segments") return VisualizationViewKind::Segments;
             if (value == "vectors") return VisualizationViewKind::Vectors;
-            if (value == "field-slice") return VisualizationViewKind::FieldSlice;
-            if (value == "field-vectors") return VisualizationViewKind::FieldVectors;
             if (value == "image") return VisualizationViewKind::Image;
             if (value == "surface") return VisualizationViewKind::Surface;
             throw std::runtime_error(std::format("Unknown Visualization view kind {}", value));
@@ -1785,10 +1895,7 @@ namespace spectra::scene {
                         switch (read_visualization_view_kind(kdl_string_property(child, u8"kind"))) {
                         case VisualizationViewKind::Points: view.data = PointVisualization{width, scale, scalar_minimum, scalar_maximum, read_point_glyph(kdl_string_property(child, u8"glyph", "screen-disc")), read_point_shading(kdl_string_property(child, u8"shading", "unlit")), color_source, color_map}; break;
                         case VisualizationViewKind::Segments: view.data = SegmentVisualization{width, scalar_minimum, scalar_maximum, color_source, color_map}; break;
-                        case VisualizationViewKind::Reserved: std::unreachable();
                         case VisualizationViewKind::Vectors: view.data = VectorVisualization{width, scale, scalar_minimum, scalar_maximum, color_source, color_map}; break;
-                        case VisualizationViewKind::FieldSlice: view.data = FieldSliceVisualization{kdl_string_property(child, u8"channel", ""), kdl_number_property<float>(child, u8"slice-position", 0.5f), scalar_minimum, scalar_maximum, kdl_number_property<std::uint32_t>(child, u8"slice-axis", 2), color_source, color_map}; break;
-                        case VisualizationViewKind::FieldVectors: view.data = FieldVectorVisualization{kdl_string_property(child, u8"channel", ""), width, scale, scalar_minimum, scalar_maximum, kdl_number_property<std::uint32_t>(child, u8"sampling", 8), color_source, color_map}; break;
                         case VisualizationViewKind::Image: view.data = ImageVisualization{screen_rect}; break;
                         case VisualizationViewKind::Surface: view.data = SurfaceVisualization{scalar_minimum, scalar_maximum, color_source, color_map}; break;
                         }
@@ -1868,10 +1975,7 @@ namespace spectra::scene {
                 if (const TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data)) add(mesh->source);
             for (const SphereSet& spheres : scene.resources.sphere_sets) add(spheres.source);
             for (const Volume& volume : scene.resources.volumes) {
-                if (const DensityGridVolume* density = std::get_if<DensityGridVolume>(&volume.data))
-                    add(density->source);
-                else if (const RgbGridVolume* rgb = std::get_if<RgbGridVolume>(&volume.data))
-                    add(rgb->source);
+                if (const GridVolume* grid = std::get_if<GridVolume>(&volume.data)) add(grid->source);
             }
             for (const Texture& texture : scene.resources.textures)
                 if (const ImageTexture* image = std::get_if<ImageTexture>(&texture.data)) add(image->source);

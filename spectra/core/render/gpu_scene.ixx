@@ -118,23 +118,22 @@ namespace spectra {
         GpuSphereSet& operator=(const GpuSphereSet&)     = delete;
     };
 
-    export enum class GpuVolumeField : std::uint8_t {
-        Density,
-        Temperature,
-        EmissionScale,
-        SigmaA,
-        SigmaS,
-        Emission,
-        Count,
+    export struct GpuVolumeField {
+        std::string id{};
+        std::string name{};
+        std::string unit{};
+        scene::VolumeFieldKind kind{scene::VolumeFieldKind::Float};
+        scene::VolumeFieldSampling sampling{scene::VolumeFieldSampling::Cell};
+        scene::VolumeVectorSpace vector_space{scene::VolumeVectorSpace::Local};
+        std::vector<GpuBuffer> buffers{};
+        std::vector<DescriptorLease> descriptors{};
     };
 
     export struct GpuVolume {
         scene::VolumeId volume_id{};
         scene::ResourceRevision revision{};
         math::UInt3 resolution{};
-        std::array<GpuBuffer, static_cast<std::size_t>(GpuVolumeField::Count)> fields{};
-        std::array<DescriptorLease, static_cast<std::size_t>(GpuVolumeField::Count)> descriptors{};
-        std::array<bool, static_cast<std::size_t>(GpuVolumeField::Count)> field_present{};
+        std::vector<GpuVolumeField> fields{};
         std::optional<scene::VolumeRegion> dirty_region{};
         bool cpu_data_stale{};
     };
@@ -255,7 +254,7 @@ namespace spectra {
         void update_sphere_set_acceleration(GpuSphereSet& spheres, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_sphere_set(scene::SphereSetId sphere_set_id, DescriptorHandle spheres_descriptor, std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_instance_transforms(const dynamics::GpuInstanceTransformUpdate& update, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_external_volume(scene::VolumeId volume_id, const GpuBuffer* density, const GpuBuffer* temperature, const GpuBuffer* emission_scale, const GpuBuffer* sigma_a, const GpuBuffer* sigma_s, const GpuBuffer* emission, std::uint64_t voxel_count, scene::VolumeRegion dirty_region, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_volume(scene::VolumeId volume_id, std::span<const dynamics::GpuVolumeFieldView> fields, const vk::raii::CommandBuffer& command_buffer);
         void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_instance_state(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_instance_bounds(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);

@@ -2,6 +2,7 @@ export module spectra.render.composition.visualization;
 
 import spectra.dynamics.gpu;
 import spectra.render.contract;
+import spectra.render.gpu_scene;
 import spectra.runtime;
 import spectra.scene;
 import std;
@@ -9,7 +10,7 @@ import vulkan;
 
 namespace spectra {
     export struct VisualizationRenderer {
-        VisualizationRenderer(VulkanRuntime& runtime, std::filesystem::path shader_directory);
+        VisualizationRenderer(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory);
         ~VisualizationRenderer();
 
         VisualizationRenderer(const VisualizationRenderer&)            = delete;
@@ -17,11 +18,12 @@ namespace spectra {
         VisualizationRenderer& operator=(const VisualizationRenderer&) = delete;
         VisualizationRenderer& operator=(VisualizationRenderer&&)      = delete;
 
-        [[nodiscard]] bool has_visible(std::span<const dynamics::GpuVisualization> views, scene::VisualizationCompositionDomain domain) const noexcept;
-        void record(const vk::raii::CommandBuffer& command_buffer, ColorCompositionTarget target, DepthBufferView depth, const scene::Camera& camera, std::span<const dynamics::GpuVisualization> views, scene::VisualizationCompositionDomain domain);
+        [[nodiscard]] bool has_visible(scene::SceneView scene, std::span<const dynamics::GpuVisualization> views, scene::VisualizationCompositionDomain domain) const noexcept;
+        void record(const vk::raii::CommandBuffer& command_buffer, ColorCompositionTarget target, DepthBufferView depth, scene::SceneView scene, const scene::Camera& camera, std::span<const dynamics::GpuVisualization> views, scene::VisualizationCompositionDomain domain);
 
         struct {
             VulkanRuntime& runtime;
+            GpuScene& gpu_scene;
             std::filesystem::path shader_directory{};
         } context;
 

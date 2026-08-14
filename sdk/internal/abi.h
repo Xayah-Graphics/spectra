@@ -68,9 +68,21 @@ enum class SpectraSdkOutputKind : std::uint32_t {
     Metrics,
 };
 
-enum class SpectraSdkVolumeChannelKind : std::uint32_t {
+enum class SpectraSdkVolumeFieldKind : std::uint32_t {
     Float,
     Float3,
+    MacFloat3,
+};
+
+enum class SpectraSdkVolumeFieldSampling : std::uint32_t {
+    Cell,
+    Vertex,
+};
+
+enum class SpectraSdkVolumeVectorSpace : std::uint32_t {
+    Grid,
+    Local,
+    World,
 };
 
 enum class SpectraSdkMeshAttribute : std::uint32_t {
@@ -81,17 +93,21 @@ enum class SpectraSdkMeshAttribute : std::uint32_t {
     Scalar            = 1u << 4u,
 };
 
-struct SpectraSdkVolumeChannelDescriptor {
+struct SpectraSdkVolumeFieldDescriptor {
     SpectraSdkString id;
-    SpectraSdkVolumeChannelKind kind;
+    SpectraSdkString name;
+    SpectraSdkString unit;
+    SpectraSdkVolumeFieldKind kind;
+    SpectraSdkVolumeFieldSampling sampling;
+    SpectraSdkVolumeVectorSpace vector_space;
 };
 
 struct SpectraSdkOutputDescriptor {
     SpectraSdkString id;
     SpectraSdkOutputKind kind;
     std::uint32_t mesh_attributes;
-    const SpectraSdkVolumeChannelDescriptor* volume_channels;
-    std::uint64_t volume_channel_count;
+    const SpectraSdkVolumeFieldDescriptor* volume_fields;
+    std::uint64_t volume_field_count;
 };
 
 struct SpectraSdkMetricDescriptor {
@@ -165,8 +181,6 @@ struct SpectraSdkSetupSink {
 struct SpectraSdkOutputCommit {
     std::uint32_t active_count;
     std::uint32_t secondary_count;
-    std::uint32_t region_minimum[3];
-    std::uint32_t region_maximum[3];
 };
 
 struct SpectraSdkFrameCommit {
@@ -209,7 +223,7 @@ struct SpectraSdkApi {
 };
 
 static_assert(sizeof(SpectraSdkValue) == 40);
-static_assert(sizeof(SpectraSdkOutputCommit) == 32);
+static_assert(sizeof(SpectraSdkOutputCommit) == 8);
 static_assert(sizeof(SpectraSdkApi) == 72);
 
 #endif

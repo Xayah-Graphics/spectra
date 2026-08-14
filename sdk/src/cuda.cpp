@@ -76,8 +76,9 @@ namespace spectra::sdk::cuda {
             std::string id{};
             OutputKind kind{};
             MeshAttribute mesh_attributes{};
-            std::vector<std::string> channel_ids{};
-            std::vector<VolumeChannelKind> channel_kinds{};
+            std::vector<std::string> field_ids{};
+            std::vector<VolumeFieldKind> field_kinds{};
+            std::vector<std::size_t> field_buffer_offsets{};
             UInt3 resolution{};
             std::uint32_t primary_capacity{};
             std::uint32_t secondary_capacity{};
@@ -187,14 +188,20 @@ namespace spectra::sdk::cuda {
         return *this;
     }
 
-    void register_output_internal(void* source, const std::string_view id, const OutputKind kind, const MeshAttribute attributes, const std::span<const std::string_view> channel_ids, const std::span<const VolumeChannelKind> channel_kinds) {
+    void register_output_internal(void* source, const std::string_view id, const OutputKind kind, const MeshAttribute attributes, const std::span<const std::string_view> field_ids, const std::span<const VolumeFieldKind> field_kinds) {
         State& state              = setup_state(source);
         OutputState& output       = state.outputs.emplace_back();
         output.id                 = id;
         output.kind               = kind;
         output.mesh_attributes    = attributes;
-        output.channel_ids.assign(channel_ids.begin(), channel_ids.end());
-        output.channel_kinds.assign(channel_kinds.begin(), channel_kinds.end());
+        output.field_ids.assign(field_ids.begin(), field_ids.end());
+        output.field_kinds.assign(field_kinds.begin(), field_kinds.end());
+        output.field_buffer_offsets.reserve(field_kinds.size());
+        std::size_t buffer_offset{};
+        for (const VolumeFieldKind field_kind : field_kinds) {
+            output.field_buffer_offsets.push_back(buffer_offset);
+            buffer_offset += field_kind == VolumeFieldKind::MacFloat3 ? 3u : 1u;
+        }
         output.current_slot = &state.next_slot;
     }
 
@@ -322,10 +329,7 @@ namespace spectra::sdk::cuda {
         OutputState& output = output_state(state, id);
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
         commit.active_count             = output.primary_capacity;
-        commit.region_maximum[0]        = output.resolution.x;
-        commit.region_maximum[1]        = output.resolution.y;
-        commit.region_maximum[2]        = output.resolution.z;
-        return {&output, output.resolution, commit.region_minimum, commit.region_maximum};
+        return {&output, output.resolution};
     }
 
     RawImageView frame_image_internal(void* source, const std::string_view id) {
@@ -336,11 +340,27 @@ namespace spectra::sdk::cuda {
         return {raw_view(output.slots[state.next_slot][0], sizeof(Float4)), output.resolution};
     }
 
-    RawView volume_channel_internal(void* source, const std::string_view id) {
+    RawView volume_field_internal(void* source, const std::string_view id) {
         OutputState& output = *static_cast<OutputState*>(source);
-        const auto found = std::ranges::find(output.channel_ids, id);
-        const std::size_t index = static_cast<std::size_t>(std::distance(output.channel_ids.begin(), found));
-        return raw_view(output.slots[*output.current_slot][index], output.channel_kinds[index] == VolumeChannelKind::Float ? sizeof(float) : sizeof(Float3));
+        const auto found = std::ranges::find(output.field_ids, id);
+        const std::size_t index = static_cast<std::size_t>(std::distance(output.field_ids.begin(), found));
+        return raw_view(output.slots[*output.current_slot][output.field_buffer_offsets[index]], output.field_kinds[index] == VolumeFieldKind::Float ? sizeof(float) : sizeof(Float3));
+    }
+
+    RawMacFieldView volume_mac_field_internal(void* source, const std::string_view id) {
+        OutputState& output = *static_cast<OutputState*>(source);
+        const auto found = std::ranges::find(output.field_ids, id);
+        const std::size_t index = static_cast<std::size_t>(std::distance(output.field_ids.begin(), found));
+        const std::size_t offset = output.field_buffer_offsets[index];
+        const auto& buffers = output.slots[*output.current_slot];
+        return {
+            raw_view(buffers[offset], sizeof(float)),
+            raw_view(buffers[offset + 1u], sizeof(float)),
+            raw_view(buffers[offset + 2u], sizeof(float)),
+            {output.resolution.x + 1u, output.resolution.y, output.resolution.z},
+            {output.resolution.x, output.resolution.y + 1u, output.resolution.z},
+            {output.resolution.x, output.resolution.y, output.resolution.z + 1u},
+        };
     }
 
     void upload_metric_internal(void* source, const std::string_view id, const MetricValue& value) {

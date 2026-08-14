@@ -920,8 +920,110 @@ namespace spectra {
                             ImGui::Text("Portal Infinite · %zu portals · Scale %.5g", data.portals.size(), data.environment.scale);
                     },
                     light.data);
+            } else if (entity->kind == SceneEntityKind::Volume) {
+                const scene::VolumeId volume_id{entity->id};
+                const scene::Volume& volume = *std::ranges::find(this->context.document.content.source.resources.volumes, volume_id, &scene::Volume::id);
+                if (const auto* grid = std::get_if<scene::GridVolume>(&volume.data)) {
+                    ImGui::TextDisabled("%u x %u x %u · %zu fields", grid->resolution.x, grid->resolution.y, grid->resolution.z, grid->fields.size());
+                    for (const scene::VolumeField& field : grid->fields) {
+                        const char* kind = field.kind == scene::VolumeFieldKind::Float ? "scalar" : field.kind == scene::VolumeFieldKind::Float3 ? "vector" : "MAC vector";
+                        ImGui::BulletText("%s · %s%s%s", field.name.c_str(), kind, field.unit.empty() ? "" : " · ", field.unit.c_str());
+                    }
+                }
             }
             ImGui::Spacing();
+        }
+
+        const std::vector<scene::Volume>& volumes = this->context.document.content.source.resources.volumes;
+        if (!volumes.empty()) {
+            if (!std::ranges::contains(volumes, this->controls.selected_volume, &scene::Volume::id)) this->controls.selected_volume = volumes.front().id;
+            ImGui::PushID("VolumeDiagnostics");
+            ImGui::TextDisabled("VOLUME");
+            if (volumes.size() > 1) {
+                const scene::Volume& selected = *std::ranges::find(volumes, this->controls.selected_volume, &scene::Volume::id);
+                if (ImGui::BeginCombo("Volume", selected.name.c_str())) {
+                    for (std::size_t index = 0; index != volumes.size(); ++index) {
+                        ImGui::PushID(static_cast<int>(index));
+                        if (ImGui::Selectable(volumes[index].name.c_str(), volumes[index].id == this->controls.selected_volume)) this->controls.selected_volume = volumes[index].id;
+                        ImGui::PopID();
+                    }
+                    ImGui::EndCombo();
+                }
+            } else
+                ImGui::TextUnformatted(volumes.front().name.c_str());
+
+            const scene::Volume& volume = *std::ranges::find(volumes, this->controls.selected_volume, &scene::Volume::id);
+            if (const auto* grid = std::get_if<scene::GridVolume>(&volume.data); grid && !grid->fields.empty()) {
+                scene::VolumeDiagnostics diagnostics = volume.diagnostics;
+                bool changed{};
+                std::vector<scene::VolumeField>::const_iterator selected_field = std::ranges::find(grid->fields, diagnostics.field_id, &scene::VolumeField::id);
+                if (selected_field == grid->fields.end()) selected_field = grid->fields.begin();
+                if (ImGui::BeginCombo("Field", selected_field->name.c_str())) {
+                    for (std::size_t index = 0; index != grid->fields.size(); ++index) {
+                        const scene::VolumeField& field = grid->fields[index];
+                        ImGui::PushID(static_cast<int>(index));
+                        if (ImGui::Selectable(field.name.c_str(), field.id == selected_field->id) && field.id != diagnostics.field_id) {
+                            diagnostics.field_id = field.id;
+                            diagnostics.mode     = scene::VolumeDiagnosticMode::Off;
+                            diagnostics.mapping  = field.kind == scene::VolumeFieldKind::Float ? scene::VolumeFieldMapping::Value : scene::VolumeFieldMapping::Magnitude;
+                            selected_field       = grid->fields.begin() + static_cast<std::ptrdiff_t>(index);
+                            changed              = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                const bool vector_field = selected_field->kind != scene::VolumeFieldKind::Float;
+                constexpr const char* modes[] = {"Off", "Slice", "Ray March", "Maximum Intensity", "Isosurface", "Glyphs", "Streamlines", "LIC"};
+                int mode = static_cast<int>(std::to_underlying(diagnostics.mode));
+                if (ImGui::Combo("Diagnostics", &mode, modes, vector_field ? 8 : 5)) {
+                    diagnostics.mode = static_cast<scene::VolumeDiagnosticMode>(mode);
+                    if (diagnostics.field_id.empty()) {
+                        diagnostics.field_id = selected_field->id;
+                        diagnostics.mapping  = vector_field ? scene::VolumeFieldMapping::Magnitude : scene::VolumeFieldMapping::Value;
+                    }
+                    changed = true;
+                }
+                if (diagnostics.mode != scene::VolumeDiagnosticMode::Off) {
+                    constexpr const char* mappings[] = {"Value", "Magnitude", "X", "Y", "Z", "Divergence", "Curl Magnitude", "Q Criterion"};
+                    constexpr const char* color_maps[] = {"Viridis", "Turbo", "Cool-Warm", "Grayscale"};
+                    constexpr const char* depth_modes[] = {"Tested", "X-Ray", "Overlay"};
+                    constexpr const char* axes[] = {"X", "Y", "Z"};
+                    constexpr std::uint32_t minimum_steps = 1u;
+                    constexpr std::uint32_t maximum_steps = 512u;
+                    constexpr std::uint32_t minimum_sampling = 1u;
+                    constexpr std::uint32_t maximum_sampling = 256u;
+                    int mapping = static_cast<int>(std::to_underlying(diagnostics.mapping));
+                    if (vector_field && ImGui::Combo("Mapping", &mapping, mappings, 8)) diagnostics.mapping = static_cast<scene::VolumeFieldMapping>(mapping), changed = true;
+                    int color_map = static_cast<int>(std::to_underlying(diagnostics.color_map));
+                    if (ImGui::Combo("Color map", &color_map, color_maps, 4)) diagnostics.color_map = static_cast<scene::VisualizationColorMap>(color_map), changed = true;
+                    changed = ImGui::DragFloatRange2("Range", &diagnostics.minimum, &diagnostics.maximum, 0.01f, 0.0f, 0.0f, "%.5g", "%.5g") || changed;
+                    changed = ImGui::ColorEdit4("Tint", &diagnostics.color.x, ImGuiColorEditFlags_Float) || changed;
+                    if (diagnostics.mode == scene::VolumeDiagnosticMode::Slice || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) {
+                        int axis = static_cast<int>(diagnostics.axis);
+                        if (ImGui::Combo("Axis", &axis, axes, 3)) diagnostics.axis = static_cast<std::uint32_t>(axis), changed = true;
+                        changed = ImGui::SliderFloat("Slice", &diagnostics.slice_position, 0.0f, 1.0f) || changed;
+                    }
+                    if (diagnostics.mode == scene::VolumeDiagnosticMode::RayMarch || diagnostics.mode == scene::VolumeDiagnosticMode::MaximumIntensityProjection || diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface || diagnostics.mode == scene::VolumeDiagnosticMode::Slice || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) changed = ImGui::DragFloat("Opacity", &diagnostics.opacity, 0.01f, 0.0f, 10.0f) || changed;
+                    if (diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface) changed = ImGui::DragFloat("Threshold", &diagnostics.threshold, 0.01f) || changed;
+                    if (diagnostics.mode == scene::VolumeDiagnosticMode::Glyphs || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines) {
+                        changed = ImGui::DragFloat("Scale", &diagnostics.scale, 0.001f) || changed;
+                        changed = ImGui::DragFloat("Width", &diagnostics.width, 0.1f, 0.25f, 8.0f, "%.2f px") || changed;
+                    }
+                    if (diagnostics.mode == scene::VolumeDiagnosticMode::RayMarch || diagnostics.mode == scene::VolumeDiagnosticMode::MaximumIntensityProjection || diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) changed = ImGui::DragScalar("Steps", ImGuiDataType_U32, &diagnostics.steps, 1.0f, &minimum_steps, &maximum_steps, "%u") || changed;
+                    if (diagnostics.mode == scene::VolumeDiagnosticMode::Glyphs || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines) changed = ImGui::DragScalar("Seeds", ImGuiDataType_U32, &diagnostics.sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u") || changed;
+                    int depth_mode = static_cast<int>(std::to_underlying(diagnostics.depth_mode));
+                    if (ImGui::Combo("Depth", &depth_mode, depth_modes, 3)) diagnostics.depth_mode = static_cast<scene::VisualizationDepthMode>(depth_mode), changed = true;
+                }
+                if (changed) {
+                    this->context.document.update_volume_diagnostics(this->context.document.content.source, volume.id, diagnostics);
+                    this->context.document.update_volume_diagnostics(this->context.document.content.evaluated, volume.id, std::move(diagnostics));
+                }
+            }
+            ImGui::PopID();
+            ImGui::Spacing();
+            ImGui::Separator();
         }
 
         ImGui::TextDisabled("SCENE DIAGNOSTICS");
@@ -1081,6 +1183,7 @@ namespace spectra {
                 ImGui::Spacing();
                 ImGui::TextDisabled("TELEMETRY / %s", telemetry_section.c_str());
             }
+            ImGui::PushID(static_cast<int>(metric_index));
             const dynamics::TelemetryValue& value = *telemetry.values[metric_index];
             std::string formatted{};
             if (value.kind == dynamics::TelemetryKind::Boolean)
@@ -1108,6 +1211,7 @@ namespace spectra {
                 }
                 ImGui::PlotLines("##History", samples.data(), static_cast<int>(samples.size()), 0, nullptr, std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), ImVec2{-1.0f, 44.0f});
             }
+            ImGui::PopID();
         }
 
         if (this->controls.reset_pending)

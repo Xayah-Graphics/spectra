@@ -415,14 +415,16 @@ namespace spectra {
             return scale * result;
         }
 
-        [[nodiscard]] std::vector<float> build_density_majorant(const scene::DensityGridVolume& volume) {
-            return build_grid_majorant(volume.resolution, [&volume](const std::size_t index) { return volume.density[index]; });
+        [[nodiscard]] std::vector<float> build_density_majorant(const math::UInt3 resolution, const std::span<const float> density) {
+            if (density.empty()) return std::vector<float>(16u * 16u * 16u);
+            return build_grid_majorant(resolution, [density](const std::size_t index) { return density[index]; });
         }
 
-        [[nodiscard]] std::vector<float> build_rgb_majorant(const scene::RgbGridVolume& volume, const RgbToSpectrumTables& tables) {
-            return build_grid_majorant(volume.resolution, [&volume, &tables](const std::size_t index) {
-                const float absorption = volume.sigma_a.empty() ? 1.0f : rgb_spectrum_maximum(volume.sigma_a[index], volume.color_space, tables);
-                const float scattering = volume.sigma_s.empty() ? 1.0f : rgb_spectrum_maximum(volume.sigma_s[index], volume.color_space, tables);
+        [[nodiscard]] std::vector<float> build_rgb_majorant(const math::UInt3 resolution, const std::span<const math::Float3> sigma_a, const std::span<const math::Float3> sigma_s, const bool has_sigma_a, const bool has_sigma_s, const scene::SpectrumColorSpace color_space, const RgbToSpectrumTables& tables) {
+            if ((has_sigma_a && sigma_a.empty()) || (has_sigma_s && sigma_s.empty())) return std::vector<float>(16u * 16u * 16u);
+            return build_grid_majorant(resolution, [sigma_a, sigma_s, has_sigma_a, has_sigma_s, color_space, &tables](const std::size_t index) {
+                const float absorption = has_sigma_a ? rgb_spectrum_maximum(sigma_a[index], color_space, tables) : 1.0f;
+                const float scattering = has_sigma_s ? rgb_spectrum_maximum(sigma_s[index], color_space, tables) : 1.0f;
                 return absorption + scattering;
             });
         }
@@ -458,9 +460,13 @@ namespace spectra {
         }
         snapshot.volumes.reserve(gpu_scene.volumes.size());
         for (const GpuVolume& volume : gpu_scene.volumes) {
-            std::array<DescriptorHandle, static_cast<std::size_t>(GpuVolumeField::Count)> descriptors{};
-            for (std::size_t index = 0; index != descriptors.size(); ++index) descriptors[index] = volume.descriptors[index];
-            snapshot.volumes.push_back({volume.volume_id, volume.revision, volume.resolution, descriptors, volume.field_present});
+            PathSceneGpuSnapshot::Volume& destination = snapshot.volumes.emplace_back(volume.volume_id, volume.revision, volume.resolution);
+            destination.cpu_data_stale = volume.cpu_data_stale;
+            destination.fields.reserve(volume.fields.size());
+            for (const GpuVolumeField& field : volume.fields) {
+                PathSceneGpuSnapshot::Volume::Field& copied = destination.fields.emplace_back(field.id, field.kind);
+                for (const DescriptorLease& descriptor : field.descriptors) copied.descriptors.emplace_back(descriptor);
+            }
         }
         snapshot.geometries.reserve(gpu_scene.geometries.size());
         for (const GpuGeometry& geometry : gpu_scene.geometries) snapshot.geometries.push_back({geometry.positions_descriptor, geometry.indices_descriptor, geometry.normals_descriptor, geometry.tangents_descriptor, geometry.texture_coordinates_descriptor, geometry.vertex_count, geometry.index_count, geometry.vertex_capacity, geometry.index_capacity, geometry.attribute_mask});
@@ -1098,6 +1104,7 @@ namespace spectra {
             PreparedPathVolume prepared_volume{};
             prepared_volume.id       = volume.id;
             prepared_volume.revision = shared.revision;
+            if (shared.cpu_data_stale && prepared_volume.revision.content != 0u) --prepared_volume.revision.content;
             pathtracer::PathVolume result{};
             result.density                 = resources.zero_volume_field_descriptor;
             result.temperature             = resources.zero_volume_field_descriptor;
@@ -1112,42 +1119,66 @@ namespace spectra {
             result.inverse_transform_row_0 = {inverse.matrix[0], inverse.matrix[1], inverse.matrix[2], inverse.matrix[3]};
             result.inverse_transform_row_1 = {inverse.matrix[4], inverse.matrix[5], inverse.matrix[6], inverse.matrix[7]};
             result.inverse_transform_row_2 = {inverse.matrix[8], inverse.matrix[9], inverse.matrix[10], inverse.matrix[11]};
-            const auto field               = [&resources, &shared](const GpuVolumeField field) -> DescriptorHandle {
-                const std::size_t index = std::to_underlying(field);
-                return shared.field_present[index] ? shared.descriptors[index] : resources.zero_volume_field_descriptor;
+            const auto field = [&resources, &shared](const std::string_view id) -> DescriptorHandle {
+                const std::vector<PathSceneGpuSnapshot::Volume::Field>::const_iterator found = std::ranges::find(shared.fields, id, &PathSceneGpuSnapshot::Volume::Field::id);
+                return found == shared.fields.end() ? resources.zero_volume_field_descriptor : found->descriptors.front();
             };
             const auto prepare_majorant = [&](const auto values) -> DescriptorHandle {
                 prepared_volume.majorant.assign(values.begin(), values.end());
                 return resources.zero_volume_field_descriptor;
             };
-            std::visit(
-                [&](const auto& data) {
-                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DensityGridVolume>) {
-                        prepared_volume.resolution        = data.resolution;
-                        result.metadata                   = {std::to_underlying(PathVolumeKind::DensityGrid), data.resolution.x, data.resolution.y, data.resolution.z};
-                        result.majorant_metadata          = {16, 16, 16, (data.temperature.empty() ? 0u : 1u) | (data.emission_scale.empty() ? 0u : 2u)};
-                        result.density                    = field(GpuVolumeField::Density);
-                        result.temperature                = field(GpuVolumeField::Temperature);
-                        result.emission_scale             = field(GpuVolumeField::EmissionScale);
-                        const std::vector<float> majorant = build_density_majorant(data);
-                        result.majorant                   = prepare_majorant(std::span<const float>{majorant});
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::RgbGridVolume>) {
-                        prepared_volume.resolution        = data.resolution;
-                        result.metadata                   = {std::to_underlying(PathVolumeKind::RgbGrid), data.resolution.x, data.resolution.y, data.resolution.z};
-                        result.majorant_metadata          = {16, 16, 16, (data.sigma_a.empty() ? 0u : 1u) | (data.sigma_s.empty() ? 0u : 2u) | (data.emission.empty() ? 0u : 4u) | (std::to_underlying(data.color_space) << 8)};
-                        result.sigma_a                    = field(GpuVolumeField::SigmaA);
-                        result.sigma_s                    = field(GpuVolumeField::SigmaS);
-                        result.emission                   = field(GpuVolumeField::Emission);
-                        const std::vector<float> majorant = build_rgb_majorant(data, spectrum_tables);
-                        result.majorant                   = prepare_majorant(std::span<const float>{majorant});
-                    } else {
-                        result.metadata[0]           = std::to_underlying(PathVolumeKind::ProceduralCloud);
-                        result.procedural_parameters = {data.density, data.wispiness, data.frequency, 0.0f};
-                        const std::array<float, 1> majorant{1.0f};
-                        result.majorant = prepare_majorant(std::span<const float>{majorant});
-                    }
-                },
-                volume.data);
+            const scene::VolumeMedium* medium{};
+            for (const scene::Medium& candidate : scene.resources.media) {
+                const scene::VolumeMedium* candidate_volume = std::get_if<scene::VolumeMedium>(&candidate.data);
+                if (candidate_volume && candidate_volume->volume == volume.id) {
+                    medium = candidate_volume;
+                    break;
+                }
+            }
+            if (const auto* data = std::get_if<scene::GridVolume>(&volume.data)) {
+                const auto vertex_sampled = [data](const std::string_view id) {
+                    const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
+                    return found != data->fields.end() && found->sampling == scene::VolumeFieldSampling::Vertex ? 1u : 0u;
+                };
+                const auto scalar_values = [data](const std::string_view id) -> std::span<const float> {
+                    const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
+                    return found == data->fields.end() ? std::span<const float>{} : std::span<const float>{found->scalar_values};
+                };
+                const auto vector_values = [data](const std::string_view id) -> std::span<const math::Float3> {
+                    const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
+                    return found == data->fields.end() ? std::span<const math::Float3>{} : std::span<const math::Float3>{found->vector_values};
+                };
+                const bool rgb                = medium && medium->density_field.empty() && (!medium->sigma_a_field.empty() || !medium->sigma_s_field.empty() || !medium->emission_field.empty());
+                prepared_volume.resolution    = data->resolution;
+                result.metadata               = {std::to_underlying(rgb ? PathVolumeKind::RgbGrid : PathVolumeKind::DensityGrid), data->resolution.x, data->resolution.y, data->resolution.z};
+                if (rgb) {
+                    const std::uint32_t flags         = (medium->sigma_a_field.empty() ? 0u : 1u) | (medium->sigma_s_field.empty() ? 0u : 2u) | (medium->emission_field.empty() ? 0u : 4u) | (std::to_underlying(medium->field_color_space) << 8)
+                        | (vertex_sampled(medium->sigma_a_field) << 19u) | (vertex_sampled(medium->sigma_s_field) << 20u) | (vertex_sampled(medium->emission_field) << 21u);
+                    result.majorant_metadata          = {16, 16, 16, flags};
+                    result.sigma_a                    = field(medium->sigma_a_field);
+                    result.sigma_s                    = field(medium->sigma_s_field);
+                    result.emission                   = field(medium->emission_field);
+                    const std::vector<float> majorant = build_rgb_majorant(data->resolution, vector_values(medium->sigma_a_field), vector_values(medium->sigma_s_field), !medium->sigma_a_field.empty(), !medium->sigma_s_field.empty(), medium->field_color_space, spectrum_tables);
+                    result.majorant                   = prepare_majorant(std::span<const float>{majorant});
+                } else {
+                    const std::uint32_t flags         = (medium && !medium->temperature_field.empty() ? 1u : 0u) | (medium && !medium->emission_scale_field.empty() ? 2u : 0u)
+                        | (vertex_sampled(medium ? std::string_view{medium->density_field} : std::string_view{}) << 16u)
+                        | (vertex_sampled(medium ? std::string_view{medium->temperature_field} : std::string_view{}) << 17u)
+                        | (vertex_sampled(medium ? std::string_view{medium->emission_scale_field} : std::string_view{}) << 18u);
+                    result.majorant_metadata          = {16, 16, 16, flags};
+                    result.density                    = field(medium ? std::string_view{medium->density_field} : std::string_view{});
+                    result.temperature                = field(medium ? std::string_view{medium->temperature_field} : std::string_view{});
+                    result.emission_scale             = field(medium ? std::string_view{medium->emission_scale_field} : std::string_view{});
+                    const std::vector<float> majorant = build_density_majorant(data->resolution, scalar_values(medium ? std::string_view{medium->density_field} : std::string_view{}));
+                    result.majorant                   = prepare_majorant(std::span<const float>{majorant});
+                }
+            } else {
+                const scene::ProceduralCloudVolume& cloud = std::get<scene::ProceduralCloudVolume>(volume.data);
+                result.metadata[0]                        = std::to_underlying(PathVolumeKind::ProceduralCloud);
+                result.procedural_parameters              = {cloud.density, cloud.wispiness, cloud.frequency, 0.0f};
+                const std::array<float, 1> majorant{1.0f};
+                result.majorant = prepare_majorant(std::span<const float>{majorant});
+            }
             volumes.push_back(result);
             prepared_volume_resources.push_back(std::move(prepared_volume));
             if (progress) progress->report(PathTracerPreparationStage::CompilingMedia, ++compiled_medium_volume_count, medium_volume_count);

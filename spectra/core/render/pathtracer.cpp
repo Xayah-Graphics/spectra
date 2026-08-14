@@ -123,6 +123,7 @@ namespace spectra {
         this->commit_sampler(std::move(this->scene_preparation->sampler), command_buffer);
         this->commit_filter(std::move(this->scene_preparation->filter), command_buffer);
         this->commit_scene(std::move(this->scene_preparation->prepared), command_buffer);
+        this->update_volumes(scene_view, command_buffer);
         this->scene.camera             = scene_view.camera;
         this->scene.transport_settings = scene_view.transport;
         this->scene_preparation->progress.report(PathTracerPreparationStage::AllocatingRenderSession);
@@ -510,6 +511,7 @@ namespace spectra {
     void PathTracer::compile_scene(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         const PathSceneGpuSnapshot gpu = snapshot_path_scene_gpu(this->context.gpu_scene, scene);
         this->commit_scene(prepare_path_scene(scene, scene.bounds(), gpu, this->context.pathtracer, nullptr), command_buffer);
+        this->update_volumes(scene, command_buffer);
     }
 
     void PathTracer::update_volumes(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
@@ -530,9 +532,9 @@ namespace spectra {
                 this->compile_scene(scene, command_buffer);
                 return;
             }
-            const auto descriptor = [this, &shared](const GpuVolumeField field) -> DescriptorHandle {
-                const std::size_t field_index = std::to_underlying(field);
-                return shared.field_present[field_index] ? shared.descriptors[field_index] : this->context.pathtracer.zero_volume_field_descriptor;
+            const auto descriptor = [this, &shared](const std::string_view id) -> DescriptorHandle {
+                const std::vector<GpuVolumeField>::const_iterator found = std::ranges::find(shared.fields, id, &GpuVolumeField::id);
+                return found == shared.fields.end() ? this->context.pathtracer.zero_volume_field_descriptor : found->descriptors.front();
             };
             DescriptorHandle density_descriptor = this->context.pathtracer.zero_volume_field_descriptor;
             DescriptorHandle sigma_a_descriptor = this->context.pathtracer.zero_volume_field_descriptor;
@@ -540,22 +542,24 @@ namespace spectra {
             std::uint32_t majorant_mode{};
             std::uint32_t majorant_flags{};
             const math::UInt3 resolution = shared.resolution;
-            if (std::holds_alternative<scene::DensityGridVolume>(volume.data)) {
-                density_descriptor = descriptor(GpuVolumeField::Density);
-            } else if (std::holds_alternative<scene::RgbGridVolume>(volume.data)) {
-                majorant_mode = 1;
-                if (shared.field_present[std::to_underlying(GpuVolumeField::SigmaA)]) {
-                    sigma_a_descriptor = descriptor(GpuVolumeField::SigmaA);
-                    majorant_flags |= 1u;
-                }
-                if (shared.field_present[std::to_underlying(GpuVolumeField::SigmaS)]) {
-                    sigma_s_descriptor = descriptor(GpuVolumeField::SigmaS);
-                    majorant_flags |= 2u;
-                }
-            } else {
+            if (!std::holds_alternative<scene::GridVolume>(volume.data)) {
                 this->compile_scene(scene, command_buffer);
                 return;
             }
+            const scene::VolumeMedium* medium{};
+            for (const scene::Medium& candidate : scene.resources.media) {
+                const scene::VolumeMedium* candidate_volume = std::get_if<scene::VolumeMedium>(&candidate.data);
+                if (candidate_volume && candidate_volume->volume == volume.id) {
+                    medium = candidate_volume;
+                    break;
+                }
+            }
+            if (medium && medium->density_field.empty() && (!medium->sigma_a_field.empty() || !medium->sigma_s_field.empty() || !medium->emission_field.empty())) {
+                majorant_mode = 1;
+                if (!medium->sigma_a_field.empty()) sigma_a_descriptor = descriptor(medium->sigma_a_field), majorant_flags |= 1u;
+                if (!medium->sigma_s_field.empty()) sigma_s_descriptor = descriptor(medium->sigma_s_field), majorant_flags |= 2u;
+            } else
+                density_descriptor = descriptor(medium ? std::string_view{medium->density_field} : std::string_view{});
             const scene::VolumeRegion dirty_region = shared.revision.content == gpu_data.revision.content + 1u ? *shared.dirty_region : scene::VolumeRegion{{}, resolution};
             const scene::VolumeRegion expanded{
                 {
