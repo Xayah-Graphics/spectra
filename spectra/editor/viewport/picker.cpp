@@ -68,7 +68,7 @@ namespace spectra {
     }
 
     void ViewportPicker::synchronize(const scene::SceneView source_scene, const GpuSceneUpdate gpu_update, const vk::raii::CommandBuffer& command_buffer) {
-        if (this->context.runtime.graphics.ray_tracing_supported && ((source_scene.revision.changes & scene::SceneChange::Geometry) != scene::SceneChange::None || (gpu_update.gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None)) this->upload(source_scene, &command_buffer);
+        if (this->context.runtime.graphics.ray_tracing_supported && ((source_scene.revision.changes & (scene::SceneChange::Geometry | scene::SceneChange::Volume)) != scene::SceneChange::None || (gpu_update.gpu_changes & GpuSceneChange::Structure) != GpuSceneChange::None)) this->upload(source_scene, &command_buffer);
     }
 
     void ViewportPicker::submit_pick(const float normalized_x, const float normalized_y, const bool select, const bool additive) noexcept {
@@ -90,7 +90,7 @@ namespace spectra {
         const std::uint32_t acceleration_instance_index = values[0];
         return {
             true,
-            acceleration_instance_index == std::numeric_limits<std::uint32_t>::max() ? std::nullopt : std::optional{slot.acceleration_instance_ids[acceleration_instance_index]},
+            acceleration_instance_index == std::numeric_limits<std::uint32_t>::max() ? std::nullopt : std::optional{slot.acceleration_entities[acceleration_instance_index]},
             values[4] == 0 ? std::nullopt : std::optional{values[4]},
             request.select,
             request.additive,
@@ -104,7 +104,7 @@ namespace spectra {
         std::ranges::fill(std::span{result, 8}, std::numeric_limits<std::uint32_t>::max());
         result[4]              = 0;
         slot.submitted_request = std::exchange(this->picking.pending_request, std::nullopt);
-        slot.acceleration_instance_ids.assign(this->context.gpu_scene.view().acceleration_instance_ids.begin(), this->context.gpu_scene.view().acceleration_instance_ids.end());
+        slot.acceleration_entities.assign(this->context.gpu_scene.view().acceleration_entities.begin(), this->context.gpu_scene.view().acceleration_entities.end());
 
         struct alignas(16) PickPushData {
             vk::DeviceAddress acceleration_structure_address;
@@ -184,19 +184,22 @@ namespace spectra {
     }
     void ViewportPicker::upload(const scene::SceneView source_scene, const vk::raii::CommandBuffer* command_buffer) {
         std::vector<ViewportPickPrimitive> primitives{};
-        primitives.reserve(this->context.gpu_scene.view().acceleration_primitive_indices.size());
-        const auto volume_medium = [&source_scene](const scene::MediumId medium_id) {
-            if (medium_id.value == 0) return false;
-            const scene::Medium& medium = *std::ranges::find(source_scene.resources.media, medium_id, &scene::Medium::id);
-            return std::holds_alternative<scene::VolumeMedium>(medium.data);
-        };
-        for (const std::uint32_t scene_primitive_index : this->context.gpu_scene.view().acceleration_primitive_indices) {
+        primitives.reserve(this->context.gpu_scene.view().acceleration_entities.size());
+        for (const GpuAccelerationEntity entity : this->context.gpu_scene.view().acceleration_entities) {
+            if (entity.kind == GpuAccelerationEntityKind::Volume) {
+                ViewportPickPrimitive pick{};
+                pick.metadata[1] = 1u;
+                primitives.push_back(pick);
+                continue;
+            }
+            const std::uint32_t scene_primitive_index = entity.resource_index;
             const GpuScenePrimitive& gpu_primitive = this->context.gpu_scene.view().primitives[scene_primitive_index];
             const scene::Instance& instance        = source_scene.resources.instances[gpu_primitive.scene_instance_index];
             const scene::Prototype& prototype      = *std::ranges::find(source_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
             const scene::Primitive& primitive      = prototype.primitives[gpu_primitive.prototype_primitive_index];
             ViewportPickPrimitive pick{};
-            pick.metadata[1] = volume_medium(primitive.media.inside) || volume_medium(primitive.media.outside) ? 1u : 0u;
+            const std::vector<scene::Material>::const_iterator material = std::ranges::find(source_scene.resources.materials, primitive.material, &scene::Material::id);
+            pick.metadata[1] = (primitive.media.inside.value != 0u || primitive.media.outside.value != 0u) && material != source_scene.resources.materials.end() && std::holds_alternative<scene::InterfaceMaterialData>(material->data) ? 1u : 0u;
             if (gpu_primitive.kind == GpuScenePrimitiveKind::SphereSet) {
                 const GpuSphereSet& spheres = this->context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
                 pick.positions              = spheres.positions_descriptor;

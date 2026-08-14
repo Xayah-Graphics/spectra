@@ -319,7 +319,8 @@ namespace spectra::scene {
             const Prototype& prototype = *std::ranges::find(this->resources.prototypes, instance.prototype, &Prototype::id);
             for (const Primitive& primitive : prototype.primitives) include_primitive_bounds(result, *this, primitive, instance.transform);
         }
-        for (const Volume& volume : this->resources.volumes) result.include(volume.bounds.transformed(volume.transform));
+        for (const Volume& volume : this->resources.volumes)
+            if (volume.visible) result.include(volume.domain.transformed(volume.transform));
         return result;
     }
 
@@ -377,7 +378,6 @@ namespace spectra::scene {
 
     void Scene::acknowledge_changes() noexcept {
         this->current_revision.changes = SceneChange::None;
-        for (Volume& volume : this->resources.volumes) volume.dirty_region.reset();
     }
 
     void Scene::mark_all_changed() noexcept {

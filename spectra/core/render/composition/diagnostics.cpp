@@ -128,51 +128,18 @@ namespace spectra {
                 boxes.push_back({math::Transform{}.matrix, {0.0f, 0.0f, 0.0f, selected ? selection_diagnostics.line_width : 1.5f}, {}, diagnostic_color(entity, selection, {0.24f, 0.76f, 1.0f, 0.82f}), {index, 1u, pick_index(entity), std::to_underlying(selected ? selection_diagnostics.depth_mode : scene::VisualizationDepthMode::Tested)}});
             }
 
-        if (selection_diagnostics.bounds)
-            for (const SceneEntityReference selected : selection.selected) {
-                if (selected.kind != SceneEntityKind::Volume) continue;
-                const scene::Volume& volume = *std::ranges::find(source_scene.resources.volumes, scene::VolumeId{selected.id}, &scene::Volume::id);
-                const SceneEntityReference entity{SceneEntityKind::Volume, volume.id.value};
+        for (const scene::Volume& volume : source_scene.resources.volumes) {
+            if (!volume.visible) continue;
+            const SceneEntityReference entity{SceneEntityKind::Volume, volume.id.value};
+            const bool selected = std::ranges::contains(selection.selected, entity);
+            if (scene_guides.all_bounds || (selection_diagnostics.bounds && selected))
                 boxes.push_back({
                     volume.transform.matrix,
-                    {volume.bounds.minimum.x, volume.bounds.minimum.y, volume.bounds.minimum.z, selection_diagnostics.line_width},
-                    {volume.bounds.maximum.x, volume.bounds.maximum.y, volume.bounds.maximum.z, 0.0f},
+                    {volume.domain.minimum.x, volume.domain.minimum.y, volume.domain.minimum.z, selected ? selection_diagnostics.line_width : 1.5f},
+                    {volume.domain.maximum.x, volume.domain.maximum.y, volume.domain.maximum.z, 0.0f},
                     diagnostic_color(entity, selection, {0.64f, 0.32f, 0.92f, 0.72f}),
-                    {0, 0, pick_index(entity), std::to_underlying(selection_diagnostics.depth_mode)},
+                    {0, 0, pick_index(entity), std::to_underlying(selected ? selection_diagnostics.depth_mode : scene::VisualizationDepthMode::Tested)},
                 });
-            }
-
-        std::vector<scene::VolumeId> inspected_volumes{};
-        if (selection_diagnostics.volume_grid && selection.active) {
-            if (selection.active->kind == SceneEntityKind::Volume)
-                inspected_volumes.emplace_back(selection.active->id);
-            else if (selection.active->kind == SceneEntityKind::Instance || selection.active->kind == SceneEntityKind::AreaEmitter) {
-                const scene::InstanceId instance_id{selection.active->kind == SceneEntityKind::Instance ? selection.active->id : selection.active->owner};
-                const scene::Instance& instance   = *std::ranges::find(source_scene.resources.instances, instance_id, &scene::Instance::id);
-                const scene::Prototype& prototype = *std::ranges::find(source_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
-                for (const scene::Primitive& primitive : prototype.primitives)
-                    for (const scene::MediumId medium_id : {primitive.media.inside, primitive.media.outside}) {
-                        if (medium_id.value == 0) continue;
-                        const scene::Medium& medium = *std::ranges::find(source_scene.resources.media, medium_id, &scene::Medium::id);
-                        const auto* volume_medium   = std::get_if<scene::VolumeMedium>(&medium.data);
-                        if (volume_medium && !std::ranges::contains(inspected_volumes, volume_medium->volume)) inspected_volumes.push_back(volume_medium->volume);
-                    }
-            }
-        }
-        for (const scene::VolumeId volume_id : inspected_volumes) {
-            const scene::Volume& volume = *std::ranges::find(source_scene.resources.volumes, volume_id, &scene::Volume::id);
-            const SceneEntityReference entity{SceneEntityKind::Volume, volume.id.value};
-            const math::Float3 minimum = volume.bounds.minimum;
-            const math::Float3 size    = volume.bounds.maximum - volume.bounds.minimum;
-            const std::uint32_t count  = selection_diagnostics.volume_grid_sampling;
-            for (std::uint32_t first = 0; first <= count; ++first)
-                for (std::uint32_t second = 0; second <= count; ++second) {
-                    const float a = static_cast<float>(first) / static_cast<float>(count);
-                    const float b = static_cast<float>(second) / static_cast<float>(count);
-                    add_line(volume.transform.transform_point(minimum + math::Float3{0.0f, size.y * a, size.z * b}), volume.transform.transform_point(minimum + math::Float3{size.x, size.y * a, size.z * b}), {0.56f, 0.27f, 0.86f, 0.28f}, entity, selection_diagnostics.line_width, selection_diagnostics.depth_mode);
-                    add_line(volume.transform.transform_point(minimum + math::Float3{size.x * a, 0.0f, size.z * b}), volume.transform.transform_point(minimum + math::Float3{size.x * a, size.y, size.z * b}), {0.56f, 0.27f, 0.86f, 0.28f}, entity, selection_diagnostics.line_width, selection_diagnostics.depth_mode);
-                    add_line(volume.transform.transform_point(minimum + math::Float3{size.x * a, size.y * b, 0.0f}), volume.transform.transform_point(minimum + math::Float3{size.x * a, size.y * b, size.z}), {0.56f, 0.27f, 0.86f, 0.28f}, entity, selection_diagnostics.line_width, selection_diagnostics.depth_mode);
-                }
         }
 
         for (const scene::Camera& scene_camera : source_scene.resources.cameras) {
@@ -273,39 +240,6 @@ namespace spectra {
                     }
                 },
                 light.data);
-        }
-
-        if ((selection_diagnostics.pivot || selection_diagnostics.orientation) && selection.active) {
-            const SceneEntityReference entity = *selection.active;
-            math::Transform transform{};
-            bool spatial{true};
-            if (entity.kind == SceneEntityKind::Instance)
-                transform = std::ranges::find(source_scene.resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id)->transform;
-            else if (entity.kind == SceneEntityKind::Camera)
-                transform = std::ranges::find(source_scene.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->transform;
-            else if (entity.kind == SceneEntityKind::Light)
-                transform = light_transform(*std::ranges::find(source_scene.resources.lights, scene::LightId{entity.id}, &scene::Light::id));
-            else if (entity.kind == SceneEntityKind::AreaEmitter)
-                transform = std::ranges::find(source_scene.resources.instances, scene::InstanceId{entity.owner}, &scene::Instance::id)->transform;
-            else if (entity.kind == SceneEntityKind::Volume)
-                transform = std::ranges::find(source_scene.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id)->transform;
-            else
-                spatial = false;
-            if (spatial) {
-                const math::Float3 origin{transform.matrix[3], transform.matrix[7], transform.matrix[11]};
-                const float size = scene_radius * 0.07f;
-                if (selection_diagnostics.pivot) {
-                    const float half = size * 0.16f;
-                    add_line(origin - math::Float3{half, 0.0f, 0.0f}, origin + math::Float3{half, 0.0f, 0.0f}, {0.95f, 0.95f, 0.98f, 0.88f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
-                    add_line(origin - math::Float3{0.0f, half, 0.0f}, origin + math::Float3{0.0f, half, 0.0f}, {0.95f, 0.95f, 0.98f, 0.88f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
-                    add_line(origin - math::Float3{0.0f, 0.0f, half}, origin + math::Float3{0.0f, 0.0f, half}, {0.95f, 0.95f, 0.98f, 0.88f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
-                }
-                if (selection_diagnostics.orientation) {
-                    add_line(origin, origin + transform.transform_vector({size, 0.0f, 0.0f}), {0.95f, 0.22f, 0.18f, 0.95f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
-                    add_line(origin, origin + transform.transform_vector({0.0f, size, 0.0f}), {0.20f, 0.90f, 0.28f, 0.95f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
-                    add_line(origin, origin + transform.transform_vector({0.0f, 0.0f, size}), {0.18f, 0.48f, 1.0f, 0.95f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
-                }
-            }
         }
 
         this->ensure_buffers(frame_resources, lines.size(), boxes.size());

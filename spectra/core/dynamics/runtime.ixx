@@ -22,7 +22,7 @@ namespace spectra {
         DynamicsRuntime& operator=(const DynamicsRuntime&) = delete;
         DynamicsRuntime& operator=(DynamicsRuntime&&)      = delete;
 
-        void initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene);
+        void initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene, scene::Scene& evaluated_scene);
         void destroy() noexcept;
         [[nodiscard]] bool initialized() const noexcept;
 
@@ -114,6 +114,7 @@ namespace spectra {
 
         struct {
             const scene::Scene* source_scene{};
+            scene::Scene* evaluated_scene{};
             std::filesystem::path assets{};
             scene::DynamicSetup setup{};
             bool initialized{};

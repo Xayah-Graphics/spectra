@@ -126,7 +126,7 @@ namespace spectra {
 
     bool VisualizationRenderer::has_visible(const scene::SceneView scene, const std::span<const dynamics::GpuVisualization> views, const scene::VisualizationCompositionDomain domain) const noexcept {
         if (std::ranges::any_of(views, [domain](const dynamics::GpuVisualization& source) { return std::visit([domain](const auto& value) { return value.style.view.visible && value.style.view.composition_domain == domain; }, source.data); })) return true;
-        return domain == scene::VisualizationCompositionDomain::DisplayReferred && std::ranges::any_of(scene.resources.volumes, [](const scene::Volume& volume) { return std::holds_alternative<scene::GridVolume>(volume.data) && volume.diagnostics.mode != scene::VolumeDiagnosticMode::Off; });
+        return domain == scene::VisualizationCompositionDomain::DisplayReferred && std::ranges::any_of(scene.resources.volumes, [](const scene::Volume& volume) { return volume.visible && std::holds_alternative<scene::GridVolume>(volume.data) && volume.diagnostics.mode != scene::VolumeDiagnosticMode::Off; });
     }
 
     void VisualizationRenderer::record(const vk::raii::CommandBuffer& command_buffer, const ColorCompositionTarget target, DepthBufferView depth, const scene::SceneView scene, const scene::Camera& camera, const std::span<const dynamics::GpuVisualization> views, const scene::VisualizationCompositionDomain domain) {
@@ -212,16 +212,16 @@ namespace spectra {
         const GpuSceneView gpu_scene = this->context.gpu_scene.view();
         const scene::CameraMatrices camera_matrices = camera.matrices();
         for (const scene::Volume& volume : scene.resources.volumes) {
-            if (domain != scene::VisualizationCompositionDomain::DisplayReferred || volume.diagnostics.mode == scene::VolumeDiagnosticMode::Off) continue;
+            if (domain != scene::VisualizationCompositionDomain::DisplayReferred || !volume.visible || volume.diagnostics.mode == scene::VolumeDiagnosticMode::Off) continue;
             const auto* grid = std::get_if<scene::GridVolume>(&volume.data);
             if (!grid) continue;
             const scene::VolumeDiagnostics& diagnostics = volume.diagnostics;
             const GpuVolume& gpu_volume = *std::ranges::find(gpu_scene.volumes, volume.id, &GpuVolume::volume_id);
-            const math::Float3 extent   = volume.bounds.diagonal();
+            const math::Float3 extent   = volume.domain.diagonal();
             const math::Transform grid_to_local{{
-                extent.x, 0.0f, 0.0f, volume.bounds.minimum.x,
-                0.0f, extent.y, 0.0f, volume.bounds.minimum.y,
-                0.0f, 0.0f, extent.z, volume.bounds.minimum.z,
+                extent.x, 0.0f, 0.0f, volume.domain.minimum.x,
+                0.0f, extent.y, 0.0f, volume.domain.minimum.y,
+                0.0f, 0.0f, extent.z, volume.domain.minimum.z,
                 0.0f, 0.0f, 0.0f, 1.0f,
             }};
             const math::Transform grid_to_world = volume.transform * grid_to_local;

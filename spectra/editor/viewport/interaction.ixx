@@ -27,7 +27,6 @@ namespace spectra {
         void orbit_viewport_camera(float x_pixels, float y_pixels);
         void pan_viewport_camera(float x_pixels, float y_pixels, float viewport_height);
         void zoom_viewport_camera(float steps);
-        void frame_scene(float aspect);
         void frame_selection(float aspect);
         void view_axis(math::Float3 direction, float aspect);
         void select(SceneEntityReference entity, bool additive);

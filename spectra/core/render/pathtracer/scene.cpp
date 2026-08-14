@@ -473,7 +473,11 @@ namespace spectra {
         snapshot.sphere_sets.reserve(gpu_scene.sphere_sets.size());
         for (const GpuSphereSet& spheres : gpu_scene.sphere_sets) snapshot.sphere_sets.push_back({spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, spheres.sphere_capacity});
         snapshot.primitives.assign(gpu_scene.primitives.begin(), gpu_scene.primitives.end());
-        snapshot.acceleration_primitive_indices.assign(gpu_scene.acceleration_primitive_indices.begin(), gpu_scene.acceleration_primitive_indices.end());
+        if (gpu_scene.volume_region_geometry) {
+            const GpuGeometry& region         = *gpu_scene.volume_region_geometry;
+            snapshot.volume_region_geometry = {region.positions_descriptor, region.indices_descriptor, region.normals_descriptor, region.tangents_descriptor, region.texture_coordinates_descriptor, region.vertex_count, region.index_count, region.vertex_capacity, region.index_capacity, region.attribute_mask};
+        }
+        snapshot.acceleration_entities.assign(gpu_scene.acceleration_entities.begin(), gpu_scene.acceleration_entities.end());
         snapshot.structure_revision = gpu_scene.structure_revision;
         return snapshot;
     }
@@ -948,6 +952,11 @@ namespace spectra {
             material_headers.push_back(material_header);
             if (progress) progress->report(PathTracerPreparationStage::CompilingMaterials, static_cast<std::uint32_t>(material_headers.size()), static_cast<std::uint32_t>(scene.resources.materials.size()));
         }
+        std::uint32_t volume_interface_material = invalid_texture;
+        if (!scene.resources.volumes.empty()) {
+            volume_interface_material = static_cast<std::uint32_t>(material_headers.size());
+            material_headers.emplace_back(static_cast<std::uint32_t>(PathMaterialKind::Interface), 0u, invalid_texture, invalid_texture);
+        }
         if (material_headers.empty()) throw std::runtime_error("Path rendering requires at least one Material");
         std::vector<pathtracer::PathMaterialTextureRequest> material_texture_requests{};
         for (std::uint32_t root = 0; root != scene.resources.materials.size(); ++root) {
@@ -1075,31 +1084,26 @@ namespace spectra {
             spectra.push_back(compile_spectrum(parameter, spectrum_tables, piecewise_spectra));
             return index;
         };
-        const auto volume_index = [&scene](const scene::VolumeId id) { return static_cast<std::uint32_t>(std::ranges::find(scene.resources.volumes, id, &scene::Volume::id) - scene.resources.volumes.begin()); };
-        media.reserve(scene.resources.media.size());
+        media.reserve(scene.resources.media.size() + scene.resources.volumes.size());
         for (const scene::Medium& medium : scene.resources.media) {
-            std::visit(
-                [&](const auto& data) {
-                    pathtracer::PathMedium result{};
-                    result.spectra = {compile_medium_spectrum(data.sigma_a), compile_medium_spectrum(data.sigma_s), compile_medium_spectrum(data.emission), invalid_path_index};
-                    result.scales  = {data.density_scale, data.emission_scale, data.anisotropy, 1.0f};
-                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::HomogeneousMedium>)
-                        result.metadata[0] = std::to_underlying(PathMediumKind::Homogeneous);
-                    else {
-                        result.metadata[0] = std::to_underlying(PathMediumKind::Volume);
-                        result.spectra[3]  = volume_index(data.volume);
-                        result.scales[3]   = data.temperature_scale;
-                        result.temperature = {data.temperature_offset, data.minimum_emission_temperature, data.blackbody_emission ? 1.0f : 0.0f, 0.0f};
-                    }
-                    media.push_back(result);
-                },
-                medium.data);
+            pathtracer::PathMedium result{};
+            result.spectra    = {compile_medium_spectrum(medium.sigma_a), compile_medium_spectrum(medium.sigma_s), compile_medium_spectrum(medium.emission), invalid_path_index};
+            result.scales     = {medium.density_scale, medium.emission_scale, medium.anisotropy, 1.0f};
+            result.metadata[0] = std::to_underlying(PathMediumKind::Homogeneous);
+            media.push_back(result);
             if (progress) progress->report(PathTracerPreparationStage::CompilingMedia, ++compiled_medium_volume_count, medium_volume_count);
         }
 
         volumes.reserve(scene.resources.volumes.size());
         prepared_volume_resources.reserve(scene.resources.volumes.size());
         for (const scene::Volume& volume : scene.resources.volumes) {
+            const scene::VolumeRendering& rendering = volume.rendering;
+            pathtracer::PathMedium compiled_medium{};
+            compiled_medium.spectra     = {compile_medium_spectrum(rendering.sigma_a), compile_medium_spectrum(rendering.sigma_s), compile_medium_spectrum(rendering.emission), static_cast<std::uint32_t>(volumes.size())};
+            compiled_medium.scales      = {rendering.density_scale, rendering.emission_scale, rendering.anisotropy, rendering.temperature_scale};
+            compiled_medium.temperature = {rendering.temperature_offset, rendering.minimum_emission_temperature, rendering.blackbody_emission ? 1.0f : 0.0f, 0.0f};
+            compiled_medium.metadata[0] = std::to_underlying(PathMediumKind::Volume);
+            media.push_back(compiled_medium);
             const PathSceneGpuSnapshot::Volume& shared = *std::ranges::find(gpu.volumes, volume.id, &PathSceneGpuSnapshot::Volume::id);
             PreparedPathVolume prepared_volume{};
             prepared_volume.id       = volume.id;
@@ -1113,8 +1117,8 @@ namespace spectra {
             result.sigma_s                 = resources.zero_volume_field_descriptor;
             result.emission                = resources.zero_volume_field_descriptor;
             result.majorant                = resources.zero_volume_field_descriptor;
-            result.bounds_minimum          = {volume.bounds.minimum.x, volume.bounds.minimum.y, volume.bounds.minimum.z, 0.0f};
-            result.bounds_maximum          = {volume.bounds.maximum.x, volume.bounds.maximum.y, volume.bounds.maximum.z, 0.0f};
+            result.bounds_minimum          = {volume.domain.minimum.x, volume.domain.minimum.y, volume.domain.minimum.z, 0.0f};
+            result.bounds_maximum          = {volume.domain.maximum.x, volume.domain.maximum.y, volume.domain.maximum.z, 0.0f};
             const math::Transform inverse  = volume.transform.inverse();
             result.inverse_transform_row_0 = {inverse.matrix[0], inverse.matrix[1], inverse.matrix[2], inverse.matrix[3]};
             result.inverse_transform_row_1 = {inverse.matrix[4], inverse.matrix[5], inverse.matrix[6], inverse.matrix[7]};
@@ -1127,14 +1131,6 @@ namespace spectra {
                 prepared_volume.majorant.assign(values.begin(), values.end());
                 return resources.zero_volume_field_descriptor;
             };
-            const scene::VolumeMedium* medium{};
-            for (const scene::Medium& candidate : scene.resources.media) {
-                const scene::VolumeMedium* candidate_volume = std::get_if<scene::VolumeMedium>(&candidate.data);
-                if (candidate_volume && candidate_volume->volume == volume.id) {
-                    medium = candidate_volume;
-                    break;
-                }
-            }
             if (const auto* data = std::get_if<scene::GridVolume>(&volume.data)) {
                 const auto vertex_sampled = [data](const std::string_view id) {
                     const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
@@ -1148,28 +1144,28 @@ namespace spectra {
                     const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
                     return found == data->fields.end() ? std::span<const math::Float3>{} : std::span<const math::Float3>{found->vector_values};
                 };
-                const bool rgb                = medium && medium->density_field.empty() && (!medium->sigma_a_field.empty() || !medium->sigma_s_field.empty() || !medium->emission_field.empty());
+                const bool rgb                = rendering.density_field.empty() && (!rendering.sigma_a_field.empty() || !rendering.sigma_s_field.empty() || !rendering.emission_field.empty());
                 prepared_volume.resolution    = data->resolution;
                 result.metadata               = {std::to_underlying(rgb ? PathVolumeKind::RgbGrid : PathVolumeKind::DensityGrid), data->resolution.x, data->resolution.y, data->resolution.z};
                 if (rgb) {
-                    const std::uint32_t flags         = (medium->sigma_a_field.empty() ? 0u : 1u) | (medium->sigma_s_field.empty() ? 0u : 2u) | (medium->emission_field.empty() ? 0u : 4u) | (std::to_underlying(medium->field_color_space) << 8)
-                        | (vertex_sampled(medium->sigma_a_field) << 19u) | (vertex_sampled(medium->sigma_s_field) << 20u) | (vertex_sampled(medium->emission_field) << 21u);
+                    const std::uint32_t flags         = (rendering.sigma_a_field.empty() ? 0u : 1u) | (rendering.sigma_s_field.empty() ? 0u : 2u) | (rendering.emission_field.empty() ? 0u : 4u) | (std::to_underlying(rendering.field_color_space) << 8)
+                        | (vertex_sampled(rendering.sigma_a_field) << 19u) | (vertex_sampled(rendering.sigma_s_field) << 20u) | (vertex_sampled(rendering.emission_field) << 21u);
                     result.majorant_metadata          = {16, 16, 16, flags};
-                    result.sigma_a                    = field(medium->sigma_a_field);
-                    result.sigma_s                    = field(medium->sigma_s_field);
-                    result.emission                   = field(medium->emission_field);
-                    const std::vector<float> majorant = build_rgb_majorant(data->resolution, vector_values(medium->sigma_a_field), vector_values(medium->sigma_s_field), !medium->sigma_a_field.empty(), !medium->sigma_s_field.empty(), medium->field_color_space, spectrum_tables);
+                    result.sigma_a                    = field(rendering.sigma_a_field);
+                    result.sigma_s                    = field(rendering.sigma_s_field);
+                    result.emission                   = field(rendering.emission_field);
+                    const std::vector<float> majorant = build_rgb_majorant(data->resolution, vector_values(rendering.sigma_a_field), vector_values(rendering.sigma_s_field), !rendering.sigma_a_field.empty(), !rendering.sigma_s_field.empty(), rendering.field_color_space, spectrum_tables);
                     result.majorant                   = prepare_majorant(std::span<const float>{majorant});
                 } else {
-                    const std::uint32_t flags         = (medium && !medium->temperature_field.empty() ? 1u : 0u) | (medium && !medium->emission_scale_field.empty() ? 2u : 0u)
-                        | (vertex_sampled(medium ? std::string_view{medium->density_field} : std::string_view{}) << 16u)
-                        | (vertex_sampled(medium ? std::string_view{medium->temperature_field} : std::string_view{}) << 17u)
-                        | (vertex_sampled(medium ? std::string_view{medium->emission_scale_field} : std::string_view{}) << 18u);
+                    const std::uint32_t flags         = (!rendering.temperature_field.empty() ? 1u : 0u) | (!rendering.emission_scale_field.empty() ? 2u : 0u)
+                        | (vertex_sampled(rendering.density_field) << 16u)
+                        | (vertex_sampled(rendering.temperature_field) << 17u)
+                        | (vertex_sampled(rendering.emission_scale_field) << 18u);
                     result.majorant_metadata          = {16, 16, 16, flags};
-                    result.density                    = field(medium ? std::string_view{medium->density_field} : std::string_view{});
-                    result.temperature                = field(medium ? std::string_view{medium->temperature_field} : std::string_view{});
-                    result.emission_scale             = field(medium ? std::string_view{medium->emission_scale_field} : std::string_view{});
-                    const std::vector<float> majorant = build_density_majorant(data->resolution, scalar_values(medium ? std::string_view{medium->density_field} : std::string_view{}));
+                    result.density                    = field(rendering.density_field);
+                    result.temperature                = field(rendering.temperature_field);
+                    result.emission_scale             = field(rendering.emission_scale_field);
+                    const std::vector<float> majorant = build_density_majorant(data->resolution, scalar_values(rendering.density_field));
                     result.majorant                   = prepare_majorant(std::span<const float>{majorant});
                 }
             } else {
@@ -1393,7 +1389,14 @@ namespace spectra {
             if (id.value == 0) return invalid_path_index;
             return static_cast<std::uint32_t>(std::ranges::find(scene.resources.media, id, &scene::Medium::id) - scene.resources.media.begin());
         };
-        const std::uint32_t camera_medium_index = medium_index(scene.camera.medium);
+        std::uint32_t camera_medium_index = medium_index(scene.camera.medium);
+        const math::Float3 camera_position = scene.camera.frame().position;
+        for (std::uint32_t volume_index = 0; volume_index != scene.resources.volumes.size(); ++volume_index) {
+            const scene::Volume& volume = scene.resources.volumes[volume_index];
+            if (!volume.visible) continue;
+            const math::Float3 local = volume.transform.inverse().transform_point(camera_position);
+            if (local.x >= volume.domain.minimum.x && local.x <= volume.domain.maximum.x && local.y >= volume.domain.minimum.y && local.y <= volume.domain.maximum.y && local.z >= volume.domain.minimum.z && local.z <= volume.domain.maximum.z) camera_medium_index = static_cast<std::uint32_t>(scene.resources.media.size()) + volume_index;
+        }
         const auto add_area_light               = [&](pathtracer::PathLightShape shape, const std::uint32_t source_index, const float area, const bool delta_position) {
             const std::uint32_t shape_index = static_cast<std::uint32_t>(light_shapes.size());
             const std::uint32_t light_index = static_cast<std::uint32_t>(lights.size());
@@ -1411,8 +1414,30 @@ namespace spectra {
             light.selection[3]          = path_pi * area * scale * (area_textures[source_index] == invalid_path_index ? spectrum_maximum(spectra[area_spectra[source_index]], piecewise_spectra, resources.cie_samples) : area_texture_channel_average[source_index]);
             lights.push_back(light);
         };
-        primitives.reserve(gpu.acceleration_primitive_indices.size());
-        for (const std::uint32_t scene_primitive_index : gpu.acceleration_primitive_indices) {
+        primitives.reserve(gpu.acceleration_entities.size());
+        for (const GpuAccelerationEntity entity : gpu.acceleration_entities) {
+            if (entity.kind == GpuAccelerationEntityKind::Volume) {
+                const scene::Volume& volume                    = scene.resources.volumes[entity.resource_index];
+                const PathSceneGpuSnapshot::Geometry& geometry = gpu.volume_region_geometry;
+                primitives.push_back(pathtracer::PathPrimitive{
+                    volume_interface_material,
+                    invalid_path_index,
+                    0u,
+                    0u,
+                    geometry.indices,
+                    geometry.normals,
+                    geometry.tangents,
+                    geometry.texture_coordinates,
+                    {geometry.attribute_mask, invalid_texture, shader_semantics::geometry_box, 0u},
+                    {},
+                    {},
+                    {static_cast<std::uint32_t>(scene.resources.media.size()) + entity.resource_index, medium_index(volume.exterior_medium), 0u, 0u},
+                    {static_cast<std::uint32_t>(volume.id.value), static_cast<std::uint32_t>(volume.id.value >> 32u)},
+                });
+                if (progress) progress->report(PathTracerPreparationStage::CompilingGeometry, static_cast<std::uint32_t>(primitives.size()), static_cast<std::uint32_t>(gpu.acceleration_entities.size()));
+                continue;
+            }
+            const std::uint32_t scene_primitive_index = entity.resource_index;
             const GpuScenePrimitive& gpu_primitive   = gpu.primitives[scene_primitive_index];
             const scene::Instance& instance          = scene.resources.instances[gpu_primitive.scene_instance_index];
             const scene::Prototype& prototype        = *std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
@@ -1502,7 +1527,7 @@ namespace spectra {
                 const PathSceneGpuSnapshot::Geometry& gpu_geometry = gpu.geometries[gpu_primitive.resource_index];
                 primitives.push_back(pathtracer::PathPrimitive{material_index, area_light, first_light_shape, primitive.reverse_orientation ? 1u : 0u, gpu_geometry.indices, gpu_geometry.normals, gpu_geometry.tangents, gpu_geometry.texture_coordinates, {gpu_geometry.attribute_mask, alpha, geometry_kind, 0}, geometry_parameters, {face_material_offset, static_cast<std::uint32_t>(primitive.face_materials.size()), 0, 0}, {medium_index(primitive.media.inside), medium_index(primitive.media.outside), 0, 0}, {static_cast<std::uint32_t>(instance.id.value), static_cast<std::uint32_t>(instance.id.value >> 32)}});
             }
-            if (progress) progress->report(PathTracerPreparationStage::CompilingGeometry, static_cast<std::uint32_t>(primitives.size()), static_cast<std::uint32_t>(gpu.acceleration_primitive_indices.size()));
+            if (progress) progress->report(PathTracerPreparationStage::CompilingGeometry, static_cast<std::uint32_t>(primitives.size()), static_cast<std::uint32_t>(gpu.acceleration_entities.size()));
         }
         const std::uint32_t light_count = static_cast<std::uint32_t>(lights.size());
         if (!lights.empty()) {

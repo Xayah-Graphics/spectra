@@ -193,7 +193,8 @@ export namespace spectra {
         std::vector<Geometry> geometries{};
         std::vector<SphereSet> sphere_sets{};
         std::vector<GpuScenePrimitive> primitives{};
-        std::vector<std::uint32_t> acceleration_primitive_indices{};
+        Geometry volume_region_geometry{};
+        std::vector<GpuAccelerationEntity> acceleration_entities{};
         std::uint64_t structure_revision{};
     };
 

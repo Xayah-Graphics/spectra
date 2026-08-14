@@ -16,7 +16,7 @@ import std;
 
 namespace spectra::scene {
     namespace {
-        constexpr std::uint32_t current_scene_format_version = 34;
+        constexpr std::uint32_t current_scene_format_version = 35;
 
         struct KdlWriter {
             std::string content{};
@@ -286,11 +286,13 @@ namespace spectra::scene {
                         const std::string_view kind = std::same_as<std::remove_cvref_t<decltype(data)>, GridVolume> ? "grid" : "procedural-cloud";
                         std::string line = std::format("{} {} {}", kind, volume.id.value, kdl_string(volume.name));
                         if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, GridVolume>) write_source(line, data.source);
+                        if (!volume.visible) line.append(" visible=#false");
+                        if (volume.exterior_medium.value != 0) line.append(std::format(" exterior-medium={}", volume.exterior_medium.value));
                         writer.begin(line);
-                        if (volume.bounds != math::Bounds3{}) write_bounds(writer, volume.bounds);
+                        writer.line(std::format("domain {} {} {} {} {} {}", volume.domain.minimum.x, volume.domain.minimum.y, volume.domain.minimum.z, volume.domain.maximum.x, volume.domain.maximum.y, volume.domain.maximum.z));
                         if (volume.transform != math::Transform{}) write_transform(writer, "transform", volume.transform);
                         if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, GridVolume>) {
-                            writer.line(std::format("resolution {} {} {}", data.resolution.x, data.resolution.y, data.resolution.z));
+                            if (data.resolution != math::UInt3{}) writer.line(std::format("resolution {} {} {}", data.resolution.x, data.resolution.y, data.resolution.z));
                             for (const VolumeField& field : data.fields) {
                                 const std::string_view field_kind = field.kind == VolumeFieldKind::Float ? "float" : field.kind == VolumeFieldKind::Float3 ? "float3" : "mac-float3";
                                 std::string field_line = std::format("field {} {} kind={}", kdl_string(field.id), kdl_string(field.name), kdl_string(field_kind));
@@ -304,6 +306,27 @@ namespace spectra::scene {
                             if (data.wispiness != 1.0f) writer.line(std::format("wispiness {}", data.wispiness));
                             if (data.frequency != 5.0f) writer.line(std::format("frequency {}", data.frequency));
                         }
+                        const VolumeRendering& rendering = volume.rendering;
+                        std::string rendering_line{"rendering"};
+                        if (!rendering.density_field.empty()) kdl_string_property(rendering_line, "density-field", rendering.density_field);
+                        if (!rendering.temperature_field.empty()) kdl_string_property(rendering_line, "temperature-field", rendering.temperature_field);
+                        if (!rendering.emission_scale_field.empty()) kdl_string_property(rendering_line, "emission-scale-field", rendering.emission_scale_field);
+                        if (!rendering.sigma_a_field.empty()) kdl_string_property(rendering_line, "sigma-a-field", rendering.sigma_a_field);
+                        if (!rendering.sigma_s_field.empty()) kdl_string_property(rendering_line, "sigma-s-field", rendering.sigma_s_field);
+                        if (!rendering.emission_field.empty()) kdl_string_property(rendering_line, "emission-field", rendering.emission_field);
+                        if (rendering.field_color_space != SpectrumColorSpace::Srgb) kdl_string_property(rendering_line, "field-color-space", spectrum_color_space_name(rendering.field_color_space));
+                        writer.begin(rendering_line);
+                        write_spectrum(writer, "sigma-a", rendering.sigma_a);
+                        write_spectrum(writer, "sigma-s", rendering.sigma_s);
+                        write_spectrum(writer, "emission", rendering.emission);
+                        if (rendering.density_scale != 1.0f) writer.line(std::format("density-scale {}", rendering.density_scale));
+                        if (rendering.emission_scale != 1.0f) writer.line(std::format("emission-scale {}", rendering.emission_scale));
+                        if (rendering.anisotropy != 0.0f) writer.line(std::format("anisotropy {}", rendering.anisotropy));
+                        if (rendering.temperature_scale != 1.0f) writer.line(std::format("temperature-scale {}", rendering.temperature_scale));
+                        if (rendering.temperature_offset != 0.0f) writer.line(std::format("temperature-offset {}", rendering.temperature_offset));
+                        if (rendering.minimum_emission_temperature != 100.0f) writer.line(std::format("minimum-emission-temperature {}", rendering.minimum_emission_temperature));
+                        if (rendering.blackbody_emission) writer.line("blackbody-emission #true");
+                        writer.end();
                         const VolumeDiagnostics& diagnostics = volume.diagnostics;
                         if (diagnostics.mode != VolumeDiagnosticMode::Off) {
                             std::string diagnostics_line = std::format("diagnostics field={} mode={}", kdl_string(diagnostics.field_id), kdl_string(volume_diagnostic_mode_name(diagnostics.mode)));
@@ -565,41 +588,14 @@ namespace spectra::scene {
             if (media.empty()) return;
             writer.begin("media");
             for (const Medium& medium : media) {
-                std::visit(
-                    [&writer, &medium](const auto& data) {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, HomogeneousMedium>) {
-                            writer.begin(std::format("homogeneous {} {}", medium.id.value, kdl_string(medium.name)));
-                            write_spectrum(writer, "sigma-a", data.sigma_a);
-                            write_spectrum(writer, "sigma-s", data.sigma_s);
-                            write_spectrum(writer, "emission", data.emission);
-                            if (data.density_scale != 1.0f) writer.line(std::format("density-scale {}", data.density_scale));
-                            if (data.emission_scale != 1.0f) writer.line(std::format("emission-scale {}", data.emission_scale));
-                            if (data.anisotropy != 0.0f) writer.line(std::format("anisotropy {}", data.anisotropy));
-                            writer.end();
-                        } else {
-                            std::string line = std::format("volume {} {} volume={}", medium.id.value, kdl_string(medium.name), data.volume.value);
-                            if (!data.density_field.empty()) kdl_string_property(line, "density-field", data.density_field);
-                            if (!data.temperature_field.empty()) kdl_string_property(line, "temperature-field", data.temperature_field);
-                            if (!data.emission_scale_field.empty()) kdl_string_property(line, "emission-scale-field", data.emission_scale_field);
-                            if (!data.sigma_a_field.empty()) kdl_string_property(line, "sigma-a-field", data.sigma_a_field);
-                            if (!data.sigma_s_field.empty()) kdl_string_property(line, "sigma-s-field", data.sigma_s_field);
-                            if (!data.emission_field.empty()) kdl_string_property(line, "emission-field", data.emission_field);
-                            if (data.field_color_space != SpectrumColorSpace::Srgb) kdl_string_property(line, "field-color-space", spectrum_color_space_name(data.field_color_space));
-                            writer.begin(line);
-                            write_spectrum(writer, "sigma-a", data.sigma_a);
-                            write_spectrum(writer, "sigma-s", data.sigma_s);
-                            write_spectrum(writer, "emission", data.emission);
-                            if (data.density_scale != 1.0f) writer.line(std::format("density-scale {}", data.density_scale));
-                            if (data.emission_scale != 1.0f) writer.line(std::format("emission-scale {}", data.emission_scale));
-                            if (data.anisotropy != 0.0f) writer.line(std::format("anisotropy {}", data.anisotropy));
-                            if (data.temperature_scale != 1.0f) writer.line(std::format("temperature-scale {}", data.temperature_scale));
-                            if (data.temperature_offset != 0.0f) writer.line(std::format("temperature-offset {}", data.temperature_offset));
-                            if (data.minimum_emission_temperature != 100.0f) writer.line(std::format("minimum-emission-temperature {}", data.minimum_emission_temperature));
-                            if (data.blackbody_emission) writer.line("blackbody-emission #true");
-                            writer.end();
-                        }
-                    },
-                    medium.data);
+                writer.begin(std::format("homogeneous {} {}", medium.id.value, kdl_string(medium.name)));
+                write_spectrum(writer, "sigma-a", medium.sigma_a);
+                write_spectrum(writer, "sigma-s", medium.sigma_s);
+                write_spectrum(writer, "emission", medium.emission);
+                if (medium.density_scale != 1.0f) writer.line(std::format("density-scale {}", medium.density_scale));
+                if (medium.emission_scale != 1.0f) writer.line(std::format("emission-scale {}", medium.emission_scale));
+                if (medium.anisotropy != 0.0f) writer.line(std::format("anisotropy {}", medium.anisotropy));
+                writer.end();
             }
             writer.end();
         }
@@ -1298,18 +1294,18 @@ namespace spectra::scene {
 
         void read_volumes(SceneResources& resources, const kdl::Node& group) {
             for (const kdl::Node& node : group.children()) {
+                const kdl::Node& domain = *kdl_child(node, u8"domain");
                 Volume volume{
-                    .id        = {kdl_number<std::uint64_t>(node.args()[0])},
-                    .name      = kdl_value_text(node.args()[1]),
-                    .bounds    = read_bounds(node),
-                    .transform = read_transform(node),
+                    .id              = {kdl_number<std::uint64_t>(node.args()[0])},
+                    .name            = kdl_value_text(node.args()[1]),
+                    .domain          = {{kdl_number<float>(domain.args()[0]), kdl_number<float>(domain.args()[1]), kdl_number<float>(domain.args()[2])}, {kdl_number<float>(domain.args()[3]), kdl_number<float>(domain.args()[4]), kdl_number<float>(domain.args()[5])}},
+                    .transform       = read_transform(node),
+                    .exterior_medium = {kdl_number_property<std::uint64_t>(node, u8"exterior-medium", 0)},
+                    .visible         = kdl_bool_property(node, u8"visible", true),
                 };
                 if (node.name() == u8"grid") {
-                    const kdl::Node& resolution = *kdl_child(node, u8"resolution");
-                    GridVolume data{
-                        .resolution = {kdl_number<std::uint32_t>(resolution.args()[0]), kdl_number<std::uint32_t>(resolution.args()[1]), kdl_number<std::uint32_t>(resolution.args()[2])},
-                        .source     = kdl_string_property(node, u8"source"),
-                    };
+                    GridVolume data{.source = kdl_string_property(node, u8"source")};
+                    if (const kdl::Node* resolution = kdl_child(node, u8"resolution")) data.resolution = {kdl_number<std::uint32_t>(resolution->args()[0]), kdl_number<std::uint32_t>(resolution->args()[1]), kdl_number<std::uint32_t>(resolution->args()[2])};
                     for (const kdl::Node& field_node : node.children()) {
                         if (field_node.name() != u8"field") continue;
                         const std::string kind = kdl_string_property(field_node, u8"kind");
@@ -1334,10 +1330,30 @@ namespace spectra::scene {
                     volume.data = data;
                 } else
                     throw std::runtime_error(std::format("Unknown Volume {}", kdl_text(node.name())));
+                const kdl::Node& rendering_node = *kdl_child(node, u8"rendering");
+                volume.rendering = {
+                    .density_field               = kdl_string_property(rendering_node, u8"density-field"),
+                    .temperature_field           = kdl_string_property(rendering_node, u8"temperature-field"),
+                    .emission_scale_field        = kdl_string_property(rendering_node, u8"emission-scale-field"),
+                    .sigma_a_field               = kdl_string_property(rendering_node, u8"sigma-a-field"),
+                    .sigma_s_field               = kdl_string_property(rendering_node, u8"sigma-s-field"),
+                    .emission_field              = kdl_string_property(rendering_node, u8"emission-field"),
+                    .field_color_space           = read_spectrum_color_space(kdl_string_property(rendering_node, u8"field-color-space", "srgb")),
+                    .sigma_a                     = read_spectrum(*kdl_child(rendering_node, u8"sigma-a")),
+                    .sigma_s                     = read_spectrum(*kdl_child(rendering_node, u8"sigma-s")),
+                    .emission                    = read_spectrum(*kdl_child(rendering_node, u8"emission")),
+                    .density_scale               = kdl_child(rendering_node, u8"density-scale") ? kdl_number<float>(kdl_child(rendering_node, u8"density-scale")->args()[0]) : 1.0f,
+                    .emission_scale              = kdl_child(rendering_node, u8"emission-scale") ? kdl_number<float>(kdl_child(rendering_node, u8"emission-scale")->args()[0]) : 1.0f,
+                    .anisotropy                  = kdl_child(rendering_node, u8"anisotropy") ? kdl_number<float>(kdl_child(rendering_node, u8"anisotropy")->args()[0]) : 0.0f,
+                    .temperature_scale           = kdl_child(rendering_node, u8"temperature-scale") ? kdl_number<float>(kdl_child(rendering_node, u8"temperature-scale")->args()[0]) : 1.0f,
+                    .temperature_offset          = kdl_child(rendering_node, u8"temperature-offset") ? kdl_number<float>(kdl_child(rendering_node, u8"temperature-offset")->args()[0]) : 0.0f,
+                    .minimum_emission_temperature = kdl_child(rendering_node, u8"minimum-emission-temperature") ? kdl_number<float>(kdl_child(rendering_node, u8"minimum-emission-temperature")->args()[0]) : 100.0f,
+                    .blackbody_emission          = kdl_child(rendering_node, u8"blackbody-emission") && kdl_child(rendering_node, u8"blackbody-emission")->args()[0].as<bool>(),
+                };
                 if (const kdl::Node* diagnostics_node = kdl_child(node, u8"diagnostics")) {
                     volume.diagnostics = {
                         .field_id       = kdl_string_property(*diagnostics_node, u8"field"),
-                        .mode           = read_volume_diagnostic_mode(kdl_string_property(*diagnostics_node, u8"mode")),
+                        .mode           = read_volume_diagnostic_mode(kdl_string_property(*diagnostics_node, u8"mode", "off")),
                         .mapping        = read_volume_field_mapping(kdl_string_property(*diagnostics_node, u8"mapping", "value")),
                         .depth_mode     = read_depth_buffer_mode(kdl_string_property(*diagnostics_node, u8"depth", "tested")),
                         .color_map      = read_visualization_color_map(kdl_string_property(*diagnostics_node, u8"color-map", "viridis")),
@@ -1526,39 +1542,13 @@ namespace spectra::scene {
                     .id   = {kdl_number<std::uint64_t>(node.args()[0])},
                     .name = kdl_value_text(node.args()[1]),
                 };
-                if (node.name() == u8"homogeneous") {
-                    HomogeneousMedium data{};
-                    data.sigma_a  = read_spectrum(*kdl_child(node, u8"sigma-a"));
-                    data.sigma_s  = read_spectrum(*kdl_child(node, u8"sigma-s"));
-                    data.emission = read_spectrum(*kdl_child(node, u8"emission"));
-                    if (const kdl::Node* value = kdl_child(node, u8"density-scale")) data.density_scale = kdl_number<float>(value->args()[0]);
-                    if (const kdl::Node* value = kdl_child(node, u8"emission-scale")) data.emission_scale = kdl_number<float>(value->args()[0]);
-                    if (const kdl::Node* value = kdl_child(node, u8"anisotropy")) data.anisotropy = kdl_number<float>(value->args()[0]);
-                    medium.data = std::move(data);
-                } else if (node.name() == u8"volume") {
-                    VolumeMedium data{
-                        .volume               = {kdl_number_property<std::uint64_t>(node, u8"volume", 0)},
-                        .density_field         = kdl_string_property(node, u8"density-field"),
-                        .temperature_field     = kdl_string_property(node, u8"temperature-field"),
-                        .emission_scale_field  = kdl_string_property(node, u8"emission-scale-field"),
-                        .sigma_a_field         = kdl_string_property(node, u8"sigma-a-field"),
-                        .sigma_s_field         = kdl_string_property(node, u8"sigma-s-field"),
-                        .emission_field        = kdl_string_property(node, u8"emission-field"),
-                        .field_color_space      = read_spectrum_color_space(kdl_string_property(node, u8"field-color-space", "srgb")),
-                    };
-                    data.sigma_a  = read_spectrum(*kdl_child(node, u8"sigma-a"));
-                    data.sigma_s  = read_spectrum(*kdl_child(node, u8"sigma-s"));
-                    data.emission = read_spectrum(*kdl_child(node, u8"emission"));
-                    if (const kdl::Node* value = kdl_child(node, u8"density-scale")) data.density_scale = kdl_number<float>(value->args()[0]);
-                    if (const kdl::Node* value = kdl_child(node, u8"emission-scale")) data.emission_scale = kdl_number<float>(value->args()[0]);
-                    if (const kdl::Node* value = kdl_child(node, u8"anisotropy")) data.anisotropy = kdl_number<float>(value->args()[0]);
-                    if (const kdl::Node* value = kdl_child(node, u8"temperature-scale")) data.temperature_scale = kdl_number<float>(value->args()[0]);
-                    if (const kdl::Node* value = kdl_child(node, u8"temperature-offset")) data.temperature_offset = kdl_number<float>(value->args()[0]);
-                    if (const kdl::Node* value = kdl_child(node, u8"minimum-emission-temperature")) data.minimum_emission_temperature = kdl_number<float>(value->args()[0]);
-                    if (const kdl::Node* value = kdl_child(node, u8"blackbody-emission")) data.blackbody_emission = value->args()[0].as<bool>();
-                    medium.data = std::move(data);
-                } else
-                    throw std::runtime_error(std::format("Unknown Medium {}", kdl_text(node.name())));
+                if (node.name() != u8"homogeneous") throw std::runtime_error(std::format("Unknown Medium {}", kdl_text(node.name())));
+                medium.sigma_a  = read_spectrum(*kdl_child(node, u8"sigma-a"));
+                medium.sigma_s  = read_spectrum(*kdl_child(node, u8"sigma-s"));
+                medium.emission = read_spectrum(*kdl_child(node, u8"emission"));
+                if (const kdl::Node* value = kdl_child(node, u8"density-scale")) medium.density_scale = kdl_number<float>(value->args()[0]);
+                if (const kdl::Node* value = kdl_child(node, u8"emission-scale")) medium.emission_scale = kdl_number<float>(value->args()[0]);
+                if (const kdl::Node* value = kdl_child(node, u8"anisotropy")) medium.anisotropy = kdl_number<float>(value->args()[0]);
                 resources.media.push_back(std::move(medium));
             }
         }

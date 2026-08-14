@@ -252,7 +252,7 @@ namespace spectra {
 
     void GpuScene::destroy() noexcept {
         this->context.runtime.frames.defer_destruction([attribute_clear_shader = std::move(this->resources.attribute_clear_shader), attribute_accumulation_shader = std::move(this->resources.attribute_accumulation_shader), attribute_normalization_shader = std::move(this->resources.attribute_normalization_shader), bounds_clear_shader = std::move(this->resources.bounds_clear_shader), bounds_accumulation_shader = std::move(this->resources.bounds_accumulation_shader), sphere_unpack_shader = std::move(this->resources.sphere_unpack_shader), instance_apply_shader = std::move(this->resources.instance_apply_shader), texture_images = std::move(this->resources.texture_images), acceleration_instances = std::move(this->resources.acceleration_structure_instances), primitive_transforms = std::move(this->resources.primitive_transforms), instance_bindings = std::move(this->resources.dynamic_instance_bindings), instance_bounds = std::move(this->resources.instance_bounds),
-                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), volumes = std::move(this->resources.volumes), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
+                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), volumes = std::move(this->resources.volumes), volume_region = std::move(this->resources.volume_region_geometry), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
         this->resources.texture_image_indices.clear();
         this->resources.acceleration_structure_instances_descriptor = {};
         this->resources.primitive_transforms_descriptor             = {};
@@ -268,9 +268,8 @@ namespace spectra {
         this->resources.external_volumes.clear();
         this->resources.mesh_bindings.clear();
         this->resources.primitives.clear();
-        this->resources.acceleration_primitive_indices.clear();
         this->resources.primitive_instance_ids.clear();
-        this->resources.acceleration_instance_ids.clear();
+        this->resources.acceleration_entities.clear();
         this->resources.resource_binding_changes      = scene::SceneChange::None;
         this->resources.dynamic_changes               = GpuSceneChange::None;
         this->resources.dynamic_revision              = 0;
@@ -289,9 +288,9 @@ namespace spectra {
             this->resources.sphere_sets,
             this->resources.volumes,
             this->resources.primitives,
-            this->resources.acceleration_primitive_indices,
             this->resources.primitive_instance_ids,
-            this->resources.acceleration_instance_ids,
+            this->resources.acceleration_entities,
+            this->context.runtime.graphics.ray_tracing_supported && !this->resources.volumes.empty() ? &this->resources.volume_region_geometry : nullptr,
             this->resources.top_level_acceleration_structure.address,
             this->resources.primitive_transforms_descriptor,
             &this->resources.primitive_transforms,
@@ -366,7 +365,7 @@ namespace spectra {
                 instance_transforms_updated = instance_transforms_updated || transforms->count != 0;
             }
         if (instance_transforms_updated) {
-            this->update_top_level_from_gpu(static_cast<std::uint32_t>(this->resources.acceleration_primitive_indices.size()), command_buffer);
+            this->update_top_level_from_gpu(static_cast<std::uint32_t>(this->resources.acceleration_entities.size()), command_buffer);
             this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Transform;
         }
         if (std::exchange(this->resources.instance_bounds_dirty, false)) this->update_instance_bounds(scene, command_buffer, frame_slot_index);
@@ -422,10 +421,14 @@ namespace spectra {
             }
             this->resources.volumes.reserve(scene.resources.volumes.size());
             for (const scene::Volume& volume : scene.resources.volumes) this->resources.volumes.emplace_back(this->create_volume(volume, target));
+            if (this->context.runtime.graphics.ray_tracing_supported && !scene.resources.volumes.empty()) {
+                const scene::Geometry region{.name = "Internal Volume Region", .data = scene::BoxGeometry{{{0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}}}};
+                this->resources.volume_region_geometry = this->create_geometry(region, target);
+            }
 
             const std::vector<vk::AccelerationStructureInstanceKHR> instances = this->acceleration_structure_instance_data(scene);
             const std::array<vk::AccelerationStructureInstanceKHR, 1> empty_instance_storage{};
-            const std::uint32_t instance_capacity                       = static_cast<std::uint32_t>(std::max<std::size_t>(this->resources.primitives.size(), 1));
+            const std::uint32_t instance_capacity                       = static_cast<std::uint32_t>(std::max<std::size_t>(this->resources.primitives.size() + this->resources.volumes.size(), 1));
             const vk::BufferUsageFlags instance_usage                   = vk::BufferUsageFlagBits::eStorageBuffer | (this->context.runtime.graphics.ray_tracing_supported ? vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR : vk::BufferUsageFlags{});
             this->resources.acceleration_structure_instances            = upload_buffer(this->context.runtime, target, instances.empty() ? std::span<const vk::AccelerationStructureInstanceKHR>{empty_instance_storage} : std::span<const vk::AccelerationStructureInstanceKHR>{instances}, instance_usage, instance_capacity);
             this->resources.acceleration_structure_instances_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
@@ -434,7 +437,10 @@ namespace spectra {
             std::vector<math::Transform> primitive_transforms{};
             std::vector<DynamicInstanceBinding> instance_bindings{};
             std::vector<std::uint32_t> acceleration_indices(this->resources.primitives.size(), std::numeric_limits<std::uint32_t>::max());
-            for (std::uint32_t acceleration_index = 0; acceleration_index < this->resources.acceleration_primitive_indices.size(); ++acceleration_index) acceleration_indices[this->resources.acceleration_primitive_indices[acceleration_index]] = acceleration_index;
+            for (std::uint32_t acceleration_index = 0; acceleration_index < this->resources.acceleration_entities.size(); ++acceleration_index) {
+                const GpuAccelerationEntity entity = this->resources.acceleration_entities[acceleration_index];
+                if (entity.kind == GpuAccelerationEntityKind::Primitive) acceleration_indices[entity.resource_index] = acceleration_index;
+            }
             primitive_transforms.reserve(this->resources.primitives.size());
             instance_bindings.reserve(this->resources.primitives.size());
             for (const GpuScenePrimitive& primitive : this->resources.primitives) {
@@ -611,15 +617,13 @@ namespace spectra {
             const std::vector<scene::Prototype>::const_iterator prototype = std::ranges::find(scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
             primitive_count += prototype->primitives.size();
         }
-        instances.reserve(primitive_count);
+        instances.reserve(primitive_count + scene.resources.volumes.size());
         this->resources.primitives.clear();
         this->resources.primitives.reserve(primitive_count);
         this->resources.primitive_instance_ids.clear();
         this->resources.primitive_instance_ids.reserve(primitive_count);
-        this->resources.acceleration_primitive_indices.clear();
-        this->resources.acceleration_primitive_indices.reserve(primitive_count);
-        this->resources.acceleration_instance_ids.clear();
-        this->resources.acceleration_instance_ids.reserve(primitive_count);
+        this->resources.acceleration_entities.clear();
+        this->resources.acceleration_entities.reserve(primitive_count + scene.resources.volumes.size());
         for (std::uint32_t instance_index = 0; instance_index < scene.resources.instances.size(); ++instance_index) {
             const scene::Instance& instance = scene.resources.instances[instance_index];
             if (!instance.visible) continue;
@@ -644,15 +648,33 @@ namespace spectra {
                 vk::GeometryInstanceFlagsKHR instance_flags = vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable;
                 if (primitive.alpha.value == 0) instance_flags |= vk::GeometryInstanceFlagBitsKHR::eForceOpaque;
                 const std::vector<scene::Material>::const_iterator material = std::ranges::find(scene.resources.materials, primitive.material, &scene::Material::id);
-                const bool volume_boundary                                  = (primitive.media.inside.value != 0 || primitive.media.outside.value != 0) && material != scene.resources.materials.end() && std::holds_alternative<scene::InterfaceMaterialData>(material->data);
+                const bool medium_interface                                 = (primitive.media.inside.value != 0 || primitive.media.outside.value != 0) && material != scene.resources.materials.end() && std::holds_alternative<scene::InterfaceMaterialData>(material->data);
                 const std::uint32_t acceleration_index                      = static_cast<std::uint32_t>(instances.size());
                 const bool procedural                                       = sphere_draw || mesh->acceleration_kind == AccelerationGeometryKind::Procedural;
                 const vk::DeviceAddress acceleration_address                = sphere_draw ? spheres->bottom_level_acceleration_structure.address : mesh->bottom_level_acceleration_structure.address;
-                instances.emplace_back(transform, acceleration_index, volume_boundary ? 0x80u : 0x7fu, procedural ? 1u : 0u, instance_flags, acceleration_address);
-                this->resources.acceleration_primitive_indices.push_back(scene_primitive_index);
-                this->resources.acceleration_instance_ids.push_back(instance.id);
+                instances.emplace_back(transform, acceleration_index, medium_interface ? 0x80u : 0x7fu, procedural ? 1u : 0u, instance_flags, acceleration_address);
+                this->resources.acceleration_entities.emplace_back(GpuAccelerationEntityKind::Primitive, scene_primitive_index);
             }
         }
+        if (this->context.runtime.graphics.ray_tracing_supported)
+            for (std::uint32_t volume_index = 0; volume_index != scene.resources.volumes.size(); ++volume_index) {
+                const scene::Volume& volume = scene.resources.volumes[volume_index];
+                if (!volume.visible) continue;
+                const math::Float3 extent = volume.domain.diagonal();
+                const math::Transform domain{{
+                    extent.x, 0.0f, 0.0f, volume.domain.minimum.x,
+                    0.0f, extent.y, 0.0f, volume.domain.minimum.y,
+                    0.0f, 0.0f, extent.z, volume.domain.minimum.z,
+                    0.0f, 0.0f, 0.0f, 1.0f,
+                }};
+                const math::Transform world = volume.transform * domain;
+                vk::TransformMatrixKHR transform{};
+                for (std::uint32_t row = 0; row < 3; ++row)
+                    for (std::uint32_t column = 0; column < 4; ++column) transform.matrix[row][column] = world.matrix[row * 4u + column];
+                const std::uint32_t acceleration_index = static_cast<std::uint32_t>(instances.size());
+                instances.emplace_back(transform, acceleration_index, 0x80u, 0u, vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable | vk::GeometryInstanceFlagBitsKHR::eForceOpaque, this->resources.volume_region_geometry.bottom_level_acceleration_structure.address);
+                this->resources.acceleration_entities.emplace_back(GpuAccelerationEntityKind::Volume, volume_index);
+            }
         return instances;
     }
     vk::DeviceAddress GpuScene::acquire_acceleration_scratch(const vk::DeviceSize size) {
@@ -1068,7 +1090,11 @@ namespace spectra {
     void GpuScene::update_volumes(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {
         for (const scene::Volume& source : scene.resources.volumes) {
             GpuVolume& volume = *std::ranges::find(this->resources.volumes, source.id, &GpuVolume::volume_id);
-            if (std::ranges::contains(this->resources.external_volumes, source.id) || source.revision.content == volume.revision.content) continue;
+            if (std::ranges::contains(this->resources.external_volumes, source.id)) continue;
+            if (source.revision.topology == volume.revision.topology) {
+                volume.revision = source.revision;
+                continue;
+            }
             GpuVolume replacement = this->create_volume(source, command_buffer);
             this->context.runtime.frames.defer_destruction([previous = std::move(volume)]() mutable {});
             volume                                   = std::move(replacement);
@@ -1080,7 +1106,10 @@ namespace spectra {
         std::vector<math::Transform> primitive_transforms{};
         std::vector<DynamicInstanceBinding> instance_bindings{};
         std::vector<std::uint32_t> acceleration_indices(this->resources.primitives.size(), std::numeric_limits<std::uint32_t>::max());
-        for (std::uint32_t acceleration_index = 0; acceleration_index < this->resources.acceleration_primitive_indices.size(); ++acceleration_index) acceleration_indices[this->resources.acceleration_primitive_indices[acceleration_index]] = acceleration_index;
+        for (std::uint32_t acceleration_index = 0; acceleration_index < this->resources.acceleration_entities.size(); ++acceleration_index) {
+            const GpuAccelerationEntity entity = this->resources.acceleration_entities[acceleration_index];
+            if (entity.kind == GpuAccelerationEntityKind::Primitive) acceleration_indices[entity.resource_index] = acceleration_index;
+        }
         primitive_transforms.reserve(this->resources.primitives.size());
         instance_bindings.reserve(this->resources.primitives.size());
         for (const GpuScenePrimitive& primitive : this->resources.primitives) {
@@ -1270,7 +1299,7 @@ namespace spectra {
         this->resources.external_geometries.clear();
         this->resources.external_sphere_sets.clear();
         this->resources.external_volumes.clear();
-        if (rebuilt_bottom_level || (scene.revision.changes & scene::SceneChange::Transform) != scene::SceneChange::None) {
+        if (rebuilt_bottom_level || (scene.revision.changes & (scene::SceneChange::Transform | scene::SceneChange::Volume)) != scene::SceneChange::None) {
             const std::vector<vk::AccelerationStructureInstanceKHR> instances = this->acceleration_structure_instance_data(scene);
             this->update_top_level(instances, command_buffer);
             this->update_instance_state(scene, command_buffer);

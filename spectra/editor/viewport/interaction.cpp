@@ -102,12 +102,6 @@ namespace spectra {
         this->camera_changed();
     }
 
-    void ViewportInteraction::frame_scene(const float aspect) {
-        this->frame_viewport_camera(this->navigation_bounds(), aspect);
-        this->view.source = CameraSource::Viewport;
-        this->camera_changed();
-    }
-
     void ViewportInteraction::frame_selection(const float aspect) {
         math::Bounds3 selected = math::Bounds3::empty();
         bool found{};
@@ -233,7 +227,8 @@ namespace spectra {
             else if (const std::optional<math::Bounds3> instance_bounds = source.view().bounds(std::array{instance.id}))
                 bounds.include(*instance_bounds);
         }
-        for (const scene::Volume& volume : source.resources.volumes) bounds.include(volume.bounds.transformed(volume.transform));
+        for (const scene::Volume& volume : source.resources.volumes)
+            if (volume.visible) bounds.include(volume.domain.transformed(volume.transform));
         return bounds;
     }
 
@@ -257,7 +252,7 @@ namespace spectra {
         const float extent               = std::max(scene_bounds.radius() * 0.05f, 0.05f);
         if (entity.kind == SceneEntityKind::Volume) {
             const scene::Volume& volume = *std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id);
-            return volume.bounds.transformed(volume.transform);
+            return volume.domain.transformed(volume.transform);
         }
         if (entity.kind == SceneEntityKind::Camera) {
             const scene::Camera& camera = *std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id);

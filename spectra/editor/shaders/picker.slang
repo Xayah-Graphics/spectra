@@ -237,10 +237,10 @@ void pick() {
                           ((push_data.far_plane - push_data.near_plane) * camera_depth)
                 : (camera_depth - push_data.near_plane) /
                       (push_data.far_plane - push_data.near_plane);
-        const bool volume_boundary =
+        const bool transparent_region =
             candidate.metadata.y != 0;
         if (
-            volume_boundary
+            transparent_region
                 ? candidate_device_depth > visible_depth + 0.001
                 : abs(candidate_device_depth - visible_depth) > 0.001)
             continue;

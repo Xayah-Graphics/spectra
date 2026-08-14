@@ -11,7 +11,7 @@ namespace spectra {
     export struct ViewportPicker {
         struct PickResult {
             bool ready{};
-            std::optional<scene::InstanceId> instance_id{};
+            std::optional<GpuAccelerationEntity> entity{};
             std::optional<std::uint32_t> diagnostic_pick_index{};
             bool select{};
             bool additive{};
@@ -45,7 +45,7 @@ namespace spectra {
             GpuBuffer result_buffer{};
             DescriptorLease result_descriptor{};
             std::optional<PickRequest> submitted_request{};
-            std::vector<scene::InstanceId> acceleration_instance_ids{};
+            std::vector<GpuAccelerationEntity> acceleration_entities{};
         };
 
         struct {

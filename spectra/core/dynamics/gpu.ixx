@@ -41,8 +41,6 @@ namespace spectra::dynamics {
 
     export struct GpuFieldUpdate {
         scene::VolumeId volume_id{};
-        math::UInt3 resolution{};
-        math::Transform local_from_grid{};
         std::vector<GpuVolumeFieldView> fields{};
     };
 

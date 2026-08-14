@@ -41,8 +41,6 @@ namespace spectra {
 
     export struct SelectionDiagnosticSettings {
         bool bounds{true};
-        bool pivot{};
-        bool orientation{};
         bool wireframe{};
         bool vertices{};
         bool normals{};
@@ -53,13 +51,11 @@ namespace spectra {
         bool light_guide{true};
         bool area_emitter{};
         bool medium_boundary{};
-        bool volume_grid{};
         scene::VisualizationDepthMode depth_mode{scene::VisualizationDepthMode::Tested};
         float line_width{1.5f};
         float point_size{5.0f};
         float vector_scale{0.1f};
         std::uint32_t attribute_sampling{1};
-        std::uint32_t volume_grid_sampling{8};
     };
 
     export struct SceneDiagnosticRenderer {

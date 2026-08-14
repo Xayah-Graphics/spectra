@@ -32,6 +32,16 @@ namespace spectra {
         SphereSet,
     };
 
+    export enum class GpuAccelerationEntityKind : std::uint8_t {
+        Primitive,
+        Volume,
+    };
+
+    export struct GpuAccelerationEntity {
+        GpuAccelerationEntityKind kind{GpuAccelerationEntityKind::Primitive};
+        std::uint32_t resource_index{};
+    };
+
     export enum class GpuSceneChange : std::uint8_t {
         None      = 0,
         Geometry  = 1 << 0,
@@ -158,9 +168,9 @@ namespace spectra {
         std::span<const GpuSphereSet> sphere_sets{};
         std::span<const GpuVolume> volumes{};
         std::span<const GpuScenePrimitive> primitives{};
-        std::span<const std::uint32_t> acceleration_primitive_indices{};
         std::span<const scene::InstanceId> primitive_instance_ids{};
-        std::span<const scene::InstanceId> acceleration_instance_ids{};
+        std::span<const GpuAccelerationEntity> acceleration_entities{};
+        const GpuGeometry* volume_region_geometry{};
         vk::DeviceAddress acceleration_structure{};
         DescriptorHandle primitive_transforms{};
         const GpuBuffer* primitive_transform_buffer{};
@@ -232,10 +242,10 @@ namespace spectra {
             std::vector<GpuGeometry> geometries{};
             std::vector<GpuSphereSet> sphere_sets{};
             std::vector<GpuVolume> volumes{};
+            GpuGeometry volume_region_geometry{};
             std::vector<GpuScenePrimitive> primitives{};
-            std::vector<std::uint32_t> acceleration_primitive_indices{};
             std::vector<scene::InstanceId> primitive_instance_ids{};
-            std::vector<scene::InstanceId> acceleration_instance_ids{};
+            std::vector<GpuAccelerationEntity> acceleration_entities{};
             GpuAccelerationStructure top_level_acceleration_structure{};
             bool instance_bounds_dirty{};
         } resources;

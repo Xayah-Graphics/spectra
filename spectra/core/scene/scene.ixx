@@ -260,17 +260,6 @@ namespace spectra::scene {
         friend auto operator<=>(const VolumeRegion&, const VolumeRegion&) = default;
     };
 
-    export struct Volume {
-        VolumeId id{};
-        std::string name{};
-        ResourceRevision revision{};
-        math::Bounds3 bounds{};
-        math::Transform transform{};
-        std::optional<VolumeRegion> dirty_region{};
-        std::variant<GridVolume, ProceduralCloudVolume> data{};
-        VolumeDiagnostics diagnostics{};
-    };
-
     export enum class TextureValueKind : std::uint8_t {
         Float,
         Spectrum,
@@ -543,17 +532,7 @@ namespace spectra::scene {
         MediumId outside{};
     };
 
-    export struct HomogeneousMedium {
-        SpectrumParameter sigma_a{{}, {}, SpectrumEncoding::RgbUnbounded};
-        SpectrumParameter sigma_s{{}, {}, SpectrumEncoding::RgbUnbounded};
-        SpectrumParameter emission{{}, {}, SpectrumEncoding::RgbIlluminant};
-        float density_scale{1.0f};
-        float emission_scale{1.0f};
-        float anisotropy{};
-    };
-
-    export struct VolumeMedium {
-        VolumeId volume{};
+    export struct VolumeRendering {
         std::string density_field{};
         std::string temperature_field{};
         std::string emission_scale_field{};
@@ -573,11 +552,29 @@ namespace spectra::scene {
         bool blackbody_emission{};
     };
 
+    export struct Volume {
+        VolumeId id{};
+        std::string name{};
+        ResourceRevision revision{};
+        math::Bounds3 domain{};
+        math::Transform transform{};
+        std::variant<GridVolume, ProceduralCloudVolume> data{};
+        VolumeRendering rendering{};
+        VolumeDiagnostics diagnostics{};
+        MediumId exterior_medium{};
+        bool visible{true};
+    };
+
     export struct Medium {
         MediumId id{};
         std::string name{};
         ResourceRevision revision{};
-        std::variant<HomogeneousMedium, VolumeMedium> data{};
+        SpectrumParameter sigma_a{{}, {}, SpectrumEncoding::RgbUnbounded};
+        SpectrumParameter sigma_s{{}, {}, SpectrumEncoding::RgbUnbounded};
+        SpectrumParameter emission{{}, {}, SpectrumEncoding::RgbIlluminant};
+        float density_scale{1.0f};
+        float emission_scale{1.0f};
+        float anisotropy{};
     };
 
     export enum class EmissionSidedness : std::uint8_t {

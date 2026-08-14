@@ -77,13 +77,14 @@ namespace spectra {
         this->destroy();
     }
 
-    void DynamicsRuntime::initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene) {
+    void DynamicsRuntime::initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene, scene::Scene& evaluated_scene) {
         this->destroy();
         try {
-            this->configuration.source_scene = &source_scene;
-            this->configuration.assets       = scene_path.parent_path();
-            this->configuration.setup        = *source_scene.dynamic_setup;
-            this->configuration.initialized  = true;
+            this->configuration.source_scene    = &source_scene;
+            this->configuration.evaluated_scene = &evaluated_scene;
+            this->configuration.assets          = scene_path.parent_path();
+            this->configuration.setup           = *source_scene.dynamic_setup;
+            this->configuration.initialized     = true;
 
             std::vector<std::string> required_providers{};
             for (const scene::DynamicSystem& system : this->configuration.setup.systems)
@@ -174,8 +175,8 @@ namespace spectra {
                 const scene::DynamicSystem& declared = this->configuration.setup.systems[system_index];
                 if (!declared.enabled) continue;
                 ProviderLibrary& library = this->provider_library(declared.provider_id);
-                SystemRuntime& system    = this->systems.values.emplace_back();
-                system.scene_system_index = system_index;
+                SystemRuntime& system       = this->systems.values.emplace_back();
+                system.scene_system_index   = system_index;
                 system.provider_descriptor = &library.provider;
                 system.api                 = library.api;
                 for (const dynamics::ParameterDescriptor& parameter : library.provider.parameters) {
@@ -502,6 +503,17 @@ namespace spectra {
         if (!output.scene_binding) return;
         if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details)) this->outputs.mesh_bindings.emplace_back(scene::GeometryId{output.scene_binding->resource_id}, dynamics::MeshUpdateMode::Deformable, mesh->vertex_capacity, mesh->index_capacity);
         else if (const auto* spheres = std::get_if<dynamics::SphereSetDataset>(&output.descriptor.details)) this->outputs.sphere_set_bindings.emplace_back(scene::SphereSetId{output.scene_binding->resource_id}, spheres->capacity);
+        else if (const auto* field = std::get_if<dynamics::FieldDataset>(&output.descriptor.details)) {
+            scene::Volume& volume   = *std::ranges::find(this->configuration.evaluated_scene->resources.volumes, scene::VolumeId{output.scene_binding->resource_id}, &scene::Volume::id);
+            scene::GridVolume& grid = std::get<scene::GridVolume>(volume.data);
+            grid.resolution = output.resolution;
+            grid.fields.clear();
+            grid.fields.reserve(field->fields.size());
+            for (const dynamics::VolumeFieldDescriptor& descriptor : field->fields) grid.fields.emplace_back(descriptor.id, descriptor.name, descriptor.unit, descriptor.kind, descriptor.sampling, descriptor.vector_space);
+            ++volume.revision.content;
+            ++volume.revision.topology;
+            this->configuration.evaluated_scene->mark_changed(scene::SceneChange::Volume | scene::SceneChange::Structure);
+        }
     }
 
     void DynamicsRuntime::create_system(SystemRuntime& system, const scene::DynamicSystem& declared) {
@@ -510,7 +522,7 @@ namespace spectra {
         std::vector<SpectraSdkValue> parameters{};
         for (const scene::DynamicParameterValue& value : system.parameter_values) parameters.emplace_back(sdk_value(value));
         std::string assets = this->configuration.assets.string();
-                SpectraSdkCreateInfo create{{assets.data(), assets.size()}, parameters.data()};
+        SpectraSdkCreateInfo create{{assets.data(), assets.size()}, parameters.data()};
         std::ranges::copy(identity.uuid, create.vulkan_device_uuid);
         std::ranges::copy(identity.luid, create.vulkan_device_luid);
         create.vulkan_device_luid_valid = identity.luid_valid;
@@ -565,7 +577,7 @@ namespace spectra {
         else if (output.kind == SpectraSdkOutputKind::Instances) snapshot.scene_updates.emplace_back(dynamics::GpuInstanceTransformUpdate{view(buffers[0]), commit.active_count});
         else if (output.kind == SpectraSdkOutputKind::Volume && output.scene_binding) {
             const auto& dataset = std::get<dynamics::FieldDataset>(output.descriptor.details);
-            dynamics::GpuFieldUpdate update{.volume_id = scene::VolumeId{output.scene_binding->resource_id}, .resolution = output.resolution};
+            dynamics::GpuFieldUpdate update{.volume_id = scene::VolumeId{output.scene_binding->resource_id}};
             for (const dynamics::VolumeFieldDescriptor& field : dataset.fields) {
                 dynamics::GpuVolumeFieldView field_view{.field = field};
                 for (std::uint32_t component = 0; component != field.buffer_count; ++component) field_view.values.emplace_back(view(buffers[field.buffer_offset + component]));

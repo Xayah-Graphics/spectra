@@ -421,7 +421,6 @@ namespace spectra {
 
     void EditorUi::handle_shortcuts(EditorActions& actions, const float aspect, const bool global_panel_available) {
         ImGuiIO& io = ImGui::GetIO();
-        if (global_panel_available && ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !io.WantTextInput) this->controls.global_panel_open = !this->controls.global_panel_open;
         if (this->controls.wireframe_restore_mode && !ImGui::IsKeyDown(ImGuiKey_W)) {
             actions.raster_display_mode = *this->controls.wireframe_restore_mode;
             this->controls.wireframe_restore_mode.reset();
@@ -433,34 +432,19 @@ namespace spectra {
         }
         if (io.WantTextInput) return;
 
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) actions.open_scene_file = true;
-        if (!this->context.document.content.loaded) return;
-        if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) actions.save_scene = true;
-        if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) actions.save_scene_as = true;
         const bool no_modifiers = !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper;
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_1, false)) actions.renderer = std::string{rasterizer_descriptor.id};
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_2, false)) actions.renderer = std::string{pathtracer_descriptor.id};
+        if (global_panel_available && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) this->controls.global_panel_open = !this->controls.global_panel_open;
+        if (!this->context.document.content.loaded) return;
         if (this->context.render_engine.selected_descriptor() == rasterizer_descriptor && no_modifiers && ImGui::IsKeyDown(ImGuiKey_W) && !this->controls.wireframe_restore_mode) {
             this->controls.wireframe_restore_mode = this->context.render_engine.raster_display_mode();
             actions.raster_display_mode           = RasterDisplayMode::Wireframe;
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_F, false)) this->context.viewport.frame_selection(aspect);
-        if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) this->context.viewport.frame_scene(aspect);
-        if (ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) this->context.viewport.view_axis({0.0f, 0.0f, 1.0f}, aspect);
-        if (ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) this->context.viewport.view_axis({1.0f, 0.0f, 0.0f}, aspect);
-        if (ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) this->context.viewport.view_axis({0.0f, 1.0f, 0.0f}, aspect);
-        if (ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) this->context.viewport.view.source = this->context.viewport.view.source == CameraSource::Scene ? CameraSource::Viewport : CameraSource::Scene;
-        SceneGuideSettings& scene_guides                   = this->context.settings.scene_guides;
-        SelectionDiagnosticSettings& selection_diagnostics = this->context.settings.selection_diagnostics;
-        const SceneEntityReference* entity                 = active_entity(*this);
-        if (entity && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_B, false)) selection_diagnostics.bounds = !selection_diagnostics.bounds;
-        if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_B, false)) scene_guides.all_bounds = !scene_guides.all_bounds;
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_C, false)) scene_guides.cameras = !scene_guides.cameras;
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_L, false)) scene_guides.lights = !scene_guides.lights;
-        if (entity && entity->kind == SceneEntityKind::Instance && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_N, false)) selection_diagnostics.normals = !selection_diagnostics.normals;
-        if (entity && entity->kind == SceneEntityKind::Instance && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_T, false)) selection_diagnostics.tangents = !selection_diagnostics.tangents;
-        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) this->context.settings.guides_visible = !this->context.settings.guides_visible;
-        if (this->context.dynamics.initialized() && !this->context.dynamics.faulted() && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_F, false)) this->context.viewport.frame_selection(aspect);
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) this->context.viewport.view_axis({0.0f, 0.0f, 1.0f}, aspect);
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) this->context.viewport.view_axis({1.0f, 0.0f, 0.0f}, aspect);
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) this->context.viewport.view_axis({0.0f, 1.0f, 0.0f}, aspect);
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) this->context.viewport.view.source = this->context.viewport.view.source == CameraSource::Scene ? CameraSource::Viewport : CameraSource::Scene;
+        if (this->context.dynamics.initialized() && !this->context.dynamics.faulted() && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
             try {
                 if (this->context.dynamics.running())
                     this->context.dynamics.pause();
@@ -638,8 +622,44 @@ namespace spectra {
         const std::optional<PathTracerPreparationProgress> preparation = this->context.render_engine.pathtracer_preparation();
         const float frames_per_second                                  = ImGui::GetIO().Framerate;
         const auto viewport_extent                                     = this->context.imgui.viewport_extent;
-
         add_line(std::format("Render {:.1f} FPS  ·  {:.2f} ms  ·  {} × {}", frames_per_second, 1000.0f / frames_per_second, viewport_extent.width, viewport_extent.height), primary);
+        add_section("SHORTCUTS");
+        const float keycap_height         = line_height + 2.0f;
+        constexpr float keycap_padding    = 6.0f;
+        constexpr float label_spacing     = 6.0f;
+        constexpr float shortcut_spacing  = 16.0f;
+        const ImU32 keycap_shadow         = ImGui::GetColorU32({0.0f, 0.0f, 0.0f, 0.28f});
+        const ImU32 keycap_background     = ImGui::GetColorU32({0.14f, 0.18f, 0.21f, 0.22f});
+        const ImU32 keycap_border         = ImGui::GetColorU32({0.55f, 0.64f, 0.72f, 0.24f});
+        const auto add_shortcut = [&draw_list, &add_text, &y, keycap_height, keycap_shadow, keycap_background, keycap_border, primary, secondary](float& x, const std::string_view key, const std::string_view action) {
+            const ImVec2 key_size = ImGui::CalcTextSize(key.data(), key.data() + key.size());
+            const ImVec2 minimum{x, y};
+            const ImVec2 maximum{x + key_size.x + keycap_padding * 2.0f, y + keycap_height};
+            draw_list.AddRectFilled({minimum.x + 1.0f, minimum.y + 1.0f}, {maximum.x + 1.0f, maximum.y + 1.0f}, keycap_shadow, 4.0f);
+            draw_list.AddRectFilled(minimum, maximum, keycap_background, 4.0f);
+            draw_list.AddRect(minimum, maximum, keycap_border, 4.0f, 0, 1.0f);
+            add_text({minimum.x + keycap_padding, minimum.y + (keycap_height - key_size.y) * 0.5f}, primary, key);
+            const ImVec2 action_size = ImGui::CalcTextSize(action.data(), action.data() + action.size());
+            const ImVec2 action_position{maximum.x + label_spacing, minimum.y + (keycap_height - action_size.y) * 0.5f};
+            add_text(action_position, secondary, action);
+            x = action_position.x + action_size.x + shortcut_spacing;
+        };
+        float shortcut_x = status_left;
+        add_shortcut(shortcut_x, "Esc", "Exit");
+        add_shortcut(shortcut_x, "Tab", "Settings");
+        add_shortcut(shortcut_x, "F", "Frame");
+        y += keycap_height + 5.0f;
+        shortcut_x = status_left;
+        add_shortcut(shortcut_x, "Num1", "Front");
+        add_shortcut(shortcut_x, "Num3", "Right");
+        add_shortcut(shortcut_x, "Num7", "Top");
+        add_shortcut(shortcut_x, "Num0", "Camera");
+        y += keycap_height + 5.0f;
+        shortcut_x = status_left;
+        add_shortcut(shortcut_x, "G", "Axes · Hold");
+        if (this->context.render_engine.selected_descriptor() == rasterizer_descriptor) add_shortcut(shortcut_x, "W", "Wireframe · Hold");
+        if (dynamic && !this->context.dynamics.faulted()) add_shortcut(shortcut_x, "Space", "Play / Pause");
+        y += keycap_height;
 
         if (dynamic) {
             const dynamics::SimulationTimeline timeline = this->context.dynamics.timeline();
@@ -723,7 +743,8 @@ namespace spectra {
                     },
                     light.data);
             } else if (entity->kind == SceneEntityKind::Volume) {
-                const scene::Volume& volume = *std::ranges::find(scene.resources.volumes, scene::VolumeId{entity->id}, &scene::Volume::id);
+                const scene::Scene& evaluated  = this->context.document.content.evaluated;
+                const scene::Volume& volume = *std::ranges::find(evaluated.resources.volumes, scene::VolumeId{entity->id}, &scene::Volume::id);
                 if (const auto* grid = std::get_if<scene::GridVolume>(&volume.data)) {
                     add_line(std::format("{} × {} × {}  ·  {} fields", grid->resolution.x, grid->resolution.y, grid->resolution.z, grid->fields.size()), primary);
                     for (const scene::VolumeField& field : grid->fields) {
@@ -960,11 +981,11 @@ namespace spectra {
             ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2{std::min(text_right + 7.0f, maximum.x - 4.0f), (minimum.y + maximum.y) * 0.5f}, 2.5f, ImGui::GetColorU32(ImVec4{0.16f, 0.72f, 0.84f, 1.0f}), 12);
         }
         if (ImGui::BeginPopup("##SceneMenu")) {
-            if (ImGui::MenuItem("Open File...", "Ctrl+O")) actions.open_scene_file = true;
+            if (ImGui::MenuItem("Open File...")) actions.open_scene_file = true;
             if (ImGui::MenuItem("Reload")) actions.reload_scene = true;
             ImGui::Separator();
-            if (ImGui::MenuItem("Save", "Ctrl+S")) actions.save_scene = true;
-            if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) actions.save_scene_as = true;
+            if (ImGui::MenuItem("Save")) actions.save_scene = true;
+            if (ImGui::MenuItem("Save As...")) actions.save_scene_as = true;
             ImGui::EndPopup();
         }
 
@@ -1084,10 +1105,7 @@ namespace spectra {
         bool spheres{};
         bool area_emitter{};
         bool medium_boundary{};
-        std::vector<const scene::Volume*> volumes{};
-        if (entity.kind == SceneEntityKind::Volume)
-            volumes.push_back(&*std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id));
-        else if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) {
+        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) {
             const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
             const scene::Instance& instance   = *std::ranges::find(source.resources.instances, instance_id, &scene::Instance::id);
             const scene::Prototype& prototype = *std::ranges::find(source.resources.prototypes, instance.prototype, &scene::Prototype::id);
@@ -1096,31 +1114,18 @@ namespace spectra {
                 spheres         = spheres || primitive.spheres.value != 0;
                 area_emitter    = area_emitter || primitive.area_light.value != 0;
                 medium_boundary = medium_boundary || primitive.media.inside.value != 0 || primitive.media.outside.value != 0;
-                for (const scene::MediumId medium_id : {primitive.media.inside, primitive.media.outside}) {
-                    if (medium_id.value == 0) continue;
-                    const scene::Medium& medium = *std::ranges::find(source.resources.media, medium_id, &scene::Medium::id);
-                    const auto* volume_medium   = std::get_if<scene::VolumeMedium>(&medium.data);
-                    if (!volume_medium) continue;
-                    const scene::Volume& volume = *std::ranges::find(source.resources.volumes, volume_medium->volume, &scene::Volume::id);
-                    if (!std::ranges::contains(volumes, &volume)) volumes.push_back(&volume);
-                }
             }
         }
 
-        const bool transform_diagnostics = entity_transform(source, entity).has_value();
         ImGui::TextDisabled("DIAGNOSTICS");
         ImGui::BeginDisabled(!this->context.settings.guides_visible);
-        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Volume) ImGui::Checkbox("Bounds  B", &diagnostics.bounds);
-        if (transform_diagnostics) {
-            ImGui::Checkbox("Pivot", &diagnostics.pivot);
-            ImGui::Checkbox("Orientation", &diagnostics.orientation);
-        }
+        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Volume) ImGui::Checkbox("Bounds", &diagnostics.bounds);
         if (entity.kind == SceneEntityKind::Instance) {
             if (geometry || spheres) ImGui::Checkbox(spheres && !geometry ? "Sphere wireframe" : "Wireframe", &diagnostics.wireframe);
             if (geometry || spheres) ImGui::Checkbox(spheres && !geometry ? "Centers" : spheres ? "Vertices / centers" : "Vertices", &diagnostics.vertices);
             if (geometry) {
-                ImGui::Checkbox("Normals  N", &diagnostics.normals);
-                ImGui::Checkbox("Tangents  T", &diagnostics.tangents);
+                ImGui::Checkbox("Normals", &diagnostics.normals);
+                ImGui::Checkbox("Tangents", &diagnostics.tangents);
             }
             if (area_emitter) ImGui::Checkbox("Area emitter", &diagnostics.area_emitter);
             if (medium_boundary) ImGui::Checkbox("Medium boundary", &diagnostics.medium_boundary);
@@ -1132,7 +1137,6 @@ namespace spectra {
             ImGui::Checkbox("Lens", &diagnostics.camera_lens);
         } else if (entity.kind == SceneEntityKind::Light)
             ImGui::Checkbox("Light guide", &diagnostics.light_guide);
-        if (!volumes.empty()) ImGui::Checkbox("Volume grid", &diagnostics.volume_grid);
 
         const bool instance_diagnostics    = entity.kind == SceneEntityKind::Instance;
         const bool wireframe_diagnostics   = instance_diagnostics && (geometry || spheres) && diagnostics.wireframe;
@@ -1140,9 +1144,7 @@ namespace spectra {
         const bool attribute_diagnostics   = instance_diagnostics && geometry && (diagnostics.normals || diagnostics.tangents);
         const bool emitter_diagnostics     = (instance_diagnostics && area_emitter || entity.kind == SceneEntityKind::AreaEmitter) && diagnostics.area_emitter;
         const bool boundary_diagnostics    = instance_diagnostics && medium_boundary && diagnostics.medium_boundary;
-        const bool grid_diagnostics        = !volumes.empty() && diagnostics.volume_grid;
-        const bool orientation_diagnostics = transform_diagnostics && (diagnostics.pivot || diagnostics.orientation);
-        const bool line_diagnostics        = wireframe_diagnostics || attribute_diagnostics || emitter_diagnostics || boundary_diagnostics || grid_diagnostics || orientation_diagnostics;
+        const bool line_diagnostics        = wireframe_diagnostics || attribute_diagnostics || emitter_diagnostics || boundary_diagnostics;
         const bool styled                  = line_diagnostics || point_diagnostics;
         if (styled) {
             ImGui::Spacing();
@@ -1157,19 +1159,15 @@ namespace spectra {
                 constexpr std::uint32_t maximum_sampling = 1024;
                 ImGui::DragScalar("Attribute sampling", ImGuiDataType_U32, &diagnostics.attribute_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
             }
-            if (grid_diagnostics) {
-                constexpr std::uint32_t minimum_sampling = 1;
-                constexpr std::uint32_t maximum_sampling = 256;
-                ImGui::DragScalar("Grid sampling", ImGuiDataType_U32, &diagnostics.volume_grid_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
-            }
         }
         ImGui::EndDisabled();
 
-        for (const scene::Volume* volume : volumes) {
+        if (entity.kind == SceneEntityKind::Volume) {
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
-            this->draw_volume_diagnostics(*volume);
+            const scene::Scene& evaluated = this->context.document.content.evaluated;
+            this->draw_volume_diagnostics(*std::ranges::find(evaluated.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id));
         }
     }
 
@@ -1264,12 +1262,12 @@ namespace spectra {
         int camera_source = static_cast<int>(this->context.viewport.view.source);
         constexpr const char* camera_sources[] = {"Scene Camera", "Viewport Camera"};
         if (ImGui::Combo("Camera", &camera_source, camera_sources, 2)) this->context.viewport.view.source = static_cast<CameraSource>(camera_source);
-        ImGui::Checkbox("Scene guides  Shift+G", &this->context.settings.guides_visible);
+        ImGui::Checkbox("Scene guides", &this->context.settings.guides_visible);
         ImGui::BeginDisabled(!this->context.settings.guides_visible);
         ImGui::Checkbox("Selection outline", &this->context.settings.selection_outline);
-        ImGui::Checkbox("All bounds  Shift+B", &this->context.settings.scene_guides.all_bounds);
-        ImGui::Checkbox("Cameras  C", &this->context.settings.scene_guides.cameras);
-        ImGui::Checkbox("Lights  L", &this->context.settings.scene_guides.lights);
+        ImGui::Checkbox("All bounds", &this->context.settings.scene_guides.all_bounds);
+        ImGui::Checkbox("Cameras", &this->context.settings.scene_guides.cameras);
+        ImGui::Checkbox("Lights", &this->context.settings.scene_guides.lights);
         ImGui::EndDisabled();
         ImGui::Spacing();
         ImGui::TextDisabled("RASTERIZER");

@@ -66,7 +66,7 @@ namespace spectra {
         void replace_scene(const std::filesystem::path& path);
         void reload_scene();
         void destroy_rendering() noexcept;
-        void rebuild_rendering(scene::Scene& source_scene);
+        void rebuild_rendering();
         [[nodiscard]] bool prepare_rendering(const vk::raii::CommandBuffer& command_buffer, vk::Extent2D extent);
         void record_editor_overlays(const vk::raii::CommandBuffer& command_buffer, bool show_axes);
     };
@@ -159,8 +159,8 @@ namespace spectra {
             this->document.content.source    = std::move(next_scene);
             this->document.content.evaluated = this->document.content.source;
             this->document.content.path      = path;
-            if (this->document.content.source.dynamic_setup) this->dynamics.initialize(path, this->document.content.source);
-            this->rebuild_rendering(this->document.content.source);
+            if (this->document.content.source.dynamic_setup) this->dynamics.initialize(path, this->document.content.source, this->document.content.evaluated);
+            this->rebuild_rendering();
             this->viewport.initialize_from_scene();
             this->document.content.loaded   = true;
             this->document.content.modified = false;
@@ -176,8 +176,8 @@ namespace spectra {
             this->rendering.synchronized_scene_revision = 0;
             if (previous_loaded) {
                 try {
-                    if (this->document.content.source.dynamic_setup) this->dynamics.initialize(this->document.content.path, this->document.content.source);
-                    this->rebuild_rendering(this->document.content.source);
+                    if (this->document.content.source.dynamic_setup) this->dynamics.initialize(this->document.content.path, this->document.content.source, this->document.content.evaluated);
+                    this->rebuild_rendering();
                     this->viewport.initialize_from_scene();
                     this->document.content.loaded = true;
                 } catch (const std::exception& restore_error) {
@@ -226,7 +226,7 @@ namespace spectra {
             }
             if (actions.rebuild_dynamic_rendering) {
                 this->destroy_rendering();
-                this->rebuild_rendering(this->document.content.source);
+                this->rebuild_rendering();
             }
             if (actions.renderer) this->render_engine.activate(*actions.renderer, this->document.content.evaluated.view());
             if (actions.raster_display_mode) this->render_engine.set_raster_display_mode(*actions.raster_display_mode);
@@ -242,7 +242,13 @@ namespace spectra {
         if (!pick.ready) return;
         std::optional<SceneEntityReference> entity{};
         if (pick.diagnostic_pick_index) entity = this->diagnostics.pick_entity(frame_slot_index, *pick.diagnostic_pick_index);
-        if (!entity && pick.instance_id) entity = SceneEntityReference{SceneEntityKind::Instance, pick.instance_id->value};
+        if (!entity && pick.entity) {
+            if (pick.entity->kind == GpuAccelerationEntityKind::Primitive) {
+                const GpuScenePrimitive& primitive = this->gpu_scene.view().primitives[pick.entity->resource_index];
+                entity = SceneEntityReference{SceneEntityKind::Instance, this->document.content.evaluated.resources.instances[primitive.scene_instance_index].id.value};
+            } else
+                entity = SceneEntityReference{SceneEntityKind::Volume, this->document.content.evaluated.resources.volumes[pick.entity->resource_index].id.value};
+        }
         if (!pick.select) {
             this->viewport.view.selection.hovered = entity;
             return;
@@ -281,8 +287,8 @@ namespace spectra {
         this->gpu_scene.destroy();
     }
 
-    void EditorApplication::rebuild_rendering(scene::Scene& source_scene) {
-        this->gpu_scene.initialize(source_scene, this->dynamics.mesh_bindings(), this->dynamics.sphere_set_bindings());
+    void EditorApplication::rebuild_rendering() {
+        this->gpu_scene.initialize(this->document.content.evaluated, this->dynamics.mesh_bindings(), this->dynamics.sphere_set_bindings());
         this->render_engine.rebuild(this->document.content.evaluated.view());
         this->overlay.initialize();
         this->picker.initialize(this->document.content.evaluated.view());

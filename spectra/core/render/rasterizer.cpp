@@ -646,32 +646,24 @@ namespace spectra {
         std::vector<RasterVolume> raster_volumes{};
         raster_volumes.reserve(scene.resources.volumes.size());
         for (const scene::Volume& volume : scene.resources.volumes) {
+            if (!volume.visible) continue;
             const GpuVolume& shared = *std::ranges::find(this->context.gpu_scene.view().volumes, volume.id, &GpuVolume::volume_id);
-            const scene::VolumeMedium* medium{};
-            for (const scene::Medium& candidate : scene.resources.media) {
-                const scene::VolumeMedium* candidate_volume = std::get_if<scene::VolumeMedium>(&candidate.data);
-                if (candidate_volume && candidate_volume->volume == volume.id) {
-                    medium = candidate_volume;
-                    break;
-                }
-            }
+            const scene::VolumeRendering& rendering = volume.rendering;
             RasterVolume record{};
-            record.bounds_minimum          = {volume.bounds.minimum.x, volume.bounds.minimum.y, volume.bounds.minimum.z, 0.0f};
-            record.bounds_maximum          = {volume.bounds.maximum.x, volume.bounds.maximum.y, volume.bounds.maximum.z, 0.0f};
+            record.bounds_minimum          = {volume.domain.minimum.x, volume.domain.minimum.y, volume.domain.minimum.z, 0.0f};
+            record.bounds_maximum          = {volume.domain.maximum.x, volume.domain.maximum.y, volume.domain.maximum.z, 0.0f};
             const math::Transform inverse  = volume.transform.inverse();
             record.inverse_transform_row_0 = {inverse.matrix[0], inverse.matrix[1], inverse.matrix[2], inverse.matrix[3]};
             record.inverse_transform_row_1 = {inverse.matrix[4], inverse.matrix[5], inverse.matrix[6], inverse.matrix[7]};
             record.inverse_transform_row_2 = {inverse.matrix[8], inverse.matrix[9], inverse.matrix[10], inverse.matrix[11]};
-            if (medium) {
-                const math::Float3 sigma_a  = raster_spectrum_rgb(medium->sigma_a);
-                const math::Float3 sigma_s  = raster_spectrum_rgb(medium->sigma_s);
-                const math::Float3 emission = raster_spectrum_rgb(medium->emission);
-                record.sigma_a              = {sigma_a.x, sigma_a.y, sigma_a.z, 0.0f};
-                record.sigma_s              = {sigma_s.x, sigma_s.y, sigma_s.z, 0.0f};
-                record.emission             = {emission.x, emission.y, emission.z, 0.0f};
-                record.scales               = {medium->density_scale, medium->emission_scale, medium->anisotropy, medium->temperature_scale};
-                record.temperature          = {medium->temperature_offset, medium->minimum_emission_temperature, medium->blackbody_emission ? 1.0f : 0.0f, 0.0f};
-            }
+            const math::Float3 sigma_a  = raster_spectrum_rgb(rendering.sigma_a);
+            const math::Float3 sigma_s  = raster_spectrum_rgb(rendering.sigma_s);
+            const math::Float3 emission = raster_spectrum_rgb(rendering.emission);
+            record.sigma_a              = {sigma_a.x, sigma_a.y, sigma_a.z, 0.0f};
+            record.sigma_s              = {sigma_s.x, sigma_s.y, sigma_s.z, 0.0f};
+            record.emission             = {emission.x, emission.y, emission.z, 0.0f};
+            record.scales               = {rendering.density_scale, rendering.emission_scale, rendering.anisotropy, rendering.temperature_scale};
+            record.temperature          = {rendering.temperature_offset, rendering.minimum_emission_temperature, rendering.blackbody_emission ? 1.0f : 0.0f, 0.0f};
             const auto field = [this, &shared](const std::string_view id) -> DescriptorHandle {
                 const std::vector<GpuVolumeField>::const_iterator found = std::ranges::find(shared.fields, id, &GpuVolumeField::id);
                 return found == shared.fields.end() ? this->scene.zero_volume_field_descriptor : found->descriptors.front();
@@ -681,27 +673,27 @@ namespace spectra {
                     const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
                     return found != data->fields.end() && found->sampling == scene::VolumeFieldSampling::Vertex ? 1u : 0u;
                 };
-                const bool rgb                   = medium && medium->density_field.empty() && (!medium->sigma_a_field.empty() || !medium->sigma_s_field.empty() || !medium->emission_field.empty());
+                const bool rgb                   = rendering.density_field.empty() && (!rendering.sigma_a_field.empty() || !rendering.sigma_s_field.empty() || !rendering.emission_field.empty());
                 record.metadata                 = {rgb ? 1u : 0u, data->resolution.x, data->resolution.y, data->resolution.z};
-                const std::uint32_t field_flags = (rgb ? (medium->sigma_a_field.empty() ? 0u : 1u) | (medium->sigma_s_field.empty() ? 0u : 2u) | (medium->emission_field.empty() ? 0u : 4u) | (std::to_underlying(medium->field_color_space) << 8) : (medium && !medium->temperature_field.empty() ? 1u : 0u) | (medium && !medium->emission_scale_field.empty() ? 2u : 0u))
-                    | (vertex_sampled(medium ? std::string_view{medium->density_field} : std::string_view{}) << 16u)
-                    | (vertex_sampled(medium ? std::string_view{medium->temperature_field} : std::string_view{}) << 17u)
-                    | (vertex_sampled(medium ? std::string_view{medium->emission_scale_field} : std::string_view{}) << 18u)
-                    | (vertex_sampled(medium ? std::string_view{medium->sigma_a_field} : std::string_view{}) << 19u)
-                    | (vertex_sampled(medium ? std::string_view{medium->sigma_s_field} : std::string_view{}) << 20u)
-                    | (vertex_sampled(medium ? std::string_view{medium->emission_field} : std::string_view{}) << 21u);
+                const std::uint32_t field_flags = (rgb ? (rendering.sigma_a_field.empty() ? 0u : 1u) | (rendering.sigma_s_field.empty() ? 0u : 2u) | (rendering.emission_field.empty() ? 0u : 4u) | (std::to_underlying(rendering.field_color_space) << 8) : (!rendering.temperature_field.empty() ? 1u : 0u) | (!rendering.emission_scale_field.empty() ? 2u : 0u))
+                    | (vertex_sampled(rendering.density_field) << 16u)
+                    | (vertex_sampled(rendering.temperature_field) << 17u)
+                    | (vertex_sampled(rendering.emission_scale_field) << 18u)
+                    | (vertex_sampled(rendering.sigma_a_field) << 19u)
+                    | (vertex_sampled(rendering.sigma_s_field) << 20u)
+                    | (vertex_sampled(rendering.emission_field) << 21u);
                 record.procedural_parameters[3] = std::bit_cast<float>(field_flags);
             } else {
                 const scene::ProceduralCloudVolume& cloud = std::get<scene::ProceduralCloudVolume>(volume.data);
                 record.metadata                           = {2, 0, 0, 0};
                 record.procedural_parameters              = {cloud.density, cloud.wispiness, cloud.frequency, 0.0f};
             }
-            record.density              = field(medium ? std::string_view{medium->density_field} : std::string_view{});
-            record.temperature_field    = field(medium ? std::string_view{medium->temperature_field} : std::string_view{});
-            record.sigma_a_field        = field(medium ? std::string_view{medium->sigma_a_field} : std::string_view{});
-            record.sigma_s_field        = field(medium ? std::string_view{medium->sigma_s_field} : std::string_view{});
-            record.emission_scale_field = field(medium ? std::string_view{medium->emission_scale_field} : std::string_view{});
-            record.emission_field       = field(medium ? std::string_view{medium->emission_field} : std::string_view{});
+            record.density              = field(rendering.density_field);
+            record.temperature_field    = field(rendering.temperature_field);
+            record.sigma_a_field        = field(rendering.sigma_a_field);
+            record.sigma_s_field        = field(rendering.sigma_s_field);
+            record.emission_scale_field = field(rendering.emission_scale_field);
+            record.emission_field       = field(rendering.emission_field);
             raster_volumes.push_back(record);
         }
         const std::uint32_t volume_count = static_cast<std::uint32_t>(raster_volumes.size());

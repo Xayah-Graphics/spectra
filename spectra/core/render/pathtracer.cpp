@@ -166,7 +166,18 @@ namespace spectra {
             reset_required                    = true;
         }
         if (this->control.camera_revision != view.camera_revision) {
-            this->scene.camera            = view.camera;
+            this->scene.camera = view.camera;
+            if (view.camera.medium.value == 0)
+                this->scene.camera_medium_index = invalid_path_index;
+            else
+                this->scene.camera_medium_index = static_cast<std::uint32_t>(std::ranges::find(scene_view.resources.media, view.camera.medium, &scene::Medium::id) - scene_view.resources.media.begin());
+            const math::Float3 camera_position = view.camera.frame().position;
+            for (std::uint32_t volume_index = 0; volume_index != scene_view.resources.volumes.size(); ++volume_index) {
+                const scene::Volume& volume = scene_view.resources.volumes[volume_index];
+                if (!volume.visible) continue;
+                const math::Float3 local = volume.transform.inverse().transform_point(camera_position);
+                if (local.x >= volume.domain.minimum.x && local.x <= volume.domain.maximum.x && local.y >= volume.domain.minimum.y && local.y <= volume.domain.maximum.y && local.z >= volume.domain.minimum.z && local.z <= volume.domain.maximum.z) this->scene.camera_medium_index = static_cast<std::uint32_t>(scene_view.resources.media.size()) + volume_index;
+            }
             this->control.camera_revision = view.camera_revision;
             reset_required                = true;
         }
@@ -546,20 +557,13 @@ namespace spectra {
                 this->compile_scene(scene, command_buffer);
                 return;
             }
-            const scene::VolumeMedium* medium{};
-            for (const scene::Medium& candidate : scene.resources.media) {
-                const scene::VolumeMedium* candidate_volume = std::get_if<scene::VolumeMedium>(&candidate.data);
-                if (candidate_volume && candidate_volume->volume == volume.id) {
-                    medium = candidate_volume;
-                    break;
-                }
-            }
-            if (medium && medium->density_field.empty() && (!medium->sigma_a_field.empty() || !medium->sigma_s_field.empty() || !medium->emission_field.empty())) {
+            const scene::VolumeRendering& rendering = volume.rendering;
+            if (rendering.density_field.empty() && (!rendering.sigma_a_field.empty() || !rendering.sigma_s_field.empty() || !rendering.emission_field.empty())) {
                 majorant_mode = 1;
-                if (!medium->sigma_a_field.empty()) sigma_a_descriptor = descriptor(medium->sigma_a_field), majorant_flags |= 1u;
-                if (!medium->sigma_s_field.empty()) sigma_s_descriptor = descriptor(medium->sigma_s_field), majorant_flags |= 2u;
+                if (!rendering.sigma_a_field.empty()) sigma_a_descriptor = descriptor(rendering.sigma_a_field), majorant_flags |= 1u;
+                if (!rendering.sigma_s_field.empty()) sigma_s_descriptor = descriptor(rendering.sigma_s_field), majorant_flags |= 2u;
             } else
-                density_descriptor = descriptor(medium ? std::string_view{medium->density_field} : std::string_view{});
+                density_descriptor = descriptor(rendering.density_field);
             const scene::VolumeRegion dirty_region = shared.revision.content == gpu_data.revision.content + 1u ? *shared.dirty_region : scene::VolumeRegion{{}, resolution};
             const scene::VolumeRegion expanded{
                 {
@@ -721,17 +725,10 @@ namespace spectra {
                 for (const scene::Instance& instance : scene.resources.instances) this->scene.compiled_instance_transforms.push_back(instance.transform);
             }
         }
-        if (!compiled && (scene.revision.changes & scene::SceneChange::Volume) != scene::SceneChange::None) this->update_volumes(scene, command_buffer);
+        if (!compiled && (scene.revision.changes & scene::SceneChange::Volume) != scene::SceneChange::None) this->compile_scene(scene, command_buffer);
         if ((scene.revision.changes & scene::SceneChange::Film) != scene::SceneChange::None) this->compile_filter(scene.film, command_buffer);
         if ((scene.revision.changes & scene::SceneChange::Sampler) != scene::SceneChange::None) this->compile_sampler(scene.sampler, command_buffer);
         if ((scene.revision.changes & scene::SceneChange::Transport) != scene::SceneChange::None) this->scene.transport_settings = scene.transport;
-        if ((scene.revision.changes & scene::SceneChange::Camera) != scene::SceneChange::None) {
-            this->scene.camera = scene.camera;
-            if (scene.camera.medium.value == 0)
-                this->scene.camera_medium_index = invalid_path_index;
-            else
-                this->scene.camera_medium_index = static_cast<std::uint32_t>(std::ranges::find(scene.resources.media, scene.camera.medium, &scene::Medium::id) - scene.resources.media.begin());
-        }
         this->scene.compiled_revision = scene.revision;
     }
 

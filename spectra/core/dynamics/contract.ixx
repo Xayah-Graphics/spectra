@@ -55,7 +55,6 @@ namespace spectra::dynamics {
     export struct FieldDataset {
         math::UInt3 resolution{};
         std::vector<VolumeFieldDescriptor> fields{};
-        math::Transform local_from_grid{};
     };
 
     export struct ImageDataset {

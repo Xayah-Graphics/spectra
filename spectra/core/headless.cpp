@@ -53,10 +53,10 @@ namespace spectra {
         document.content.evaluated = document.content.source;
 
         DynamicsRuntime dynamics{runtime};
-        if (document.content.source.dynamic_setup) dynamics.initialize(request.scene_path, document.content.source);
+        if (document.content.source.dynamic_setup) dynamics.initialize(request.scene_path, document.content.source, document.content.evaluated);
 
         GpuScene gpu_scene{runtime, shader_directory};
-        gpu_scene.initialize(document.content.source, dynamics.mesh_bindings(), dynamics.sphere_set_bindings());
+        gpu_scene.initialize(document.content.evaluated, dynamics.mesh_bindings(), dynamics.sphere_set_bindings());
 
         const auto consume_dynamic_snapshot = [&]() {
             const FrameContext frame = runtime.frames.begin_frame();
