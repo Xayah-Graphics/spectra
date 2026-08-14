@@ -15,7 +15,7 @@ namespace spectra {
             linear_composition.emplace(display.linear_output(request.renderer_output));
         }
         display.record(command_buffer, linear_composition ? *linear_composition : request.renderer_output, request.exposure);
-        if (request.diagnostics) request.diagnostics->renderer.record(command_buffer, request.frame_slot_index, display, *request.depth, request.scene, request.camera, request.scene_camera_view, request.diagnostics->settings, request.diagnostics->selection);
+        if (request.diagnostics) request.diagnostics->renderer.record(command_buffer, request.frame_slot_index, display, *request.depth, request.scene, request.camera, request.scene_camera_view, request.diagnostics->scene_guides, request.diagnostics->selection_diagnostics, request.diagnostics->selection);
         if (display_visualizations) request.visualization->record(command_buffer, display.target(), *request.depth, request.scene, request.camera, request.visualizations, scene::VisualizationCompositionDomain::DisplayReferred);
     }
 } // namespace spectra

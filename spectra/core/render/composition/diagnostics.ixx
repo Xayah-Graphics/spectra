@@ -33,32 +33,33 @@ namespace spectra {
         std::optional<SceneEntityReference> hovered{};
     };
 
-    export struct SceneDiagnosticSettings {
-        bool enabled{true};
-        bool selected_bounds{true};
+    export struct SceneGuideSettings {
         bool all_bounds{};
-        bool pivots{};
-        bool geometry_edges{};
+        bool cameras{};
+        bool lights{};
+    };
+
+    export struct SelectionDiagnosticSettings {
+        bool bounds{true};
+        bool pivot{};
+        bool orientation{};
+        bool wireframe{};
         bool vertices{};
         bool normals{};
         bool tangents{};
-        bool orientation{};
-        bool cameras{};
+        bool camera_frustum{true};
         bool camera_focal_plane{};
         bool camera_lens{};
-        bool lights{};
-        bool area_emitters{};
-        bool volume_bounds{};
+        bool light_guide{true};
+        bool area_emitter{};
+        bool medium_boundary{};
         bool volume_grid{};
-        bool medium_boundaries{};
         scene::VisualizationDepthMode depth_mode{scene::VisualizationDepthMode::Tested};
         float line_width{1.5f};
         float point_size{5.0f};
-        float normal_scale{0.1f};
+        float vector_scale{0.1f};
         std::uint32_t attribute_sampling{1};
         std::uint32_t volume_grid_sampling{8};
-
-        friend auto operator<=>(const SceneDiagnosticSettings&, const SceneDiagnosticSettings&) = default;
     };
 
     export struct SceneDiagnosticRenderer {
@@ -71,7 +72,7 @@ namespace spectra {
         SceneDiagnosticRenderer& operator=(SceneDiagnosticRenderer&&)      = delete;
 
         void initialize();
-        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, scene::SceneView scene, const scene::Camera& camera, std::optional<scene::CameraId> scene_camera_view, const SceneDiagnosticSettings& settings, const SelectionState& selection);
+        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, scene::SceneView scene, const scene::Camera& camera, std::optional<scene::CameraId> scene_camera_view, const SceneGuideSettings& scene_guides, const SelectionDiagnosticSettings& selection_diagnostics, const SelectionState& selection);
         [[nodiscard]] const GpuImage& pick_image() const noexcept;
         [[nodiscard]] std::optional<SceneEntityReference> pick_entity(std::uint32_t frame_slot_index, std::uint32_t pick_index) const noexcept;
 

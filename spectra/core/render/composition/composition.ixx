@@ -12,7 +12,8 @@ import vulkan;
 namespace spectra {
     export struct SceneDiagnosticsComposition {
         SceneDiagnosticRenderer& renderer;
-        const SceneDiagnosticSettings& settings;
+        const SceneGuideSettings& scene_guides;
+        const SelectionDiagnosticSettings& selection_diagnostics;
         const SelectionState& selection;
     };
 

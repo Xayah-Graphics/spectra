@@ -143,7 +143,7 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
         const float4 second_value = float4(second_local, 1.0);
         const float3 first = float3(dot(transform_row_0, first_value), dot(transform_row_1, first_value), dot(transform_row_2, first_value));
         const float3 second = float3(dot(transform_row_0, second_value), dot(transform_row_1, second_value), dot(transform_row_2, second_value));
-        return make_line(first, second, push_data.parameters.x, color, metadata.z, metadata.w, vertex_id % 6);
+        return make_line(first, second, boxes.Load<float>(offset + 76), color, metadata.z, metadata.w, vertex_id % 6);
     }
     ByteAddressBuffer primary = push_data.primary;
     ByteAddressBuffer secondary = push_data.secondary;

@@ -43,7 +43,6 @@ namespace spectra {
 
         struct {
             SelectionState selection{};
-            bool overlays_visible{true};
             scene::Camera camera{};
             math::Float3 focus{};
             math::Float3 navigation_up{0.0f, 1.0f, 0.0f};

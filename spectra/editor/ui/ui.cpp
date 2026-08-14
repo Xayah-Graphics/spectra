@@ -10,16 +10,11 @@ import std;
 
 namespace spectra {
     namespace {
-        constexpr float top_strip_height       = 36.0f;
-        constexpr float transform_tools_left   = 10.0f;
-        constexpr float transform_tools_width  = 48.0f;
-        constexpr float transform_tools_height = 136.0f;
-        constexpr float floating_panel_top     = 52.0f;
-        constexpr float floating_panel_right   = 12.0f;
-        constexpr float floating_panel_width   = 320.0f;
-        constexpr float transform_hud_height   = 250.0f;
-        constexpr float inspector_gap          = 12.0f;
-        constexpr float inspector_bottom       = 12.0f;
+        constexpr float top_strip_height    = 36.0f;
+        constexpr float panel_top           = 52.0f;
+        constexpr float panel_margin        = 12.0f;
+        constexpr float panel_minimum_width = 280.0f;
+        constexpr float panel_maximum_width = 320.0f;
 
         enum class Icon : std::uint8_t {
             Translate,
@@ -43,12 +38,24 @@ namespace spectra {
             float vertical_offset{};
         };
 
-        void draw_floating_surface(ImDrawList& draw_list, const ImVec2 minimum, const ImVec2 maximum, const float rounding, const float alpha = 0.94f) {
-            draw_list.PushClipRectFullScreen();
-            draw_list.AddRectFilled(ImVec2{minimum.x + 3.0f, minimum.y + 4.0f}, ImVec2{maximum.x + 4.0f, maximum.y + 5.0f}, ImGui::GetColorU32(ImVec4{0.0f, 0.0f, 0.0f, 0.28f}), rounding + 2.0f);
-            draw_list.AddRectFilled(minimum, maximum, ImGui::GetColorU32(ImVec4{0.025f, 0.035f, 0.045f, alpha}), rounding);
-            draw_list.AddRect(minimum, maximum, ImGui::GetColorU32(ImVec4{0.40f, 0.49f, 0.57f, 0.24f}), rounding, ImDrawFlags_None, 1.0f);
-            draw_list.PopClipRect();
+        void push_panel_style() {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {12.0f, 10.0f});
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {6.0f, 6.0f});
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 5.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 2.5f);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, {0.02f, 0.028f, 0.038f, 0.22f});
+            ImGui::PushStyleColor(ImGuiCol_Border, {0.55f, 0.65f, 0.72f, 0.14f});
+            ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, {0.0f, 0.0f, 0.0f, 0.0f});
+            ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, {0.52f, 0.62f, 0.70f, 0.20f});
+            ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, {0.52f, 0.62f, 0.70f, 0.30f});
+            ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, {0.52f, 0.62f, 0.70f, 0.40f});
+        }
+
+        void pop_panel_style() {
+            ImGui::PopStyleColor(6);
+            ImGui::PopStyleVar(6);
         }
 
         [[nodiscard]] std::array<float, 16> column_major(const std::array<float, 16>& row_major) noexcept {
@@ -215,7 +222,7 @@ namespace spectra {
         }
     } // namespace
 
-    EditorUi::EditorUi(SceneDocument& document, SceneDiagnosticSettings& diagnostic_settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, ImGuiBackend& imgui) noexcept : context{document, diagnostic_settings, dynamics, render_engine, viewport, picker, imgui} {}
+    EditorUi::EditorUi(SceneDocument& document, EditorViewportSettings& settings, DynamicsRuntime& dynamics, RenderEngine& render_engine, ViewportInteraction& viewport, ViewportPicker& picker, ImGuiBackend& imgui) noexcept : context{document, settings, dynamics, render_engine, viewport, picker, imgui} {}
 
     void EditorUi::notify(std::string message, const bool error) {
         this->controls.status       = std::move(message);
@@ -231,7 +238,7 @@ namespace spectra {
         const float aspect            = size.x / size.y;
         const ImGuiIO& io             = ImGui::GetIO();
         if (!this->context.document.content.loaded) {
-            this->controls.inspector_open = false;
+            this->controls.global_panel_open = false;
             this->controls.parameter_drafts.clear();
             this->controls.reset_pending = false;
             this->controls.recreate_pending = false;
@@ -242,18 +249,16 @@ namespace spectra {
         }
         actions.show_axes                  = ImGui::IsKeyDown(ImGuiKey_G) && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper && !io.WantTextInput;
         const SceneEntityReference* entity = active_entity(*this);
-        const bool transform_visible       = entity && entity_transform(this->context.document.content.source, *entity).has_value();
         const bool editable                = entity && transform_editable(*this, *entity);
 
+        this->synchronize_dynamic_controls();
         this->synchronize_transform();
         this->handle_shortcuts(actions, aspect, true);
-        this->draw_viewport(position, size, actions.show_axes, editable);
+        const ViewportLayout layout = this->make_layout(position, size);
+        this->draw_viewport(layout, actions.show_axes, editable);
         this->draw_top_strip(position, size, actions);
-        if (transform_visible) {
-            this->draw_transform_tools(position, size, editable);
-            this->draw_transform_hud(position, size, editable);
-        }
-        if (this->controls.inspector_open) this->draw_inspector(position, size);
+        if (layout.selection_panel.visible) this->draw_selection_panel(layout.selection_panel, editable);
+        if (layout.global_panel.visible) this->draw_global_panel(layout.global_panel, actions);
         actions.rebuild_dynamic_rendering = std::exchange(this->controls.rebuild_dynamic_rendering, false);
         this->draw_status_toast(position, size);
         return actions;
@@ -277,20 +282,56 @@ namespace spectra {
         }
     }
 
-    bool EditorUi::pointer_over_interface(const ImVec2 position, const ImVec2 size, const bool show_axes) const noexcept {
+    EditorUi::ViewportLayout EditorUi::make_layout(const ImVec2 position, const ImVec2 size) const noexcept {
+        const bool selection_visible = active_entity(*this) != nullptr;
+        const float width             = std::clamp(size.x * 0.18f, panel_minimum_width, panel_maximum_width);
+        const float maximum_height    = size.y - panel_top - panel_margin;
+        return {
+            .position = position,
+            .size     = size,
+            .global_panel{
+                .position       = {position.x + panel_margin, position.y + panel_top},
+                .size           = {width, std::min(this->controls.global_panel_height, maximum_height)},
+                .maximum_height = maximum_height,
+                .visible        = this->controls.global_panel_open,
+            },
+            .selection_panel{
+                .position       = {position.x + size.x - panel_margin - width, position.y + panel_top},
+                .size           = {width, std::min(this->controls.selection_panel_height, maximum_height)},
+                .maximum_height = maximum_height,
+                .visible        = selection_visible,
+            },
+        };
+    }
+
+    bool EditorUi::pointer_over_interface(const ViewportLayout& layout, const bool show_axes) const noexcept {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
-        if (mouse.y <= position.y + top_strip_height + 5.0f) return true;
-        if (show_axes && mouse.x >= position.x + size.x - 116.0f && mouse.y <= position.y + 126.0f) return true;
-        const SceneEntityReference* entity = active_entity(*this);
-        const bool transform_visible       = entity && entity_transform(this->context.document.content.source, *entity).has_value();
-        if (transform_visible) {
-            const float tools_top = position.y + size.y * 0.5f - transform_tools_height * 0.5f;
-            if (mouse.x >= position.x + transform_tools_left && mouse.x <= position.x + transform_tools_left + transform_tools_width && mouse.y >= tools_top && mouse.y <= tools_top + transform_tools_height) return true;
-            if (mouse.x >= position.x + size.x - floating_panel_right - floating_panel_width && mouse.x <= position.x + size.x - floating_panel_right && mouse.y >= position.y + floating_panel_top && mouse.y <= position.y + floating_panel_top + transform_hud_height) return true;
-        }
-        const float inspector_top = transform_visible ? floating_panel_top + transform_hud_height + inspector_gap : floating_panel_top;
-        if (this->controls.inspector_open && mouse.x >= position.x + size.x - floating_panel_right - floating_panel_width && mouse.x <= position.x + size.x - floating_panel_right && mouse.y >= position.y + inspector_top && mouse.y <= position.y + size.y - inspector_bottom) return true;
+        if (mouse.y <= layout.position.y + top_strip_height + 5.0f) return true;
+        if (show_axes && mouse.x >= layout.position.x + layout.size.x - 116.0f && mouse.y <= layout.position.y + 126.0f) return true;
+        const auto contains = [mouse](const PanelRect& panel) { return panel.visible && mouse.x >= panel.position.x && mouse.x <= panel.position.x + panel.size.x && mouse.y >= panel.position.y && mouse.y <= panel.position.y + panel.size.y; };
+        if (contains(layout.global_panel) || contains(layout.selection_panel)) return true;
         return false;
+    }
+
+    void EditorUi::synchronize_dynamic_controls() {
+        if (this->controls.observed_dynamic_revision != this->context.document.content.source.revision().number && !ImGui::IsAnyItemActive()) {
+            this->controls.observed_dynamic_revision = this->context.document.content.source.revision().number;
+            this->controls.physics_sample_initialized = false;
+            this->controls.parameter_drafts.clear();
+            this->controls.reset_pending    = false;
+            this->controls.recreate_pending = false;
+        }
+        const std::optional<scene::DynamicSetup>& setup = this->context.document.content.source.dynamic_setup;
+        if (!setup) {
+            this->controls.selected_dynamic_system = 0;
+            return;
+        }
+        if (this->controls.selected_dynamic_system < setup->systems.size() && setup->systems[this->controls.selected_dynamic_system].enabled) return;
+        const auto first = std::ranges::find(setup->systems, true, &scene::DynamicSystem::enabled);
+        this->controls.selected_dynamic_system = first == setup->systems.end() ? 0 : static_cast<std::size_t>(first - setup->systems.begin());
+        this->controls.parameter_drafts.clear();
+        this->controls.reset_pending    = false;
+        this->controls.recreate_pending = false;
     }
 
     void EditorUi::synchronize_transform() {
@@ -359,9 +400,9 @@ namespace spectra {
             ImGui::SetNextItemWidth(component_width - 22.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{5.0f, 6.0f});
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.075f, 0.095f, 0.115f, 0.94f});
-            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.11f, 0.14f, 0.17f, 0.98f});
-            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.10f, 0.18f, 0.21f, 1.0f});
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.075f, 0.095f, 0.115f, 0.36f});
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.11f, 0.14f, 0.17f, 0.50f});
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.10f, 0.18f, 0.21f, 0.62f});
             const bool changed = ImGui::DragFloat("##Value", &value[component], speed, 0.0f, 0.0f, format);
             if (ImGui::IsItemActivated() && this->controls.transform_entity) this->controls.transform_drag_active = true;
             if (changed) {
@@ -378,9 +419,9 @@ namespace spectra {
         ImGui::PopID();
     }
 
-    void EditorUi::handle_shortcuts(EditorActions& actions, const float aspect, const bool inspector_available) {
+    void EditorUi::handle_shortcuts(EditorActions& actions, const float aspect, const bool global_panel_available) {
         ImGuiIO& io = ImGui::GetIO();
-        if (inspector_available && ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !io.WantTextInput) this->controls.inspector_open = !this->controls.inspector_open;
+        if (global_panel_available && ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !io.WantTextInput) this->controls.global_panel_open = !this->controls.global_panel_open;
         if (this->controls.wireframe_restore_mode && !ImGui::IsKeyDown(ImGuiKey_W)) {
             actions.raster_display_mode = *this->controls.wireframe_restore_mode;
             this->controls.wireframe_restore_mode.reset();
@@ -409,16 +450,16 @@ namespace spectra {
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) this->context.viewport.view_axis({1.0f, 0.0f, 0.0f}, aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) this->context.viewport.view_axis({0.0f, 1.0f, 0.0f}, aspect);
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) this->context.viewport.view.source = this->context.viewport.view.source == CameraSource::Scene ? CameraSource::Viewport : CameraSource::Scene;
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_B, false)) this->context.diagnostic_settings.selected_bounds = !this->context.diagnostic_settings.selected_bounds;
-        if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_B, false)) this->context.diagnostic_settings.all_bounds = !this->context.diagnostic_settings.all_bounds;
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_C, false)) this->context.diagnostic_settings.cameras = !this->context.diagnostic_settings.cameras;
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_L, false)) this->context.diagnostic_settings.lights = !this->context.diagnostic_settings.lights;
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_N, false)) this->context.diagnostic_settings.normals = !this->context.diagnostic_settings.normals;
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_T, false)) this->context.diagnostic_settings.tangents = !this->context.diagnostic_settings.tangents;
-        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
-            this->context.viewport.view.overlays_visible = !this->context.viewport.view.overlays_visible;
-            this->context.diagnostic_settings.enabled    = this->context.viewport.view.overlays_visible;
-        }
+        SceneGuideSettings& scene_guides                   = this->context.settings.scene_guides;
+        SelectionDiagnosticSettings& selection_diagnostics = this->context.settings.selection_diagnostics;
+        const SceneEntityReference* entity                 = active_entity(*this);
+        if (entity && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_B, false)) selection_diagnostics.bounds = !selection_diagnostics.bounds;
+        if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_B, false)) scene_guides.all_bounds = !scene_guides.all_bounds;
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_C, false)) scene_guides.cameras = !scene_guides.cameras;
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_L, false)) scene_guides.lights = !scene_guides.lights;
+        if (entity && entity->kind == SceneEntityKind::Instance && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_N, false)) selection_diagnostics.normals = !selection_diagnostics.normals;
+        if (entity && entity->kind == SceneEntityKind::Instance && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_T, false)) selection_diagnostics.tangents = !selection_diagnostics.tangents;
+        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) this->context.settings.guides_visible = !this->context.settings.guides_visible;
         if (this->context.dynamics.initialized() && !this->context.dynamics.faulted() && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
             try {
                 if (this->context.dynamics.running())
@@ -538,7 +579,9 @@ namespace spectra {
             this->context.picker.submit_pick(x, y, false, false);
     }
 
-    void EditorUi::draw_viewport(const ImVec2 position, const ImVec2 size, const bool show_axes, const bool transform_editable) {
+    void EditorUi::draw_viewport(const ViewportLayout& layout, const bool show_axes, const bool transform_editable) {
+        const ImVec2 position = layout.position;
+        const ImVec2 size     = layout.size;
         ImGui::SetNextWindowPos(position);
         ImGui::SetNextWindowSize(size);
         ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
@@ -549,9 +592,10 @@ namespace spectra {
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         draw_list->AddImage(static_cast<ImTextureID>(this->context.imgui.viewport_texture_id), position, ImVec2{position.x + size.x, position.y + size.y});
         ImGui::PushClipRect(position, ImVec2{position.x + size.x, position.y + size.y}, true);
-        const bool blocked = this->pointer_over_interface(position, size, show_axes);
+        const bool blocked = this->pointer_over_interface(layout, show_axes);
         this->draw_gizmo(position, size, blocked, transform_editable);
         this->draw_orientation(position, size, show_axes);
+        this->draw_viewport_hud(layout, *draw_list);
         this->handle_viewport_input(position, size, blocked);
         ImGui::PopClipRect();
         ImGui::SetCursorScreenPos(ImVec2{position.x, position.y + size.y});
@@ -560,9 +604,243 @@ namespace spectra {
         ImGui::PopStyleVar(2);
     }
 
-    float EditorUi::draw_render_status(const float right_edge, const std::optional<RenderProgress>& render_progress, const std::optional<PathTracerPreparationProgress>& pathtracer_preparation) {
+    void EditorUi::draw_viewport_hud(const ViewportLayout& layout, ImDrawList& draw_list) {
+        if (!this->context.settings.hud_visible) return;
+        const float viewport_left  = layout.position.x + panel_margin;
+        const float viewport_right = layout.position.x + layout.size.x - panel_margin;
+        const float status_left    = layout.global_panel.visible ? layout.global_panel.position.x + layout.global_panel.size.x + panel_margin : viewport_left;
+        const float status_right   = layout.selection_panel.visible ? layout.selection_panel.position.x - panel_margin : viewport_right;
+        const float top            = layout.position.y + panel_top;
+        const float bottom         = layout.position.y + layout.size.y - panel_margin;
+        draw_list.PushClipRect({viewport_left, top}, {viewport_right, bottom}, true);
+        draw_list.PushClipRect({status_left, top}, {status_right, bottom}, true);
+        const float line_height = ImGui::GetTextLineHeight() + 3.0f;
+        const ImU32 primary     = ImGui::GetColorU32({0.92f, 0.95f, 0.98f, 0.96f});
+        const ImU32 secondary   = ImGui::GetColorU32({0.72f, 0.78f, 0.84f, 0.84f});
+        const ImU32 heading     = ImGui::GetColorU32({0.28f, 0.79f, 0.90f, 0.92f});
+        const ImU32 shadow      = ImGui::GetColorU32({0.0f, 0.0f, 0.0f, 0.88f});
+        const auto add_text = [&draw_list, shadow](const ImVec2 position, const ImU32 color, const std::string_view value) {
+            draw_list.AddText({position.x + 1.0f, position.y + 1.0f}, shadow, value.data(), value.data() + value.size());
+            draw_list.AddText(position, color, value.data(), value.data() + value.size());
+        };
+        float y = top;
+        const auto add_line = [&add_text, &y, line_height, status_left](const std::string_view value, const ImU32 color) {
+            add_text({status_left, y}, color, value);
+            y += line_height;
+        };
+        const auto add_section = [&add_line, &y, line_height, heading, top](const std::string_view value) {
+            if (y != top) y += line_height * 0.35f;
+            add_line(value, heading);
+        };
+        const SceneEntityReference* entity                             = active_entity(*this);
+        const bool dynamic                                             = this->context.dynamics.initialized();
+        const std::optional<RenderProgress> render_progress            = this->context.render_engine.progress();
+        const std::optional<PathTracerPreparationProgress> preparation = this->context.render_engine.pathtracer_preparation();
+        const float frames_per_second                                  = ImGui::GetIO().Framerate;
+        const auto viewport_extent                                     = this->context.imgui.viewport_extent;
+
+        add_line(std::format("Render {:.1f} FPS  ·  {:.2f} ms  ·  {} × {}", frames_per_second, 1000.0f / frames_per_second, viewport_extent.width, viewport_extent.height), primary);
+
+        if (dynamic) {
+            const dynamics::SimulationTimeline timeline = this->context.dynamics.timeline();
+            const auto physics_sample_time              = std::chrono::steady_clock::now();
+            const bool physics_running                  = this->context.dynamics.running() && !this->context.dynamics.faulted();
+            if (!physics_running || !this->controls.physics_sample_initialized || timeline.step < this->controls.physics_sample_step) {
+                this->controls.physics_sample_time        = physics_sample_time;
+                this->controls.physics_sample_step        = timeline.step;
+                this->controls.physics_frames_per_second  = 0.0f;
+                this->controls.physics_sample_initialized = true;
+            } else if (const double sample_seconds = std::chrono::duration<double>(physics_sample_time - this->controls.physics_sample_time).count(); sample_seconds >= 0.5) {
+                this->controls.physics_frames_per_second = static_cast<float>(static_cast<double>(timeline.step - this->controls.physics_sample_step) / sample_seconds);
+                this->controls.physics_sample_time       = physics_sample_time;
+                this->controls.physics_sample_step       = timeline.step;
+            }
+            add_section("SIMULATION");
+            const char* state = this->context.dynamics.faulted() ? "STOPPED" : this->context.dynamics.running() ? "PLAYING" : "PAUSED";
+            add_line(std::format("Physics {:.1f} FPS", this->controls.physics_frames_per_second), primary);
+            add_line(std::format("Step {}  ·  {:.3f} s  ·  {}", timeline.step, timeline.seconds, state), this->context.dynamics.faulted() ? ImGui::GetColorU32({0.96f, 0.38f, 0.33f, 1.0f}) : this->context.dynamics.running() ? ImGui::GetColorU32({0.35f, 0.84f, 0.55f, 1.0f}) : secondary);
+        } else
+            this->controls.physics_sample_initialized = false;
+        if (render_progress) {
+            add_section("PATH TRACER");
+            add_line(std::format("{} / {} spp{}", render_progress->completed, render_progress->target, render_progress->paused ? "  ·  PAUSED" : ""), primary);
+        }
+        if (preparation) {
+            const char* stage{};
+            switch (preparation->stage) {
+            case PathTracerPreparationStage::LoadingShaders: stage = "Loading shaders"; break;
+            case PathTracerPreparationStage::CreatingRayTracingModules: stage = "Creating ray tracing modules"; break;
+            case PathTracerPreparationStage::CompilingRayTracingPipeline: stage = "Compiling ray tracing pipeline"; break;
+            case PathTracerPreparationStage::CreatingComputeShaders: stage = "Creating compute shaders"; break;
+            case PathTracerPreparationStage::CreatingShaderBindingTable: stage = "Creating shader binding table"; break;
+            case PathTracerPreparationStage::CompilingSampler: stage = "Compiling sampler"; break;
+            case PathTracerPreparationStage::CompilingFilter: stage = "Compiling filter"; break;
+            case PathTracerPreparationStage::CompilingTextures: stage = "Compiling textures"; break;
+            case PathTracerPreparationStage::CompilingMaterials: stage = "Compiling materials"; break;
+            case PathTracerPreparationStage::CompilingMedia: stage = "Compiling media"; break;
+            case PathTracerPreparationStage::CompilingLights: stage = "Compiling lights"; break;
+            case PathTracerPreparationStage::CompilingGeometry: stage = "Compiling geometry"; break;
+            case PathTracerPreparationStage::BuildingLightBvh: stage = "Building light BVH"; break;
+            case PathTracerPreparationStage::AssemblingScene: stage = "Assembling scene"; break;
+            case PathTracerPreparationStage::UploadingScene: stage = "Uploading scene"; break;
+            case PathTracerPreparationStage::AllocatingRenderSession: stage = "Allocating render session"; break;
+            case PathTracerPreparationStage::Ready: stage = "Ready"; break;
+            }
+            add_section("PATH TRACER PREPARATION");
+            if (preparation->total == 0)
+                add_line(std::format("{}  ·  {:.1f} s", stage, std::chrono::duration<float>(std::chrono::steady_clock::now() - preparation->started).count()), primary);
+            else
+                add_line(std::format("{}  ·  {} / {}", stage, preparation->completed, preparation->total), primary);
+        }
+        if (entity) {
+            add_section("SELECTION");
+            const scene::Scene& scene = this->context.document.content.source;
+            add_line(std::format("{}  ·  {} {}", entity_name(scene, *entity), entity_kind_name(*entity), entity->id), primary);
+            if (this->context.viewport.view.selection.selected.size() > 1) add_line(std::format("{} objects selected", this->context.viewport.view.selection.selected.size()), secondary);
+            if (entity->kind == SceneEntityKind::Instance) {
+                const scene::Instance& instance = *std::ranges::find(scene.resources.instances, scene::InstanceId{entity->id}, &scene::Instance::id);
+                add_line(std::format("Prototype {}  ·  {}", instance.prototype.value, instance.visible ? "Visible" : "Hidden"), secondary);
+            } else if (entity->kind == SceneEntityKind::Camera) {
+                const scene::Camera& camera = *std::ranges::find(scene.resources.cameras, scene::CameraId{entity->id}, &scene::Camera::id);
+                std::visit(
+                    [&add_line, primary, secondary](const auto& data) {
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) add_line(std::format("Perspective  ·  {:.2f} deg", data.vertical_fov), primary);
+                        else add_line("Orthographic", primary);
+                        add_line(std::format("Near {:.5g}  ·  Far {:.5g}", data.near_plane, data.far_plane), secondary);
+                        add_line(std::format("Focus {:.5g}  ·  Lens {:.5g}", data.focal_distance, data.lens_radius), secondary);
+                    },
+                    camera.data);
+            } else if (entity->kind == SceneEntityKind::Light || entity->kind == SceneEntityKind::AreaEmitter) {
+                const scene::Light& light = *std::ranges::find(scene.resources.lights, scene::LightId{entity->id}, &scene::Light::id);
+                std::visit(
+                    [&add_line, entity, primary](const auto& data) {
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight>) add_line(std::format("Point  ·  Scale {:.5g}", data.scale), primary);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) add_line(std::format("Spot  ·  {:.3g} / {:.3g} deg  ·  Scale {:.5g}", data.cone_angle - data.cone_delta, data.cone_angle, data.scale), primary);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>) add_line(std::format("Distant  ·  Scale {:.5g}", data.scale), primary);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiffuseAreaLight>) add_line(std::format("Diffuse Area  ·  {}  ·  Instance {}", data.sidedness == scene::EmissionSidedness::Both ? "two-sided" : "front", entity->owner), primary);
+                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::InfiniteLight>) add_line(std::format("Infinite  ·  Scale {:.5g}", data.scale), primary);
+                        else add_line(std::format("Portal Infinite  ·  {} portals  ·  Scale {:.5g}", data.portals.size(), data.environment.scale), primary);
+                    },
+                    light.data);
+            } else if (entity->kind == SceneEntityKind::Volume) {
+                const scene::Volume& volume = *std::ranges::find(scene.resources.volumes, scene::VolumeId{entity->id}, &scene::Volume::id);
+                if (const auto* grid = std::get_if<scene::GridVolume>(&volume.data)) {
+                    add_line(std::format("{} × {} × {}  ·  {} fields", grid->resolution.x, grid->resolution.y, grid->resolution.z, grid->fields.size()), primary);
+                    for (const scene::VolumeField& field : grid->fields) {
+                        const char* kind = field.kind == scene::VolumeFieldKind::Float ? "scalar" : field.kind == scene::VolumeFieldKind::Float3 ? "vector" : "MAC vector";
+                        add_line(std::format("{}  ·  {}{}{}", field.name, kind, field.unit.empty() ? "" : "  ·  ", field.unit), secondary);
+                    }
+                }
+            }
+        }
+        const float status_bottom = y;
+        draw_list.PopClipRect();
+
+        if (this->context.settings.telemetry_visible && dynamic) {
+            const std::optional<scene::DynamicSetup>& setup = this->context.document.content.source.dynamic_setup;
+            const scene::DynamicSystem& system              = setup->systems[this->controls.selected_dynamic_system];
+            const dynamics::ProviderDescriptor& provider    = this->context.dynamics.provider_descriptor(system.provider_id);
+            if (!provider.telemetry.empty() && bottom - status_bottom >= line_height * 3.0f) {
+                const dynamics::TelemetrySnapshot& telemetry = this->context.dynamics.telemetry(this->controls.selected_dynamic_system);
+                std::size_t row_count                        = 2;
+                std::string section{};
+                for (std::size_t index = 0; index < provider.telemetry.size(); ++index) {
+                    if (!telemetry.values[index]) continue;
+                    if (provider.telemetry[index].section_id != section) {
+                        section = provider.telemetry[index].section_id;
+                        ++row_count;
+                    }
+                    ++row_count;
+                }
+
+                constexpr float column_width = 370.0f;
+                const float telemetry_top     = status_bottom + line_height;
+                const std::size_t rows_per_column = std::max<std::size_t>(2, static_cast<std::size_t>((bottom - telemetry_top) / line_height));
+                const float content_height         = static_cast<float>(std::min(row_count, rows_per_column)) * line_height;
+                const float start_y                = bottom - content_height;
+                const float telemetry_left         = layout.global_panel.visible && layout.global_panel.position.y + layout.global_panel.size.y > start_y ? status_left : viewport_left;
+                const float telemetry_right        = layout.selection_panel.visible && layout.selection_panel.position.y + layout.selection_panel.size.y > start_y ? status_right : viewport_right;
+                float column_x                     = telemetry_left;
+                float telemetry_y                  = start_y;
+                std::size_t row                    = 0;
+                draw_list.PushClipRect({telemetry_left, telemetry_top}, {telemetry_right, bottom}, true);
+                const auto next_column = [&column_x, &telemetry_y, &row, start_y] {
+                    column_x += column_width;
+                    telemetry_y = start_y;
+                    row         = 0;
+                };
+                const auto add_telemetry_line = [&add_text, &column_x, &telemetry_y, &row, line_height](const std::string_view value, const ImU32 color) {
+                    add_text({column_x, telemetry_y}, color, value);
+                    telemetry_y += line_height;
+                    ++row;
+                };
+                const auto scalar_value = [](const dynamics::TelemetryValue& value) {
+                    if (value.kind == dynamics::TelemetryKind::Boolean || value.kind == dynamics::TelemetryKind::Integer) return static_cast<float>(value.integer);
+                    if (value.kind == dynamics::TelemetryKind::Float) return static_cast<float>(value.floating[0]);
+                    return static_cast<float>(std::sqrt(value.floating[0] * value.floating[0] + value.floating[1] * value.floating[1] + value.floating[2] * value.floating[2]));
+                };
+
+                add_telemetry_line("TELEMETRY", heading);
+                add_telemetry_line(system.name, primary);
+                section.clear();
+                for (std::size_t index = 0; index < provider.telemetry.size(); ++index) {
+                    if (!telemetry.values[index]) continue;
+                    const dynamics::TelemetryDescriptor& metric = provider.telemetry[index];
+                    if (metric.section_id != section) {
+                        section = metric.section_id;
+                        if (row + 2 > rows_per_column) next_column();
+                        add_telemetry_line(section, heading);
+                    } else if (row == rows_per_column) {
+                        next_column();
+                    }
+
+                    const dynamics::TelemetryValue& value = *telemetry.values[index];
+                    std::string formatted{};
+                    if (value.kind == dynamics::TelemetryKind::Boolean) formatted = value.integer == 0 ? "false" : "true";
+                    else if (value.kind == dynamics::TelemetryKind::Integer) formatted = std::to_string(value.integer);
+                    else if (value.kind == dynamics::TelemetryKind::Float) formatted = std::format("{:.6g}", value.floating[0]);
+                    else formatted = std::format("[{:+.4g}, {:+.4g}, {:+.4g}]", value.floating[0], value.floating[1], value.floating[2]);
+                    if (!metric.unit.empty()) formatted = std::format("{} {}", formatted, metric.unit);
+
+                    draw_list.PushClipRect({column_x, telemetry_y}, {column_x + 148.0f, telemetry_y + line_height}, true);
+                    add_text({column_x, telemetry_y}, secondary, metric.name);
+                    draw_list.PopClipRect();
+                    draw_list.PushClipRect({column_x + 152.0f, telemetry_y}, {column_x + 262.0f, telemetry_y + line_height}, true);
+                    add_text({column_x + 152.0f, telemetry_y}, primary, formatted);
+                    draw_list.PopClipRect();
+
+                    if (metric.plot && telemetry.history.size() > 1) {
+                        const ImVec2 plot_minimum{column_x + 268.0f, telemetry_y + 2.0f};
+                        const ImVec2 plot_maximum{column_x + 364.0f, telemetry_y + line_height - 2.0f};
+                        float minimum = scalar_value(telemetry.history.front().values[index]);
+                        float maximum = minimum;
+                        for (const dynamics::TelemetrySample& sample : telemetry.history) {
+                            const float sample_value = scalar_value(sample.values[index]);
+                            minimum                  = std::min(minimum, sample_value);
+                            maximum                  = std::max(maximum, sample_value);
+                        }
+                        const float range = maximum == minimum ? 1.0f : maximum - minimum;
+                        draw_list.AddLine({plot_minimum.x, (plot_minimum.y + plot_maximum.y) * 0.5f}, {plot_maximum.x, (plot_minimum.y + plot_maximum.y) * 0.5f}, ImGui::GetColorU32({0.58f, 0.66f, 0.72f, 0.24f}));
+                        draw_list.PathClear();
+                        for (std::size_t sample_index = 0; sample_index < telemetry.history.size(); ++sample_index) {
+                            const float normalized_x = static_cast<float>(sample_index) / static_cast<float>(telemetry.history.size() - 1);
+                            const float normalized_y = (scalar_value(telemetry.history[sample_index].values[index]) - minimum) / range;
+                            draw_list.PathLineTo({std::lerp(plot_minimum.x, plot_maximum.x, normalized_x), std::lerp(plot_maximum.y, plot_minimum.y, normalized_y)});
+                        }
+                        draw_list.PathStroke(ImGui::GetColorU32({0.28f, 0.79f, 0.90f, 0.88f}), 0, 1.25f);
+                    }
+                    telemetry_y += line_height;
+                    ++row;
+                }
+                draw_list.PopClipRect();
+            }
+        }
+        draw_list.PopClipRect();
+    }
+
+    float EditorUi::draw_playback_controls(const float right_edge, const std::optional<RenderProgress>& render_progress) {
         const bool dynamic = this->context.dynamics.initialized();
-        if (!dynamic && !render_progress && !pathtracer_preparation) return right_edge;
+        if (!dynamic && !render_progress) return right_edge;
 
         const float spacing    = ImGui::GetStyle().ItemSpacing.x;
         const auto button_size = [](const char* label) {
@@ -570,51 +848,7 @@ namespace spectra {
             const ImVec2 padding   = ImGui::GetStyle().FramePadding;
             return ImVec2{text_size.x + padding.x * 2.0f, 27.0f};
         };
-        const auto draw_status_text = [](const std::string& text, const ImVec4 color = ImVec4{0.88f, 0.91f, 0.95f, 0.55f}) {
-            const ImVec2 minimum   = ImGui::GetCursorScreenPos();
-            const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
-            const ImVec2 text_position{minimum.x, minimum.y + (27.0f - text_size.y) * 0.5f};
-            ImGui::GetWindowDrawList()->AddText(ImVec2{text_position.x + 1.0f, text_position.y + 1.0f}, ImGui::GetColorU32(ImVec4{0.0f, 0.0f, 0.0f, 0.55f}), text.c_str());
-            ImGui::GetWindowDrawList()->AddText(text_position, ImGui::GetColorU32(color), text.c_str());
-            ImGui::Dummy(ImVec2{text_size.x, 27.0f});
-        };
-        const auto preparation_status = [](const PathTracerPreparationProgress& progress) {
-            const char* stage{};
-            switch (progress.stage) {
-            case PathTracerPreparationStage::LoadingShaders: stage = "loading shaders"; break;
-            case PathTracerPreparationStage::CreatingRayTracingModules: stage = "creating RT shader modules"; break;
-            case PathTracerPreparationStage::CompilingRayTracingPipeline: stage = "compiling GPU RT pipeline"; break;
-            case PathTracerPreparationStage::CreatingComputeShaders: stage = "creating compute shaders"; break;
-            case PathTracerPreparationStage::CreatingShaderBindingTable: stage = "creating shader binding table"; break;
-            case PathTracerPreparationStage::CompilingSampler: stage = "compiling sampler"; break;
-            case PathTracerPreparationStage::CompilingFilter: stage = "compiling film filter"; break;
-            case PathTracerPreparationStage::CompilingTextures: stage = "compiling textures"; break;
-            case PathTracerPreparationStage::CompilingMaterials: stage = "compiling materials"; break;
-            case PathTracerPreparationStage::CompilingMedia: stage = "compiling media"; break;
-            case PathTracerPreparationStage::CompilingLights: stage = "compiling lights"; break;
-            case PathTracerPreparationStage::CompilingGeometry: stage = "compiling geometry"; break;
-            case PathTracerPreparationStage::BuildingLightBvh: stage = "building light BVH"; break;
-            case PathTracerPreparationStage::AssemblingScene: stage = "assembling scene"; break;
-            case PathTracerPreparationStage::UploadingScene: stage = "uploading scene"; break;
-            case PathTracerPreparationStage::AllocatingRenderSession: stage = "allocating render session"; break;
-            case PathTracerPreparationStage::Ready: stage = "ready"; break;
-            }
-            if (progress.total != 0) return std::format("Path Tracer · {} · {} / {}", stage, progress.completed, progress.total);
-            const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - progress.started).count();
-            return std::format("Path Tracer · {} · {:.1f} s", stage, seconds);
-        };
-
-        if (!dynamic && pathtracer_preparation) {
-            const std::string status = preparation_status(*pathtracer_preparation);
-            const float status_start = right_edge - ImGui::CalcTextSize(status.c_str()).x - 8.0f;
-            ImGui::SameLine(status_start);
-            draw_status_text(status);
-            return status_start;
-        }
-
-        const dynamics::SimulationTimeline timeline = dynamic ? this->context.dynamics.timeline() : dynamics::SimulationTimeline{};
         const bool simulation_faulted               = dynamic && this->context.dynamics.faulted();
-        const std::string status                    = dynamic ? std::format("step {}  ·  {:.3f} s{}{}", timeline.step, timeline.seconds, simulation_faulted ? "  ·  Provider stopped" : "", pathtracer_preparation ? std::format("  ·  {}", preparation_status(*pathtracer_preparation)) : std::string{}) : std::format("{} / {} spp", render_progress->completed, render_progress->target);
         const bool simulation_playing               = dynamic && this->context.dynamics.running();
         const char* playback_label                  = dynamic ? simulation_playing ? "Pause" : "Play" : render_progress->paused ? "Resume" : "Pause";
         const char* secondary_label                 = dynamic ? "Step" : "Reset";
@@ -623,9 +857,9 @@ namespace spectra {
         playback_size.x                             = std::max(button_size("Pause").x, button_size(dynamic ? "Play" : "Resume").x);
         const ImVec2 secondary_size                 = button_size(secondary_label);
         const ImVec2 reset_size                     = button_size(reset_label);
-        const float status_width                    = ImGui::CalcTextSize(status.c_str()).x + playback_size.x + secondary_size.x + (dynamic ? reset_size.x + spacing : 0.0f) + spacing * 2.0f;
-        const float status_start                    = right_edge - status_width - 8.0f;
-        ImGui::SameLine(status_start);
+        const float controls_width                  = playback_size.x + secondary_size.x + (dynamic ? reset_size.x + spacing : 0.0f) + spacing;
+        const float controls_start                  = right_edge - controls_width - 8.0f;
+        ImGui::SameLine(controls_start);
 
         if (dynamic) {
             ImGui::BeginDisabled(simulation_faulted);
@@ -660,16 +894,12 @@ namespace spectra {
             }
             ImGui::EndDisabled();
             ImGui::EndDisabled();
-            ImGui::SameLine();
-            draw_status_text(status);
         } else {
-            draw_status_text(status);
-            ImGui::SameLine();
             if (icon_button("##PathPlayback", playback_size, render_progress->paused ? Icon::Play : Icon::Pause, playback_label, render_progress->paused ? ImVec4{0.91f, 0.72f, 0.29f, 1.0f} : ImVec4{})) this->context.render_engine.set_paused(!render_progress->paused);
             ImGui::SameLine();
             if (icon_button("##PathReset", secondary_size, Icon::Reset, secondary_label)) this->context.render_engine.reset();
         }
-        return status_start;
+        return controls_start;
     }
 
     void EditorUi::draw_top_strip(const ImVec2 position, const ImVec2 size, EditorActions& actions) {
@@ -756,12 +986,12 @@ namespace spectra {
         constexpr float exposure_width = 84.0f;
         constexpr float edge_margin    = 4.0f;
         const float exposure_start     = right - edge_margin - exposure_width;
-        const float status_start       = this->draw_render_status(exposure_start, render_progress, pathtracer_preparation);
+        const float controls_start     = this->draw_playback_controls(exposure_start, render_progress);
         ImGui::SameLine(exposure_start);
         const FlatButtonInteraction exposure = flat_button("##Exposure", ImVec2{exposure_width, 27.0f});
-        if (exposure.active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) this->controls.exposure = std::clamp(this->controls.exposure + ImGui::GetIO().MouseDelta.x * 0.05f, -20.0f, 20.0f);
-        if (exposure.hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) this->controls.exposure = 0.0f;
-        const std::string exposure_text = std::format("{:+.2f} EV", this->controls.exposure);
+        if (exposure.active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) this->context.settings.exposure = std::clamp(this->context.settings.exposure + ImGui::GetIO().MouseDelta.x * 0.05f, -20.0f, 20.0f);
+        if (exposure.hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) this->context.settings.exposure = 0.0f;
+        const std::string exposure_text = std::format("{:+.2f} EV", this->context.settings.exposure);
         const ImVec2 exposure_text_size = ImGui::CalcTextSize(exposure_text.c_str());
         const ImVec2 exposure_text_position{
             exposure.minimum.x + (exposure_width - exposure_text_size.x) * 0.5f,
@@ -774,65 +1004,38 @@ namespace spectra {
         const float mode_client_start   = strip_offset_x + mode_start;
         const float mode_client_end     = mode_client_start + mode_width;
         const float right_drag_start    = mode_client_end + 4.0f;
-        const float status_client_start = strip_offset_x + status_start;
+        const float controls_client_start = strip_offset_x + controls_start;
         actions.window_drag_regions     = {{
             {left_drag_start, 0.0f, std::max(left_drag_start, mode_client_start - 4.0f), top_strip_height + 5.0f},
-            {right_drag_start, 0.0f, std::max(right_drag_start, status_client_start - 4.0f), top_strip_height + 5.0f},
+            {right_drag_start, 0.0f, std::max(right_drag_start, controls_client_start - 4.0f), top_strip_height + 5.0f},
         }};
         ImGui::End();
         ImGui::PopStyleVar(2);
     }
 
-    void EditorUi::draw_transform_tools(const ImVec2 position, const ImVec2 size, const bool transform_editable) {
-        ImGui::SetNextWindowPos(ImVec2{position.x + transform_tools_left, position.y + size.y * 0.5f - transform_tools_height * 0.5f});
-        ImGui::SetNextWindowSize(ImVec2{transform_tools_width, transform_tools_height});
-        ImGui::SetNextWindowBgAlpha(0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{6.0f, 7.0f});
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{0.0f, 4.0f});
-        constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNavFocus;
-        ImGui::Begin("##TransformTools", nullptr, flags);
-        draw_floating_surface(*ImGui::GetWindowDrawList(), ImGui::GetWindowPos(), ImVec2{ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), ImGui::GetWindowPos().y + ImGui::GetWindowHeight()}, 10.0f, 0.90f);
-        ImGui::BeginDisabled(!transform_editable);
-        const bool translating = this->controls.gizmo_operation == ImGuizmo::TRANSLATE;
-        const bool rotating    = this->controls.gizmo_operation == ImGuizmo::ROTATE;
-        const bool scaling     = this->controls.gizmo_operation == ImGuizmo::SCALE;
-        if (icon_button("##Translate", ImVec2{36.0f, 38.0f}, Icon::Translate, nullptr, translating ? ImVec4{0.16f, 0.72f, 0.84f, 1.0f} : ImVec4{}, translating, false, 0.55f)) this->controls.gizmo_operation = ImGuizmo::TRANSLATE;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
-        if (icon_button("##Rotate", ImVec2{36.0f, 38.0f}, Icon::Rotate, nullptr, rotating ? ImVec4{0.16f, 0.72f, 0.84f, 1.0f} : ImVec4{}, rotating, false, 0.55f)) this->controls.gizmo_operation = ImGuizmo::ROTATE;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
-        if (icon_button("##Scale", ImVec2{36.0f, 38.0f}, Icon::Scale, nullptr, scaling ? ImVec4{0.16f, 0.72f, 0.84f, 1.0f} : ImVec4{}, scaling, false, 0.55f)) this->controls.gizmo_operation = ImGuizmo::SCALE;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
-        ImGui::EndDisabled();
-        ImGui::End();
-        ImGui::PopStyleVar(2);
-    }
-
-    void EditorUi::draw_transform_hud(const ImVec2 position, const ImVec2 size, const bool transform_editable) {
+    void EditorUi::draw_selection_panel(const PanelRect& panel, const bool transform_editable) {
         const SceneEntityReference* entity = active_entity(*this);
-        if (!entity || !entity_transform(this->context.document.content.source, *entity)) return;
+        if (!entity) return;
+        const bool has_transform = entity_transform(this->context.document.content.source, *entity).has_value();
         const std::string& name = entity_name(this->context.document.content.source, *entity);
-        this->synchronize_transform();
-        ImGui::SetNextWindowPos(ImVec2{position.x + size.x - floating_panel_right - floating_panel_width, position.y + floating_panel_top});
-        ImGui::SetNextWindowSize(ImVec2{floating_panel_width, transform_hud_height});
-        ImGui::SetNextWindowBgAlpha(0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{14.0f, 12.0f});
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{6.0f, 6.0f});
-        constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNavFocus;
-        ImGui::Begin("##TransformHud", nullptr, flags);
+        if (has_transform) this->synchronize_transform();
+        ImGui::SetNextWindowPos(panel.position);
+        ImGui::SetNextWindowSizeConstraints({panel.size.x, 0.0f}, {panel.size.x, panel.maximum_height});
+        push_panel_style();
+        constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_AlwaysAutoResize;
+        ImGui::Begin("##SelectionPanel", nullptr, flags);
         ImDrawList* draw_list        = ImGui::GetWindowDrawList();
-        const ImVec2 window_position = ImGui::GetWindowPos();
-        draw_floating_surface(*draw_list, window_position, ImVec2{window_position.x + ImGui::GetWindowWidth(), window_position.y + ImGui::GetWindowHeight()}, 10.0f);
 
         const ImVec2 header_position = ImGui::GetCursorScreenPos();
         const float header_width     = ImGui::GetContentRegionAvail().x;
         constexpr float status_width = 88.0f;
-        const float name_right       = header_position.x + header_width - (transform_editable ? 0.0f : status_width + 8.0f);
+        const float name_right       = header_position.x + header_width - (has_transform && !transform_editable ? status_width + 8.0f : 0.0f);
         draw_list->PushClipRect(header_position, ImVec2{name_right, header_position.y + ImGui::GetTextLineHeight()}, true);
         draw_list->AddText(header_position, ImGui::GetColorU32(ImVec4{0.92f, 0.95f, 0.98f, 1.0f}), name.c_str());
         draw_list->PopClipRect();
         ImGui::Dummy(ImVec2{header_width, ImGui::GetTextLineHeight()});
-        ImGui::TextDisabled("%s", entity_kind_name(*entity));
-        if (!transform_editable) {
+        ImGui::TextDisabled("%s  ·  %llu", entity_kind_name(*entity), entity->id);
+        if (has_transform && !transform_editable) {
             const ImVec2 status_minimum{header_position.x + header_width - status_width, header_position.y - 2.0f};
             const ImVec2 status_maximum{status_minimum.x + status_width, status_minimum.y + 20.0f};
             draw_list->AddRectFilled(status_minimum, status_maximum, ImGui::GetColorU32(ImVec4{0.91f, 0.65f, 0.24f, 0.14f}), 10.0f);
@@ -844,237 +1047,259 @@ namespace spectra {
         const ImVec2 separator = ImGui::GetCursorScreenPos();
         draw_list->AddLine(ImVec2{separator.x, separator.y + 2.0f}, ImVec2{separator.x + header_width, separator.y + 2.0f}, ImGui::GetColorU32(ImVec4{0.40f, 0.49f, 0.57f, 0.22f}));
         ImGui::Dummy(ImVec2{header_width, 8.0f});
-        ImGui::BeginDisabled(!transform_editable);
-        this->transform_row("Position", "POSITION", this->controls.translation, 0.01f, "%.3f");
-        this->transform_row("Rotation", "ROTATION", this->controls.rotation, 0.1f, "%.1f\xc2\xb0");
-        this->transform_row("Scale", "SCALE", this->controls.scale, 0.01f, "%.3f");
-        ImGui::EndDisabled();
+        if (has_transform) {
+            ImGui::BeginDisabled(!transform_editable);
+            const bool translating = this->controls.gizmo_operation == ImGuizmo::TRANSLATE;
+            const bool rotating    = this->controls.gizmo_operation == ImGuizmo::ROTATE;
+            const bool scaling     = this->controls.gizmo_operation == ImGuizmo::SCALE;
+            if (icon_button("##Translate", ImVec2{38.0f, 34.0f}, Icon::Translate, nullptr, translating ? ImVec4{0.16f, 0.72f, 0.84f, 1.0f} : ImVec4{}, translating, false, 0.55f)) this->controls.gizmo_operation = ImGuizmo::TRANSLATE;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
+            ImGui::SameLine();
+            if (icon_button("##Rotate", ImVec2{38.0f, 34.0f}, Icon::Rotate, nullptr, rotating ? ImVec4{0.16f, 0.72f, 0.84f, 1.0f} : ImVec4{}, rotating, false, 0.55f)) this->controls.gizmo_operation = ImGuizmo::ROTATE;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
+            ImGui::SameLine();
+            if (icon_button("##Scale", ImVec2{38.0f, 34.0f}, Icon::Scale, nullptr, scaling ? ImVec4{0.16f, 0.72f, 0.84f, 1.0f} : ImVec4{}, scaling, false, 0.55f)) this->controls.gizmo_operation = ImGuizmo::SCALE;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
+            ImGui::Spacing();
+            this->transform_row("Position", "POSITION", this->controls.translation, 0.01f, "%.3f");
+            this->transform_row("Rotation", "ROTATION", this->controls.rotation, 0.1f, "%.1f\xc2\xb0");
+            this->transform_row("Scale", "SCALE", this->controls.scale, 0.01f, "%.3f");
+            ImGui::EndDisabled();
+        }
+        if (has_transform) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+        this->draw_selection_diagnostics(*entity);
+        this->controls.selection_panel_height = ImGui::GetWindowHeight();
         ImGui::End();
-        ImGui::PopStyleVar(2);
+        pop_panel_style();
     }
 
-    void EditorUi::draw_inspector(const ImVec2 position, const ImVec2 size) {
-        if (this->controls.observed_dynamic_revision != this->context.document.content.source.revision().number && !ImGui::IsAnyItemActive()) {
-            this->controls.observed_dynamic_revision = this->context.document.content.source.revision().number;
-            this->controls.parameter_drafts.clear();
-            this->controls.reset_pending = false;
-            this->controls.recreate_pending = false;
+    void EditorUi::draw_selection_diagnostics(const SceneEntityReference entity) {
+        const scene::Scene& source               = this->context.document.content.source;
+        SelectionDiagnosticSettings& diagnostics = this->context.settings.selection_diagnostics;
+        bool geometry{};
+        bool spheres{};
+        bool area_emitter{};
+        bool medium_boundary{};
+        std::vector<const scene::Volume*> volumes{};
+        if (entity.kind == SceneEntityKind::Volume)
+            volumes.push_back(&*std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id));
+        else if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) {
+            const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
+            const scene::Instance& instance   = *std::ranges::find(source.resources.instances, instance_id, &scene::Instance::id);
+            const scene::Prototype& prototype = *std::ranges::find(source.resources.prototypes, instance.prototype, &scene::Prototype::id);
+            for (const scene::Primitive& primitive : prototype.primitives) {
+                geometry        = geometry || primitive.geometry.value != 0;
+                spheres         = spheres || primitive.spheres.value != 0;
+                area_emitter    = area_emitter || primitive.area_light.value != 0;
+                medium_boundary = medium_boundary || primitive.media.inside.value != 0 || primitive.media.outside.value != 0;
+                for (const scene::MediumId medium_id : {primitive.media.inside, primitive.media.outside}) {
+                    if (medium_id.value == 0) continue;
+                    const scene::Medium& medium = *std::ranges::find(source.resources.media, medium_id, &scene::Medium::id);
+                    const auto* volume_medium   = std::get_if<scene::VolumeMedium>(&medium.data);
+                    if (!volume_medium) continue;
+                    const scene::Volume& volume = *std::ranges::find(source.resources.volumes, volume_medium->volume, &scene::Volume::id);
+                    if (!std::ranges::contains(volumes, &volume)) volumes.push_back(&volume);
+                }
+            }
         }
 
+        const bool transform_diagnostics = entity_transform(source, entity).has_value();
+        ImGui::TextDisabled("DIAGNOSTICS");
+        ImGui::BeginDisabled(!this->context.settings.guides_visible);
+        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Volume) ImGui::Checkbox("Bounds  B", &diagnostics.bounds);
+        if (transform_diagnostics) {
+            ImGui::Checkbox("Pivot", &diagnostics.pivot);
+            ImGui::Checkbox("Orientation", &diagnostics.orientation);
+        }
+        if (entity.kind == SceneEntityKind::Instance) {
+            if (geometry || spheres) ImGui::Checkbox(spheres && !geometry ? "Sphere wireframe" : "Wireframe", &diagnostics.wireframe);
+            if (geometry || spheres) ImGui::Checkbox(spheres && !geometry ? "Centers" : spheres ? "Vertices / centers" : "Vertices", &diagnostics.vertices);
+            if (geometry) {
+                ImGui::Checkbox("Normals  N", &diagnostics.normals);
+                ImGui::Checkbox("Tangents  T", &diagnostics.tangents);
+            }
+            if (area_emitter) ImGui::Checkbox("Area emitter", &diagnostics.area_emitter);
+            if (medium_boundary) ImGui::Checkbox("Medium boundary", &diagnostics.medium_boundary);
+        } else if (entity.kind == SceneEntityKind::AreaEmitter)
+            ImGui::Checkbox("Emitter surface", &diagnostics.area_emitter);
+        else if (entity.kind == SceneEntityKind::Camera) {
+            ImGui::Checkbox("Frustum", &diagnostics.camera_frustum);
+            ImGui::Checkbox("Focal plane", &diagnostics.camera_focal_plane);
+            ImGui::Checkbox("Lens", &diagnostics.camera_lens);
+        } else if (entity.kind == SceneEntityKind::Light)
+            ImGui::Checkbox("Light guide", &diagnostics.light_guide);
+        if (!volumes.empty()) ImGui::Checkbox("Volume grid", &diagnostics.volume_grid);
+
+        const bool instance_diagnostics    = entity.kind == SceneEntityKind::Instance;
+        const bool wireframe_diagnostics   = instance_diagnostics && (geometry || spheres) && diagnostics.wireframe;
+        const bool point_diagnostics       = instance_diagnostics && (geometry || spheres) && diagnostics.vertices;
+        const bool attribute_diagnostics   = instance_diagnostics && geometry && (diagnostics.normals || diagnostics.tangents);
+        const bool emitter_diagnostics     = (instance_diagnostics && area_emitter || entity.kind == SceneEntityKind::AreaEmitter) && diagnostics.area_emitter;
+        const bool boundary_diagnostics    = instance_diagnostics && medium_boundary && diagnostics.medium_boundary;
+        const bool grid_diagnostics        = !volumes.empty() && diagnostics.volume_grid;
+        const bool orientation_diagnostics = transform_diagnostics && (diagnostics.pivot || diagnostics.orientation);
+        const bool line_diagnostics        = wireframe_diagnostics || attribute_diagnostics || emitter_diagnostics || boundary_diagnostics || grid_diagnostics || orientation_diagnostics;
+        const bool styled                  = line_diagnostics || point_diagnostics;
+        if (styled) {
+            ImGui::Spacing();
+            constexpr const char* depth_modes[] = {"Tested", "X-Ray", "Overlay"};
+            int depth_mode                      = static_cast<int>(std::to_underlying(diagnostics.depth_mode));
+            if (ImGui::Combo("Depth", &depth_mode, depth_modes, 3)) diagnostics.depth_mode = static_cast<scene::VisualizationDepthMode>(depth_mode);
+            if (line_diagnostics) ImGui::DragFloat("Line width", &diagnostics.line_width, 0.1f, 0.25f, 8.0f, "%.2f px");
+            if (point_diagnostics) ImGui::DragFloat("Point size", &diagnostics.point_size, 0.25f, 1.0f, 32.0f, "%.2f px");
+            if (attribute_diagnostics) {
+                ImGui::DragFloat("Vector scale", &diagnostics.vector_scale, 0.01f, 0.001f, 100.0f, "%.4g");
+                constexpr std::uint32_t minimum_sampling = 1;
+                constexpr std::uint32_t maximum_sampling = 1024;
+                ImGui::DragScalar("Attribute sampling", ImGuiDataType_U32, &diagnostics.attribute_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
+            }
+            if (grid_diagnostics) {
+                constexpr std::uint32_t minimum_sampling = 1;
+                constexpr std::uint32_t maximum_sampling = 256;
+                ImGui::DragScalar("Grid sampling", ImGuiDataType_U32, &diagnostics.volume_grid_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
+            }
+        }
+        ImGui::EndDisabled();
+
+        for (const scene::Volume* volume : volumes) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            this->draw_volume_diagnostics(*volume);
+        }
+    }
+
+    void EditorUi::draw_volume_diagnostics(const scene::Volume& volume) {
+        ImGui::PushID(&volume);
+        ImGui::TextDisabled("VOLUME VISUALIZATION / %s", volume.name.c_str());
+        const auto* grid = std::get_if<scene::GridVolume>(&volume.data);
+        if (!grid || grid->fields.empty()) {
+            ImGui::TextDisabled("No diagnostic fields");
+            ImGui::PopID();
+            return;
+        }
+        scene::VolumeDiagnostics diagnostics = volume.diagnostics;
+        bool changed{};
+        std::vector<scene::VolumeField>::const_iterator selected_field = std::ranges::find(grid->fields, diagnostics.field_id, &scene::VolumeField::id);
+        if (selected_field == grid->fields.end()) selected_field = grid->fields.begin();
+        if (ImGui::BeginCombo("Field", selected_field->name.c_str())) {
+            for (std::size_t index = 0; index != grid->fields.size(); ++index) {
+                const scene::VolumeField& field = grid->fields[index];
+                ImGui::PushID(static_cast<int>(index));
+                if (ImGui::Selectable(field.name.c_str(), field.id == selected_field->id) && field.id != diagnostics.field_id) {
+                    diagnostics.field_id = field.id;
+                    diagnostics.mode     = scene::VolumeDiagnosticMode::Off;
+                    diagnostics.mapping  = field.kind == scene::VolumeFieldKind::Float ? scene::VolumeFieldMapping::Value : scene::VolumeFieldMapping::Magnitude;
+                    selected_field       = grid->fields.begin() + static_cast<std::ptrdiff_t>(index);
+                    changed              = true;
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+
+        const bool vector_field = selected_field->kind != scene::VolumeFieldKind::Float;
+        constexpr const char* modes[] = {"Off", "Slice", "Ray March", "Maximum Intensity", "Isosurface", "Glyphs", "Streamlines", "LIC"};
+        int mode = static_cast<int>(std::to_underlying(diagnostics.mode));
+        if (ImGui::Combo("Diagnostics", &mode, modes, vector_field ? 8 : 5)) {
+            diagnostics.mode = static_cast<scene::VolumeDiagnosticMode>(mode);
+            if (diagnostics.field_id.empty()) {
+                diagnostics.field_id = selected_field->id;
+                diagnostics.mapping  = vector_field ? scene::VolumeFieldMapping::Magnitude : scene::VolumeFieldMapping::Value;
+            }
+            changed = true;
+        }
+        if (diagnostics.mode != scene::VolumeDiagnosticMode::Off) {
+            constexpr const char* mappings[] = {"Value", "Magnitude", "X", "Y", "Z", "Divergence", "Curl Magnitude", "Q Criterion"};
+            constexpr const char* color_maps[] = {"Viridis", "Turbo", "Cool-Warm", "Grayscale"};
+            constexpr const char* depth_modes[] = {"Tested", "X-Ray", "Overlay"};
+            constexpr const char* axes[] = {"X", "Y", "Z"};
+            constexpr std::uint32_t minimum_steps = 1u;
+            constexpr std::uint32_t maximum_steps = 512u;
+            constexpr std::uint32_t minimum_sampling = 1u;
+            constexpr std::uint32_t maximum_sampling = 256u;
+            int mapping = static_cast<int>(std::to_underlying(diagnostics.mapping));
+            if (vector_field && ImGui::Combo("Mapping", &mapping, mappings, 8)) diagnostics.mapping = static_cast<scene::VolumeFieldMapping>(mapping), changed = true;
+            int color_map = static_cast<int>(std::to_underlying(diagnostics.color_map));
+            if (ImGui::Combo("Color map", &color_map, color_maps, 4)) diagnostics.color_map = static_cast<scene::VisualizationColorMap>(color_map), changed = true;
+            changed = ImGui::DragFloatRange2("Range", &diagnostics.minimum, &diagnostics.maximum, 0.01f, 0.0f, 0.0f, "%.5g", "%.5g") || changed;
+            changed = ImGui::ColorEdit4("Tint", &diagnostics.color.x, ImGuiColorEditFlags_Float) || changed;
+            if (diagnostics.mode == scene::VolumeDiagnosticMode::Slice || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) {
+                int axis = static_cast<int>(diagnostics.axis);
+                if (ImGui::Combo("Axis", &axis, axes, 3)) diagnostics.axis = static_cast<std::uint32_t>(axis), changed = true;
+                changed = ImGui::SliderFloat("Slice", &diagnostics.slice_position, 0.0f, 1.0f) || changed;
+            }
+            if (diagnostics.mode == scene::VolumeDiagnosticMode::RayMarch || diagnostics.mode == scene::VolumeDiagnosticMode::MaximumIntensityProjection || diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface || diagnostics.mode == scene::VolumeDiagnosticMode::Slice || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) changed = ImGui::DragFloat("Opacity", &diagnostics.opacity, 0.01f, 0.0f, 10.0f) || changed;
+            if (diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface) changed = ImGui::DragFloat("Threshold", &diagnostics.threshold, 0.01f) || changed;
+            if (diagnostics.mode == scene::VolumeDiagnosticMode::Glyphs || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines) {
+                changed = ImGui::DragFloat("Scale", &diagnostics.scale, 0.001f) || changed;
+                changed = ImGui::DragFloat("Width", &diagnostics.width, 0.1f, 0.25f, 8.0f, "%.2f px") || changed;
+            }
+            if (diagnostics.mode == scene::VolumeDiagnosticMode::RayMarch || diagnostics.mode == scene::VolumeDiagnosticMode::MaximumIntensityProjection || diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) changed = ImGui::DragScalar("Steps", ImGuiDataType_U32, &diagnostics.steps, 1.0f, &minimum_steps, &maximum_steps, "%u") || changed;
+            if (diagnostics.mode == scene::VolumeDiagnosticMode::Glyphs || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines) changed = ImGui::DragScalar("Seeds", ImGuiDataType_U32, &diagnostics.sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u") || changed;
+            int depth_mode = static_cast<int>(std::to_underlying(diagnostics.depth_mode));
+            if (ImGui::Combo("Depth", &depth_mode, depth_modes, 3)) diagnostics.depth_mode = static_cast<scene::VisualizationDepthMode>(depth_mode), changed = true;
+        }
+        if (changed) {
+            this->context.document.update_volume_diagnostics(this->context.document.content.source, volume.id, diagnostics);
+            this->context.document.update_volume_diagnostics(this->context.document.content.evaluated, volume.id, std::move(diagnostics));
+        }
+        ImGui::PopID();
+    }
+
+    void EditorUi::draw_view_settings(EditorActions& actions) {
+        ImGui::TextDisabled("HUD");
+        ImGui::Checkbox("Viewport HUD", &this->context.settings.hud_visible);
+        ImGui::BeginDisabled(!this->context.settings.hud_visible);
+        ImGui::Checkbox("Telemetry", &this->context.settings.telemetry_visible);
+        ImGui::EndDisabled();
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextDisabled("VIEWPORT");
+        int camera_source = static_cast<int>(this->context.viewport.view.source);
+        constexpr const char* camera_sources[] = {"Scene Camera", "Viewport Camera"};
+        if (ImGui::Combo("Camera", &camera_source, camera_sources, 2)) this->context.viewport.view.source = static_cast<CameraSource>(camera_source);
+        ImGui::Checkbox("Scene guides  Shift+G", &this->context.settings.guides_visible);
+        ImGui::BeginDisabled(!this->context.settings.guides_visible);
+        ImGui::Checkbox("Selection outline", &this->context.settings.selection_outline);
+        ImGui::Checkbox("All bounds  Shift+B", &this->context.settings.scene_guides.all_bounds);
+        ImGui::Checkbox("Cameras  C", &this->context.settings.scene_guides.cameras);
+        ImGui::Checkbox("Lights  L", &this->context.settings.scene_guides.lights);
+        ImGui::EndDisabled();
+        ImGui::Spacing();
+        ImGui::TextDisabled("RASTERIZER");
+        ImGui::BeginDisabled(this->context.render_engine.selected_descriptor() != rasterizer_descriptor);
+        int display_mode = static_cast<int>(this->context.render_engine.raster_display_mode());
+        constexpr const char* display_modes[] = {"Material", "Wireframe"};
+        if (ImGui::Combo("Display", &display_mode, display_modes, 2)) actions.raster_display_mode = static_cast<RasterDisplayMode>(display_mode);
+        ImGui::EndDisabled();
+    }
+
+    void EditorUi::draw_simulation_settings() {
         const scene::DynamicSetup* setup = this->context.document.content.source.dynamic_setup ? &*this->context.document.content.source.dynamic_setup : nullptr;
-        std::vector<std::size_t> parameter_systems{};
+        std::vector<std::size_t> dynamic_systems{};
         if (setup)
             for (std::size_t index = 0; index < setup->systems.size(); ++index) {
                 if (!setup->systems[index].enabled) continue;
-                const dynamics::ProviderDescriptor& provider = this->context.dynamics.provider_descriptor(setup->systems[index].provider_id);
-                if (!provider.parameters.empty() || !provider.telemetry.empty()) parameter_systems.emplace_back(index);
+                dynamic_systems.emplace_back(index);
             }
-        if (!parameter_systems.empty() && std::ranges::find(parameter_systems, this->controls.selected_dynamic_system) == parameter_systems.end()) this->controls.selected_dynamic_system = parameter_systems.front();
-
-        const SceneEntityReference* entity = active_entity(*this);
-        const bool transform_visible       = entity && entity_transform(this->context.document.content.source, *entity).has_value();
-        const float inspector_top          = transform_visible ? floating_panel_top + transform_hud_height + inspector_gap : floating_panel_top;
-        ImGui::SetNextWindowPos(ImVec2{position.x + size.x - floating_panel_right - floating_panel_width, position.y + inspector_top});
-        ImGui::SetNextWindowSize(ImVec2{floating_panel_width, size.y - inspector_top - inspector_bottom});
-        ImGui::SetNextWindowBgAlpha(0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 10.0f});
-        constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNavFocus;
-        ImGui::Begin("##Inspector", nullptr, flags);
-        const ImVec2 inspector_position = ImGui::GetWindowPos();
-        draw_floating_surface(*ImGui::GetWindowDrawList(), inspector_position, ImVec2{inspector_position.x + ImGui::GetWindowWidth(), inspector_position.y + ImGui::GetWindowHeight()}, 10.0f);
-        ImGui::TextUnformatted("Inspector");
-        ImGui::Separator();
-
-        if (entity) {
-            ImGui::TextDisabled("SCENE ENTITY");
-            ImGui::TextUnformatted(entity_name(this->context.document.content.source, *entity).c_str());
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s · %llu", entity_kind_name(*entity), entity->id);
-            if (entity->kind == SceneEntityKind::Camera) {
-                const scene::Camera& camera = *std::ranges::find(this->context.document.content.source.resources.cameras, scene::CameraId{entity->id}, &scene::Camera::id);
-                std::visit(
-                    [](const auto& data) {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>)
-                            ImGui::Text("Perspective · %.2f deg", data.vertical_fov);
-                        else
-                            ImGui::TextUnformatted("Orthographic");
-                        ImGui::TextDisabled("Near %.5g · Far %.5g", data.near_plane, data.far_plane);
-                        ImGui::TextDisabled("Focus %.5g · Lens %.5g", data.focal_distance, data.lens_radius);
-                    },
-                    camera.data);
-            } else if (entity->kind == SceneEntityKind::Light || entity->kind == SceneEntityKind::AreaEmitter) {
-                const scene::Light& light = *std::ranges::find(this->context.document.content.source.resources.lights, scene::LightId{entity->id}, &scene::Light::id);
-                std::visit(
-                    [entity](const auto& data) {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight>)
-                            ImGui::Text("Point · Scale %.5g", data.scale);
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>)
-                            ImGui::Text("Spot · %.3g / %.3g deg · Scale %.5g", data.cone_angle - data.cone_delta, data.cone_angle, data.scale);
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>)
-                            ImGui::Text("Distant · Scale %.5g", data.scale);
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DiffuseAreaLight>)
-                            ImGui::Text("Diffuse Area · %s · Instance %llu", data.sidedness == scene::EmissionSidedness::Both ? "two-sided" : "front", entity->owner);
-                        else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::InfiniteLight>)
-                            ImGui::Text("Infinite · Scale %.5g", data.scale);
-                        else
-                            ImGui::Text("Portal Infinite · %zu portals · Scale %.5g", data.portals.size(), data.environment.scale);
-                    },
-                    light.data);
-            } else if (entity->kind == SceneEntityKind::Volume) {
-                const scene::VolumeId volume_id{entity->id};
-                const scene::Volume& volume = *std::ranges::find(this->context.document.content.source.resources.volumes, volume_id, &scene::Volume::id);
-                if (const auto* grid = std::get_if<scene::GridVolume>(&volume.data)) {
-                    ImGui::TextDisabled("%u x %u x %u · %zu fields", grid->resolution.x, grid->resolution.y, grid->resolution.z, grid->fields.size());
-                    for (const scene::VolumeField& field : grid->fields) {
-                        const char* kind = field.kind == scene::VolumeFieldKind::Float ? "scalar" : field.kind == scene::VolumeFieldKind::Float3 ? "vector" : "MAC vector";
-                        ImGui::BulletText("%s · %s%s%s", field.name.c_str(), kind, field.unit.empty() ? "" : " · ", field.unit.c_str());
-                    }
-                }
-            }
-            ImGui::Spacing();
-        }
-
-        const std::vector<scene::Volume>& volumes = this->context.document.content.source.resources.volumes;
-        if (!volumes.empty()) {
-            if (!std::ranges::contains(volumes, this->controls.selected_volume, &scene::Volume::id)) this->controls.selected_volume = volumes.front().id;
-            ImGui::PushID("VolumeDiagnostics");
-            ImGui::TextDisabled("VOLUME");
-            if (volumes.size() > 1) {
-                const scene::Volume& selected = *std::ranges::find(volumes, this->controls.selected_volume, &scene::Volume::id);
-                if (ImGui::BeginCombo("Volume", selected.name.c_str())) {
-                    for (std::size_t index = 0; index != volumes.size(); ++index) {
-                        ImGui::PushID(static_cast<int>(index));
-                        if (ImGui::Selectable(volumes[index].name.c_str(), volumes[index].id == this->controls.selected_volume)) this->controls.selected_volume = volumes[index].id;
-                        ImGui::PopID();
-                    }
-                    ImGui::EndCombo();
-                }
-            } else
-                ImGui::TextUnformatted(volumes.front().name.c_str());
-
-            const scene::Volume& volume = *std::ranges::find(volumes, this->controls.selected_volume, &scene::Volume::id);
-            if (const auto* grid = std::get_if<scene::GridVolume>(&volume.data); grid && !grid->fields.empty()) {
-                scene::VolumeDiagnostics diagnostics = volume.diagnostics;
-                bool changed{};
-                std::vector<scene::VolumeField>::const_iterator selected_field = std::ranges::find(grid->fields, diagnostics.field_id, &scene::VolumeField::id);
-                if (selected_field == grid->fields.end()) selected_field = grid->fields.begin();
-                if (ImGui::BeginCombo("Field", selected_field->name.c_str())) {
-                    for (std::size_t index = 0; index != grid->fields.size(); ++index) {
-                        const scene::VolumeField& field = grid->fields[index];
-                        ImGui::PushID(static_cast<int>(index));
-                        if (ImGui::Selectable(field.name.c_str(), field.id == selected_field->id) && field.id != diagnostics.field_id) {
-                            diagnostics.field_id = field.id;
-                            diagnostics.mode     = scene::VolumeDiagnosticMode::Off;
-                            diagnostics.mapping  = field.kind == scene::VolumeFieldKind::Float ? scene::VolumeFieldMapping::Value : scene::VolumeFieldMapping::Magnitude;
-                            selected_field       = grid->fields.begin() + static_cast<std::ptrdiff_t>(index);
-                            changed              = true;
-                        }
-                        ImGui::PopID();
-                    }
-                    ImGui::EndCombo();
-                }
-
-                const bool vector_field = selected_field->kind != scene::VolumeFieldKind::Float;
-                constexpr const char* modes[] = {"Off", "Slice", "Ray March", "Maximum Intensity", "Isosurface", "Glyphs", "Streamlines", "LIC"};
-                int mode = static_cast<int>(std::to_underlying(diagnostics.mode));
-                if (ImGui::Combo("Diagnostics", &mode, modes, vector_field ? 8 : 5)) {
-                    diagnostics.mode = static_cast<scene::VolumeDiagnosticMode>(mode);
-                    if (diagnostics.field_id.empty()) {
-                        diagnostics.field_id = selected_field->id;
-                        diagnostics.mapping  = vector_field ? scene::VolumeFieldMapping::Magnitude : scene::VolumeFieldMapping::Value;
-                    }
-                    changed = true;
-                }
-                if (diagnostics.mode != scene::VolumeDiagnosticMode::Off) {
-                    constexpr const char* mappings[] = {"Value", "Magnitude", "X", "Y", "Z", "Divergence", "Curl Magnitude", "Q Criterion"};
-                    constexpr const char* color_maps[] = {"Viridis", "Turbo", "Cool-Warm", "Grayscale"};
-                    constexpr const char* depth_modes[] = {"Tested", "X-Ray", "Overlay"};
-                    constexpr const char* axes[] = {"X", "Y", "Z"};
-                    constexpr std::uint32_t minimum_steps = 1u;
-                    constexpr std::uint32_t maximum_steps = 512u;
-                    constexpr std::uint32_t minimum_sampling = 1u;
-                    constexpr std::uint32_t maximum_sampling = 256u;
-                    int mapping = static_cast<int>(std::to_underlying(diagnostics.mapping));
-                    if (vector_field && ImGui::Combo("Mapping", &mapping, mappings, 8)) diagnostics.mapping = static_cast<scene::VolumeFieldMapping>(mapping), changed = true;
-                    int color_map = static_cast<int>(std::to_underlying(diagnostics.color_map));
-                    if (ImGui::Combo("Color map", &color_map, color_maps, 4)) diagnostics.color_map = static_cast<scene::VisualizationColorMap>(color_map), changed = true;
-                    changed = ImGui::DragFloatRange2("Range", &diagnostics.minimum, &diagnostics.maximum, 0.01f, 0.0f, 0.0f, "%.5g", "%.5g") || changed;
-                    changed = ImGui::ColorEdit4("Tint", &diagnostics.color.x, ImGuiColorEditFlags_Float) || changed;
-                    if (diagnostics.mode == scene::VolumeDiagnosticMode::Slice || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) {
-                        int axis = static_cast<int>(diagnostics.axis);
-                        if (ImGui::Combo("Axis", &axis, axes, 3)) diagnostics.axis = static_cast<std::uint32_t>(axis), changed = true;
-                        changed = ImGui::SliderFloat("Slice", &diagnostics.slice_position, 0.0f, 1.0f) || changed;
-                    }
-                    if (diagnostics.mode == scene::VolumeDiagnosticMode::RayMarch || diagnostics.mode == scene::VolumeDiagnosticMode::MaximumIntensityProjection || diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface || diagnostics.mode == scene::VolumeDiagnosticMode::Slice || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) changed = ImGui::DragFloat("Opacity", &diagnostics.opacity, 0.01f, 0.0f, 10.0f) || changed;
-                    if (diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface) changed = ImGui::DragFloat("Threshold", &diagnostics.threshold, 0.01f) || changed;
-                    if (diagnostics.mode == scene::VolumeDiagnosticMode::Glyphs || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines) {
-                        changed = ImGui::DragFloat("Scale", &diagnostics.scale, 0.001f) || changed;
-                        changed = ImGui::DragFloat("Width", &diagnostics.width, 0.1f, 0.25f, 8.0f, "%.2f px") || changed;
-                    }
-                    if (diagnostics.mode == scene::VolumeDiagnosticMode::RayMarch || diagnostics.mode == scene::VolumeDiagnosticMode::MaximumIntensityProjection || diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) changed = ImGui::DragScalar("Steps", ImGuiDataType_U32, &diagnostics.steps, 1.0f, &minimum_steps, &maximum_steps, "%u") || changed;
-                    if (diagnostics.mode == scene::VolumeDiagnosticMode::Glyphs || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines) changed = ImGui::DragScalar("Seeds", ImGuiDataType_U32, &diagnostics.sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u") || changed;
-                    int depth_mode = static_cast<int>(std::to_underlying(diagnostics.depth_mode));
-                    if (ImGui::Combo("Depth", &depth_mode, depth_modes, 3)) diagnostics.depth_mode = static_cast<scene::VisualizationDepthMode>(depth_mode), changed = true;
-                }
-                if (changed) {
-                    this->context.document.update_volume_diagnostics(this->context.document.content.source, volume.id, diagnostics);
-                    this->context.document.update_volume_diagnostics(this->context.document.content.evaluated, volume.id, std::move(diagnostics));
-                }
-            }
-            ImGui::PopID();
-            ImGui::Spacing();
-            ImGui::Separator();
-        }
-
-        ImGui::TextDisabled("SCENE DIAGNOSTICS");
-        SceneDiagnosticSettings& diagnostics = this->context.diagnostic_settings;
-        ImGui::Checkbox("Enabled", &diagnostics.enabled);
-        ImGui::Checkbox("Selected bounds  B", &diagnostics.selected_bounds);
-        ImGui::Checkbox("All bounds  Shift+B", &diagnostics.all_bounds);
-        ImGui::Checkbox("Pivots", &diagnostics.pivots);
-        ImGui::Checkbox("Geometry edges", &diagnostics.geometry_edges);
-        ImGui::Checkbox("Vertices", &diagnostics.vertices);
-        ImGui::Checkbox("Normals  N", &diagnostics.normals);
-        ImGui::Checkbox("Tangents  T", &diagnostics.tangents);
-        ImGui::Checkbox("Orientation", &diagnostics.orientation);
-        ImGui::Checkbox("Cameras  C", &diagnostics.cameras);
-        ImGui::Indent();
-        ImGui::BeginDisabled(!diagnostics.cameras);
-        ImGui::Checkbox("Focal planes", &diagnostics.camera_focal_plane);
-        ImGui::Checkbox("Lenses", &diagnostics.camera_lens);
-        ImGui::EndDisabled();
-        ImGui::Unindent();
-        ImGui::Checkbox("Lights  L", &diagnostics.lights);
-        ImGui::Checkbox("Area emitters", &diagnostics.area_emitters);
-        ImGui::Checkbox("Volume bounds", &diagnostics.volume_bounds);
-        ImGui::Checkbox("Volume grid", &diagnostics.volume_grid);
-        ImGui::Checkbox("Medium boundaries", &diagnostics.medium_boundaries);
-        const char* depth_modes[] = {"Tested", "X-Ray", "Overlay"};
-        int depth_mode            = static_cast<int>(std::to_underlying(diagnostics.depth_mode));
-        if (ImGui::Combo("Depth", &depth_mode, depth_modes, 3)) {
-            diagnostics.depth_mode = static_cast<scene::VisualizationDepthMode>(depth_mode);
-        }
-        ImGui::DragFloat("Line width", &diagnostics.line_width, 0.1f, 0.25f, 8.0f, "%.2f px");
-        ImGui::DragFloat("Point size", &diagnostics.point_size, 0.25f, 1.0f, 32.0f, "%.2f px");
-        ImGui::DragFloat("Normal scale", &diagnostics.normal_scale, 0.01f, 0.001f, 100.0f, "%.4g");
-        constexpr std::uint32_t minimum_sampling = 1;
-        constexpr std::uint32_t maximum_sampling = 1024;
-        ImGui::DragScalar("Attribute sampling", ImGuiDataType_U32, &diagnostics.attribute_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
-        ImGui::DragScalar("Volume grid sampling", ImGuiDataType_U32, &diagnostics.volume_grid_sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u");
-
-        if (parameter_systems.empty()) {
-            ImGui::End();
-            ImGui::PopStyleVar();
+        if (dynamic_systems.empty()) {
+            ImGui::TextDisabled("No dynamic systems");
             return;
         }
+        if (std::ranges::find(dynamic_systems, this->controls.selected_dynamic_system) == dynamic_systems.end()) this->controls.selected_dynamic_system = dynamic_systems.front();
+
         const scene::DynamicSetup& dynamic_setup = *setup;
-        ImGui::Spacing();
-        ImGui::Separator();
         ImGui::TextDisabled("DYNAMIC SYSTEM");
 
-        if (parameter_systems.size() > 1) {
+        if (dynamic_systems.size() > 1) {
             if (ImGui::BeginCombo("##DynamicSystem", dynamic_setup.systems[this->controls.selected_dynamic_system].name.c_str())) {
-                for (const std::size_t index : parameter_systems)
+                for (const std::size_t index : dynamic_systems)
                     if (ImGui::Selectable(dynamic_setup.systems[index].name.c_str(), index == this->controls.selected_dynamic_system)) {
                         this->controls.selected_dynamic_system = index;
                         this->controls.parameter_drafts.clear();
@@ -1088,13 +1313,10 @@ namespace spectra {
 
         const scene::DynamicSystem& scene_system     = dynamic_setup.systems[this->controls.selected_dynamic_system];
         const dynamics::ProviderDescriptor& provider = this->context.dynamics.provider_descriptor(scene_system.provider_id);
-        const dynamics::TelemetrySnapshot& telemetry = this->context.dynamics.telemetry(this->controls.selected_dynamic_system);
-        if (!telemetry.phase.empty()) ImGui::TextColored(ImVec4{0.96f, 0.72f, 0.32f, 1.0f}, "%s", telemetry.phase.c_str());
-        if (!telemetry.headline.empty()) ImGui::TextWrapped("%s", telemetry.headline.c_str());
-        if (!telemetry.message.empty()) {
+        if (provider.parameters.empty()) {
             ImGui::Spacing();
-            ImGui::TextDisabled("%s", telemetry.message.c_str());
-            ImGui::Spacing();
+            ImGui::TextDisabled("This system has no configurable parameters");
+            return;
         }
         if (this->controls.parameter_drafts.empty()) {
             this->controls.parameter_drafts.reserve(provider.parameters.size());
@@ -1167,49 +1389,7 @@ namespace spectra {
                 std::vector<scene::DynamicParameterSetting> parameters = parameter_values(false);
                 this->apply_dynamic_parameters(std::move(parameters), false);
                 ImGui::PopID();
-                ImGui::End();
-                ImGui::PopStyleVar();
                 return;
-            }
-            ImGui::PopID();
-        }
-
-        std::string telemetry_section{};
-        for (std::size_t metric_index = 0; metric_index < provider.telemetry.size(); ++metric_index) {
-            if (!telemetry.values[metric_index]) continue;
-            const dynamics::TelemetryDescriptor& metric = provider.telemetry[metric_index];
-            if (metric.section_id != telemetry_section) {
-                telemetry_section  = metric.section_id;
-                ImGui::Spacing();
-                ImGui::TextDisabled("TELEMETRY / %s", telemetry_section.c_str());
-            }
-            ImGui::PushID(static_cast<int>(metric_index));
-            const dynamics::TelemetryValue& value = *telemetry.values[metric_index];
-            std::string formatted{};
-            if (value.kind == dynamics::TelemetryKind::Boolean)
-                formatted = value.integer == 0 ? "false" : "true";
-            else if (value.kind == dynamics::TelemetryKind::Integer)
-                formatted = std::to_string(value.integer);
-            else if (value.kind == dynamics::TelemetryKind::Float)
-                formatted = std::format("{:.6g}", value.floating[0]);
-            else if (value.kind == dynamics::TelemetryKind::Float3)
-                formatted = std::format("[{:+.5g}, {:+.5g}, {:+.5g}]", value.floating[0], value.floating[1], value.floating[2]);
-            ImGui::TextUnformatted(metric.name.c_str());
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s%s%s", formatted.c_str(), metric.unit.empty() ? "" : " ", metric.unit.c_str());
-            if (metric.plot && !telemetry.history.empty()) {
-                std::vector<float> samples{};
-                samples.reserve(telemetry.history.size());
-                for (const dynamics::TelemetrySample& sample : telemetry.history) {
-                    const dynamics::TelemetryValue& historical = sample.values[metric_index];
-                    if (historical.kind == dynamics::TelemetryKind::Boolean || historical.kind == dynamics::TelemetryKind::Integer)
-                        samples.push_back(static_cast<float>(historical.integer));
-                    else if (historical.kind == dynamics::TelemetryKind::Float)
-                        samples.push_back(static_cast<float>(historical.floating[0]));
-                    else
-                        samples.push_back(static_cast<float>(std::sqrt(historical.floating[0] * historical.floating[0] + historical.floating[1] * historical.floating[1] + historical.floating[2] * historical.floating[2])));
-                }
-                ImGui::PlotLines("##History", samples.data(), static_cast<int>(samples.size()), 0, nullptr, std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), ImVec2{-1.0f, 44.0f});
             }
             ImGui::PopID();
         }
@@ -1219,9 +1399,31 @@ namespace spectra {
                 std::vector<scene::DynamicParameterSetting> parameters = parameter_values(true);
                 this->apply_dynamic_parameters(std::move(parameters), true);
             }
+    }
 
+    void EditorUi::draw_global_panel(const PanelRect& panel, EditorActions& actions) {
+        ImGui::SetNextWindowPos(panel.position);
+        ImGui::SetNextWindowSizeConstraints({panel.size.x, 0.0f}, {panel.size.x, panel.maximum_height});
+        push_panel_style();
+        constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_AlwaysAutoResize;
+        ImGui::Begin("##GlobalControls", nullptr, flags);
+        ImGui::TextDisabled("GLOBAL  ·  TAB");
+        if (ImGui::BeginTabBar("##GlobalControlTabs")) {
+            if (ImGui::BeginTabItem("View")) {
+                ImGui::Spacing();
+                this->draw_view_settings(actions);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Simulation")) {
+                ImGui::Spacing();
+                this->draw_simulation_settings();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+        this->controls.global_panel_height = ImGui::GetWindowHeight();
         ImGui::End();
-        ImGui::PopStyleVar();
+        pop_panel_style();
     }
 
     void EditorUi::draw_status_toast(const ImVec2 position, const ImVec2 size) {

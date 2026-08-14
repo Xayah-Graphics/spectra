@@ -26,6 +26,7 @@ namespace spectra {
         void resize_viewport(vk::Extent2D extent);
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, vk::Image target_image, vk::ImageView target_view, vk::Extent2D extent, vk::ImageLayout target_layout, vk::ImageLayout final_layout);
         std::uint64_t viewport_texture_id{};
+        vk::Extent2D viewport_extent{};
 
     private:
         struct FrameResources {

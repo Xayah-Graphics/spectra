@@ -112,9 +112,6 @@ namespace spectra::dynamics {
     };
 
     export struct TelemetrySnapshot {
-        std::string phase{};
-        std::string headline{};
-        std::string message{};
         std::vector<std::optional<TelemetryValue>> values{};
         std::deque<TelemetrySample> history{};
     };

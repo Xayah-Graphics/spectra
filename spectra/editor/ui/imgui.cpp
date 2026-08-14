@@ -83,6 +83,7 @@ namespace spectra {
     }
 
     void ImGuiBackend::resize_viewport(const vk::Extent2D extent) {
+        this->viewport_extent = extent;
         if (!this->context.display.resize(extent)) return;
         DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         this->context.runtime.resources.write_sampled_image_descriptor(descriptor, this->context.display.image, vk::ImageLayout::eShaderReadOnlyOptimal);

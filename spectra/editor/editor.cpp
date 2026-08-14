@@ -40,7 +40,7 @@ namespace spectra {
         VulkanRuntime runtime;
         VulkanPresentation presentation;
         SceneDocument document;
-        SceneDiagnosticSettings diagnostic_settings{};
+        EditorViewportSettings viewport_settings{};
         DynamicsRuntime dynamics;
         GpuScene gpu_scene;
         SceneDiagnosticRenderer diagnostics;
@@ -72,7 +72,7 @@ namespace spectra {
     };
 
     EditorApplication::EditorApplication(EditorRequest request, const std::filesystem::path& shader_directory, const std::filesystem::path& pathtracer_directory)
-        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, dynamics{runtime}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics, gpu_scene}, display{runtime, shader_directory}, visualization{runtime, gpu_scene, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, imgui{platform, runtime, display, shader_directory}, ui{document, diagnostic_settings, dynamics, render_engine, viewport, picker, imgui} {
+        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, dynamics{runtime}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics, gpu_scene}, display{runtime, shader_directory}, visualization{runtime, gpu_scene, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, imgui{platform, runtime, display, shader_directory}, ui{document, viewport_settings, dynamics, render_engine, viewport, picker, imgui} {
         this->display.initialize();
         this->diagnostics.initialize();
         this->imgui.initialize();
@@ -130,12 +130,12 @@ namespace spectra {
                             .scene_camera_view      = this->viewport.view.source == CameraSource::Scene ? std::optional{this->viewport.view.render_camera.id} : std::nullopt,
                             .visualizations         = this->dynamics.visualizations(),
                             .visualization          = &this->visualization,
-                            .diagnostics            = this->diagnostic_settings.enabled ? std::optional{SceneDiagnosticsComposition{this->diagnostics, this->diagnostic_settings, this->viewport.view.selection}} : std::nullopt,
+                            .diagnostics            = this->viewport_settings.guides_visible ? std::optional{SceneDiagnosticsComposition{this->diagnostics, this->viewport_settings.scene_guides, this->viewport_settings.selection_diagnostics, this->viewport.view.selection}} : std::nullopt,
                             .frame_slot_index       = frame->frame.slot_index,
-                            .exposure               = this->ui.controls.exposure,
+                            .exposure               = this->viewport_settings.exposure,
                             .compose_visualizations = true,
                         });
-                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->viewport.view.render_camera, *depth, this->diagnostic_settings.enabled ? &this->diagnostics.pick_image() : nullptr);
+                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->viewport.view.render_camera, *depth, this->viewport_settings.guides_visible ? &this->diagnostics.pick_image() : nullptr);
                     this->record_editor_overlays(frame->frame.command_buffer, actions.show_axes);
                 }
             }
@@ -352,7 +352,7 @@ namespace spectra {
                 .hovered_instance   = instance_id(this->viewport.view.selection.hovered),
                 .axes_plane         = std::to_underlying(this->viewport.view.source == CameraSource::Scene ? AxesPlane::Xz : this->viewport.view.axes_plane),
                 .axes_visible       = show_axes,
-                .outline_visible    = this->viewport.view.overlays_visible,
+                .outline_visible    = this->viewport_settings.guides_visible && this->viewport_settings.selection_outline,
             });
     }
 

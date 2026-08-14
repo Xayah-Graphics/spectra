@@ -131,7 +131,8 @@ namespace spectra {
                     if (output_layer == RenderOutputLayer::RendererDisplay)
                         display->record(frame.command_buffer, renderer_output, 0.0f);
                     else {
-                        const SceneDiagnosticSettings diagnostic_settings{.selected_bounds = false, .all_bounds = true};
+                        const SceneGuideSettings scene_guides{.all_bounds = true};
+                        const SelectionDiagnosticSettings selection_diagnostics{};
                         const SelectionState selection{};
                         record_render_composition(frame.command_buffer, *display,
                             RenderCompositionRequest{
@@ -142,7 +143,7 @@ namespace spectra {
                                 .scene_camera_view      = camera.id,
                                 .visualizations         = dynamics.visualizations(),
                                 .visualization          = visualization.get(),
-                                .diagnostics            = diagnostics ? std::optional{SceneDiagnosticsComposition{*diagnostics, diagnostic_settings, selection}} : std::nullopt,
+                                .diagnostics            = diagnostics ? std::optional{SceneDiagnosticsComposition{*diagnostics, scene_guides, selection_diagnostics, selection}} : std::nullopt,
                                 .frame_slot_index       = frame.slot_index,
                                 .compose_visualizations = compose_visualizations,
                             });

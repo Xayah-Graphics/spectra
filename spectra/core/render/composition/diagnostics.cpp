@@ -88,7 +88,7 @@ namespace spectra {
         this->renderer.initialized = true;
     }
 
-    void SceneDiagnosticRenderer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, const scene::SceneView source_scene, const scene::Camera& camera, const std::optional<scene::CameraId> scene_camera_view, const SceneDiagnosticSettings& settings, const SelectionState& selection) {
+    void SceneDiagnosticRenderer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, const scene::SceneView source_scene, const scene::Camera& camera, const std::optional<scene::CameraId> scene_camera_view, const SceneGuideSettings& scene_guides, const SelectionDiagnosticSettings& selection_diagnostics, const SelectionState& selection) {
         SceneDiagnosticFrameResources& frame_resources = this->renderer.frame_resources[frame_slot_index];
         std::vector<DiagnosticLine> lines{};
         std::vector<DiagnosticBox> boxes{};
@@ -100,7 +100,7 @@ namespace spectra {
             pick_entities.push_back(entity);
             return static_cast<std::uint32_t>(pick_entities.size());
         };
-        const auto add_line   = [&](const math::Float3 first, const math::Float3 second, const math::Float4 color, const std::optional<SceneEntityReference> entity = std::nullopt, const float width = 0.0f) { lines.emplace_back(first, width == 0.0f ? settings.line_width : width, second, std::to_underlying(settings.depth_mode), color, entity ? pick_index(*entity) : 0u); };
+        const auto add_line   = [&](const math::Float3 first, const math::Float3 second, const math::Float4 color, const std::optional<SceneEntityReference> entity = std::nullopt, const float width = 1.5f, const scene::VisualizationDepthMode depth_mode = scene::VisualizationDepthMode::Tested) { lines.emplace_back(first, width, second, std::to_underlying(depth_mode), color, entity ? pick_index(*entity) : 0u); };
         const auto add_circle = [&](const math::Float3 center, const math::Float3 first_axis, const math::Float3 second_axis, const float radius, const math::Float4 color, const SceneEntityReference entity) {
             constexpr std::uint32_t segments = 32;
             for (std::uint32_t index = 0; index != segments; ++index) {
@@ -119,170 +119,194 @@ namespace spectra {
         math::Bounds3 diagnostic_bounds = source_scene.bounds();
         diagnostic_bounds.include(this->context.gpu_scene.view().resolved_scene_bounds);
         const float scene_radius = std::max(diagnostic_bounds.radius(), 1.0f);
-        if (settings.all_bounds || settings.selected_bounds)
+        if (scene_guides.all_bounds || selection_diagnostics.bounds)
             for (std::uint32_t index = 0; index != source_scene.resources.instances.size(); ++index) {
                 const scene::Instance& instance = source_scene.resources.instances[index];
-                if (!instance.visible || !instance_has_geometry[index] || (!settings.all_bounds && !selected_instance(instance.id))) continue;
+                const bool selected             = selected_instance(instance.id);
+                if (!instance.visible || !instance_has_geometry[index] || (!scene_guides.all_bounds && !(selection_diagnostics.bounds && selected))) continue;
                 const SceneEntityReference entity{SceneEntityKind::Instance, instance.id.value};
-                boxes.push_back({math::Transform{}.matrix, {}, {}, diagnostic_color(entity, selection, {0.24f, 0.76f, 1.0f, 0.82f}), {index, 1u, pick_index(entity), std::to_underlying(settings.depth_mode)}});
+                boxes.push_back({math::Transform{}.matrix, {0.0f, 0.0f, 0.0f, selected ? selection_diagnostics.line_width : 1.5f}, {}, diagnostic_color(entity, selection, {0.24f, 0.76f, 1.0f, 0.82f}), {index, 1u, pick_index(entity), std::to_underlying(selected ? selection_diagnostics.depth_mode : scene::VisualizationDepthMode::Tested)}});
             }
 
-        if (settings.volume_bounds)
-            for (const scene::Volume& volume : source_scene.resources.volumes) {
+        if (selection_diagnostics.bounds)
+            for (const SceneEntityReference selected : selection.selected) {
+                if (selected.kind != SceneEntityKind::Volume) continue;
+                const scene::Volume& volume = *std::ranges::find(source_scene.resources.volumes, scene::VolumeId{selected.id}, &scene::Volume::id);
                 const SceneEntityReference entity{SceneEntityKind::Volume, volume.id.value};
                 boxes.push_back({
                     volume.transform.matrix,
-                    {volume.bounds.minimum.x, volume.bounds.minimum.y, volume.bounds.minimum.z, 0.0f},
+                    {volume.bounds.minimum.x, volume.bounds.minimum.y, volume.bounds.minimum.z, selection_diagnostics.line_width},
                     {volume.bounds.maximum.x, volume.bounds.maximum.y, volume.bounds.maximum.z, 0.0f},
                     diagnostic_color(entity, selection, {0.64f, 0.32f, 0.92f, 0.72f}),
-                    {0, 0, pick_index(entity), std::to_underlying(settings.depth_mode)},
+                    {0, 0, pick_index(entity), std::to_underlying(selection_diagnostics.depth_mode)},
                 });
             }
 
-        if (settings.volume_grid)
-            for (const scene::Volume& volume : source_scene.resources.volumes) {
-                const math::Float3 minimum = volume.bounds.minimum;
-                const math::Float3 size    = volume.bounds.maximum - volume.bounds.minimum;
-                const std::uint32_t count  = settings.volume_grid_sampling;
-                for (std::uint32_t first = 0; first <= count; ++first)
-                    for (std::uint32_t second = 0; second <= count; ++second) {
-                        const float a = static_cast<float>(first) / static_cast<float>(count);
-                        const float b = static_cast<float>(second) / static_cast<float>(count);
-                        add_line(volume.transform.transform_point(minimum + math::Float3{0.0f, size.y * a, size.z * b}), volume.transform.transform_point(minimum + math::Float3{size.x, size.y * a, size.z * b}), {0.56f, 0.27f, 0.86f, 0.28f});
-                        add_line(volume.transform.transform_point(minimum + math::Float3{size.x * a, 0.0f, size.z * b}), volume.transform.transform_point(minimum + math::Float3{size.x * a, size.y, size.z * b}), {0.56f, 0.27f, 0.86f, 0.28f});
-                        add_line(volume.transform.transform_point(minimum + math::Float3{size.x * a, size.y * b, 0.0f}), volume.transform.transform_point(minimum + math::Float3{size.x * a, size.y * b, size.z}), {0.56f, 0.27f, 0.86f, 0.28f});
+        std::vector<scene::VolumeId> inspected_volumes{};
+        if (selection_diagnostics.volume_grid && selection.active) {
+            if (selection.active->kind == SceneEntityKind::Volume)
+                inspected_volumes.emplace_back(selection.active->id);
+            else if (selection.active->kind == SceneEntityKind::Instance || selection.active->kind == SceneEntityKind::AreaEmitter) {
+                const scene::InstanceId instance_id{selection.active->kind == SceneEntityKind::Instance ? selection.active->id : selection.active->owner};
+                const scene::Instance& instance   = *std::ranges::find(source_scene.resources.instances, instance_id, &scene::Instance::id);
+                const scene::Prototype& prototype = *std::ranges::find(source_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
+                for (const scene::Primitive& primitive : prototype.primitives)
+                    for (const scene::MediumId medium_id : {primitive.media.inside, primitive.media.outside}) {
+                        if (medium_id.value == 0) continue;
+                        const scene::Medium& medium = *std::ranges::find(source_scene.resources.media, medium_id, &scene::Medium::id);
+                        const auto* volume_medium   = std::get_if<scene::VolumeMedium>(&medium.data);
+                        if (volume_medium && !std::ranges::contains(inspected_volumes, volume_medium->volume)) inspected_volumes.push_back(volume_medium->volume);
                     }
             }
-
-        if (settings.cameras)
-            for (const scene::Camera& scene_camera : source_scene.resources.cameras) {
-                if (scene_camera_view && scene_camera.id == *scene_camera_view) continue;
-                const SceneEntityReference entity{SceneEntityKind::Camera, scene_camera.id.value};
-                const math::Float4 color       = diagnostic_color(entity, selection, scene_camera.id == source_scene.camera.id ? math::Float4{1.0f, 0.66f, 0.12f, 0.95f} : math::Float4{0.20f, 0.80f, 0.95f, 0.82f});
-                const scene::CameraFrame frame = scene_camera.frame();
-                std::array<math::Float3, 4> near_corners{};
-                std::array<math::Float3, 4> far_corners{};
-                std::visit(
-                    [&](const auto& data) {
-                        constexpr std::array signs{math::Float2{-1.0f, -1.0f}, math::Float2{1.0f, -1.0f}, math::Float2{1.0f, 1.0f}, math::Float2{-1.0f, 1.0f}};
-                        for (std::size_t index = 0; index != signs.size(); ++index) {
-                            const math::Float2 window{
-                                signs[index].x < 0.0f ? data.screen_window.minimum.x : data.screen_window.maximum.x,
-                                signs[index].y < 0.0f ? data.screen_window.minimum.y : data.screen_window.maximum.y,
-                            };
-                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) {
-                                const float tangent = std::tan(data.vertical_fov * std::numbers::pi_v<float> / 360.0f);
-                                near_corners[index] = frame.position + frame.forward * data.near_plane + (frame.right * window.x + frame.up * window.y) * tangent * data.near_plane;
-                                far_corners[index]  = frame.position + frame.forward * data.far_plane + (frame.right * window.x + frame.up * window.y) * tangent * data.far_plane;
-                            } else {
-                                near_corners[index] = frame.position + frame.forward * data.near_plane + frame.right * window.x + frame.up * window.y;
-                                far_corners[index]  = frame.position + frame.forward * data.far_plane + frame.right * window.x + frame.up * window.y;
-                            }
-                        }
-                        if (settings.camera_focal_plane) {
-                            std::array<math::Float3, 4> focal{};
-                            for (std::size_t index = 0; index != signs.size(); ++index) {
-                                const math::Float2 window{signs[index].x < 0.0f ? data.screen_window.minimum.x : data.screen_window.maximum.x, signs[index].y < 0.0f ? data.screen_window.minimum.y : data.screen_window.maximum.y};
-                                float scale{1.0f};
-                                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) scale = std::tan(data.vertical_fov * std::numbers::pi_v<float> / 360.0f) * data.focal_distance;
-                                focal[index] = frame.position + frame.forward * data.focal_distance + (frame.right * window.x + frame.up * window.y) * scale;
-                            }
-                            for (std::size_t index = 0; index != focal.size(); ++index) add_line(focal[index], focal[(index + 1) % focal.size()], {0.96f, 0.34f, 0.72f, 0.72f}, entity);
-                        }
-                        if (settings.camera_lens && data.lens_radius > 0.0f) add_circle(frame.position, frame.right, frame.up, data.lens_radius, {0.96f, 0.34f, 0.72f, 0.82f}, entity);
-                    },
-                    scene_camera.data);
-                for (std::size_t index = 0; index != near_corners.size(); ++index) {
-                    add_line(near_corners[index], near_corners[(index + 1) % near_corners.size()], color, entity);
-                    add_line(far_corners[index], far_corners[(index + 1) % far_corners.size()], color, entity);
-                    add_line(near_corners[index], far_corners[index], color, entity);
+        }
+        for (const scene::VolumeId volume_id : inspected_volumes) {
+            const scene::Volume& volume = *std::ranges::find(source_scene.resources.volumes, volume_id, &scene::Volume::id);
+            const SceneEntityReference entity{SceneEntityKind::Volume, volume.id.value};
+            const math::Float3 minimum = volume.bounds.minimum;
+            const math::Float3 size    = volume.bounds.maximum - volume.bounds.minimum;
+            const std::uint32_t count  = selection_diagnostics.volume_grid_sampling;
+            for (std::uint32_t first = 0; first <= count; ++first)
+                for (std::uint32_t second = 0; second <= count; ++second) {
+                    const float a = static_cast<float>(first) / static_cast<float>(count);
+                    const float b = static_cast<float>(second) / static_cast<float>(count);
+                    add_line(volume.transform.transform_point(minimum + math::Float3{0.0f, size.y * a, size.z * b}), volume.transform.transform_point(minimum + math::Float3{size.x, size.y * a, size.z * b}), {0.56f, 0.27f, 0.86f, 0.28f}, entity, selection_diagnostics.line_width, selection_diagnostics.depth_mode);
+                    add_line(volume.transform.transform_point(minimum + math::Float3{size.x * a, 0.0f, size.z * b}), volume.transform.transform_point(minimum + math::Float3{size.x * a, size.y, size.z * b}), {0.56f, 0.27f, 0.86f, 0.28f}, entity, selection_diagnostics.line_width, selection_diagnostics.depth_mode);
+                    add_line(volume.transform.transform_point(minimum + math::Float3{size.x * a, size.y * b, 0.0f}), volume.transform.transform_point(minimum + math::Float3{size.x * a, size.y * b, size.z}), {0.56f, 0.27f, 0.86f, 0.28f}, entity, selection_diagnostics.line_width, selection_diagnostics.depth_mode);
                 }
-            }
+        }
 
-        if (settings.lights)
-            for (const scene::Light& light : source_scene.resources.lights) {
-                if (std::holds_alternative<scene::DiffuseAreaLight>(light.data)) continue;
-                const SceneEntityReference entity{SceneEntityKind::Light, light.id.value};
-                const math::Float4 color        = diagnostic_color(entity, selection, {1.0f, 0.82f, 0.25f, 0.88f});
-                const math::Transform transform = light_transform(light);
-                const math::Float3 position{transform.matrix[3], transform.matrix[7], transform.matrix[11]};
-                const math::Float3 right   = transform.transform_vector({1.0f, 0.0f, 0.0f}).normalized();
-                const math::Float3 up      = transform.transform_vector({0.0f, 1.0f, 0.0f}).normalized();
-                const math::Float3 forward = -transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
-                const float icon           = scene_radius * 0.035f;
-                std::visit(
-                    [&](const auto& data) {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight>) {
-                            add_circle(position, right, up, icon, color, entity);
-                            add_circle(position, right, forward, icon, color, entity);
-                            add_circle(position, up, forward, icon, color, entity);
-                        } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) {
-                            const float length = scene_radius * 0.18f;
-                            for (const float angle : {data.cone_angle - data.cone_delta, data.cone_angle}) {
-                                const float radius        = std::tan(angle * std::numbers::pi_v<float> / 180.0f) * length;
-                                const math::Float3 center = position + forward * length;
-                                add_circle(center, right, up, radius, angle == data.cone_angle ? color : math::Float4{0.98f, 0.48f, 0.20f, 0.78f}, entity);
-                                add_line(position, center + right * radius, color, entity);
-                                add_line(position, center - right * radius, color, entity);
-                                add_line(position, center + up * radius, color, entity);
-                                add_line(position, center - up * radius, color, entity);
-                            }
-                        } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>) {
-                            add_circle(position, right, up, icon, color, entity);
-                            const math::Float3 end = position + forward * icon * 3.5f;
-                            add_line(position, end, color, entity, settings.line_width * 1.25f);
-                            add_line(end, end - forward * icon + right * icon * 0.5f, color, entity);
-                            add_line(end, end - forward * icon - right * icon * 0.5f, color, entity);
-                        } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::InfiniteLight>) {
-                            add_circle(position, right, up, icon * 1.5f, color, entity);
-                            add_circle(position, right, forward, icon * 1.5f, color, entity);
-                            add_line(position, position + forward * icon * 3.0f, color, entity, settings.line_width * 1.25f);
-                        } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>) {
-                            add_circle(position, right, up, icon * 1.5f, color, entity);
-                            add_circle(position, right, forward, icon * 1.5f, color, entity);
-                            add_line(position, position + forward * icon * 3.0f, color, entity, settings.line_width * 1.25f);
-                            for (const std::array<math::Float3, 4>& portal : data.portals) {
-                                for (std::size_t index = 0; index != portal.size(); ++index) add_line(portal[index], portal[(index + 1) % portal.size()], {0.28f, 0.95f, 0.78f, 0.92f}, entity, settings.line_width * 1.4f);
-                                const math::Float3 portal_center = (portal[0] + portal[1] + portal[2] + portal[3]) / 4.0f;
-                                const math::Float3 normal        = (portal[1] - portal[0]).cross(portal[3] - portal[0]).normalized();
-                                add_line(portal_center, portal_center + normal * scene_radius * 0.08f, {0.28f, 0.95f, 0.78f, 0.92f}, entity);
-                            }
+        for (const scene::Camera& scene_camera : source_scene.resources.cameras) {
+            const bool selected_camera = selection.active && selection.active->kind == SceneEntityKind::Camera && selection.active->id == scene_camera.id.value;
+            if (!scene_guides.cameras && !(selected_camera && selection_diagnostics.camera_frustum)) continue;
+            if (scene_camera_view && scene_camera.id == *scene_camera_view) continue;
+            const SceneEntityReference entity{SceneEntityKind::Camera, scene_camera.id.value};
+            const math::Float4 color       = diagnostic_color(entity, selection, scene_camera.id == source_scene.camera.id ? math::Float4{1.0f, 0.66f, 0.12f, 0.95f} : math::Float4{0.20f, 0.80f, 0.95f, 0.82f});
+            const scene::CameraFrame frame = scene_camera.frame();
+            std::array<math::Float3, 4> near_corners{};
+            std::array<math::Float3, 4> far_corners{};
+            std::visit(
+                [&](const auto& data) {
+                    constexpr std::array signs{math::Float2{-1.0f, -1.0f}, math::Float2{1.0f, -1.0f}, math::Float2{1.0f, 1.0f}, math::Float2{-1.0f, 1.0f}};
+                    for (std::size_t index = 0; index != signs.size(); ++index) {
+                        const math::Float2 window{
+                            signs[index].x < 0.0f ? data.screen_window.minimum.x : data.screen_window.maximum.x,
+                            signs[index].y < 0.0f ? data.screen_window.minimum.y : data.screen_window.maximum.y,
+                        };
+                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) {
+                            const float tangent = std::tan(data.vertical_fov * std::numbers::pi_v<float> / 360.0f);
+                            near_corners[index] = frame.position + frame.forward * data.near_plane + (frame.right * window.x + frame.up * window.y) * tangent * data.near_plane;
+                            far_corners[index]  = frame.position + frame.forward * data.far_plane + (frame.right * window.x + frame.up * window.y) * tangent * data.far_plane;
+                        } else {
+                            near_corners[index] = frame.position + frame.forward * data.near_plane + frame.right * window.x + frame.up * window.y;
+                            far_corners[index]  = frame.position + frame.forward * data.far_plane + frame.right * window.x + frame.up * window.y;
                         }
-                    },
-                    light.data);
+                    }
+                    if (selected_camera && selection_diagnostics.camera_focal_plane) {
+                        std::array<math::Float3, 4> focal{};
+                        for (std::size_t index = 0; index != signs.size(); ++index) {
+                            const math::Float2 window{signs[index].x < 0.0f ? data.screen_window.minimum.x : data.screen_window.maximum.x, signs[index].y < 0.0f ? data.screen_window.minimum.y : data.screen_window.maximum.y};
+                            float scale{1.0f};
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) scale = std::tan(data.vertical_fov * std::numbers::pi_v<float> / 360.0f) * data.focal_distance;
+                            focal[index] = frame.position + frame.forward * data.focal_distance + (frame.right * window.x + frame.up * window.y) * scale;
+                        }
+                        for (std::size_t index = 0; index != focal.size(); ++index) add_line(focal[index], focal[(index + 1) % focal.size()], {0.96f, 0.34f, 0.72f, 0.72f}, entity);
+                    }
+                    if (selected_camera && selection_diagnostics.camera_lens && data.lens_radius > 0.0f) add_circle(frame.position, frame.right, frame.up, data.lens_radius, {0.96f, 0.34f, 0.72f, 0.82f}, entity);
+                },
+                scene_camera.data);
+            for (std::size_t index = 0; index != near_corners.size(); ++index) {
+                add_line(near_corners[index], near_corners[(index + 1) % near_corners.size()], color, entity);
+                add_line(far_corners[index], far_corners[(index + 1) % far_corners.size()], color, entity);
+                add_line(near_corners[index], far_corners[index], color, entity);
             }
+        }
 
-        if (settings.pivots || settings.orientation)
-            for (const SceneEntityReference entity : selection.selected) {
-                math::Transform transform{};
-                bool spatial{true};
-                if (entity.kind == SceneEntityKind::Instance)
-                    transform = std::ranges::find(source_scene.resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id)->transform;
-                else if (entity.kind == SceneEntityKind::Camera)
-                    transform = std::ranges::find(source_scene.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->transform;
-                else if (entity.kind == SceneEntityKind::Light)
-                    transform = light_transform(*std::ranges::find(source_scene.resources.lights, scene::LightId{entity.id}, &scene::Light::id));
-                else if (entity.kind == SceneEntityKind::AreaEmitter)
-                    transform = std::ranges::find(source_scene.resources.instances, scene::InstanceId{entity.owner}, &scene::Instance::id)->transform;
-                else if (entity.kind == SceneEntityKind::Volume)
-                    transform = std::ranges::find(source_scene.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id)->transform;
-                else
-                    spatial = false;
-                if (!spatial) continue;
+        for (const scene::Light& light : source_scene.resources.lights) {
+            if (std::holds_alternative<scene::DiffuseAreaLight>(light.data)) continue;
+            const bool selected_light = selection.active && selection.active->kind == SceneEntityKind::Light && selection.active->id == light.id.value;
+            if (!scene_guides.lights && !(selected_light && selection_diagnostics.light_guide)) continue;
+            const SceneEntityReference entity{SceneEntityKind::Light, light.id.value};
+            const math::Float4 color        = diagnostic_color(entity, selection, {1.0f, 0.82f, 0.25f, 0.88f});
+            const math::Transform transform = light_transform(light);
+            const math::Float3 position{transform.matrix[3], transform.matrix[7], transform.matrix[11]};
+            const math::Float3 right   = transform.transform_vector({1.0f, 0.0f, 0.0f}).normalized();
+            const math::Float3 up      = transform.transform_vector({0.0f, 1.0f, 0.0f}).normalized();
+            const math::Float3 forward = -transform.transform_vector({0.0f, 0.0f, 1.0f}).normalized();
+            const float icon           = scene_radius * 0.035f;
+            std::visit(
+                [&](const auto& data) {
+                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight>) {
+                        add_circle(position, right, up, icon, color, entity);
+                        add_circle(position, right, forward, icon, color, entity);
+                        add_circle(position, up, forward, icon, color, entity);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) {
+                        const float length = scene_radius * 0.18f;
+                        for (const float angle : {data.cone_angle - data.cone_delta, data.cone_angle}) {
+                            const float radius        = std::tan(angle * std::numbers::pi_v<float> / 180.0f) * length;
+                            const math::Float3 center = position + forward * length;
+                            add_circle(center, right, up, radius, angle == data.cone_angle ? color : math::Float4{0.98f, 0.48f, 0.20f, 0.78f}, entity);
+                            add_line(position, center + right * radius, color, entity);
+                            add_line(position, center - right * radius, color, entity);
+                            add_line(position, center + up * radius, color, entity);
+                            add_line(position, center - up * radius, color, entity);
+                        }
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DistantLight>) {
+                        add_circle(position, right, up, icon, color, entity);
+                        const math::Float3 end = position + forward * icon * 3.5f;
+                        add_line(position, end, color, entity, 1.875f);
+                        add_line(end, end - forward * icon + right * icon * 0.5f, color, entity);
+                        add_line(end, end - forward * icon - right * icon * 0.5f, color, entity);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::InfiniteLight>) {
+                        add_circle(position, right, up, icon * 1.5f, color, entity);
+                        add_circle(position, right, forward, icon * 1.5f, color, entity);
+                        add_line(position, position + forward * icon * 3.0f, color, entity, 1.875f);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PortalInfiniteLight>) {
+                        add_circle(position, right, up, icon * 1.5f, color, entity);
+                        add_circle(position, right, forward, icon * 1.5f, color, entity);
+                        add_line(position, position + forward * icon * 3.0f, color, entity, 1.875f);
+                        for (const std::array<math::Float3, 4>& portal : data.portals) {
+                            for (std::size_t index = 0; index != portal.size(); ++index) add_line(portal[index], portal[(index + 1) % portal.size()], {0.28f, 0.95f, 0.78f, 0.92f}, entity, 2.1f);
+                            const math::Float3 portal_center = (portal[0] + portal[1] + portal[2] + portal[3]) / 4.0f;
+                            const math::Float3 normal        = (portal[1] - portal[0]).cross(portal[3] - portal[0]).normalized();
+                            add_line(portal_center, portal_center + normal * scene_radius * 0.08f, {0.28f, 0.95f, 0.78f, 0.92f}, entity);
+                        }
+                    }
+                },
+                light.data);
+        }
+
+        if ((selection_diagnostics.pivot || selection_diagnostics.orientation) && selection.active) {
+            const SceneEntityReference entity = *selection.active;
+            math::Transform transform{};
+            bool spatial{true};
+            if (entity.kind == SceneEntityKind::Instance)
+                transform = std::ranges::find(source_scene.resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id)->transform;
+            else if (entity.kind == SceneEntityKind::Camera)
+                transform = std::ranges::find(source_scene.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->transform;
+            else if (entity.kind == SceneEntityKind::Light)
+                transform = light_transform(*std::ranges::find(source_scene.resources.lights, scene::LightId{entity.id}, &scene::Light::id));
+            else if (entity.kind == SceneEntityKind::AreaEmitter)
+                transform = std::ranges::find(source_scene.resources.instances, scene::InstanceId{entity.owner}, &scene::Instance::id)->transform;
+            else if (entity.kind == SceneEntityKind::Volume)
+                transform = std::ranges::find(source_scene.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id)->transform;
+            else
+                spatial = false;
+            if (spatial) {
                 const math::Float3 origin{transform.matrix[3], transform.matrix[7], transform.matrix[11]};
                 const float size = scene_radius * 0.07f;
-                if (settings.pivots) {
+                if (selection_diagnostics.pivot) {
                     const float half = size * 0.16f;
-                    add_line(origin - math::Float3{half, 0.0f, 0.0f}, origin + math::Float3{half, 0.0f, 0.0f}, {0.95f, 0.95f, 0.98f, 0.88f}, entity, settings.line_width * 1.2f);
-                    add_line(origin - math::Float3{0.0f, half, 0.0f}, origin + math::Float3{0.0f, half, 0.0f}, {0.95f, 0.95f, 0.98f, 0.88f}, entity, settings.line_width * 1.2f);
-                    add_line(origin - math::Float3{0.0f, 0.0f, half}, origin + math::Float3{0.0f, 0.0f, half}, {0.95f, 0.95f, 0.98f, 0.88f}, entity, settings.line_width * 1.2f);
+                    add_line(origin - math::Float3{half, 0.0f, 0.0f}, origin + math::Float3{half, 0.0f, 0.0f}, {0.95f, 0.95f, 0.98f, 0.88f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
+                    add_line(origin - math::Float3{0.0f, half, 0.0f}, origin + math::Float3{0.0f, half, 0.0f}, {0.95f, 0.95f, 0.98f, 0.88f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
+                    add_line(origin - math::Float3{0.0f, 0.0f, half}, origin + math::Float3{0.0f, 0.0f, half}, {0.95f, 0.95f, 0.98f, 0.88f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
                 }
-                if (settings.orientation) {
-                    add_line(origin, origin + transform.transform_vector({size, 0.0f, 0.0f}), {0.95f, 0.22f, 0.18f, 0.95f}, entity, settings.line_width * 1.2f);
-                    add_line(origin, origin + transform.transform_vector({0.0f, size, 0.0f}), {0.20f, 0.90f, 0.28f, 0.95f}, entity, settings.line_width * 1.2f);
-                    add_line(origin, origin + transform.transform_vector({0.0f, 0.0f, size}), {0.18f, 0.48f, 1.0f, 0.95f}, entity, settings.line_width * 1.2f);
+                if (selection_diagnostics.orientation) {
+                    add_line(origin, origin + transform.transform_vector({size, 0.0f, 0.0f}), {0.95f, 0.22f, 0.18f, 0.95f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
+                    add_line(origin, origin + transform.transform_vector({0.0f, size, 0.0f}), {0.20f, 0.90f, 0.28f, 0.95f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
+                    add_line(origin, origin + transform.transform_vector({0.0f, 0.0f, size}), {0.18f, 0.48f, 1.0f, 0.95f}, entity, selection_diagnostics.line_width * 1.2f, selection_diagnostics.depth_mode);
                 }
             }
+        }
 
         this->ensure_buffers(frame_resources, lines.size(), boxes.size());
         if (!lines.empty()) std::memcpy(frame_resources.line_buffer.mapped, lines.data(), lines.size() * sizeof(DiagnosticLine));
@@ -334,8 +358,8 @@ namespace spectra {
                 gpu_transform_index == std::numeric_limits<std::uint32_t>::max() ? this->context.gpu_scene.view().instance_bounds : this->context.gpu_scene.view().primitive_transforms,
                 depth.descriptor,
                                     {kind, count, pick, std::to_underlying(depth_mode)},
-                                    {display.image.extent.width, display.image.extent.height, settings.attribute_sampling, gpu_transform_index},
-                                    {settings.line_width, settings.point_size, settings.normal_scale, static_cast<float>(settings.attribute_sampling)},
+                                    {display.image.extent.width, display.image.extent.height, selection_diagnostics.attribute_sampling, gpu_transform_index},
+                                    {selection_diagnostics.line_width, selection_diagnostics.point_size, selection_diagnostics.vector_scale, static_cast<float>(selection_diagnostics.attribute_sampling)},
                                     {color.x, color.y, color.z, color.w},
                                     {matrix[0], matrix[1], matrix[2], matrix[3]},
                                     {matrix[4], matrix[5], matrix[6], matrix[7]},
@@ -349,11 +373,15 @@ namespace spectra {
             this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
             command_buffer.draw(vertex_count, kind <= 1 || kind == 8 ? count : 1u, 0, 0);
         };
-        if (!lines.empty()) push_and_draw(0, frame_resources.line_descriptor, frame_resources.line_descriptor, static_cast<std::uint32_t>(lines.size()), 0, settings.depth_mode, {}, {}, 6);
-        if (!boxes.empty()) push_and_draw(1, frame_resources.box_descriptor, this->context.gpu_scene.view().instance_bounds, static_cast<std::uint32_t>(boxes.size()), 0, settings.depth_mode, {}, {}, 72);
+        if (!lines.empty()) push_and_draw(0, frame_resources.line_descriptor, frame_resources.line_descriptor, static_cast<std::uint32_t>(lines.size()), 0, selection_diagnostics.depth_mode, {}, {}, 6);
+        if (!boxes.empty()) push_and_draw(1, frame_resources.box_descriptor, this->context.gpu_scene.view().instance_bounds, static_cast<std::uint32_t>(boxes.size()), 0, selection_diagnostics.depth_mode, {}, {}, 72);
 
+        const bool inspect_instance = selection.active && selection.active->kind == SceneEntityKind::Instance;
+        const bool inspect_area     = selection.active && selection.active->kind == SceneEntityKind::AreaEmitter;
+        const scene::InstanceId inspected_instance{inspect_instance ? selection.active->id : inspect_area ? selection.active->owner : 0};
         for (const GpuScenePrimitive& gpu_primitive : this->context.gpu_scene.view().primitives) {
             const scene::Instance& instance   = source_scene.resources.instances[gpu_primitive.scene_instance_index];
+            if ((!inspect_instance && !inspect_area) || instance.id != inspected_instance) continue;
             const scene::Prototype& prototype = *std::ranges::find(source_scene.resources.prototypes, instance.prototype, &scene::Prototype::id);
             const scene::Primitive& primitive = prototype.primitives[gpu_primitive.prototype_primitive_index];
             const SceneEntityReference instance_entity{SceneEntityKind::Instance, instance.id.value};
@@ -361,26 +389,26 @@ namespace spectra {
             if (gpu_primitive.kind == GpuScenePrimitiveKind::Geometry) {
                 const GpuGeometry& geometry       = this->context.gpu_scene.view().geometries[gpu_primitive.resource_index];
                 const std::uint32_t instance_pick = pick_index(instance_entity);
-                if (settings.geometry_edges) push_and_draw(2, geometry.positions_descriptor, geometry.indices_descriptor, geometry.index_count / 3u, instance_pick, settings.depth_mode, diagnostic_color(instance_entity, selection, {0.18f, 0.76f, 1.0f, 0.56f}), transform, geometry.index_count * 6u, gpu_primitive.scene_primitive_index);
-                if (settings.vertices) push_and_draw(3, geometry.positions_descriptor, geometry.positions_descriptor, geometry.vertex_count, instance_pick, settings.depth_mode, diagnostic_color(instance_entity, selection, {0.94f, 0.94f, 0.98f, 0.90f}), transform, geometry.vertex_count * 6u, gpu_primitive.scene_primitive_index);
-                if (settings.normals && (geometry.attribute_mask & gpu_geometry_attribute_normal) != 0) push_and_draw(4, geometry.positions_descriptor, geometry.normals_descriptor, geometry.vertex_count, instance_pick, settings.depth_mode, {0.24f, 0.86f, 0.48f, 0.84f}, transform, ((geometry.vertex_count + settings.attribute_sampling - 1u) / settings.attribute_sampling) * 6u, gpu_primitive.scene_primitive_index);
-                if (settings.tangents && (geometry.attribute_mask & gpu_geometry_attribute_tangent) != 0) push_and_draw(5, geometry.positions_descriptor, geometry.tangents_descriptor, geometry.vertex_count, instance_pick, settings.depth_mode, {0.94f, 0.38f, 0.74f, 0.84f}, transform, ((geometry.vertex_count + settings.attribute_sampling - 1u) / settings.attribute_sampling) * 6u, gpu_primitive.scene_primitive_index);
-                if (settings.area_emitters && primitive.area_light.value != 0) {
+                if (inspect_instance && selection_diagnostics.wireframe) push_and_draw(2, geometry.positions_descriptor, geometry.indices_descriptor, geometry.index_count / 3u, instance_pick, selection_diagnostics.depth_mode, diagnostic_color(instance_entity, selection, {0.18f, 0.76f, 1.0f, 0.56f}), transform, geometry.index_count * 6u, gpu_primitive.scene_primitive_index);
+                if (inspect_instance && selection_diagnostics.vertices) push_and_draw(3, geometry.positions_descriptor, geometry.positions_descriptor, geometry.vertex_count, instance_pick, selection_diagnostics.depth_mode, diagnostic_color(instance_entity, selection, {0.94f, 0.94f, 0.98f, 0.90f}), transform, geometry.vertex_count * 6u, gpu_primitive.scene_primitive_index);
+                if (inspect_instance && selection_diagnostics.normals && (geometry.attribute_mask & gpu_geometry_attribute_normal) != 0) push_and_draw(4, geometry.positions_descriptor, geometry.normals_descriptor, geometry.vertex_count, instance_pick, selection_diagnostics.depth_mode, {0.24f, 0.86f, 0.48f, 0.84f}, transform, ((geometry.vertex_count + selection_diagnostics.attribute_sampling - 1u) / selection_diagnostics.attribute_sampling) * 6u, gpu_primitive.scene_primitive_index);
+                if (inspect_instance && selection_diagnostics.tangents && (geometry.attribute_mask & gpu_geometry_attribute_tangent) != 0) push_and_draw(5, geometry.positions_descriptor, geometry.tangents_descriptor, geometry.vertex_count, instance_pick, selection_diagnostics.depth_mode, {0.94f, 0.38f, 0.74f, 0.84f}, transform, ((geometry.vertex_count + selection_diagnostics.attribute_sampling - 1u) / selection_diagnostics.attribute_sampling) * 6u, gpu_primitive.scene_primitive_index);
+                if (selection_diagnostics.area_emitter && primitive.area_light.value != 0 && (!inspect_area || selection.active->subindex == gpu_primitive.prototype_primitive_index)) {
                     const SceneEntityReference area{SceneEntityKind::AreaEmitter, primitive.area_light.value, instance.id.value, gpu_primitive.prototype_primitive_index};
-                    push_and_draw(2, geometry.positions_descriptor, geometry.indices_descriptor, geometry.index_count / 3u, pick_index(area), settings.depth_mode, diagnostic_color(area, selection, {1.0f, 0.48f, 0.10f, 0.94f}), transform, geometry.index_count * 6u, gpu_primitive.scene_primitive_index);
-                    if ((geometry.attribute_mask & gpu_geometry_attribute_normal) != 0) push_and_draw(4, geometry.positions_descriptor, geometry.normals_descriptor, geometry.vertex_count, pick_index(area), settings.depth_mode, {1.0f, 0.48f, 0.10f, 0.72f}, transform, ((geometry.vertex_count + settings.attribute_sampling - 1u) / settings.attribute_sampling) * 6u, gpu_primitive.scene_primitive_index);
+                    push_and_draw(2, geometry.positions_descriptor, geometry.indices_descriptor, geometry.index_count / 3u, pick_index(area), selection_diagnostics.depth_mode, diagnostic_color(area, selection, {1.0f, 0.48f, 0.10f, 0.94f}), transform, geometry.index_count * 6u, gpu_primitive.scene_primitive_index);
+                    if ((geometry.attribute_mask & gpu_geometry_attribute_normal) != 0) push_and_draw(4, geometry.positions_descriptor, geometry.normals_descriptor, geometry.vertex_count, pick_index(area), selection_diagnostics.depth_mode, {1.0f, 0.48f, 0.10f, 0.72f}, transform, ((geometry.vertex_count + selection_diagnostics.attribute_sampling - 1u) / selection_diagnostics.attribute_sampling) * 6u, gpu_primitive.scene_primitive_index);
                 }
-                if (settings.medium_boundaries && (primitive.media.inside.value != 0 || primitive.media.outside.value != 0)) push_and_draw(2, geometry.positions_descriptor, geometry.indices_descriptor, geometry.index_count / 3u, instance_pick, scene::VisualizationDepthMode::XRay, {0.18f, 0.92f, 0.86f, 0.72f}, transform, geometry.index_count * 6u, gpu_primitive.scene_primitive_index);
+                if (inspect_instance && selection_diagnostics.medium_boundary && (primitive.media.inside.value != 0 || primitive.media.outside.value != 0)) push_and_draw(2, geometry.positions_descriptor, geometry.indices_descriptor, geometry.index_count / 3u, instance_pick, selection_diagnostics.depth_mode, {0.18f, 0.92f, 0.86f, 0.72f}, transform, geometry.index_count * 6u, gpu_primitive.scene_primitive_index);
             } else {
                 const GpuSphereSet& spheres       = this->context.gpu_scene.view().sphere_sets[gpu_primitive.resource_index];
                 const std::uint32_t instance_pick = pick_index(instance_entity);
-                if (settings.geometry_edges) push_and_draw(8, spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, instance_pick, settings.depth_mode, diagnostic_color(instance_entity, selection, {0.18f, 0.76f, 1.0f, 0.56f}), transform, 32u * 3u * 6u, gpu_primitive.scene_primitive_index);
-                if (settings.vertices) push_and_draw(6, spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, instance_pick, settings.depth_mode, diagnostic_color(instance_entity, selection, {0.94f, 0.94f, 0.98f, 0.90f}), transform, spheres.sphere_count * 6u, gpu_primitive.scene_primitive_index);
-                if (settings.area_emitters && primitive.area_light.value != 0) {
+                if (inspect_instance && selection_diagnostics.wireframe) push_and_draw(8, spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, instance_pick, selection_diagnostics.depth_mode, diagnostic_color(instance_entity, selection, {0.18f, 0.76f, 1.0f, 0.56f}), transform, 32u * 3u * 6u, gpu_primitive.scene_primitive_index);
+                if (inspect_instance && selection_diagnostics.vertices) push_and_draw(6, spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, instance_pick, selection_diagnostics.depth_mode, diagnostic_color(instance_entity, selection, {0.94f, 0.94f, 0.98f, 0.90f}), transform, spheres.sphere_count * 6u, gpu_primitive.scene_primitive_index);
+                if (selection_diagnostics.area_emitter && primitive.area_light.value != 0 && (!inspect_area || selection.active->subindex == gpu_primitive.prototype_primitive_index)) {
                     const SceneEntityReference area{SceneEntityKind::AreaEmitter, primitive.area_light.value, instance.id.value, gpu_primitive.prototype_primitive_index};
-                    push_and_draw(8, spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, pick_index(area), settings.depth_mode, diagnostic_color(area, selection, {1.0f, 0.48f, 0.10f, 0.94f}), transform, 32u * 3u * 6u, gpu_primitive.scene_primitive_index);
+                    push_and_draw(8, spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, pick_index(area), selection_diagnostics.depth_mode, diagnostic_color(area, selection, {1.0f, 0.48f, 0.10f, 0.94f}), transform, 32u * 3u * 6u, gpu_primitive.scene_primitive_index);
                 }
-                if (settings.medium_boundaries && (primitive.media.inside.value != 0 || primitive.media.outside.value != 0)) push_and_draw(8, spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, instance_pick, scene::VisualizationDepthMode::XRay, {0.18f, 0.92f, 0.86f, 0.72f}, transform, 32u * 3u * 6u, gpu_primitive.scene_primitive_index);
+                if (inspect_instance && selection_diagnostics.medium_boundary && (primitive.media.inside.value != 0 || primitive.media.outside.value != 0)) push_and_draw(8, spheres.positions_descriptor, spheres.radii_descriptor, spheres.sphere_count, instance_pick, selection_diagnostics.depth_mode, {0.18f, 0.92f, 0.86f, 0.72f}, transform, 32u * 3u * 6u, gpu_primitive.scene_primitive_index);
             }
         }
         command_buffer.endRendering();
