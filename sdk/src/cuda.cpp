@@ -1,6 +1,7 @@
 module;
 
 #include <cuda_runtime_api.h>
+#include <spectra/sdk/cuda_types.h>
 
 #include "../internal/abi.h"
 

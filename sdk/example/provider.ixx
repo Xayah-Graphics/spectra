@@ -15,7 +15,7 @@ export namespace spectra::sdk::example {
         bool visible{true};
     };
 
-    export struct Provider {
+    struct Provider {
         Settings settings{};
 
         static constexpr auto description = spectra::sdk::describe(

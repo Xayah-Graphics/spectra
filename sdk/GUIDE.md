@@ -2,7 +2,7 @@
 
 Spectra SDK lets a CUDA simulation publish typed GPU resources without implementing Spectra's binary ABI, Vulkan external-memory import, or semaphore protocol.
 
-Spectra and Spectra SDK are separate CMake projects. The Spectra root build never configures CUDA or builds the SDK. Configure and install the SDK from its own source directory before building a Provider:
+Spectra SDK CUDA Providers are supported only on Windows. The SDK is disabled in the Spectra root build by default, so the main Spectra build has no CUDA dependency. Configure and install the SDK from its own source directory before building a Provider:
 
 ```text
 cmake -S sdk -B sdk/cmake-build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=sdk/install
@@ -30,7 +30,7 @@ export namespace project {
         float gravity{-9.81F};
     };
 
-    export struct Provider {
+    struct Provider {
         Settings settings{};
 
         static constexpr auto description = spectra::sdk::describe(
