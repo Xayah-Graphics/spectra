@@ -15,6 +15,9 @@ namespace spectra {
         constexpr float panel_margin        = 12.0f;
         constexpr float panel_minimum_width = 280.0f;
         constexpr float panel_maximum_width = 320.0f;
+        constexpr ImVec2 playback_button_size{76.0f, 34.0f};
+        constexpr float playback_spacing       = 7.0f;
+        constexpr float playback_bottom_margin = 18.0f;
 
         enum class Icon : std::uint8_t {
             Translate,
@@ -284,6 +287,10 @@ namespace spectra {
 
     EditorUi::ViewportLayout EditorUi::make_layout(const ImVec2 position, const ImVec2 size) const noexcept {
         const bool selection_visible = active_entity(*this) != nullptr;
+        const bool dynamic_visible    = this->context.dynamics.initialized();
+        const bool playback_visible   = dynamic_visible || this->context.render_engine.progress().has_value();
+        const float playback_count    = dynamic_visible ? 3.0f : 2.0f;
+        const float playback_width    = playback_button_size.x * playback_count + playback_spacing * (playback_count - 1.0f);
         const float width             = std::clamp(size.x * 0.18f, panel_minimum_width, panel_maximum_width);
         const float maximum_height    = size.y - panel_top - panel_margin;
         return {
@@ -301,6 +308,11 @@ namespace spectra {
                 .maximum_height = maximum_height,
                 .visible        = selection_visible,
             },
+            .playback_controls{
+                .position = {position.x + (size.x - playback_width) * 0.5f, position.y + size.y - playback_bottom_margin - playback_button_size.y},
+                .size     = {playback_width, playback_button_size.y},
+                .visible  = playback_visible,
+            },
         };
     }
 
@@ -308,8 +320,8 @@ namespace spectra {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         if (mouse.y <= layout.position.y + top_strip_height + 5.0f) return true;
         if (show_axes && mouse.x >= layout.position.x + layout.size.x - 116.0f && mouse.y <= layout.position.y + 126.0f) return true;
-        const auto contains = [mouse](const PanelRect& panel) { return panel.visible && mouse.x >= panel.position.x && mouse.x <= panel.position.x + panel.size.x && mouse.y >= panel.position.y && mouse.y <= panel.position.y + panel.size.y; };
-        if (contains(layout.global_panel) || contains(layout.selection_panel)) return true;
+        const auto contains = [mouse](const auto& region) { return region.visible && mouse.x >= region.position.x && mouse.x <= region.position.x + region.size.x && mouse.y >= region.position.y && mouse.y <= region.position.y + region.size.y; };
+        if (contains(layout.global_panel) || contains(layout.selection_panel) || contains(layout.playback_controls)) return true;
         return false;
     }
 
@@ -495,9 +507,11 @@ namespace spectra {
     }
 
     void EditorUi::draw_gizmo(const ImVec2 minimum, const ImVec2 size, const bool blocked, const bool transform_editable) {
+        this->controls.gizmo_active = false;
+        if (!transform_editable) return;
         const SceneEntityReference* entity = active_entity(*this);
         if (!entity) return;
-        const scene::Scene& transform_scene            = transform_editable ? this->context.document.content.source : this->context.document.content.evaluated;
+        const scene::Scene& transform_scene            = this->context.document.content.source;
         const std::optional<math::Transform> transform = entity_transform(transform_scene, *entity);
         if (!transform) return;
         math::Float3 pivot{};
@@ -521,7 +535,7 @@ namespace spectra {
         ImGuizmo::SetOrthographic(std::holds_alternative<scene::OrthographicCameraData>(this->context.viewport.view.render_camera.data));
         ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
         ImGuizmo::SetRect(minimum.x, minimum.y, size.x, size.y);
-        ImGuizmo::Enable(!blocked && transform_editable);
+        ImGuizmo::Enable(!blocked);
         const bool changed = ImGuizmo::Manipulate(view.data(), projection.data(), this->controls.gizmo_operation, ImGuizmo::WORLD, matrix.data());
         if (changed) this->apply_transform(*entity, row_major_transform(matrix) * from_pivot);
         this->controls.gizmo_active = ImGuizmo::IsUsing();
@@ -580,6 +594,7 @@ namespace spectra {
         this->draw_gizmo(position, size, blocked, transform_editable);
         this->draw_orientation(position, size, show_axes);
         this->draw_viewport_hud(layout, *draw_list);
+        this->draw_playback_controls(layout.playback_controls);
         this->handle_viewport_input(position, size, blocked);
         ImGui::PopClipRect();
         ImGui::SetCursorScreenPos(ImVec2{position.x, position.y + size.y});
@@ -859,32 +874,29 @@ namespace spectra {
         draw_list.PopClipRect();
     }
 
-    float EditorUi::draw_playback_controls(const float right_edge, const std::optional<RenderProgress>& render_progress) {
-        const bool dynamic = this->context.dynamics.initialized();
-        if (!dynamic && !render_progress) return right_edge;
+    void EditorUi::draw_playback_controls(const ControlRect& controls) {
+        if (!controls.visible) return;
+        const bool dynamic                                  = this->context.dynamics.initialized();
+        const std::optional<RenderProgress> render_progress = dynamic ? std::nullopt : this->context.render_engine.progress();
+        if (!dynamic && !render_progress) return;
 
-        const float spacing    = ImGui::GetStyle().ItemSpacing.x;
-        const auto button_size = [](const char* label) {
-            const ImVec2 text_size = ImGui::CalcTextSize(label);
-            const ImVec2 padding   = ImGui::GetStyle().FramePadding;
-            return ImVec2{text_size.x + padding.x * 2.0f, 27.0f};
+        ImGui::SetCursorScreenPos(controls.position);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{playback_spacing, 0.0f});
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        const auto draw_button_surface = [draw_list] {
+            const ImVec2 minimum = ImGui::GetCursorScreenPos();
+            const ImVec2 maximum{minimum.x + playback_button_size.x, minimum.y + playback_button_size.y};
+            draw_list->AddRectFilled({minimum.x + 1.0f, minimum.y + 2.0f}, {maximum.x + 1.0f, maximum.y + 2.0f}, ImGui::GetColorU32({0.0f, 0.0f, 0.0f, 0.24f}), 6.0f);
+            draw_list->AddRectFilled(minimum, maximum, ImGui::GetColorU32({0.025f, 0.035f, 0.045f, 0.34f}), 6.0f);
+            draw_list->AddRect(minimum, maximum, ImGui::GetColorU32({0.56f, 0.65f, 0.72f, 0.18f}), 6.0f, 0, 1.0f);
         };
-        const bool simulation_faulted               = dynamic && this->context.dynamics.faulted();
-        const bool simulation_playing               = dynamic && this->context.dynamics.running();
-        const char* playback_label                  = dynamic ? simulation_playing ? "Pause" : "Play" : render_progress->paused ? "Resume" : "Pause";
-        const char* secondary_label                 = dynamic ? "Step" : "Reset";
-        const char* reset_label                     = "Reset";
-        ImVec2 playback_size                        = button_size(playback_label);
-        playback_size.x                             = std::max(button_size("Pause").x, button_size(dynamic ? "Play" : "Resume").x);
-        const ImVec2 secondary_size                 = button_size(secondary_label);
-        const ImVec2 reset_size                     = button_size(reset_label);
-        const float controls_width                  = playback_size.x + secondary_size.x + (dynamic ? reset_size.x + spacing : 0.0f) + spacing;
-        const float controls_start                  = right_edge - controls_width - 8.0f;
-        ImGui::SameLine(controls_start);
 
         if (dynamic) {
+            const bool simulation_faulted = this->context.dynamics.faulted();
+            const bool simulation_playing = this->context.dynamics.running();
             ImGui::BeginDisabled(simulation_faulted);
-            if (icon_button("##SimulationPlayback", playback_size, simulation_playing ? Icon::Pause : Icon::Play, playback_label, simulation_playing ? ImVec4{0.35f, 0.84f, 0.55f, 1.0f} : ImVec4{})) {
+            draw_button_surface();
+            if (icon_button("##SimulationPlayback", playback_button_size, simulation_playing ? Icon::Pause : Icon::Play, simulation_playing ? "Pause" : "Play", simulation_playing ? ImVec4{0.35f, 0.84f, 0.55f, 1.0f} : ImVec4{0.28f, 0.79f, 0.90f, 0.92f})) {
                 try {
                     if (simulation_playing)
                         this->context.dynamics.pause();
@@ -896,7 +908,8 @@ namespace spectra {
             }
             ImGui::SameLine();
             ImGui::BeginDisabled(simulation_playing);
-            if (icon_button("##SimulationStep", secondary_size, Icon::Step, secondary_label)) {
+            draw_button_surface();
+            if (icon_button("##SimulationStep", playback_button_size, Icon::Step, "Step")) {
                 try {
                     this->context.dynamics.step();
                 } catch (const std::exception& error) {
@@ -906,7 +919,8 @@ namespace spectra {
             ImGui::EndDisabled();
             ImGui::SameLine();
             ImGui::BeginDisabled(simulation_playing);
-            if (icon_button("##SimulationReset", reset_size, Icon::Reset, reset_label)) {
+            draw_button_surface();
+            if (icon_button("##SimulationReset", playback_button_size, Icon::Reset, "Reset")) {
                 try {
                     this->context.dynamics.reset();
                 } catch (const std::exception& error) {
@@ -916,11 +930,13 @@ namespace spectra {
             ImGui::EndDisabled();
             ImGui::EndDisabled();
         } else {
-            if (icon_button("##PathPlayback", playback_size, render_progress->paused ? Icon::Play : Icon::Pause, playback_label, render_progress->paused ? ImVec4{0.91f, 0.72f, 0.29f, 1.0f} : ImVec4{})) this->context.render_engine.set_paused(!render_progress->paused);
+            draw_button_surface();
+            if (icon_button("##PathPlayback", playback_button_size, render_progress->paused ? Icon::Play : Icon::Pause, render_progress->paused ? "Resume" : "Pause", render_progress->paused ? ImVec4{0.91f, 0.72f, 0.29f, 1.0f} : ImVec4{})) this->context.render_engine.set_paused(!render_progress->paused);
             ImGui::SameLine();
-            if (icon_button("##PathReset", secondary_size, Icon::Reset, secondary_label)) this->context.render_engine.reset();
+            draw_button_surface();
+            if (icon_button("##PathReset", playback_button_size, Icon::Reset, "Reset")) this->context.render_engine.reset();
         }
-        return controls_start;
+        ImGui::PopStyleVar();
     }
 
     void EditorUi::draw_top_strip(const ImVec2 position, const ImVec2 size, EditorActions& actions) {
@@ -1007,7 +1023,6 @@ namespace spectra {
         constexpr float exposure_width = 84.0f;
         constexpr float edge_margin    = 4.0f;
         const float exposure_start     = right - edge_margin - exposure_width;
-        const float controls_start     = this->draw_playback_controls(exposure_start, render_progress);
         ImGui::SameLine(exposure_start);
         const FlatButtonInteraction exposure = flat_button("##Exposure", ImVec2{exposure_width, 27.0f});
         if (exposure.active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) this->context.settings.exposure = std::clamp(this->context.settings.exposure + ImGui::GetIO().MouseDelta.x * 0.05f, -20.0f, 20.0f);
@@ -1020,15 +1035,15 @@ namespace spectra {
         };
         ImGui::GetWindowDrawList()->AddText(ImVec2{exposure_text_position.x + 1.0f, exposure_text_position.y + 1.0f}, exposure.shadow, exposure_text.c_str());
         ImGui::GetWindowDrawList()->AddText(exposure_text_position, exposure.color, exposure_text.c_str());
-        const float strip_offset_x      = ImGui::GetWindowPos().x - position.x;
-        const float left_drag_start     = strip_offset_x + source_end + 4.0f;
-        const float mode_client_start   = strip_offset_x + mode_start;
-        const float mode_client_end     = mode_client_start + mode_width;
-        const float right_drag_start    = mode_client_end + 4.0f;
-        const float controls_client_start = strip_offset_x + controls_start;
-        actions.window_drag_regions     = {{
+        const float strip_offset_x        = ImGui::GetWindowPos().x - position.x;
+        const float left_drag_start       = strip_offset_x + source_end + 4.0f;
+        const float mode_client_start     = strip_offset_x + mode_start;
+        const float mode_client_end       = mode_client_start + mode_width;
+        const float right_drag_start      = mode_client_end + 4.0f;
+        const float exposure_client_start = strip_offset_x + exposure_start;
+        actions.window_drag_regions       = {{
             {left_drag_start, 0.0f, std::max(left_drag_start, mode_client_start - 4.0f), top_strip_height + 5.0f},
-            {right_drag_start, 0.0f, std::max(right_drag_start, controls_client_start - 4.0f), top_strip_height + 5.0f},
+            {right_drag_start, 0.0f, std::max(right_drag_start, exposure_client_start - 4.0f), top_strip_height + 5.0f},
         }};
         ImGui::End();
         ImGui::PopStyleVar(2);

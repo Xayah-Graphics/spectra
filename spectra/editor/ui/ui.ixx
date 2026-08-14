@@ -95,11 +95,18 @@ namespace spectra {
             bool visible{};
         };
 
+        struct ControlRect {
+            ImVec2 position{};
+            ImVec2 size{};
+            bool visible{};
+        };
+
         struct ViewportLayout {
             ImVec2 position{};
             ImVec2 size{};
             PanelRect global_panel{};
             PanelRect selection_panel{};
+            ControlRect playback_controls{};
         };
 
         void apply_dynamic_parameters(std::vector<scene::DynamicParameterSetting> parameters, bool reset);
@@ -115,7 +122,7 @@ namespace spectra {
         void handle_viewport_input(ImVec2 minimum, ImVec2 size, bool blocked);
         void draw_viewport(const ViewportLayout& layout, bool show_axes, bool transform_editable);
         void draw_viewport_hud(const ViewportLayout& layout, ImDrawList& draw_list);
-        [[nodiscard]] float draw_playback_controls(float right_edge, const std::optional<RenderProgress>& render_progress);
+        void draw_playback_controls(const ControlRect& controls);
         void draw_top_strip(ImVec2 position, ImVec2 size, EditorActions& actions);
         void draw_selection_panel(const PanelRect& panel, bool transform_editable);
         void draw_selection_diagnostics(SceneEntityReference entity);
