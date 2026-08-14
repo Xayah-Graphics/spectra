@@ -25,6 +25,7 @@ else ()
     set(SPECTRA_BUILD_UI_DEFAULT OFF)
 endif ()
 option(SPECTRA_BUILD_UI "Build the Windows visualization UI into the spectra executable" ${SPECTRA_BUILD_UI_DEFAULT})
+option(SPECTRA_BUILD_SDK "Build and install the Spectra SDK" OFF)
 if (SPECTRA_BUILD_UI AND NOT WIN32)
     message(FATAL_ERROR "SPECTRA_BUILD_UI is currently supported only on Windows.")
 endif ()
@@ -247,6 +248,14 @@ add_custom_command(
 )
 add_custom_target(spectra_runtime_resources ALL DEPENDS "${SPECTRA_RUNTIME_RESOURCE_STAMP}")
 add_dependencies(spectra spectra_runtime_resources)
+
+
+# ============================================================================
+# Spectra SDK
+# ============================================================================
+if (SPECTRA_BUILD_SDK)
+    add_subdirectory(sdk)
+endif ()
 
 
 # ============================================================================

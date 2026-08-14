@@ -2,8 +2,8 @@
 
 # Spectra
 
-[![Windows](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml)
-[![Arch Linux](https://github.com/Xayah-Graphics/spectra/actions/workflows/arch.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/arch.yml)
+[![Windows Build](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows-build.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows-build.yml)
+[![Arch Build](https://github.com/Xayah-Graphics/spectra/actions/workflows/arch-build.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/arch-build.yml)
 [![Docker](https://github.com/Xayah-Graphics/spectra/actions/workflows/docker.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/docker.yml)
 [![License](https://img.shields.io/github/license/Xayah-Graphics/spectra)](LICENSE)
 
