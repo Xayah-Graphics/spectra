@@ -28,6 +28,7 @@ namespace spectra {
         VisualizationRenderer* visualization{};
         NeuralFieldRenderer* neural_field{};
         std::optional<SceneDiagnosticsComposition> diagnostics{};
+        std::optional<CameraReferenceVisualization> camera_reference{};
         std::uint32_t frame_slot_index{};
         float exposure{};
         bool compose_visualizations{};

@@ -3,6 +3,6 @@
 import @SPECTRA_PROVIDER_MODULE@;
 import spectra.sdk.internal.bridge;
 
-extern "C" SPECTRA_SDK_EXPORT const SpectraSdkApi* spectra_sdk_api_2() noexcept {
+extern "C" SPECTRA_SDK_EXPORT const SpectraSdkApi* spectra_sdk_api_3() noexcept {
     return spectra::sdk::internal::ProviderBridge<@SPECTRA_PROVIDER_TYPE@>::api();
 }

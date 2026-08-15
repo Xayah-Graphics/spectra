@@ -121,6 +121,7 @@ namespace spectra {
         void draw_gizmo(ImVec2 minimum, ImVec2 size, bool blocked, bool transform_editable);
         void handle_viewport_input(ImVec2 minimum, ImVec2 size, bool blocked);
         void draw_viewport(const ViewportLayout& layout, bool show_axes, bool transform_editable);
+        void draw_camera_gate(ImVec2 position, ImVec2 size, ImDrawList& draw_list) const;
         void draw_viewport_hud(const ViewportLayout& layout, ImDrawList& draw_list);
         void draw_playback_controls(const ControlRect& controls);
         void draw_top_strip(ImVec2 position, ImVec2 size, EditorActions& actions);

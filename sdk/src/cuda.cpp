@@ -202,6 +202,28 @@ namespace spectra::sdk::cuda {
         return {triangles, has_uv ? raw_view(output.fixed_buffers[triangle_capacity == 0u ? 0u : 1u], sizeof(Float2)) : RawView{}};
     }
 
+    RawCamerasSetupView setup_cameras_internal(void* source, const std::string_view id, const std::span<const Camera> cameras, const std::uint32_t width, const std::uint32_t height) {
+        State& state            = setup_state(source);
+        OutputState& output     = output_state(state, id);
+        output.resolution       = {width, height, static_cast<std::uint32_t>(cameras.size())};
+        output.primary_capacity = static_cast<std::uint32_t>(cameras.size());
+        std::vector<SpectraSdkCamera> encoded{};
+        encoded.reserve(cameras.size());
+        for (const Camera& camera : cameras) encoded.emplace_back(std::bit_cast<SpectraSdkCamera>(camera));
+        const SpectraSdkOutputLayout layout{
+            output_index(state, output),
+            abi_kind(output.kind),
+            output.primary_capacity,
+            0u,
+            {width, height, output.primary_capacity},
+            0u,
+            encoded.data(),
+            encoded.size(),
+        };
+        request_output(state, output, layout);
+        return {raw_view(output.fixed_buffers[0], sizeof(Rgba8)), output.resolution};
+    }
+
     void setup_collection_internal(void* source, const std::string_view id, const OutputKind kind, const std::uint32_t capacity) {
         State& state            = setup_state(source);
         OutputState& output     = output_state(state, id);

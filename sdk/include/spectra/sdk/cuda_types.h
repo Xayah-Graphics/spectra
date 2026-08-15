@@ -6,6 +6,13 @@
 #include <type_traits>
 
 namespace spectra::sdk {
+    struct Rgba8 {
+        std::uint8_t r{};
+        std::uint8_t g{};
+        std::uint8_t b{};
+        std::uint8_t a{};
+    };
+
     struct Half {
         std::uint16_t bits{};
     };
@@ -39,6 +46,15 @@ namespace spectra::sdk {
         std::uint32_t x{};
         std::uint32_t y{};
         std::uint32_t z{};
+    };
+
+    struct Camera {
+        Float3 right{};
+        Float3 down{};
+        Float3 forward{};
+        Float3 position{};
+        Float2 focal{};
+        Float2 principal{};
     };
 
     struct Transform {
@@ -78,12 +94,14 @@ namespace spectra::sdk {
         float scalar{};
     };
 
+    static_assert(std::is_standard_layout_v<Rgba8> && std::is_trivially_copyable_v<Rgba8> && sizeof(Rgba8) == 4u);
     static_assert(std::is_standard_layout_v<Half> && std::is_trivially_copyable_v<Half> && sizeof(Half) == 2u);
     static_assert(std::is_standard_layout_v<Half4> && std::is_trivially_copyable_v<Half4> && sizeof(Half4) == 8u);
     static_assert(std::is_standard_layout_v<Float2> && std::is_trivially_copyable_v<Float2> && sizeof(Float2) == 8u);
     static_assert(std::is_standard_layout_v<Float3> && std::is_trivially_copyable_v<Float3> && sizeof(Float3) == 12u);
     static_assert(std::is_standard_layout_v<Float4> && std::is_trivially_copyable_v<Float4> && sizeof(Float4) == 16u);
     static_assert(std::is_standard_layout_v<UInt3> && std::is_trivially_copyable_v<UInt3> && sizeof(UInt3) == 12u);
+    static_assert(std::is_standard_layout_v<Camera> && std::is_trivially_copyable_v<Camera> && sizeof(Camera) == 64u);
     static_assert(std::is_standard_layout_v<Transform> && std::is_trivially_copyable_v<Transform> && sizeof(Transform) == 64u);
     static_assert(std::is_standard_layout_v<Sphere> && std::is_trivially_copyable_v<Sphere> && sizeof(Sphere) == 16u);
     static_assert(std::is_standard_layout_v<Instance> && std::is_trivially_copyable_v<Instance> && sizeof(Instance) == 72u);

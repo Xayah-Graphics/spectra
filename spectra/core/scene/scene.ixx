@@ -570,12 +570,17 @@ namespace spectra::scene {
         bool visible{true};
     };
 
+    export struct NeuralFieldDiagnostics {
+        bool occupancy_grid{};
+    };
+
     export struct NeuralField {
         static constexpr math::Bounds3 local_bounds{{0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}};
 
         NeuralFieldId id{};
         std::string name{};
         math::Transform transform{};
+        NeuralFieldDiagnostics diagnostics{};
         bool visible{true};
     };
 

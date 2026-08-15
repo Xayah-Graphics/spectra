@@ -33,6 +33,7 @@ export namespace spectra::sdk::example {
             spectra::sdk::lines<"lines">(),
             spectra::sdk::vectors<"vectors">(),
             spectra::sdk::image<"image">(),
+            spectra::sdk::cameras<"cameras">(),
             spectra::sdk::hash_grid_radiance_field<"field">(),
             spectra::sdk::metric<"time", float>("Time", "s", {}, true)
         );
@@ -52,6 +53,22 @@ export namespace spectra::sdk::example {
             setup.lines<"lines">(1u);
             setup.vectors<"vectors">(1u);
             setup.image<"image">(2u, 2u);
+            constexpr std::array cameras{spectra::sdk::Camera{
+                .right     = {1.0F, 0.0F, 0.0F},
+                .down      = {0.0F, -1.0F, 0.0F},
+                .forward   = {0.0F, 0.0F, -1.0F},
+                .position  = {0.5F, 0.5F, 2.0F},
+                .focal     = {2.0F, 2.0F},
+                .principal = {1.0F, 1.0F},
+            }};
+            auto camera_output = setup.cameras<"cameras">(cameras, 2u, 2u);
+            constexpr std::array pixels{
+                spectra::sdk::Rgba8{255u, 0u, 0u, 255u},
+                spectra::sdk::Rgba8{0u, 255u, 0u, 255u},
+                spectra::sdk::Rgba8{0u, 0u, 255u, 255u},
+                spectra::sdk::Rgba8{255u, 255u, 255u, 255u},
+            };
+            if (cudaMemcpy(camera_output.images.data(), pixels.data(), sizeof(pixels), cudaMemcpyHostToDevice) != cudaSuccess) throw std::runtime_error("CUDA Camera reference upload failed");
             setup.hash_grid_radiance_field<"field">();
         }
 

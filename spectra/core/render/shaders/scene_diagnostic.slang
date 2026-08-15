@@ -2,8 +2,8 @@ module scene_diagnostic;
 
 struct DiagnosticPushData {
     DescriptorHandle<ByteAddressBuffer> primary;
-    DescriptorHandle<ByteAddressBuffer> secondary;
-    DescriptorHandle<ByteAddressBuffer> tertiary;
+    uint2 secondary;
+    uint2 tertiary;
     DescriptorHandle<Texture2D<float>> depth;
     uint4 metadata;
     uint4 detail;
@@ -39,7 +39,7 @@ uniform DiagnosticPushData push_data;
 float4 transform_position(float3 position) {
     const float4 value = float4(position, 1.0);
     if (push_data.detail.w != 0xffffffff) {
-        ByteAddressBuffer transforms = push_data.tertiary;
+        ByteAddressBuffer transforms = DescriptorHandle<ByteAddressBuffer>(push_data.tertiary);
         const uint offset = push_data.detail.w * 64;
         return float4(dot(transforms.Load<float4>(offset), value), dot(transforms.Load<float4>(offset + 16), value), dot(transforms.Load<float4>(offset + 32), value), dot(transforms.Load<float4>(offset + 48), value));
     }
@@ -48,7 +48,7 @@ float4 transform_position(float3 position) {
 
 float3 transform_vector(float3 vector) {
     if (push_data.detail.w != 0xffffffff) {
-        ByteAddressBuffer transforms = push_data.tertiary;
+        ByteAddressBuffer transforms = DescriptorHandle<ByteAddressBuffer>(push_data.tertiary);
         const uint offset = push_data.detail.w * 64;
         return float3(dot(transforms.Load<float4>(offset).xyz, vector), dot(transforms.Load<float4>(offset + 16).xyz, vector), dot(transforms.Load<float4>(offset + 32).xyz, vector));
     }
@@ -60,7 +60,7 @@ float3 transform_normal(float3 normal) {
     float3 row_1 = push_data.transform_row_1.xyz;
     float3 row_2 = push_data.transform_row_2.xyz;
     if (push_data.detail.w != 0xffffffff) {
-        ByteAddressBuffer transforms = push_data.tertiary;
+        ByteAddressBuffer transforms = DescriptorHandle<ByteAddressBuffer>(push_data.tertiary);
         const uint offset = push_data.detail.w * 64;
         row_0 = transforms.Load<float4>(offset).xyz;
         row_1 = transforms.Load<float4>(offset + 16).xyz;
@@ -106,6 +106,38 @@ float ordered_float(uint value) {
     return asfloat(bits);
 }
 
+uint compact_morton_component(uint value) {
+    value &= 0x49249249u;
+    value = (value ^ (value >> 2u)) & 0xC30C30C3u;
+    value = (value ^ (value >> 4u)) & 0x0F00F00Fu;
+    value = (value ^ (value >> 8u)) & 0xFF0000FFu;
+    return (value ^ (value >> 16u)) & 0x000003FFu;
+}
+
+[shader("compute")]
+[numthreads(256, 1, 1)]
+void compact_scene_diagnostic_occupancy(uint3 dispatch_thread_id : SV_DispatchThreadID) {
+    const uint word_index = dispatch_thread_id.x;
+    if (word_index >= 65536u) return;
+    ByteAddressBuffer occupancy = push_data.primary;
+    RWByteAddressBuffer occupied_cells = DescriptorHandle<RWByteAddressBuffer>(push_data.secondary);
+    RWByteAddressBuffer draw = DescriptorHandle<RWByteAddressBuffer>(push_data.tertiary);
+    if (word_index == 0u) draw.Store(0u, 72u);
+    uint bits = occupancy.Load<uint>(word_index * 4u);
+    const uint cell_count = countbits(bits);
+    if (cell_count == 0u) return;
+    uint destination;
+    draw.InterlockedAdd(4u, cell_count, destination);
+    while (bits != 0u) {
+        const uint bit = firstbitlow(bits);
+        const uint morton_index = word_index * 32u + bit;
+        const uint linear_index = compact_morton_component(morton_index) | (compact_morton_component(morton_index >> 1u) << 7u) | (compact_morton_component(morton_index >> 2u) << 14u);
+        occupied_cells.Store(destination * 4u, linear_index);
+        ++destination;
+        bits &= bits - 1u;
+    }
+}
+
 [shader("vertex")]
 DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID) {
     const uint kind = push_data.metadata.x;
@@ -116,7 +148,7 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
     }
     if (kind == 1) {
         ByteAddressBuffer boxes = push_data.primary;
-        ByteAddressBuffer bounds = push_data.secondary;
+        ByteAddressBuffer bounds = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
         const uint offset = instance_id * 128;
         const float4 transform_row_0 = boxes.Load<float4>(offset);
         const float4 transform_row_1 = boxes.Load<float4>(offset + 16);
@@ -145,8 +177,21 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
         const float3 second = float3(dot(transform_row_0, second_value), dot(transform_row_1, second_value), dot(transform_row_2, second_value));
         return make_line(first, second, boxes.Load<float>(offset + 76), color, metadata.z, metadata.w, vertex_id % 6);
     }
+    if (kind == 9) {
+        ByteAddressBuffer occupied_cells = push_data.primary;
+        const uint linear_index = occupied_cells.Load<uint>(instance_id * 4u);
+        const uint3 coordinate = uint3(linear_index & 127u, (linear_index >> 7u) & 127u, linear_index >> 14u);
+        const uint edges[24] = {0,1, 1,3, 3,2, 2,0, 4,5, 5,7, 7,6, 6,4, 0,4, 1,5, 2,6, 3,7};
+        const uint edge = vertex_id / 6u;
+        const uint first_corner = edges[edge * 2u];
+        const uint second_corner = edges[edge * 2u + 1u];
+        const float3 minimum = float3(coordinate) / 128.0;
+        const float3 first = minimum + float3(first_corner & 1u, (first_corner >> 1u) & 1u, (first_corner >> 2u) & 1u) / 128.0;
+        const float3 second = minimum + float3(second_corner & 1u, (second_corner >> 1u) & 1u, (second_corner >> 2u) & 1u) / 128.0;
+        return make_line(first, second, push_data.parameters.x, push_data.color, 0u, 1u, vertex_id % 6u);
+    }
     ByteAddressBuffer primary = push_data.primary;
-    ByteAddressBuffer secondary = push_data.secondary;
+    ByteAddressBuffer secondary = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
     if (kind == 8) {
         const uint line_vertex = vertex_id % 6;
         const uint segment_index = vertex_id / 6;
@@ -206,8 +251,10 @@ DiagnosticFragmentOutput scene_diagnostic_fragment(DiagnosticVertexOutput input)
         Texture2D<float> depth = push_data.depth;
         const bool hidden = input.position.z > depth.Load(int3(uint2(input.position.xy), 0)) + 0.00001;
         if (hidden && input.depth_mode == 0) discard;
-        if (hidden) color.a *= 0.22;
+        if (hidden && push_data.metadata.x == 9u) color.rgb *= 0.22;
+        else if (hidden) color.a *= 0.22;
     }
+    if (push_data.metadata.x == 9u) color.a = 1.0;
     DiagnosticFragmentOutput output = {color, input.pick_index};
     return output;
 }

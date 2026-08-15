@@ -16,25 +16,64 @@ namespace spectra {
         this->view.aspect                     = static_cast<float>(film.resolution[0]) / static_cast<float>(film.resolution[1]);
         this->view.axes_plane                 = AxesPlane::Xz;
         this->view.source                     = CameraSource::Viewport;
+        this->view.scene_camera               = this->context.document.content.source.active_camera;
         this->camera_changed();
         this->view.selection = {};
     }
 
     void ViewportInteraction::camera_changed() noexcept {
-        this->view.render_camera = this->view.source == CameraSource::Scene ? this->context.document.content.source.camera() : this->view.camera;
+        const scene::Camera& scene_camera = this->view.source == CameraSource::Scene ? *std::ranges::find(this->context.document.content.evaluated.resources.cameras, this->view.scene_camera, &scene::Camera::id) : this->view.camera;
+        this->view.render_camera          = scene_camera;
+        this->view.camera_gate.reset();
+        const dynamics::CameraReferenceImage* reference = this->view.source == CameraSource::Scene ? this->context.dynamics.camera_reference(this->view.scene_camera) : nullptr;
         std::visit(
-            [this](auto& data) {
-                const float center_x         = (data.screen_window.minimum.x + data.screen_window.maximum.x) * 0.5f;
-                const float half_height      = (data.screen_window.maximum.y - data.screen_window.minimum.y) * 0.5f;
-                const float half_width       = half_height * this->view.aspect;
-                data.screen_window.minimum.x = center_x - half_width;
-                data.screen_window.maximum.x = center_x + half_width;
+            [this, reference](auto& data) {
+                const float center_x    = (data.screen_window.minimum.x + data.screen_window.maximum.x) * 0.5f;
+                const float center_y    = (data.screen_window.minimum.y + data.screen_window.maximum.y) * 0.5f;
+                const float half_width  = (data.screen_window.maximum.x - data.screen_window.minimum.x) * 0.5f;
+                const float half_height = (data.screen_window.maximum.y - data.screen_window.minimum.y) * 0.5f;
+                if (!reference) {
+                    const float adjusted_half_width = half_height * this->view.aspect;
+                    data.screen_window.minimum.x     = center_x - adjusted_half_width;
+                    data.screen_window.maximum.x     = center_x + adjusted_half_width;
+                    return;
+                }
+                const float image_aspect = static_cast<float>(reference->extent[0]) / static_cast<float>(reference->extent[1]);
+                if (this->view.aspect >= image_aspect) {
+                    const float scale                 = this->view.aspect / image_aspect;
+                    data.screen_window.minimum.x      = center_x - half_width * scale;
+                    data.screen_window.maximum.x      = center_x + half_width * scale;
+                    const float gate_width            = image_aspect / this->view.aspect;
+                    this->view.camera_gate             = math::Float4{(1.0f - gate_width) * 0.5f, 0.0f, gate_width, 1.0f};
+                } else {
+                    const float scale                 = image_aspect / this->view.aspect;
+                    data.screen_window.minimum.y      = center_y - half_height * scale;
+                    data.screen_window.maximum.y      = center_y + half_height * scale;
+                    const float gate_height           = this->view.aspect / image_aspect;
+                    this->view.camera_gate             = math::Float4{0.0f, (1.0f - gate_height) * 0.5f, 1.0f, gate_height};
+                }
             },
             this->view.render_camera.data);
         ++this->view.render_camera_revision;
         this->view.synchronized_source                = this->view.source;
         this->view.synchronized_camera_revision       = this->view.camera_revision;
-        this->view.synchronized_scene_camera_revision = this->context.document.content.source.camera().revision;
+        this->view.synchronized_scene_camera_revision = scene_camera.revision;
+    }
+
+    void ViewportInteraction::view_camera(const scene::CameraId camera_id) noexcept {
+        this->view.scene_camera = camera_id;
+        this->view.source       = CameraSource::Scene;
+        this->camera_changed();
+    }
+
+    void ViewportInteraction::toggle_scene_camera() noexcept {
+        if (this->view.source == CameraSource::Scene)
+            this->view.source = CameraSource::Viewport;
+        else {
+            this->view.scene_camera = this->context.document.content.source.active_camera;
+            this->view.source       = CameraSource::Scene;
+        }
+        this->camera_changed();
     }
 
     void ViewportInteraction::orbit_viewport_camera(const float x_pixels, const float y_pixels) {
@@ -203,7 +242,7 @@ namespace spectra {
     }
 
     bool ViewportInteraction::entity_exists(const SceneEntityReference entity) const noexcept {
-        const scene::SceneResources& resources = this->context.document.content.source.resources;
+        const scene::SceneResources& resources = this->context.document.content.evaluated.resources;
         if (entity.kind == SceneEntityKind::Instance) return std::ranges::contains(resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id);
         if (entity.kind == SceneEntityKind::Camera) return std::ranges::contains(resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id);
         if (entity.kind == SceneEntityKind::Light) return std::ranges::contains(resources.lights, scene::LightId{entity.id}, &scene::Light::id);

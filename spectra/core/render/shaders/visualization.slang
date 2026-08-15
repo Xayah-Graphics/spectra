@@ -78,6 +78,17 @@ float4 load_image_pixel(ByteAddressBuffer pixels, uint pixel_index) {
     return value;
 }
 
+float srgb_eotf(float value) {
+    return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4);
+}
+
+float4 load_reference_pixel(ByteAddressBuffer pixels, uint pixel_index) {
+    const uint packed = pixels.Load<uint>(pixel_index * 4);
+    const float4 encoded = float4(packed & 255u, (packed >> 8u) & 255u, (packed >> 16u) & 255u, packed >> 24u) * (1.0 / 255.0);
+    const float3 linear = float3(srgb_eotf(encoded.r), srgb_eotf(encoded.g), srgb_eotf(encoded.b));
+    return float4(linear * encoded.a, 1.0);
+}
+
 float4 element_visualization_color(float4 element_color, float scalar) {
     if (push_data.detail.z == 1) return push_data.color;
     if (push_data.detail.z == 2) return float4(visualization_color_map((scalar - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z), push_data.detail.w), element_color.a * push_data.color.a);
@@ -309,6 +320,22 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         VisualizationVertexOutput output = {float4(screen.x * 2.0 - 1.0, 1.0 - screen.y * 2.0, 0.0, 1.0), push_data.color, uv, 0, 1, 0.0};
         return output;
     }
+    if (kind == 15) {
+        const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
+        const float2 uv = corners[vertex_id];
+        const float2 screen = push_data.screen_rect.xy + uv * push_data.screen_rect.zw;
+        VisualizationVertexOutput output = {float4(screen.x * 2.0 - 1.0, 1.0 - screen.y * 2.0, 0.0, 1.0), push_data.color, uv, push_data.detail.x, 3, 0.0};
+        return output;
+    }
+    if (kind == 16) {
+        const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
+        const float2 uv = corners[vertex_id];
+        const float2 screen = float2(lerp(push_data.screen_rect.x, push_data.screen_rect.z, uv.x), lerp(push_data.screen_rect.w, push_data.screen_rect.y, uv.y));
+        const float distance = push_data.parameters.y;
+        const float3 local = float3(screen * push_data.parameters.x * distance, -distance);
+        VisualizationVertexOutput output = {project_position(transform_position(local)), push_data.color, uv, push_data.detail.x, 3, 0.0};
+        return output;
+    }
     if (kind == 8 || kind == 14) {
         const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
         const float2 uv = corners[vertex_id];
@@ -517,6 +544,12 @@ float4 visualization_fragment(VisualizationVertexOutput input) : SV_Target0 {
             const float clip_w = input.depth_data.y - (perspective ? surface_offset : 0.0);
             visualization_depth = clip_z / clip_w;
         }
+    }
+    if (input.sample_image == 3) {
+        ByteAddressBuffer pixels = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+        const uint2 coordinate = min(uint2(input.texture_coordinates * float2(push_data.dimensions.z, push_data.dimensions.w)), uint2(push_data.dimensions.z - 1, push_data.dimensions.w - 1));
+        const uint layer_offset = input.image_layer * push_data.dimensions.z * push_data.dimensions.w;
+        color *= load_reference_pixel(pixels, layer_offset + coordinate.y * push_data.dimensions.z + coordinate.x);
     }
     if (push_data.metadata.w != 2 && !(kind >= 9 && kind <= 11)) {
         Texture2D<float> depth = push_data.depth;

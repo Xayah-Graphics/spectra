@@ -360,10 +360,11 @@ namespace spectra::scene {
             for (const NeuralField& field : fields) {
                 std::string line = std::format("hash-grid-radiance-field {} {}", field.id.value, kdl_string(field.name));
                 if (!field.visible) kdl_bool_property(line, "visible", false);
-                if (field.transform == math::Transform{}) writer.line(line);
+                if (field.transform == math::Transform{} && !field.diagnostics.occupancy_grid) writer.line(line);
                 else {
                     writer.begin(line);
-                    write_transform(writer, "transform", field.transform);
+                    if (field.transform != math::Transform{}) write_transform(writer, "transform", field.transform);
+                    if (field.diagnostics.occupancy_grid) writer.line("diagnostics occupancy-grid=#true");
                     writer.end();
                 }
             }
@@ -1394,10 +1395,14 @@ namespace spectra::scene {
         void read_neural_fields(SceneResources& resources, const kdl::Node& group) {
             for (const kdl::Node& node : group.children()) {
                 if (node.name() != u8"hash-grid-radiance-field") throw std::runtime_error(std::format("Unknown Neural Field {}", kdl_text(node.name())));
+                const kdl::Node* diagnostics = kdl_child(node, u8"diagnostics");
                 NeuralField field{
                     .id        = {kdl_number<std::uint64_t>(node.args()[0])},
                     .name      = kdl_value_text(node.args()[1]),
                     .transform = read_transform(node),
+                    .diagnostics = {
+                        .occupancy_grid = diagnostics && kdl_bool_property(*diagnostics, u8"occupancy-grid", false),
+                    },
                     .visible   = kdl_bool_property(node, u8"visible", true),
                 };
                 resources.neural_fields.emplace_back(std::move(field));

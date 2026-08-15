@@ -49,6 +49,8 @@ namespace spectra {
         bool camera_frustum{true};
         bool camera_focal_plane{};
         bool camera_lens{};
+        bool camera_gt_overlay{true};
+        bool camera_gt_plane{};
         bool light_guide{true};
         bool area_emitter{};
         bool medium_boundary{};
@@ -77,8 +79,12 @@ namespace spectra {
         struct SceneDiagnosticFrameResources {
             GpuBuffer line_buffer{};
             GpuBuffer box_buffer{};
+            GpuBuffer occupied_cell_buffer{};
+            GpuBuffer occupancy_draw_buffer{};
             DescriptorLease line_descriptor{};
             DescriptorLease box_descriptor{};
+            DescriptorLease occupied_cell_descriptor{};
+            DescriptorLease occupancy_draw_descriptor{};
             std::size_t line_capacity{};
             std::size_t box_capacity{};
         };
@@ -91,6 +97,7 @@ namespace spectra {
 
         struct {
             vk::raii::ShaderEXTs draw_shaders{nullptr};
+            vk::raii::ShaderEXT occupancy_compaction_shader{nullptr};
             std::array<SceneDiagnosticFrameResources, VulkanFrames::frames_in_flight> frame_resources{};
             GpuImage pick_image{};
             vk::ImageLayout pick_layout{vk::ImageLayout::eUndefined};
@@ -99,6 +106,7 @@ namespace spectra {
         } renderer;
 
         void ensure_buffers(SceneDiagnosticFrameResources& frame, std::size_t line_count, std::size_t box_count);
+        void ensure_occupancy_buffers(SceneDiagnosticFrameResources& frame);
         void resize_pick_image(vk::Extent2D extent);
     };
 } // namespace spectra

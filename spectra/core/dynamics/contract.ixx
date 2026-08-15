@@ -62,10 +62,24 @@ namespace spectra::dynamics {
         scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
     };
 
+    export struct CameraDescriptor {
+        math::Float3 right{};
+        math::Float3 down{};
+        math::Float3 forward{};
+        math::Float3 position{};
+        math::Float2 focal{};
+        math::Float2 principal{};
+    };
+
+    export struct CameraDataset {
+        std::array<std::uint32_t, 2> extent{};
+        std::vector<CameraDescriptor> cameras{};
+    };
+
     export struct DatasetDescriptor {
         std::string id{};
         std::optional<scene::DynamicSceneResourceKind> resource_kind{};
-        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, PointDataset, SegmentDataset, VectorDataset, FieldDataset, ImageDataset> details{TriangleMeshDataset{}};
+        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, PointDataset, SegmentDataset, VectorDataset, FieldDataset, ImageDataset, CameraDataset> details{TriangleMeshDataset{}};
     };
 
     export struct ParameterDescriptor {

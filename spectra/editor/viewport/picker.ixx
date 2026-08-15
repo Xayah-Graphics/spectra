@@ -12,6 +12,7 @@ namespace spectra {
         struct PickResult {
             bool ready{};
             std::optional<GpuAccelerationEntity> entity{};
+            std::optional<scene::NeuralFieldId> neural_field{};
             std::optional<std::uint32_t> diagnostic_pick_index{};
             bool select{};
             bool additive{};
@@ -31,7 +32,7 @@ namespace spectra {
         void submit_pick(float normalized_x, float normalized_y, bool select, bool additive) noexcept;
         void cancel_selection_requests() noexcept;
         [[nodiscard]] PickResult take_pick_result(std::uint32_t frame_slot_index) noexcept;
-        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, const scene::Camera& camera, DepthBufferView depth, const GpuImage* diagnostic_pick_image);
+        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, scene::SceneView scene, const scene::Camera& camera, DepthBufferView depth, const GpuImage* diagnostic_pick_image);
 
     private:
         struct PickRequest {
@@ -46,6 +47,7 @@ namespace spectra {
             DescriptorLease result_descriptor{};
             std::optional<PickRequest> submitted_request{};
             std::vector<GpuAccelerationEntity> acceleration_entities{};
+            std::optional<scene::NeuralFieldId> neural_field{};
         };
 
         struct {

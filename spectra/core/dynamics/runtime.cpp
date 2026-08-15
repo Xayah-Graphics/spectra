@@ -158,6 +158,7 @@ namespace spectra {
                     else if (output.kind == SpectraSdkOutputKind::Lines) dataset.details = dynamics::SegmentDataset{};
                     else if (output.kind == SpectraSdkOutputKind::Vectors) dataset.details = dynamics::VectorDataset{};
                     else if (output.kind == SpectraSdkOutputKind::Image) dataset.details = dynamics::ImageDataset{};
+                    else if (output.kind == SpectraSdkOutputKind::Cameras) dataset.details = dynamics::CameraDataset{};
                     else dataset.resource_kind = scene::DynamicSceneResourceKind::NeuralField;
                     provider.datasets.emplace_back(std::move(dataset));
                 }
@@ -186,8 +187,8 @@ namespace spectra {
                     system.parameter_values.emplace_back(found == declared.parameters.end() ? parameter.value : found->value);
                 }
                 this->create_system(system, declared);
-                for (const OutputRuntime& output : system.outputs) this->declare_scene_output(output);
             }
+            this->declare_outputs();
             this->reset_simulation();
         } catch (...) {
             this->destroy();
@@ -254,6 +255,15 @@ namespace spectra {
         return std::ranges::any_of(this->systems.values, [volume_id](const SystemRuntime& system) { return std::ranges::any_of(system.outputs, [volume_id](const OutputRuntime& output) { return output.scene_binding && output.descriptor.resource_kind == scene::DynamicSceneResourceKind::Volume && output.scene_binding->resource_id == volume_id.value; }); });
     }
 
+    bool DynamicsRuntime::controls(const scene::CameraId camera_id) const noexcept {
+        return std::ranges::contains(this->outputs.camera_references, camera_id, &dynamics::CameraReferenceImage::camera_id);
+    }
+
+    const dynamics::CameraReferenceImage* DynamicsRuntime::camera_reference(const scene::CameraId camera_id) const noexcept {
+        const auto reference = std::ranges::find(this->outputs.camera_references, camera_id, &dynamics::CameraReferenceImage::camera_id);
+        return reference == this->outputs.camera_references.end() ? nullptr : &*reference;
+    }
+
     bool DynamicsRuntime::running() const noexcept { return this->clock.playing; }
     bool DynamicsRuntime::faulted() const noexcept { return this->configuration.faulted; }
     dynamics::SimulationTimeline DynamicsRuntime::timeline() const noexcept { return {this->clock.simulation_step, this->clock.simulation_step * this->configuration.setup.clock.step_seconds}; }
@@ -301,9 +311,7 @@ namespace spectra {
             }
             system = std::move(replacement);
             this->configuration.setup.systems[system_index].parameters.assign(parameters.begin(), parameters.end());
-            this->outputs = {};
-            for (const SystemRuntime& value : this->systems.values)
-                for (const OutputRuntime& output : value.outputs) this->declare_scene_output(output);
+            this->declare_outputs();
             this->publish_frame();
             return true;
         }
@@ -379,7 +387,7 @@ namespace spectra {
 #else
             const auto entry = reinterpret_cast<const SpectraSdkApi* (*)() noexcept>(dlsym(loaded, SPECTRA_SDK_ENTRY_NAME));
 #endif
-            if (!entry) throw std::runtime_error("Provider does not export Spectra SDK ABI 2");
+            if (!entry) throw std::runtime_error("Provider does not export Spectra SDK ABI 3");
             api = entry();
             if (api->abi_version != SPECTRA_SDK_ABI_VERSION || api->struct_size != sizeof(SpectraSdkApi)) throw std::runtime_error("Provider has an incompatible Spectra SDK ABI");
             const SpectraSdkProviderDescriptionResult described = api->describe_provider();
@@ -427,6 +435,22 @@ namespace spectra {
             else if (auto* vectors = std::get_if<dynamics::VectorDataset>(&output.descriptor.details)) vectors->capacity = output.capacity;
             else if (auto* volume = std::get_if<dynamics::FieldDataset>(&output.descriptor.details)) volume->resolution = output.resolution;
             else if (auto* image = std::get_if<dynamics::ImageDataset>(&output.descriptor.details)) image->extent = {output.resolution.x, output.resolution.y};
+            else if (auto* cameras = std::get_if<dynamics::CameraDataset>(&output.descriptor.details)) {
+                cameras->extent = {output.resolution.x, output.resolution.y};
+                cameras->cameras.clear();
+                cameras->cameras.reserve(layout->camera_count);
+                for (std::uint64_t camera_index = 0; camera_index != layout->camera_count; ++camera_index) {
+                    const SpectraSdkCamera& camera = layout->cameras[camera_index];
+                    cameras->cameras.emplace_back(
+                        math::Float3{camera.right[0], camera.right[1], camera.right[2]},
+                        math::Float3{camera.down[0], camera.down[1], camera.down[2]},
+                        math::Float3{camera.forward[0], camera.forward[1], camera.forward[2]},
+                        math::Float3{camera.position[0], camera.position[1], camera.position[2]},
+                        math::Float2{camera.focal[0], camera.focal[1]},
+                        math::Float2{camera.principal[0], camera.principal[1]}
+                    );
+                }
+            }
 
             std::vector<std::uint64_t> static_sizes{};
             std::vector<std::uint64_t> dynamic_sizes{};
@@ -458,7 +482,9 @@ namespace spectra {
                     static_cast<std::uint64_t>(SPECTRA_SDK_RGB_OUTPUT_COUNT) * 2u,
                     static_cast<std::uint64_t>(SPECTRA_SDK_OCCUPANCY_WORD_COUNT) * 4u,
                 };
-            } else dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * collection_element_size(layout->kind));
+            } else if (layout->kind == SpectraSdkOutputKind::Cameras)
+                static_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * output.resolution.x * output.resolution.y * 4u);
+            else dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * collection_element_size(layout->kind));
 
             output.static_buffers.resize(static_sizes.size());
             lifetime->fixed.resize(static_sizes.size());
@@ -466,7 +492,7 @@ namespace spectra {
             for (std::size_t buffer = 0; buffer != static_sizes.size(); ++buffer) {
                 OutputBuffer& destination = output.static_buffers[buffer];
                 destination.byte_size     = static_sizes[buffer];
-                destination.gpu_buffer    = runtime.context.runtime.resources.create_external_buffer(destination.byte_size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndexBuffer);
+                destination.gpu_buffer    = runtime.context.runtime.resources.create_external_buffer(destination.byte_size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress);
                 destination.descriptor    = runtime.context.runtime.frames.allocate_resource_descriptor();
                 runtime.context.runtime.resources.write_buffer_descriptor(destination.descriptor.handle(), vk::DescriptorType::eStorageBuffer, destination.gpu_buffer);
                 lifetime->fixed_handles[buffer] = runtime.context.runtime.resources.export_buffer_memory_handle(destination.gpu_buffer);
@@ -483,7 +509,7 @@ namespace spectra {
                 for (std::size_t buffer = 0; buffer != dynamic_sizes.size(); ++buffer) {
                     OutputBuffer& destination = output.slots[slot][buffer];
                     destination.byte_size     = dynamic_sizes[buffer];
-                    destination.gpu_buffer    = runtime.context.runtime.resources.create_external_buffer(destination.byte_size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc);
+                    destination.gpu_buffer    = runtime.context.runtime.resources.create_external_buffer(destination.byte_size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eShaderDeviceAddress);
                     destination.descriptor    = runtime.context.runtime.frames.allocate_resource_descriptor();
                     runtime.context.runtime.resources.write_buffer_descriptor(destination.descriptor.handle(), vk::DescriptorType::eStorageBuffer, destination.gpu_buffer);
                     lifetime->handles[slot][buffer] = runtime.context.runtime.resources.export_buffer_memory_handle(destination.gpu_buffer);
@@ -511,7 +537,67 @@ namespace spectra {
             if (view.dataset_id == output.descriptor.id) output.visualizations.emplace_back(view);
     }
 
-    void DynamicsRuntime::declare_scene_output(const OutputRuntime& output) {
+    void DynamicsRuntime::declare_outputs() {
+        for (const dynamics::CameraReferenceImage& reference : this->outputs.camera_references)
+            std::erase_if(this->configuration.evaluated_scene->resources.cameras, [&reference](const scene::Camera& camera) { return camera.id == reference.camera_id; });
+        this->outputs = {};
+        this->configuration.next_camera_id = 1u;
+        for (const scene::Camera& camera : this->configuration.source_scene->resources.cameras) this->configuration.next_camera_id = std::max(this->configuration.next_camera_id, camera.id.value + 1u);
+        for (SystemRuntime& system : this->systems.values)
+            for (OutputRuntime& output : system.outputs) this->declare_scene_output(output);
+    }
+
+    void DynamicsRuntime::declare_scene_output(OutputRuntime& output) {
+        if (const auto* cameras = std::get_if<dynamics::CameraDataset>(&output.descriptor.details)) {
+            const math::Bounds3 bounds = this->configuration.evaluated_scene->view().bounds();
+            const math::Float3 center  = bounds.center();
+            const float clip_margin    = std::max(bounds.diagonal().length() * 0.0001f, 0.00001f);
+            const dynamics::GpuBufferView pixels{&output.static_buffers[0].gpu_buffer, output.static_buffers[0].descriptor.handle()};
+            for (std::size_t index = 0; index != cameras->cameras.size(); ++index) {
+                const dynamics::CameraDescriptor& source = cameras->cameras[index];
+                float minimum_depth = std::numeric_limits<float>::max();
+                float maximum_depth = std::numeric_limits<float>::lowest();
+                for (std::uint32_t corner = 0; corner != 8u; ++corner) {
+                    const math::Float3 position{
+                        (corner & 1u) == 0u ? bounds.minimum.x : bounds.maximum.x,
+                        (corner & 2u) == 0u ? bounds.minimum.y : bounds.maximum.y,
+                        (corner & 4u) == 0u ? bounds.minimum.z : bounds.maximum.z,
+                    };
+                    const float depth = (position - source.position).dot(source.forward);
+                    minimum_depth = std::min(minimum_depth, depth);
+                    maximum_depth = std::max(maximum_depth, depth);
+                }
+                const float tangent       = static_cast<float>(cameras->extent[1]) / (2.0f * source.focal.y);
+                const float screen_width  = static_cast<float>(cameras->extent[0]) / (source.focal.x * tangent);
+                const float screen_height = 2.0f;
+                const float near_plane    = std::max(clip_margin, minimum_depth - clip_margin);
+                const float far_plane     = std::max(near_plane + clip_margin, maximum_depth + clip_margin);
+                const scene::CameraId camera_id{this->configuration.next_camera_id++};
+                this->configuration.evaluated_scene->resources.cameras.emplace_back(scene::Camera{
+                    .id   = camera_id,
+                    .name = std::format("{} Camera {:03}", output.descriptor.id, index + 1u),
+                    .transform = math::Transform{{
+                        source.right.x, -source.down.x, -source.forward.x, source.position.x,
+                        source.right.y, -source.down.y, -source.forward.y, source.position.y,
+                        source.right.z, -source.down.z, -source.forward.z, source.position.z,
+                        0.0f, 0.0f, 0.0f, 1.0f,
+                    }},
+                    .data = scene::PerspectiveCameraData{
+                        .vertical_fov = 2.0f * std::atan(tangent) * 180.0f / std::numbers::pi_v<float>,
+                        .screen_window = {
+                            {-source.principal.x * screen_width / static_cast<float>(cameras->extent[0]), -(static_cast<float>(cameras->extent[1]) - source.principal.y) * screen_height / static_cast<float>(cameras->extent[1])},
+                            {(static_cast<float>(cameras->extent[0]) - source.principal.x) * screen_width / static_cast<float>(cameras->extent[0]), source.principal.y * screen_height / static_cast<float>(cameras->extent[1])},
+                        },
+                        .focal_distance = std::max(0.001f, (center - source.position).dot(source.forward)),
+                        .near_plane     = near_plane,
+                        .far_plane      = far_plane,
+                    },
+                });
+                this->outputs.camera_references.emplace_back(camera_id, output.descriptor.id, static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(cameras->cameras.size()), cameras->extent, source.focal, source.principal, pixels, static_cast<std::uint32_t>(index));
+            }
+            this->configuration.evaluated_scene->mark_changed(scene::SceneChange::Camera | scene::SceneChange::Structure);
+            return;
+        }
         if (!output.scene_binding) return;
         if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details)) this->outputs.mesh_bindings.emplace_back(scene::GeometryId{output.scene_binding->resource_id}, dynamics::MeshUpdateMode::Deformable, mesh->vertex_capacity, mesh->index_capacity);
         else if (const auto* spheres = std::get_if<dynamics::SphereSetDataset>(&output.descriptor.details)) this->outputs.sphere_set_bindings.emplace_back(scene::SphereSetId{output.scene_binding->resource_id}, spheres->capacity);
@@ -653,7 +739,7 @@ namespace spectra {
             system.signal_value = commit.signal_value;
             system.output_pending = true;
             for (std::size_t index = 0; index != system.outputs.size(); ++index)
-                if (system.outputs[index].kind != SpectraSdkOutputKind::Metrics) this->append_output(system, system.outputs[index], commit.outputs[index], snapshot);
+                if (system.outputs[index].kind != SpectraSdkOutputKind::Metrics && system.outputs[index].kind != SpectraSdkOutputKind::Cameras) this->append_output(system, system.outputs[index], commit.outputs[index], snapshot);
         }
         this->publication.snapshot          = std::move(snapshot);
         this->publication.snapshot_pending  = true;

@@ -82,7 +82,8 @@ namespace spectra {
         [[nodiscard]] bool transform_editable(const EditorUi& editor, const SceneEntityReference entity) noexcept {
             if (entity.kind == SceneEntityKind::NeuralField) return false;
             if (entity.kind == SceneEntityKind::Volume) return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(scene::VolumeId{entity.id});
-            if (entity.kind != SceneEntityKind::Instance && entity.kind != SceneEntityKind::AreaEmitter) return entity.kind == SceneEntityKind::Camera || entity.kind == SceneEntityKind::Light;
+            if (entity.kind == SceneEntityKind::Camera) return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(scene::CameraId{entity.id});
+            if (entity.kind != SceneEntityKind::Instance && entity.kind != SceneEntityKind::AreaEmitter) return entity.kind == SceneEntityKind::Light;
             const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
             return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(instance_id);
         }
@@ -358,7 +359,7 @@ namespace spectra {
         }
         if (this->controls.transform_drag_active || this->controls.gizmo_active) return;
         const bool editable                            = transform_editable(*this, *entity);
-        const scene::Scene& transform_scene            = editable ? this->context.document.content.source : this->context.document.content.evaluated;
+        const scene::Scene& transform_scene            = this->context.document.content.evaluated;
         const std::optional<math::Transform> transform = entity_transform(transform_scene, *entity);
         if (!transform) {
             this->controls.transform_entity.reset();
@@ -459,7 +460,7 @@ namespace spectra {
         if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) this->context.viewport.view_axis({0.0f, 0.0f, 1.0f}, aspect);
         if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) this->context.viewport.view_axis({1.0f, 0.0f, 0.0f}, aspect);
         if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) this->context.viewport.view_axis({0.0f, 1.0f, 0.0f}, aspect);
-        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) this->context.viewport.view.source = this->context.viewport.view.source == CameraSource::Scene ? CameraSource::Viewport : CameraSource::Scene;
+        if (no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) this->context.viewport.toggle_scene_camera();
         if (this->context.dynamics.initialized() && !this->context.dynamics.faulted() && no_modifiers && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
             try {
                 if (this->context.dynamics.running())
@@ -515,7 +516,7 @@ namespace spectra {
         if (!transform_editable) return;
         const SceneEntityReference* entity = active_entity(*this);
         if (!entity) return;
-        const scene::Scene& transform_scene            = this->context.document.content.source;
+        const scene::Scene& transform_scene            = this->context.document.content.evaluated;
         const std::optional<math::Transform> transform = entity_transform(transform_scene, *entity);
         if (!transform) return;
         math::Float3 pivot{};
@@ -594,6 +595,7 @@ namespace spectra {
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         draw_list->AddImage(static_cast<ImTextureID>(this->context.imgui.viewport_texture_id), position, ImVec2{position.x + size.x, position.y + size.y});
         ImGui::PushClipRect(position, ImVec2{position.x + size.x, position.y + size.y}, true);
+        this->draw_camera_gate(position, size, *draw_list);
         const bool blocked = this->pointer_over_interface(layout, show_axes);
         this->draw_gizmo(position, size, blocked, transform_editable);
         this->draw_orientation(position, size, show_axes);
@@ -605,6 +607,20 @@ namespace spectra {
         ImGui::Dummy({});
         ImGui::End();
         ImGui::PopStyleVar(2);
+    }
+
+    void EditorUi::draw_camera_gate(const ImVec2 position, const ImVec2 size, ImDrawList& draw_list) const {
+        if (!this->context.viewport.view.camera_gate) return;
+        const math::Float4 gate = *this->context.viewport.view.camera_gate;
+        const ImVec2 minimum{position.x + gate.x * size.x, position.y + gate.y * size.y};
+        const ImVec2 maximum{minimum.x + gate.z * size.x, minimum.y + gate.w * size.y};
+        const ImVec2 viewport_maximum{position.x + size.x, position.y + size.y};
+        const ImU32 shade = ImGui::GetColorU32(ImVec4{0.0f, 0.0f, 0.0f, 0.42f});
+        draw_list.AddRectFilled(position, {viewport_maximum.x, minimum.y}, shade);
+        draw_list.AddRectFilled({position.x, maximum.y}, viewport_maximum, shade);
+        draw_list.AddRectFilled({position.x, minimum.y}, {minimum.x, maximum.y}, shade);
+        draw_list.AddRectFilled({maximum.x, minimum.y}, {viewport_maximum.x, maximum.y}, shade);
+        draw_list.AddRect(minimum, maximum, ImGui::GetColorU32(ImVec4{0.67f, 0.75f, 0.80f, 0.58f}), 0.0f, 0, 1.0f);
     }
 
     void EditorUi::draw_viewport_hud(const ViewportLayout& layout, ImDrawList& draw_list) {
@@ -733,7 +749,7 @@ namespace spectra {
         }
         if (entity) {
             add_section("SELECTION");
-            const scene::Scene& scene = this->context.document.content.source;
+            const scene::Scene& scene = this->context.document.content.evaluated;
             add_line(std::format("{}  ·  {} {}", entity_name(scene, *entity), entity_kind_name(*entity), entity->id), primary);
             if (this->context.viewport.view.selection.selected.size() > 1) add_line(std::format("{} objects selected", this->context.viewport.view.selection.selected.size()), secondary);
             if (entity->kind == SceneEntityKind::Instance) {
@@ -741,14 +757,19 @@ namespace spectra {
                 add_line(std::format("Prototype {}  ·  {}", instance.prototype.value, instance.visible ? "Visible" : "Hidden"), secondary);
             } else if (entity->kind == SceneEntityKind::Camera) {
                 const scene::Camera& camera = *std::ranges::find(scene.resources.cameras, scene::CameraId{entity->id}, &scene::Camera::id);
-                std::visit(
-                    [&add_line, primary, secondary](const auto& data) {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) add_line(std::format("Perspective  ·  {:.2f} deg", data.vertical_fov), primary);
-                        else add_line("Orthographic", primary);
-                        add_line(std::format("Near {:.5g}  ·  Far {:.5g}", data.near_plane, data.far_plane), secondary);
-                        add_line(std::format("Focus {:.5g}  ·  Lens {:.5g}", data.focal_distance, data.lens_radius), secondary);
-                    },
-                    camera.data);
+                if (const dynamics::CameraReferenceImage* reference = this->context.dynamics.camera_reference(camera.id)) {
+                    add_line(std::format("{}  ·  Camera {} / {}", reference->group, reference->index + 1u, reference->count), primary);
+                    add_line(std::format("{} × {}  ·  fx {:.3f}  fy {:.3f}", reference->extent[0], reference->extent[1], reference->focal.x, reference->focal.y), secondary);
+                    add_line(std::format("cx {:.3f}  cy {:.3f}", reference->principal.x, reference->principal.y), secondary);
+                } else
+                    std::visit(
+                        [&add_line, primary, secondary](const auto& data) {
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) add_line(std::format("Perspective  ·  {:.2f} deg", data.vertical_fov), primary);
+                            else add_line("Orthographic", primary);
+                            add_line(std::format("Near {:.5g}  ·  Far {:.5g}", data.near_plane, data.far_plane), secondary);
+                            add_line(std::format("Focus {:.5g}  ·  Lens {:.5g}", data.focal_distance, data.lens_radius), secondary);
+                        },
+                        camera.data);
             } else if (entity->kind == SceneEntityKind::Light || entity->kind == SceneEntityKind::AreaEmitter) {
                 const scene::Light& light = *std::ranges::find(scene.resources.lights, scene::LightId{entity->id}, &scene::Light::id);
                 std::visit(
@@ -1058,8 +1079,8 @@ namespace spectra {
     void EditorUi::draw_selection_panel(const PanelRect& panel, const bool transform_editable) {
         const SceneEntityReference* entity = active_entity(*this);
         if (!entity) return;
-        const bool has_transform = entity_transform(this->context.document.content.source, *entity).has_value();
-        const std::string& name = entity_name(this->context.document.content.source, *entity);
+        const bool has_transform = entity_transform(this->context.document.content.evaluated, *entity).has_value();
+        const std::string& name = entity_name(this->context.document.content.evaluated, *entity);
         if (has_transform) this->synchronize_transform();
         ImGui::SetNextWindowPos(panel.position);
         ImGui::SetNextWindowSizeConstraints({panel.size.x, 0.0f}, {panel.size.x, panel.maximum_height});
@@ -1082,7 +1103,7 @@ namespace spectra {
             const ImVec2 status_maximum{status_minimum.x + status_width, status_minimum.y + 20.0f};
             draw_list->AddRectFilled(status_minimum, status_maximum, ImGui::GetColorU32(ImVec4{0.91f, 0.65f, 0.24f, 0.14f}), 10.0f);
             draw_list->AddRect(status_minimum, status_maximum, ImGui::GetColorU32(ImVec4{0.91f, 0.65f, 0.24f, 0.42f}), 10.0f);
-            const char* status            = "SIMULATED";
+            const char* status            = entity->kind == SceneEntityKind::Camera && this->context.dynamics.controls(scene::CameraId{entity->id}) ? "PROVIDER" : "SIMULATED";
             const ImVec2 status_text_size = ImGui::CalcTextSize(status);
             draw_list->AddText(ImVec2{status_minimum.x + (status_width - status_text_size.x) * 0.5f, status_minimum.y + (20.0f - status_text_size.y) * 0.5f}, ImGui::GetColorU32(ImVec4{0.96f, 0.74f, 0.36f, 1.0f}), status);
         }
@@ -1113,6 +1134,21 @@ namespace spectra {
             ImGui::Separator();
             ImGui::Spacing();
         }
+        if (entity->kind == SceneEntityKind::Camera && this->context.dynamics.camera_reference(scene::CameraId{entity->id})) {
+            ImGui::TextDisabled("CAMERA");
+            const bool viewing = this->context.viewport.view.source == CameraSource::Scene && this->context.viewport.view.scene_camera == scene::CameraId{entity->id};
+            if (text_button("##ViewThrough", viewing ? "Return to Viewport" : "View Through", ImVec2{ImGui::GetContentRegionAvail().x, 27.0f})) {
+                if (viewing) this->context.viewport.toggle_scene_camera();
+                else this->context.viewport.view_camera(scene::CameraId{entity->id});
+            }
+            ImGui::Spacing();
+            ImGui::TextDisabled("REFERENCE");
+            ImGui::Checkbox("GT Overlay", &this->context.settings.selection_diagnostics.camera_gt_overlay);
+            ImGui::Checkbox("GT Image Plane", &this->context.settings.selection_diagnostics.camera_gt_plane);
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
         this->draw_selection_diagnostics(*entity);
         this->controls.selection_panel_height = ImGui::GetWindowHeight();
         ImGui::End();
@@ -1120,7 +1156,7 @@ namespace spectra {
     }
 
     void EditorUi::draw_selection_diagnostics(const SceneEntityReference entity) {
-        const scene::Scene& source               = this->context.document.content.source;
+        const scene::Scene& evaluated            = this->context.document.content.evaluated;
         SelectionDiagnosticSettings& diagnostics = this->context.settings.selection_diagnostics;
         bool geometry{};
         bool spheres{};
@@ -1128,8 +1164,8 @@ namespace spectra {
         bool medium_boundary{};
         if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) {
             const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
-            const scene::Instance& instance   = *std::ranges::find(source.resources.instances, instance_id, &scene::Instance::id);
-            const scene::Prototype& prototype = *std::ranges::find(source.resources.prototypes, instance.prototype, &scene::Prototype::id);
+            const scene::Instance& instance   = *std::ranges::find(evaluated.resources.instances, instance_id, &scene::Instance::id);
+            const scene::Prototype& prototype = *std::ranges::find(evaluated.resources.prototypes, instance.prototype, &scene::Prototype::id);
             for (const scene::Primitive& primitive : prototype.primitives) {
                 geometry        = geometry || primitive.geometry.value != 0;
                 spheres         = spheres || primitive.spheres.value != 0;
@@ -1156,6 +1192,13 @@ namespace spectra {
             ImGui::Checkbox("Frustum", &diagnostics.camera_frustum);
             ImGui::Checkbox("Focal plane", &diagnostics.camera_focal_plane);
             ImGui::Checkbox("Lens", &diagnostics.camera_lens);
+        } else if (entity.kind == SceneEntityKind::NeuralField) {
+            const scene::NeuralField& field = *std::ranges::find(evaluated.resources.neural_fields, scene::NeuralFieldId{entity.id}, &scene::NeuralField::id);
+            scene::NeuralFieldDiagnostics field_diagnostics = field.diagnostics;
+            if (ImGui::Checkbox("Occupancy Grid", &field_diagnostics.occupancy_grid)) {
+                this->context.document.update_neural_field_diagnostics(this->context.document.content.source, field.id, field_diagnostics);
+                this->context.document.update_neural_field_diagnostics(this->context.document.content.evaluated, field.id, std::move(field_diagnostics));
+            }
         } else if (entity.kind == SceneEntityKind::Light)
             ImGui::Checkbox("Light guide", &diagnostics.light_guide);
 
@@ -1187,7 +1230,6 @@ namespace spectra {
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
-            const scene::Scene& evaluated = this->context.document.content.evaluated;
             this->draw_volume_diagnostics(*std::ranges::find(evaluated.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id));
         }
     }

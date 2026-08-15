@@ -3,8 +3,8 @@
 
 #include <cstdint>
 
-inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = 2;
-inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = "spectra_sdk_api_2";
+inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = 3;
+inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = "spectra_sdk_api_3";
 inline constexpr std::uint32_t SPECTRA_SDK_HASH_GRID_ENTRY_COUNT   = 2920448;
 inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_INPUT_COUNT     = 64 * 32;
 inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_OUTPUT_COUNT    = 16 * 64;
@@ -73,7 +73,17 @@ enum class SpectraSdkOutputKind : std::uint32_t {
     Vectors,
     Image,
     HashGridRadianceField,
+    Cameras,
     Metrics,
+};
+
+struct SpectraSdkCamera {
+    float right[3];
+    float down[3];
+    float forward[3];
+    float position[3];
+    float focal[2];
+    float principal[2];
 };
 
 enum class SpectraSdkVolumeFieldKind : std::uint32_t {
@@ -164,6 +174,8 @@ struct SpectraSdkOutputLayout {
     std::uint32_t secondary_capacity;
     std::uint32_t resolution[3];
     std::uint32_t mesh_attributes;
+    const SpectraSdkCamera* cameras;
+    std::uint64_t camera_count;
 };
 
 struct SpectraSdkOutputConfiguration {
@@ -231,6 +243,7 @@ struct SpectraSdkApi {
 };
 
 static_assert(sizeof(SpectraSdkValue) == 40);
+static_assert(sizeof(SpectraSdkCamera) == 64);
 static_assert(sizeof(SpectraSdkOutputCommit) == 8);
 static_assert(sizeof(SpectraSdkApi) == 72);
 

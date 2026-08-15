@@ -28,6 +28,11 @@ namespace spectra::sdk::cuda {
         RawView texture_coordinates{};
     };
 
+    struct RawCamerasSetupView {
+        RawView images{};
+        UInt3 extent{};
+    };
+
     struct RawImageView {
         RawView pixels{};
         UInt3 extent{};
@@ -63,6 +68,7 @@ namespace spectra::sdk::cuda {
     };
 
     [[nodiscard]] RawMeshSetupView setup_mesh_internal(void* state, std::string_view id, std::uint32_t vertex_capacity, std::uint32_t triangle_capacity);
+    [[nodiscard]] RawCamerasSetupView setup_cameras_internal(void* state, std::string_view id, std::span<const Camera> cameras, std::uint32_t width, std::uint32_t height);
     void setup_collection_internal(void* state, std::string_view id, OutputKind kind, std::uint32_t capacity);
     void setup_volume_internal(void* state, std::string_view id, UInt3 resolution);
     void setup_image_internal(void* state, std::string_view id, UInt3 extent);
@@ -81,6 +87,11 @@ namespace spectra::sdk::cuda {
     export struct MeshSetup {
         std::span<std::uint32_t> triangles{};
         std::span<Float2> texture_coordinates{};
+    };
+
+    export struct CamerasSetup {
+        std::span<Rgba8> images{};
+        UInt3 extent{};
     };
 
     export struct Mesh {
@@ -181,6 +192,12 @@ namespace spectra::sdk::cuda {
                 {static_cast<std::uint32_t*>(view.triangles.data), view.triangles.count},
                 {static_cast<Float2*>(view.texture_coordinates.data), view.texture_coordinates.count},
             };
+        }
+
+        template <FixedString Id>
+        [[nodiscard]] CamerasSetup cameras(const std::span<const Camera> values, const std::uint32_t width, const std::uint32_t height) {
+            const RawCamerasSetupView view = setup_cameras_internal(state, Id.view(), values, width, height);
+            return {{static_cast<Rgba8*>(view.images.data), view.images.count}, view.extent};
         }
 
         template <FixedString Id>

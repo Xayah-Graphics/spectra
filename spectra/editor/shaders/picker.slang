@@ -20,6 +20,9 @@ struct PickPushData {
     float2 screen;
     float near_plane;
     float far_plane;
+    float4 neural_field_inverse_row_0;
+    float4 neural_field_inverse_row_1;
+    float4 neural_field_inverse_row_2;
 }
 
 [[vk::binding(0, 0)]]
@@ -166,6 +169,62 @@ float procedural_hit_distance(
     return -1.0;
 }
 
+float device_depth(float distance, float camera_depth_scale) {
+    const float camera_depth =
+        distance *
+        camera_depth_scale;
+    return push_data.camera_metadata.x == 0
+        ? push_data.far_plane /
+              (push_data.far_plane - push_data.near_plane) -
+              push_data.far_plane * push_data.near_plane /
+                  ((push_data.far_plane - push_data.near_plane) * camera_depth)
+        : (camera_depth - push_data.near_plane) /
+              (push_data.far_plane - push_data.near_plane);
+}
+
+float neural_field_hit_distance(
+    float3 origin,
+    float3 direction,
+    float minimum,
+    float maximum) {
+    const float4 homogeneous_origin =
+        float4(origin, 1.0);
+    const float3 local_origin =
+        float3(
+            dot(push_data.neural_field_inverse_row_0, homogeneous_origin),
+            dot(push_data.neural_field_inverse_row_1, homogeneous_origin),
+            dot(push_data.neural_field_inverse_row_2, homogeneous_origin));
+    const float3 local_direction =
+        float3(
+            dot(push_data.neural_field_inverse_row_0.xyz, direction),
+            dot(push_data.neural_field_inverse_row_1.xyz, direction),
+            dot(push_data.neural_field_inverse_row_2.xyz, direction));
+    const float3 inverse_direction =
+        1.0 /
+        local_direction;
+    const float3 first =
+        -local_origin *
+        inverse_direction;
+    const float3 second =
+        (1.0 - local_origin) *
+        inverse_direction;
+    const float3 lower =
+        min(first, second);
+    const float3 upper =
+        max(first, second);
+    const float entry =
+        max(
+            max(max(lower.x, lower.y), lower.z),
+            minimum);
+    const float exit =
+        min(
+            min(min(upper.x, upper.y), upper.z),
+            maximum);
+    return exit > entry
+        ? entry
+        : -1.0;
+}
+
 [shader("compute")]
 [numthreads(1, 1, 1)]
 void pick() {
@@ -226,17 +285,10 @@ void pick() {
                     query.CandidatePrimitiveIndex());
         }
         if (distance <= 0.0) continue;
-        const float camera_depth =
-            distance *
-            candidate_depth_scale;
         const float candidate_device_depth =
-            push_data.camera_metadata.x == 0
-                ? push_data.far_plane /
-                      (push_data.far_plane - push_data.near_plane) -
-                      push_data.far_plane * push_data.near_plane /
-                          ((push_data.far_plane - push_data.near_plane) * camera_depth)
-                : (camera_depth - push_data.near_plane) /
-                      (push_data.far_plane - push_data.near_plane);
+            device_depth(
+                distance,
+                candidate_depth_scale);
         const bool transparent_region =
             candidate.metadata.y != 0;
         if (
@@ -252,11 +304,31 @@ void pick() {
             query.CommitProceduralPrimitiveHit(
                 distance);
     }
-    if (
+    const bool acceleration_hit =
         query.CommittedStatus() ==
             COMMITTED_TRIANGLE_HIT ||
         query.CommittedStatus() ==
-            COMMITTED_PROCEDURAL_PRIMITIVE_HIT) {
+            COMMITTED_PROCEDURAL_PRIMITIVE_HIT;
+    if (push_data.camera_metadata.y != 0) {
+        const float distance =
+            neural_field_hit_distance(
+                ray.Origin,
+                ray.Direction,
+                ray.TMin,
+                ray.TMax);
+        if (
+            distance > 0.0 &&
+            (!acceleration_hit || distance < query.CommittedRayT()) &&
+            device_depth(
+                distance,
+                candidate_depth_scale) <=
+                visible_depth +
+                    0.001) {
+            result[5] = 1;
+            return;
+        }
+    }
+    if (acceleration_hit) {
         result[0] =
             query.CommittedInstanceID();
     }

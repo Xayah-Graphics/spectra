@@ -34,6 +34,8 @@ namespace spectra {
         [[nodiscard]] std::span<const dynamics::GpuVisualization> visualizations() const noexcept;
         [[nodiscard]] bool controls(scene::InstanceId instance_id) const noexcept;
         [[nodiscard]] bool controls(scene::VolumeId volume_id) const noexcept;
+        [[nodiscard]] bool controls(scene::CameraId camera_id) const noexcept;
+        [[nodiscard]] const dynamics::CameraReferenceImage* camera_reference(scene::CameraId camera_id) const noexcept;
 
         [[nodiscard]] bool running() const noexcept;
         [[nodiscard]] bool faulted() const noexcept;
@@ -117,6 +119,7 @@ namespace spectra {
             scene::Scene* evaluated_scene{};
             std::filesystem::path assets{};
             scene::DynamicSetup setup{};
+            std::uint64_t next_camera_id{};
             bool initialized{};
             bool faulted{};
         } configuration;
@@ -146,13 +149,15 @@ namespace spectra {
         struct {
             std::vector<dynamics::MeshOutputBinding> mesh_bindings{};
             std::vector<dynamics::SphereSetOutputBinding> sphere_set_bindings{};
+            std::vector<dynamics::CameraReferenceImage> camera_references{};
         } outputs;
 
         [[nodiscard]] ProviderLibrary& provider_library(std::string_view provider_id) const;
         static SpectraSdkResult configure_output(void* context, const SpectraSdkOutputLayout* layout, SpectraSdkOutputRequest* request) noexcept;
         static void release_output(void* lifetime) noexcept;
         void bind_output(OutputRuntime& output, const scene::DynamicSystem& system) const;
-        void declare_scene_output(const OutputRuntime& output);
+        void declare_outputs();
+        void declare_scene_output(OutputRuntime& output);
         void create_system(SystemRuntime& system, const scene::DynamicSystem& declared);
         void apply_parameters(SystemRuntime& system, std::span<const scene::DynamicParameterValue> values);
         void append_output(const SystemRuntime& system, const OutputRuntime& output, const SpectraSdkOutputCommit& commit, dynamics::DynamicSnapshot& snapshot) const;

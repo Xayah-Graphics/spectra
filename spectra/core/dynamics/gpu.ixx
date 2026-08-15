@@ -11,6 +11,18 @@ namespace spectra::dynamics {
         DescriptorHandle descriptor{};
     };
 
+    export struct CameraReferenceImage {
+        scene::CameraId camera_id{};
+        std::string group{};
+        std::uint32_t index{};
+        std::uint32_t count{};
+        std::array<std::uint32_t, 2> extent{};
+        math::Float2 focal{};
+        math::Float2 principal{};
+        GpuBufferView pixels{};
+        std::uint32_t layer{};
+    };
+
     export struct GpuVolumeFieldView {
         VolumeFieldDescriptor field{};
         std::vector<GpuBufferView> values{};

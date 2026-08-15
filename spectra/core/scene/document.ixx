@@ -23,5 +23,6 @@ namespace spectra {
         void update_light_transform(scene::Scene& target_scene, scene::LightId light_id, math::Transform transform);
         void update_volume_transform(scene::Scene& target_scene, scene::VolumeId volume_id, math::Transform transform);
         void update_volume_diagnostics(scene::Scene& target_scene, scene::VolumeId volume_id, scene::VolumeDiagnostics diagnostics);
+        void update_neural_field_diagnostics(scene::Scene& target_scene, scene::NeuralFieldId neural_field_id, scene::NeuralFieldDiagnostics diagnostics);
     };
 } // namespace spectra

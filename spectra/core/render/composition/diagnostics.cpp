@@ -70,17 +70,19 @@ namespace spectra {
 
     SceneDiagnosticRenderer::~SceneDiagnosticRenderer() {
         if (!this->renderer.initialized) return;
-        this->context.runtime.frames.defer_destruction([frames = std::move(this->renderer.frame_resources), draw_shaders = std::move(this->renderer.draw_shaders), pick_image = std::move(this->renderer.pick_image)]() mutable {});
+        this->context.runtime.frames.defer_destruction([frames = std::move(this->renderer.frame_resources), draw_shaders = std::move(this->renderer.draw_shaders), occupancy_compaction_shader = std::move(this->renderer.occupancy_compaction_shader), pick_image = std::move(this->renderer.pick_image)]() mutable {});
     }
 
     void SceneDiagnosticRenderer::initialize() {
-        const std::vector<std::uint32_t> vertex_code   = load_spirv(this->context.shader_directory / "scene_diagnostic_vertex.spv");
-        const std::vector<std::uint32_t> fragment_code = load_spirv(this->context.shader_directory / "scene_diagnostic_fragment.spv");
+        const std::vector<std::uint32_t> vertex_code     = load_spirv(this->context.shader_directory / "scene_diagnostic_vertex.spv");
+        const std::vector<std::uint32_t> fragment_code   = load_spirv(this->context.shader_directory / "scene_diagnostic_fragment.spv");
+        const std::vector<std::uint32_t> compaction_code = load_spirv(this->context.shader_directory / "scene_diagnostic_occupancy_compaction.spv");
         const std::array draw_create_infos{
             vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eLinkStage | vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment, vk::ShaderCodeTypeEXT::eSpirv, vertex_code.size() * sizeof(std::uint32_t), vertex_code.data(), "scene_diagnostic_vertex"},
             vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eLinkStage | vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eFragment, {}, vk::ShaderCodeTypeEXT::eSpirv, fragment_code.size() * sizeof(std::uint32_t), fragment_code.data(), "scene_diagnostic_fragment"},
         };
-        this->renderer.draw_shaders = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, draw_create_infos};
+        this->renderer.draw_shaders                = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, draw_create_infos};
+        this->renderer.occupancy_compaction_shader = vk::raii::ShaderEXT{this->context.runtime.graphics.device, vk::ShaderCreateInfoEXT{vk::ShaderCreateFlagBitsEXT::eDescriptorHeap, vk::ShaderStageFlagBits::eCompute, {}, vk::ShaderCodeTypeEXT::eSpirv, compaction_code.size() * sizeof(std::uint32_t), compaction_code.data(), "compact_scene_diagnostic_occupancy"}};
         for (SceneDiagnosticFrameResources& frame : this->renderer.frame_resources) {
             frame.line_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
             frame.box_descriptor  = this->context.runtime.frames.allocate_resource_descriptor();
@@ -92,6 +94,17 @@ namespace spectra {
         SceneDiagnosticFrameResources& frame_resources = this->renderer.frame_resources[frame_slot_index];
         std::vector<DiagnosticLine> lines{};
         std::vector<DiagnosticBox> boxes{};
+        const scene::NeuralField* occupancy_field{};
+        const GpuNeuralField* occupancy_gpu_field{};
+        const auto field = std::ranges::find_if(source_scene.resources.neural_fields, [](const scene::NeuralField& candidate) { return candidate.visible && candidate.diagnostics.occupancy_grid; });
+        if (field != source_scene.resources.neural_fields.end()) {
+            const GpuSceneView gpu_scene = this->context.gpu_scene.view();
+            const auto gpu_field         = std::ranges::find(gpu_scene.neural_fields, field->id, &GpuNeuralField::neural_field_id);
+            if (gpu_field != gpu_scene.neural_fields.end() && gpu_field->revision != 0) {
+                occupancy_field     = &*field;
+                occupancy_gpu_field = &*gpu_field;
+            }
+        }
         std::vector<SceneEntityReference>& pick_entities = this->renderer.pick_entities[frame_slot_index];
         pick_entities.clear();
         const auto pick_index = [&pick_entities](const SceneEntityReference entity) {
@@ -118,7 +131,9 @@ namespace spectra {
 
         math::Bounds3 diagnostic_bounds = source_scene.bounds();
         diagnostic_bounds.include(this->context.gpu_scene.view().resolved_scene_bounds);
-        const float scene_radius = std::max(diagnostic_bounds.radius(), 1.0f);
+        const float bounds_radius     = diagnostic_bounds.radius();
+        const float scene_radius      = std::max(bounds_radius, 1.0f);
+        const float camera_guide_size = bounds_radius * 0.1f;
         if (scene_guides.all_bounds || selection_diagnostics.bounds)
             for (std::uint32_t index = 0; index != source_scene.resources.instances.size(); ++index) {
                 const scene::Instance& instance = source_scene.resources.instances[index];
@@ -163,24 +178,23 @@ namespace spectra {
             const SceneEntityReference entity{SceneEntityKind::Camera, scene_camera.id.value};
             const math::Float4 color       = diagnostic_color(entity, selection, scene_camera.id == source_scene.camera.id ? math::Float4{1.0f, 0.66f, 0.12f, 0.95f} : math::Float4{0.20f, 0.80f, 0.95f, 0.82f});
             const scene::CameraFrame frame = scene_camera.frame();
-            std::array<math::Float3, 4> near_corners{};
-            std::array<math::Float3, 4> far_corners{};
+            const float line_width         = selected_camera ? selection_diagnostics.line_width : 1.5f;
+            const scene::VisualizationDepthMode depth_mode = selected_camera ? selection_diagnostics.depth_mode : scene::VisualizationDepthMode::Tested;
+            std::array<math::Float3, 4> guide_corners{};
             std::visit(
                 [&](const auto& data) {
                     constexpr std::array signs{math::Float2{-1.0f, -1.0f}, math::Float2{1.0f, -1.0f}, math::Float2{1.0f, 1.0f}, math::Float2{-1.0f, 1.0f}};
+                    const float window_width  = data.screen_window.maximum.x - data.screen_window.minimum.x;
+                    const float window_height = data.screen_window.maximum.y - data.screen_window.minimum.y;
+                    const float guide_scale   = camera_guide_size / std::max(window_width, window_height);
+                    float guide_distance      = camera_guide_size;
+                    if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) guide_distance = guide_scale / std::tan(data.vertical_fov * std::numbers::pi_v<float> / 360.0f);
                     for (std::size_t index = 0; index != signs.size(); ++index) {
                         const math::Float2 window{
                             signs[index].x < 0.0f ? data.screen_window.minimum.x : data.screen_window.maximum.x,
                             signs[index].y < 0.0f ? data.screen_window.minimum.y : data.screen_window.maximum.y,
                         };
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData>) {
-                            const float tangent = std::tan(data.vertical_fov * std::numbers::pi_v<float> / 360.0f);
-                            near_corners[index] = frame.position + frame.forward * data.near_plane + (frame.right * window.x + frame.up * window.y) * tangent * data.near_plane;
-                            far_corners[index]  = frame.position + frame.forward * data.far_plane + (frame.right * window.x + frame.up * window.y) * tangent * data.far_plane;
-                        } else {
-                            near_corners[index] = frame.position + frame.forward * data.near_plane + frame.right * window.x + frame.up * window.y;
-                            far_corners[index]  = frame.position + frame.forward * data.far_plane + frame.right * window.x + frame.up * window.y;
-                        }
+                        guide_corners[index] = frame.position + frame.forward * guide_distance + (frame.right * window.x + frame.up * window.y) * guide_scale;
                     }
                     if (selected_camera && selection_diagnostics.camera_focal_plane) {
                         std::array<math::Float3, 4> focal{};
@@ -195,10 +209,9 @@ namespace spectra {
                     if (selected_camera && selection_diagnostics.camera_lens && data.lens_radius > 0.0f) add_circle(frame.position, frame.right, frame.up, data.lens_radius, {0.96f, 0.34f, 0.72f, 0.82f}, entity);
                 },
                 scene_camera.data);
-            for (std::size_t index = 0; index != near_corners.size(); ++index) {
-                add_line(near_corners[index], near_corners[(index + 1) % near_corners.size()], color, entity);
-                add_line(far_corners[index], far_corners[(index + 1) % far_corners.size()], color, entity);
-                add_line(near_corners[index], far_corners[index], color, entity);
+            for (std::size_t index = 0; index != guide_corners.size(); ++index) {
+                add_line(guide_corners[index], guide_corners[(index + 1) % guide_corners.size()], color, entity, line_width, depth_mode);
+                add_line(frame.position, guide_corners[index], color, entity, line_width, depth_mode);
             }
         }
 
@@ -259,6 +272,19 @@ namespace spectra {
         this->ensure_buffers(frame_resources, lines.size(), boxes.size());
         if (!lines.empty()) std::memcpy(frame_resources.line_buffer.mapped, lines.data(), lines.size() * sizeof(DiagnosticLine));
         if (!boxes.empty()) std::memcpy(frame_resources.box_buffer.mapped, boxes.data(), boxes.size() * sizeof(DiagnosticBox));
+        if (occupancy_gpu_field) {
+            this->ensure_occupancy_buffers(frame_resources);
+            command_buffer.fillBuffer(*frame_resources.occupancy_draw_buffer.buffer, 0, frame_resources.occupancy_draw_buffer.size, 0u);
+            const vk::MemoryBarrier2 reset_dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite};
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &reset_dependency});
+            const DiagnosticPushData compaction_push{occupancy_gpu_field->occupancy.descriptor, frame_resources.occupied_cell_descriptor, frame_resources.occupancy_draw_descriptor};
+            this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&compaction_push, 1}));
+            command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->renderer.occupancy_compaction_shader);
+            command_buffer.dispatch(256, 1, 1);
+            const vk::MemoryBarrier2 compaction_dependency{vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eDrawIndirect | vk::PipelineStageFlagBits2::eVertexShader, vk::AccessFlagBits2::eIndirectCommandRead | vk::AccessFlagBits2::eShaderStorageRead};
+            command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &compaction_dependency});
+        }
         this->resize_pick_image(display.image.extent);
         const vk::MemoryBarrier2 host_barrier{vk::PipelineStageFlagBits2::eHost, vk::AccessFlagBits2::eHostWrite, vk::PipelineStageFlagBits2::eVertexShader, vk::AccessFlagBits2::eShaderStorageRead};
         std::vector<vk::ImageMemoryBarrier2> image_barriers{};
@@ -321,6 +347,33 @@ namespace spectra {
             this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
             command_buffer.draw(vertex_count, kind <= 1 || kind == 8 ? count : 1u, 0, 0);
         };
+        if (occupancy_gpu_field) {
+            const std::array<float, 16>& matrix = occupancy_field->transform.matrix;
+            const DiagnosticPushData push{
+                frame_resources.occupied_cell_descriptor,
+                frame_resources.occupied_cell_descriptor,
+                frame_resources.occupied_cell_descriptor,
+                depth.descriptor,
+                {9u, 0u, 0u, std::to_underlying(scene::VisualizationDepthMode::XRay)},
+                {display.image.extent.width, display.image.extent.height, 1u, std::numeric_limits<std::uint32_t>::max()},
+                {0.5f, 0.0f, 0.0f, 0.0f},
+                {0.08f, 0.82f, 0.96f, 1.0f},
+                {matrix[0], matrix[1], matrix[2], matrix[3]},
+                {matrix[4], matrix[5], matrix[6], matrix[7]},
+                {matrix[8], matrix[9], matrix[10], matrix[11]},
+                {matrix[12], matrix[13], matrix[14], matrix[15]},
+                {view_projection[0], view_projection[1], view_projection[2], view_projection[3]},
+                {view_projection[4], view_projection[5], view_projection[6], view_projection[7]},
+                {view_projection[8], view_projection[9], view_projection[10], view_projection[11]},
+                {view_projection[12], view_projection[13], view_projection[14], view_projection[15]},
+            };
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+            constexpr std::array<vk::Bool32, 1> disabled_blending{vk::False};
+            command_buffer.setColorBlendEnableEXT(0, disabled_blending);
+            command_buffer.drawIndirect(*frame_resources.occupancy_draw_buffer.buffer, 0, 1, sizeof(vk::DrawIndirectCommand));
+            constexpr std::array<vk::Bool32, 1> enabled_blending{vk::True};
+            command_buffer.setColorBlendEnableEXT(0, enabled_blending);
+        }
         if (!lines.empty()) push_and_draw(0, frame_resources.line_descriptor, frame_resources.line_descriptor, static_cast<std::uint32_t>(lines.size()), 0, selection_diagnostics.depth_mode, {}, {}, 6);
         if (!boxes.empty()) push_and_draw(1, frame_resources.box_descriptor, this->context.gpu_scene.view().instance_bounds, static_cast<std::uint32_t>(boxes.size()), 0, selection_diagnostics.depth_mode, {}, {}, 72);
 
@@ -378,6 +431,7 @@ namespace spectra {
         if (pick_index == 0 || pick_index > this->renderer.pick_entities[frame_slot_index].size()) return std::nullopt;
         return this->renderer.pick_entities[frame_slot_index][pick_index - 1u];
     }
+
     void SceneDiagnosticRenderer::ensure_buffers(SceneDiagnosticFrameResources& frame, const std::size_t line_count, const std::size_t box_count) {
         const auto ensure = [this](GpuBuffer& buffer, std::size_t& capacity, DescriptorLease& descriptor, const std::size_t count, const std::size_t stride) {
             if (capacity >= std::max<std::size_t>(count, 1)) return;
@@ -392,6 +446,17 @@ namespace spectra {
         };
         ensure(frame.line_buffer, frame.line_capacity, frame.line_descriptor, line_count, sizeof(DiagnosticLine));
         ensure(frame.box_buffer, frame.box_capacity, frame.box_descriptor, box_count, sizeof(DiagnosticBox));
+    }
+
+    void SceneDiagnosticRenderer::ensure_occupancy_buffers(SceneDiagnosticFrameResources& frame) {
+        if (*frame.occupied_cell_buffer.buffer) return;
+        constexpr vk::DeviceSize cell_count = 128u * 128u * 128u;
+        frame.occupied_cell_buffer = this->context.runtime.resources.create_buffer(cell_count * sizeof(std::uint32_t), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
+        frame.occupancy_draw_buffer = this->context.runtime.resources.create_buffer(sizeof(vk::DrawIndirectCommand), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
+        frame.occupied_cell_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+        frame.occupancy_draw_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+        this->context.runtime.resources.write_buffer_descriptor(frame.occupied_cell_descriptor, vk::DescriptorType::eStorageBuffer, frame.occupied_cell_buffer);
+        this->context.runtime.resources.write_buffer_descriptor(frame.occupancy_draw_descriptor, vk::DescriptorType::eStorageBuffer, frame.occupancy_draw_buffer);
     }
 
     void SceneDiagnosticRenderer::resize_pick_image(const vk::Extent2D extent) {

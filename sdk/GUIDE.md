@@ -1,4 +1,4 @@
-# Spectra SDK 1.1
+# Spectra SDK 1.2
 
 Spectra SDK lets a CUDA simulation publish typed GPU resources without implementing Spectra's binary ABI, Vulkan external-memory import, or semaphore protocol.
 
@@ -57,7 +57,7 @@ export namespace project {
 
 ## GPU outputs
 
-Declare only the resources a project publishes. SDK 1.1 provides `mesh`, `spheres`, `volume`, `instances`, `points`, `lines`, `vectors`, `image`, and `hash_grid_radiance_field`. A Volume declares its fields explicitly:
+Declare only the resources a project publishes. SDK 1.2 provides `mesh`, `spheres`, `volume`, `instances`, `points`, `lines`, `vectors`, `image`, `hash_grid_radiance_field`, and `cameras`. A Volume declares its fields explicitly:
 
 ```cpp
 spectra::sdk::volume<"smoke">(
@@ -71,6 +71,25 @@ spectra::sdk::volume<"smoke">(
 ```
 
 `float` and `Float3` fields contain `nx * ny * nz` values. Cell sampling places them at cell centers; vertex sampling spans the Volume bounds without changing the published element count. `MacFloat3` exposes staggered `x`, `y`, and `z` spans with resolutions `(nx + 1, ny, nz)`, `(nx, ny + 1, nz)`, and `(nx, ny, nz + 1)`. Spectra owns field selection, derived maps, slicing, ray marching, isosurfaces, glyphs, streamlines, and LIC; a Provider publishes only simulation data and field metadata.
+
+`cameras` publishes a fixed set of dataset Cameras and their reference images during `setup`:
+
+```cpp
+spectra::sdk::cameras<"training">()
+
+std::array cameras{spectra::sdk::Camera{
+    .right = {1.0F, 0.0F, 0.0F},
+    .down = {0.0F, -1.0F, 0.0F},
+    .forward = {0.0F, 0.0F, -1.0F},
+    .position = {0.0F, 0.0F, 2.0F},
+    .focal = {800.0F, 800.0F},
+    .principal = {400.0F, 300.0F},
+}};
+auto training = setup.cameras<"training">(cameras, 800u, 600u);
+cudaMemcpy(training.images.data(), rgba_pixels, training.images.size_bytes(), cudaMemcpyHostToDevice);
+```
+
+`right`, `down`, and `forward` are unit world-space Camera axes, and `position` is the world-space optical center. `focal = {fx, fy}` and `principal = {cx, cy}` use pixel units with a top-left image origin. Every Camera in one output shares the supplied resolution. Images are laid out as `[camera][y][x]` in `Rgba8` nonlinear sRGB with straight alpha. Spectra turns each entry into an ordinary runtime Camera with a static GT reference image. Cameras have no frame accessor and are never republished from `publish`.
 
 `hash_grid_radiance_field` is the fixed canonical v1 radiance-field layout: a unit AABB, eight F16 Hash Grid levels with four features per level, a `32 → 64 → 16` density network, and a `32 → 64 → 64 → 16` RGB network. It exposes seven typed spans:
 
@@ -124,7 +143,7 @@ CUDA translation units include `<spectra/sdk/cuda_types.h>` and write the exact 
 ## CMake
 
 ```cmake
-find_package(SpectraSDK 1 CONFIG REQUIRED)
+find_package(SpectraSDK 1.2 CONFIG REQUIRED)
 
 spectra_add_provider(
         cloth-provider
@@ -146,4 +165,4 @@ The target produces `cloth-provider.spectra-provider.dll` on Windows. `spectra_a
 
 Place the Provider DLL beside the `.spectra` scene. Spectra scans that directory for `*.spectra-provider.dll` and matches the scene's Provider ID against the DLL's `description` ID, so the CMake target name does not need to duplicate the Provider ID.
 
-The complete nine-output compile example is in `sdk/example` and can be enabled while configuring the SDK with `-DSPECTRA_SDK_BUILD_EXAMPLE=ON`.
+The complete ten-output compile example is in `sdk/example` and can be enabled while configuring the SDK with `-DSPECTRA_SDK_BUILD_EXAMPLE=ON`.

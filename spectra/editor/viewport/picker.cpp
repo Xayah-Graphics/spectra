@@ -91,20 +91,24 @@ namespace spectra {
         return {
             true,
             acceleration_instance_index == std::numeric_limits<std::uint32_t>::max() ? std::nullopt : std::optional{slot.acceleration_entities[acceleration_instance_index]},
+            values[5] == 0 ? std::nullopt : slot.neural_field,
             values[4] == 0 ? std::nullopt : std::optional{values[4]},
             request.select,
             request.additive,
         };
     }
 
-    void ViewportPicker::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const scene::Camera& camera, const DepthBufferView depth, const GpuImage* diagnostic_pick_image) {
+    void ViewportPicker::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const scene::SceneView source_scene, const scene::Camera& camera, const DepthBufferView depth, const GpuImage* diagnostic_pick_image) {
         if (!this->picking.pending_request) return;
         PickFrameSlot& slot   = this->picking.frame_slots[frame_slot_index];
         std::uint32_t* result = static_cast<std::uint32_t*>(slot.result_buffer.mapped);
         std::ranges::fill(std::span{result, 8}, std::numeric_limits<std::uint32_t>::max());
         result[4]              = 0;
+        result[5]              = 0;
         slot.submitted_request = std::exchange(this->picking.pending_request, std::nullopt);
         slot.acceleration_entities.assign(this->context.gpu_scene.view().acceleration_entities.begin(), this->context.gpu_scene.view().acceleration_entities.end());
+        const std::vector<scene::NeuralField>::const_iterator neural_field = std::ranges::find_if(source_scene.resources.neural_fields, [](const scene::NeuralField& field) { return field.visible; });
+        slot.neural_field = neural_field == source_scene.resources.neural_fields.end() ? std::nullopt : std::optional{neural_field->id};
 
         struct alignas(16) PickPushData {
             vk::DeviceAddress acceleration_structure_address;
@@ -119,8 +123,11 @@ namespace spectra {
             std::array<float, 2> screen;
             float near_plane;
             float far_plane;
+            std::array<float, 4> neural_field_inverse_row_0;
+            std::array<float, 4> neural_field_inverse_row_1;
+            std::array<float, 4> neural_field_inverse_row_2;
         };
-        static_assert(sizeof(PickPushData) == 112);
+        static_assert(sizeof(PickPushData) == 160);
         std::array<std::uint32_t, 2> camera_metadata{};
         std::array<float, 2> screen{};
         float near_plane{};
@@ -144,7 +151,9 @@ namespace spectra {
                 far_plane  = data.far_plane;
             },
             camera.data);
+        camera_metadata[1] = slot.neural_field.has_value() ? 1u : 0u;
         const std::array<float, 16>& transform = camera.transform.matrix;
+        const math::Transform neural_field_inverse = slot.neural_field ? neural_field->transform.inverse() : math::Transform{};
         const PickPushData push_data{
             this->context.gpu_scene.view().acceleration_structure,
             slot.result_descriptor,
@@ -161,6 +170,9 @@ namespace spectra {
             screen,
             near_plane,
             far_plane,
+            {neural_field_inverse.matrix[0], neural_field_inverse.matrix[1], neural_field_inverse.matrix[2], neural_field_inverse.matrix[3]},
+            {neural_field_inverse.matrix[4], neural_field_inverse.matrix[5], neural_field_inverse.matrix[6], neural_field_inverse.matrix[7]},
+            {neural_field_inverse.matrix[8], neural_field_inverse.matrix[9], neural_field_inverse.matrix[10], neural_field_inverse.matrix[11]},
         };
         if (this->context.runtime.graphics.ray_tracing_supported) {
             const std::array begin_barriers{

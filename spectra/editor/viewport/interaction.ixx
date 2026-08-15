@@ -24,6 +24,8 @@ namespace spectra {
 
         void initialize_from_scene();
         void camera_changed() noexcept;
+        void view_camera(scene::CameraId camera_id) noexcept;
+        void toggle_scene_camera() noexcept;
         void orbit_viewport_camera(float x_pixels, float y_pixels);
         void pan_viewport_camera(float x_pixels, float y_pixels, float viewport_height);
         void zoom_viewport_camera(float steps);
@@ -47,6 +49,8 @@ namespace spectra {
             math::Float3 navigation_up{0.0f, 1.0f, 0.0f};
             std::uint64_t camera_revision{1};
             CameraSource source{CameraSource::Viewport};
+            scene::CameraId scene_camera{};
+            std::optional<math::Float4> camera_gate{};
             AxesPlane axes_plane{AxesPlane::Xz};
             scene::Camera render_camera{};
             std::uint64_t render_camera_revision{};

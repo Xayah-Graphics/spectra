@@ -70,6 +70,7 @@ export namespace spectra::sdk {
         Vectors,
         Image,
         HashGridRadianceField,
+        Cameras,
     };
 
     enum class MeshAttribute : std::uint32_t {
@@ -186,6 +187,11 @@ export namespace spectra::sdk {
     template <FixedString Id>
     [[nodiscard]] consteval auto hash_grid_radiance_field() {
         return OutputDefinition<Id, OutputKind::HashGridRadianceField>{};
+    }
+
+    template <FixedString Id>
+    [[nodiscard]] consteval auto cameras() {
+        return OutputDefinition<Id, OutputKind::Cameras>{};
     }
 
     template <FixedString Id, typename Type>

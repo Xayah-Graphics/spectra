@@ -131,4 +131,9 @@ namespace spectra {
         std::ranges::find(target_scene.resources.volumes, volume_id, &scene::Volume::id)->diagnostics = std::move(diagnostics);
         this->mark_change(target_scene, scene::SceneChange::Metadata);
     }
+
+    void SceneDocument::update_neural_field_diagnostics(scene::Scene& target_scene, const scene::NeuralFieldId neural_field_id, scene::NeuralFieldDiagnostics diagnostics) {
+        std::ranges::find(target_scene.resources.neural_fields, neural_field_id, &scene::NeuralField::id)->diagnostics = std::move(diagnostics);
+        this->mark_change(target_scene, scene::SceneChange::Metadata);
+    }
 } // namespace spectra

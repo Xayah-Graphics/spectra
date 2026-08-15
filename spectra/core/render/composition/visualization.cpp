@@ -129,7 +129,7 @@ namespace spectra {
         return domain == scene::VisualizationCompositionDomain::DisplayReferred && std::ranges::any_of(scene.resources.volumes, [](const scene::Volume& volume) { return volume.visible && std::holds_alternative<scene::GridVolume>(volume.data) && volume.diagnostics.mode != scene::VolumeDiagnosticMode::Off; });
     }
 
-    void VisualizationRenderer::record(const vk::raii::CommandBuffer& command_buffer, const ColorCompositionTarget target, DepthBufferView depth, const scene::SceneView scene, const scene::Camera& camera, const std::span<const dynamics::GpuVisualization> views, const scene::VisualizationCompositionDomain domain) {
+    void VisualizationRenderer::record(const vk::raii::CommandBuffer& command_buffer, const ColorCompositionTarget target, DepthBufferView depth, const scene::SceneView scene, const scene::Camera& camera, const std::span<const dynamics::GpuVisualization> views, const scene::VisualizationCompositionDomain domain, const CameraReferenceVisualization* camera_reference) {
         std::vector<vk::ImageMemoryBarrier2> barriers{};
         const vk::PipelineStageFlags2 target_stage = target.layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::PipelineStageFlagBits2::eFragmentShader : target.layout == vk::ImageLayout::eTransferDstOptimal ? vk::PipelineStageFlagBits2::eCopy : target.layout == vk::ImageLayout::eGeneral ? vk::PipelineStageFlagBits2::eComputeShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         const vk::AccessFlags2 target_access       = target.layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::AccessFlagBits2::eShaderSampledRead : target.layout == vk::ImageLayout::eTransferDstOptimal ? vk::AccessFlagBits2::eTransferWrite : target.layout == vk::ImageLayout::eGeneral ? vk::AccessFlagBits2::eShaderStorageWrite : vk::AccessFlagBits2::eColorAttachmentWrite;
@@ -277,6 +277,41 @@ namespace spectra {
                 command_buffer.draw(18, seed_count, 0, 0);
             else
                 command_buffer.draw(6, seed_count * diagnostics.steps, 0, 0);
+        }
+        if (domain == scene::VisualizationCompositionDomain::DisplayReferred && camera_reference) {
+            const dynamics::CameraReferenceImage& reference = *camera_reference->reference;
+            const scene::PerspectiveCameraData& reference_camera = std::get<scene::PerspectiveCameraData>(camera_reference->camera->data);
+            const std::array<float, 16>& transform = camera_reference->camera->transform.matrix;
+            const std::array<float, 16>& projected = camera.matrices().view_projection;
+            const float tangent = std::tan(reference_camera.vertical_fov * std::numbers::pi_v<float> / 360.0f);
+            const auto draw_reference = [&](const std::uint32_t kind, const math::Float4 parameters, const math::Float4 screen_rect, const std::uint32_t depth_mode) {
+                const VisualizationPushData push{
+                    reference.pixels.descriptor,
+                    reference.pixels.descriptor,
+                    depth.descriptor,
+                    0u,
+                    0u,
+                    {kind, 1u, 0u, depth_mode},
+                    {target.image.extent.width, target.image.extent.height, reference.extent[0], reference.extent[1]},
+                    {reference.layer, 0u, 0u, 0u},
+                    {parameters.x, parameters.y, parameters.z, parameters.w},
+                    {1.0f, 1.0f, 1.0f, 1.0f},
+                    {screen_rect.x, screen_rect.y, screen_rect.z, screen_rect.w},
+                    {transform[0], transform[1], transform[2], transform[3]},
+                    {transform[4], transform[5], transform[6], transform[7]},
+                    {transform[8], transform[9], transform[10], transform[11]},
+                    {transform[12], transform[13], transform[14], transform[15]},
+                    {projected[0], projected[1], projected[2], projected[3]},
+                    {projected[4], projected[5], projected[6], projected[7]},
+                    {projected[8], projected[9], projected[10], projected[11]},
+                    {projected[12], projected[13], projected[14], projected[15]},
+                };
+                this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+                command_buffer.draw(6, 1, 0, 0);
+            };
+            if (camera_reference->plane)
+                draw_reference(16u, {tangent, reference_camera.focal_distance, 0.0f, 0.0f}, {reference_camera.screen_window.minimum.x, reference_camera.screen_window.minimum.y, reference_camera.screen_window.maximum.x, reference_camera.screen_window.maximum.y}, std::to_underlying(scene::VisualizationDepthMode::Tested));
+            if (camera_reference->overlay) draw_reference(15u, {}, camera_reference->overlay_rect, std::to_underlying(scene::VisualizationDepthMode::Overlay));
         }
         command_buffer.endRendering();
         const vk::ImageMemoryBarrier2 target_to_sample{vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *target.image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
