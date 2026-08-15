@@ -6,6 +6,17 @@
 #include <type_traits>
 
 namespace spectra::sdk {
+    struct Half {
+        std::uint16_t bits{};
+    };
+
+    struct Half4 {
+        Half x{};
+        Half y{};
+        Half z{};
+        Half w{};
+    };
+
     struct Float2 {
         float x{};
         float y{};
@@ -67,6 +78,8 @@ namespace spectra::sdk {
         float scalar{};
     };
 
+    static_assert(std::is_standard_layout_v<Half> && std::is_trivially_copyable_v<Half> && sizeof(Half) == 2u);
+    static_assert(std::is_standard_layout_v<Half4> && std::is_trivially_copyable_v<Half4> && sizeof(Half4) == 8u);
     static_assert(std::is_standard_layout_v<Float2> && std::is_trivially_copyable_v<Float2> && sizeof(Float2) == 8u);
     static_assert(std::is_standard_layout_v<Float3> && std::is_trivially_copyable_v<Float3> && sizeof(Float3) == 12u);
     static_assert(std::is_standard_layout_v<Float4> && std::is_trivially_copyable_v<Float4> && sizeof(Float4) == 16u);

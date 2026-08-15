@@ -957,7 +957,7 @@ namespace spectra {
             volume_interface_material = static_cast<std::uint32_t>(material_headers.size());
             material_headers.emplace_back(static_cast<std::uint32_t>(PathMaterialKind::Interface), 0u, invalid_texture, invalid_texture);
         }
-        if (material_headers.empty()) throw std::runtime_error("Path rendering requires at least one Material");
+        if (material_headers.empty()) material_headers.emplace_back(static_cast<std::uint32_t>(PathMaterialKind::Interface), 0u, invalid_texture, invalid_texture);
         std::vector<pathtracer::PathMaterialTextureRequest> material_texture_requests{};
         for (std::uint32_t root = 0; root != scene.resources.materials.size(); ++root) {
             const std::uint32_t request_offset = static_cast<std::uint32_t>(material_texture_requests.size());

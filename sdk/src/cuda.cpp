@@ -5,11 +5,6 @@ module;
 
 #include "../internal/abi.h"
 
-#if !defined(_WIN32)
-#include <cerrno>
-#include <unistd.h>
-#endif
-
 module spectra.sdk.cuda;
 
 import std;
@@ -30,19 +25,10 @@ namespace spectra::sdk::cuda {
 
             explicit ImportedBuffer(const SpectraSdkGpuBuffer& source) : byte_size(source.byte_size) {
                 cudaExternalMemoryHandleDesc description{};
-#if defined(_WIN32)
                 description.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
                 description.handle.win32.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(source.memory.value));
-#else
-                description.type      = cudaExternalMemoryHandleTypeOpaqueFd;
-                description.handle.fd = dup(static_cast<int>(source.memory.value));
-                if (description.handle.fd == -1) throw std::system_error(errno, std::generic_category(), "dup external memory handle");
-#endif
                 description.size                = source.byte_size;
                 const cudaError_t import_result = cudaImportExternalMemory(&memory, &description);
-#if !defined(_WIN32)
-                if (import_result != cudaSuccess) close(description.handle.fd);
-#endif
                 check_cuda(import_result, "cudaImportExternalMemory");
                 cudaExternalMemoryBufferDesc buffer{};
                 buffer.size = source.byte_size;
@@ -122,18 +108,9 @@ namespace spectra::sdk::cuda {
 
         void import_timeline(State& state) {
             cudaExternalSemaphoreHandleDesc description{};
-#if defined(_WIN32)
             description.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
             description.handle.win32.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(state.sink.timeline_semaphore.value));
-#else
-            description.type      = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
-            description.handle.fd = dup(static_cast<int>(state.sink.timeline_semaphore.value));
-            if (description.handle.fd == -1) throw std::system_error(errno, std::generic_category(), "dup external semaphore handle");
-#endif
             const cudaError_t result = cudaImportExternalSemaphore(&state.timeline, &description);
-#if !defined(_WIN32)
-            if (result != cudaSuccess) close(description.handle.fd);
-#endif
             check_cuda(result, "cudaImportExternalSemaphore");
         }
 
@@ -251,6 +228,14 @@ namespace spectra::sdk::cuda {
         request_output(state, output, layout);
     }
 
+    void setup_hash_grid_radiance_field_internal(void* source, const std::string_view id) {
+        State& state          = setup_state(source);
+        OutputState& output   = output_state(state, id);
+        output.primary_capacity = SPECTRA_SDK_HASH_GRID_ENTRY_COUNT;
+        const SpectraSdkOutputLayout layout{output_index(state, output), abi_kind(output.kind), output.primary_capacity};
+        request_output(state, output, layout);
+    }
+
     void Setup::complete() {
         State& state = setup_state(this->state);
         if (!state.metric_ids.empty()) {
@@ -339,6 +324,23 @@ namespace spectra::sdk::cuda {
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
         commit.active_count             = output.primary_capacity;
         return {raw_view(output.slots[state.next_slot][0], sizeof(Float4)), output.resolution};
+    }
+
+    RawHashGridRadianceFieldView frame_hash_grid_radiance_field_internal(void* source, const std::string_view id) {
+        State& state        = setup_state(source);
+        OutputState& output = output_state(state, id);
+        const auto& buffers = output.slots[state.next_slot];
+        SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
+        commit.active_count = output.primary_capacity;
+        return {
+            raw_view(buffers[0], sizeof(Half4)),
+            raw_view(buffers[1], sizeof(Half)),
+            raw_view(buffers[2], sizeof(Half)),
+            raw_view(buffers[3], sizeof(Half)),
+            raw_view(buffers[4], sizeof(Half)),
+            raw_view(buffers[5], sizeof(Half)),
+            raw_view(buffers[6], sizeof(std::uint32_t)),
+        };
     }
 
     RawView volume_field_internal(void* source, const std::string_view id) {

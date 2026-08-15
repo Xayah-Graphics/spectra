@@ -107,6 +107,7 @@ namespace spectra {
         GpuImage& image;
         vk::ImageLayout& layout;
         scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
+        DescriptorHandle storage_descriptor{};
     };
 
 } // namespace spectra

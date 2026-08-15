@@ -354,6 +354,22 @@ namespace spectra::scene {
             writer.end();
         }
 
+        void write_neural_fields(KdlWriter& writer, const std::vector<NeuralField>& fields) {
+            if (fields.empty()) return;
+            writer.begin("neural-fields");
+            for (const NeuralField& field : fields) {
+                std::string line = std::format("hash-grid-radiance-field {} {}", field.id.value, kdl_string(field.name));
+                if (!field.visible) kdl_bool_property(line, "visible", false);
+                if (field.transform == math::Transform{}) writer.line(line);
+                else {
+                    writer.begin(line);
+                    write_transform(writer, "transform", field.transform);
+                    writer.end();
+                }
+            }
+            writer.end();
+        }
+
         [[nodiscard]] std::string texture_value_kind_name(const TextureValueKind kind) {
             return kind == TextureValueKind::Float ? "float" : "spectrum";
         }
@@ -999,6 +1015,7 @@ namespace spectra::scene {
             write_geometries(writer, scene.resources.geometries);
             write_sphere_sets(writer, scene.resources.sphere_sets);
             write_volumes(writer, scene.resources.volumes);
+            write_neural_fields(writer, scene.resources.neural_fields);
             write_textures(writer, scene.resources.textures);
             write_materials(writer, scene.resources.materials);
             write_media(writer, scene.resources.media);
@@ -1371,6 +1388,19 @@ namespace spectra::scene {
                     if (const kdl::Node* color = kdl_child(*diagnostics_node, u8"color")) volume.diagnostics.color = {kdl_number<float>(color->args()[0]), kdl_number<float>(color->args()[1]), kdl_number<float>(color->args()[2]), kdl_number<float>(color->args()[3])};
                 }
                 resources.volumes.push_back(std::move(volume));
+            }
+        }
+
+        void read_neural_fields(SceneResources& resources, const kdl::Node& group) {
+            for (const kdl::Node& node : group.children()) {
+                if (node.name() != u8"hash-grid-radiance-field") throw std::runtime_error(std::format("Unknown Neural Field {}", kdl_text(node.name())));
+                NeuralField field{
+                    .id        = {kdl_number<std::uint64_t>(node.args()[0])},
+                    .name      = kdl_value_text(node.args()[1]),
+                    .transform = read_transform(node),
+                    .visible   = kdl_bool_property(node, u8"visible", true),
+                };
+                resources.neural_fields.emplace_back(std::move(field));
             }
         }
 
@@ -1930,6 +1960,8 @@ namespace spectra::scene {
                     read_sphere_sets(scene.resources, node);
                 else if (node.name() == u8"volumes")
                     read_volumes(scene.resources, node);
+                else if (node.name() == u8"neural-fields")
+                    read_neural_fields(scene.resources, node);
                 else if (node.name() == u8"textures")
                     read_textures(scene.resources, node);
                 else if (node.name() == u8"materials")
@@ -1953,6 +1985,7 @@ namespace spectra::scene {
                 else
                     throw std::runtime_error(std::format("Unknown Spectra scene section {}", kdl_text(node.name())));
             }
+            if (std::ranges::count_if(scene.resources.neural_fields, [](const NeuralField& field) { return field.visible; }) > 1) throw std::runtime_error("Spectra supports one visible Neural Field");
             return scene;
         }
 

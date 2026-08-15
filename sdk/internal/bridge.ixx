@@ -203,7 +203,7 @@ export namespace spectra::sdk::internal {
                 select_device(info);
                 std::remove_cvref_t<decltype(std::declval<Provider>().settings)> settings{};
                 apply_settings(settings, info->parameters);
-                const std::filesystem::path assets{std::string_view{info->assets.data, info->assets.size}};
+                const std::filesystem::path assets{std::u8string{reinterpret_cast<const char8_t*>(info->assets.data), info->assets.size}};
                 return {success(), new Instance{std::move(settings), assets}};
             } catch (const std::exception& exception) {
                 return {failure(exception), nullptr};

@@ -47,6 +47,16 @@ namespace spectra::sdk::cuda {
         UInt3 z_resolution{};
     };
 
+    struct RawHashGridRadianceFieldView {
+        RawView hash_grid{};
+        RawView density_input{};
+        RawView density_output{};
+        RawView rgb_input{};
+        RawView rgb_hidden{};
+        RawView rgb_output{};
+        RawView occupancy{};
+    };
+
     struct MetricValue {
         double floating[3]{};
         std::int64_t integer{};
@@ -56,12 +66,14 @@ namespace spectra::sdk::cuda {
     void setup_collection_internal(void* state, std::string_view id, OutputKind kind, std::uint32_t capacity);
     void setup_volume_internal(void* state, std::string_view id, UInt3 resolution);
     void setup_image_internal(void* state, std::string_view id, UInt3 extent);
+    void setup_hash_grid_radiance_field_internal(void* state, std::string_view id);
     void register_output_internal(void* state, std::string_view id, OutputKind kind, MeshAttribute attributes, std::span<const std::string_view> field_ids, std::span<const VolumeFieldKind> field_kinds);
     void configure_metrics_internal(void* state, std::span<const std::string_view> ids);
     [[nodiscard]] RawMeshView frame_mesh_internal(void* state, std::string_view id);
     [[nodiscard]] RawView frame_collection_internal(void* state, std::string_view id, std::uint32_t active_count);
     [[nodiscard]] RawVolumeView frame_volume_internal(void* state, std::string_view id);
     [[nodiscard]] RawImageView frame_image_internal(void* state, std::string_view id);
+    [[nodiscard]] RawHashGridRadianceFieldView frame_hash_grid_radiance_field_internal(void* state, std::string_view id);
     [[nodiscard]] RawView volume_field_internal(void* state, std::string_view id);
     [[nodiscard]] RawMacFieldView volume_mac_field_internal(void* state, std::string_view id);
     void upload_metric_internal(void* state, std::string_view id, const MetricValue& value);
@@ -84,6 +96,16 @@ namespace spectra::sdk::cuda {
     export struct Image {
         std::span<Float4> pixels{};
         UInt3 extent{};
+    };
+
+    export struct HashGridRadianceField {
+        std::span<Half4> hash_grid{};
+        std::span<Half> density_input{};
+        std::span<Half> density_output{};
+        std::span<Half> rgb_input{};
+        std::span<Half> rgb_hidden{};
+        std::span<Half> rgb_output{};
+        std::span<std::uint32_t> occupancy{};
     };
 
     export struct MacField;
@@ -196,6 +218,11 @@ namespace spectra::sdk::cuda {
             setup_image_internal(state, Id.view(), {width, height, 1u});
         }
 
+        template <FixedString Id>
+        void hash_grid_radiance_field() {
+            setup_hash_grid_radiance_field_internal(state, Id.view());
+        }
+
         void complete();
 
         template <typename... Definitions>
@@ -282,6 +309,20 @@ namespace spectra::sdk::cuda {
         [[nodiscard]] Image image() const {
             const RawImageView view = frame_image_internal(state, Id.view());
             return {{static_cast<Float4*>(view.pixels.data), view.pixels.count}, view.extent};
+        }
+
+        template <FixedString Id>
+        [[nodiscard]] HashGridRadianceField hash_grid_radiance_field() const {
+            const RawHashGridRadianceFieldView view = frame_hash_grid_radiance_field_internal(state, Id.view());
+            return {
+                {static_cast<Half4*>(view.hash_grid.data), view.hash_grid.count},
+                {static_cast<Half*>(view.density_input.data), view.density_input.count},
+                {static_cast<Half*>(view.density_output.data), view.density_output.count},
+                {static_cast<Half*>(view.rgb_input.data), view.rgb_input.count},
+                {static_cast<Half*>(view.rgb_hidden.data), view.rgb_hidden.count},
+                {static_cast<Half*>(view.rgb_output.data), view.rgb_output.count},
+                {static_cast<std::uint32_t*>(view.occupancy.data), view.occupancy.count},
+            };
         }
 
         template <FixedString Id>

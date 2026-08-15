@@ -11,6 +11,7 @@ import spectra.dynamics.runtime;
 import spectra.render;
 import spectra.render.composition;
 import spectra.render.composition.diagnostics;
+import spectra.render.composition.neural_field;
 import spectra.render.composition.overlay;
 import spectra.render.composition.visualization;
 import spectra.render.display;
@@ -47,6 +48,7 @@ namespace spectra {
         RenderEngine render_engine;
         ViewportInteraction viewport;
         DisplayPass display;
+        NeuralFieldRenderer neural_field;
         VisualizationRenderer visualization;
         ViewportOverlay overlay;
         ViewportPicker picker;
@@ -72,7 +74,7 @@ namespace spectra {
     };
 
     EditorApplication::EditorApplication(EditorRequest request, const std::filesystem::path& shader_directory, const std::filesystem::path& pathtracer_directory)
-        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, dynamics{runtime}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics, gpu_scene}, display{runtime, shader_directory}, visualization{runtime, gpu_scene, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, imgui{platform, runtime, display, shader_directory}, ui{document, viewport_settings, dynamics, render_engine, viewport, picker, imgui} {
+        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, dynamics{runtime}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics, gpu_scene}, display{runtime, shader_directory}, neural_field{runtime, gpu_scene, shader_directory}, visualization{runtime, gpu_scene, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, imgui{platform, runtime, display, shader_directory}, ui{document, viewport_settings, dynamics, render_engine, viewport, picker, imgui} {
         this->display.initialize();
         this->diagnostics.initialize();
         this->imgui.initialize();
@@ -130,6 +132,7 @@ namespace spectra {
                             .scene_camera_view      = this->viewport.view.source == CameraSource::Scene ? std::optional{this->viewport.view.render_camera.id} : std::nullopt,
                             .visualizations         = this->dynamics.visualizations(),
                             .visualization          = &this->visualization,
+                            .neural_field           = &this->neural_field,
                             .diagnostics            = this->viewport_settings.guides_visible ? std::optional{SceneDiagnosticsComposition{this->diagnostics, this->viewport_settings.scene_guides, this->viewport_settings.selection_diagnostics, this->viewport.view.selection}} : std::nullopt,
                             .frame_slot_index       = frame->frame.slot_index,
                             .exposure               = this->viewport_settings.exposure,

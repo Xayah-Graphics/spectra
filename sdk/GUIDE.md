@@ -1,4 +1,4 @@
-# Spectra SDK 1.0
+# Spectra SDK 1.1
 
 Spectra SDK lets a CUDA simulation publish typed GPU resources without implementing Spectra's binary ABI, Vulkan external-memory import, or semaphore protocol.
 
@@ -57,7 +57,7 @@ export namespace project {
 
 ## GPU outputs
 
-Declare only the resources a project publishes. SDK 1.0 provides `mesh`, `spheres`, `volume`, `instances`, `points`, `lines`, `vectors`, and `image`. A Volume declares its fields explicitly:
+Declare only the resources a project publishes. SDK 1.1 provides `mesh`, `spheres`, `volume`, `instances`, `points`, `lines`, `vectors`, `image`, and `hash_grid_radiance_field`. A Volume declares its fields explicitly:
 
 ```cpp
 spectra::sdk::volume<"smoke">(
@@ -71,6 +71,21 @@ spectra::sdk::volume<"smoke">(
 ```
 
 `float` and `Float3` fields contain `nx * ny * nz` values. Cell sampling places them at cell centers; vertex sampling spans the Volume bounds without changing the published element count. `MacFloat3` exposes staggered `x`, `y`, and `z` spans with resolutions `(nx + 1, ny, nz)`, `(nx, ny + 1, nz)`, and `(nx, ny, nz + 1)`. Spectra owns field selection, derived maps, slicing, ray marching, isosurfaces, glyphs, streamlines, and LIC; a Provider publishes only simulation data and field metadata.
+
+`hash_grid_radiance_field` is the fixed canonical v1 radiance-field layout: a unit AABB, eight F16 Hash Grid levels with four features per level, a `32 → 64 → 16` density network, and a `32 → 64 → 64 → 16` RGB network. It exposes seven typed spans:
+
+```cpp
+auto field = frame.hash_grid_radiance_field<"field">();
+cudaMemcpyAsync(field.hash_grid.data(), source_hash_grid, field.hash_grid.size_bytes(), cudaMemcpyDeviceToDevice, stream);
+cudaMemcpyAsync(field.density_input.data(), source_density_input, field.density_input.size_bytes(), cudaMemcpyDeviceToDevice, stream);
+cudaMemcpyAsync(field.density_output.data(), source_density_output, field.density_output.size_bytes(), cudaMemcpyDeviceToDevice, stream);
+cudaMemcpyAsync(field.rgb_input.data(), source_rgb_input, field.rgb_input.size_bytes(), cudaMemcpyDeviceToDevice, stream);
+cudaMemcpyAsync(field.rgb_hidden.data(), source_rgb_hidden, field.rgb_hidden.size_bytes(), cudaMemcpyDeviceToDevice, stream);
+cudaMemcpyAsync(field.rgb_output.data(), source_rgb_output, field.rgb_output.size_bytes(), cudaMemcpyDeviceToDevice, stream);
+cudaMemcpyAsync(field.occupancy.data(), source_occupancy, field.occupancy.size_bytes(), cudaMemcpyDeviceToDevice, stream);
+```
+
+The seven spans may share internal allocations, but their layouts and lifetimes are independent of Provider code. `occupancy` is the canonical 128³ Morton-order bitfield stored as 32-bit words. Spectra performs Vulkan-side matrix conversion, inference, and scene-linear composition.
 
 Allocate fixed capacities once in `setup`:
 
@@ -127,8 +142,8 @@ target_sources(
 target_link_libraries(cloth-provider PRIVATE project-simulation)
 ```
 
-The target produces `cloth-provider.spectra-provider.dll` on Windows or `cloth-provider.spectra-provider.so` on Linux. `spectra_add_provider` generates the ABI entry and compiles the internal bridge; project code must not include SDK internal files.
+The target produces `cloth-provider.spectra-provider.dll` on Windows. `spectra_add_provider` generates the ABI entry and compiles the internal bridge; project code must not include SDK internal files.
 
-Place the Provider DLL beside the `.spectra` scene. Spectra scans that directory for `*.spectra-provider.dll` or `*.spectra-provider.so` and matches the scene's Provider ID against the DLL's `description` ID, so the CMake target name does not need to duplicate the Provider ID.
+Place the Provider DLL beside the `.spectra` scene. Spectra scans that directory for `*.spectra-provider.dll` and matches the scene's Provider ID against the DLL's `description` ID, so the CMake target name does not need to duplicate the Provider ID.
 
-The complete eight-output compile example is in `sdk/example` and can be enabled while configuring the SDK with `-DSPECTRA_SDK_BUILD_EXAMPLE=ON`.
+The complete nine-output compile example is in `sdk/example` and can be enabled while configuring the SDK with `-DSPECTRA_SDK_BUILD_EXAMPLE=ON`.

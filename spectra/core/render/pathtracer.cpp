@@ -144,7 +144,8 @@ namespace spectra {
     void PathTracer::invalidate(const scene::SceneChange changes, const GpuSceneUpdate gpu_update) noexcept {
         constexpr scene::SceneChange relevant        = scene::SceneChange::Geometry | scene::SceneChange::Transform | scene::SceneChange::Texture | scene::SceneChange::Material | scene::SceneChange::Light | scene::SceneChange::Medium | scene::SceneChange::Volume | scene::SceneChange::Camera | scene::SceneChange::Film | scene::SceneChange::Sampler | scene::SceneChange::Transport;
         this->control.pending_changes                = this->control.pending_changes | (changes & relevant);
-        this->control.pending_gpu_changes            = this->control.pending_gpu_changes | gpu_update.gpu_changes;
+        constexpr GpuSceneChange relevant_gpu       = GpuSceneChange::Geometry | GpuSceneChange::Volume | GpuSceneChange::Structure | GpuSceneChange::Transform;
+        this->control.pending_gpu_changes            = this->control.pending_gpu_changes | (gpu_update.gpu_changes & relevant_gpu);
         this->control.pending_gpu_structure_revision = std::max(this->control.pending_gpu_structure_revision, gpu_update.structure_revision);
     }
 

@@ -33,6 +33,7 @@ export namespace spectra::sdk::example {
             spectra::sdk::lines<"lines">(),
             spectra::sdk::vectors<"vectors">(),
             spectra::sdk::image<"image">(),
+            spectra::sdk::hash_grid_radiance_field<"field">(),
             spectra::sdk::metric<"time", float>("Time", "s", {}, true)
         );
 
@@ -51,6 +52,7 @@ export namespace spectra::sdk::example {
             setup.lines<"lines">(1u);
             setup.vectors<"vectors">(1u);
             setup.image<"image">(2u, 2u);
+            setup.hash_grid_radiance_field<"field">();
         }
 
         void reset(std::uint64_t) {}
@@ -68,6 +70,7 @@ export namespace spectra::sdk::example {
             auto lines = frame.lines<"lines">(1u);
             auto vectors = frame.vectors<"vectors">(1u);
             auto image = frame.image<"image">();
+            auto field = frame.hash_grid_radiance_field<"field">();
             static_cast<void>(mesh.positions.data());
             static_cast<void>(spheres.data());
             static_cast<void>(volume.field<"density", float>().data());
@@ -77,6 +80,13 @@ export namespace spectra::sdk::example {
             static_cast<void>(lines.data());
             static_cast<void>(vectors.data());
             static_cast<void>(image.pixels.data());
+            static_cast<void>(field.hash_grid.data());
+            static_cast<void>(field.density_input.data());
+            static_cast<void>(field.density_output.data());
+            static_cast<void>(field.rgb_input.data());
+            static_cast<void>(field.rgb_hidden.data());
+            static_cast<void>(field.rgb_output.data());
+            static_cast<void>(field.occupancy.data());
             frame.metric<"time">().upload(time);
             frame.commit();
         }

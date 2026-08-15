@@ -44,8 +44,19 @@ namespace spectra::dynamics {
         std::vector<GpuVolumeFieldView> fields{};
     };
 
+    export struct GpuHashGridRadianceFieldUpdate {
+        scene::NeuralFieldId neural_field_id{};
+        GpuBufferView hash_grid{};
+        GpuBufferView density_input{};
+        GpuBufferView density_output{};
+        GpuBufferView rgb_input{};
+        GpuBufferView rgb_hidden{};
+        GpuBufferView rgb_output{};
+        GpuBufferView occupancy{};
+    };
+
     export struct GpuSceneUpdate {
-        std::variant<GpuTriangleMeshUpdate, GpuSphereSetUpdate, GpuInstanceTransformUpdate, GpuFieldUpdate> data{};
+        std::variant<GpuTriangleMeshUpdate, GpuSphereSetUpdate, GpuInstanceTransformUpdate, GpuFieldUpdate, GpuHashGridRadianceFieldUpdate> data{};
     };
 
     export struct VisualizationStyle {

@@ -48,16 +48,19 @@ namespace spectra {
 
     bool DisplayPass::resize(const vk::Extent2D extent) {
         if (*this->image.image && extent == this->image.extent) return false;
-        GpuImage next_linear_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
+        GpuImage next_linear_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst);
         GpuImage next_image = this->context.runtime.resources.create_image_2d(extent, vk::Format::eB8G8R8A8Srgb, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst);
-        DescriptorLease next_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+        DescriptorLease next_descriptor         = this->context.runtime.frames.allocate_resource_descriptor();
+        DescriptorLease next_storage_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
         this->context.runtime.resources.write_sampled_image_descriptor(next_descriptor, next_linear_image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->context.runtime.resources.write_storage_image_descriptor(next_storage_descriptor, next_linear_image, vk::ImageLayout::eGeneral);
         if (*this->image.image) {
             this->context.runtime.frames.defer_destruction([linear = std::move(this->linear_image), display = std::move(this->image)]() mutable {});
         }
         this->linear_image              = std::move(next_linear_image);
         this->image                     = std::move(next_image);
         this->linear_sampled_descriptor = std::move(next_descriptor);
+        this->linear_storage_descriptor = std::move(next_storage_descriptor);
         this->linear_layout = vk::ImageLayout::eUndefined;
         this->layout = vk::ImageLayout::eUndefined;
         return true;
@@ -114,12 +117,12 @@ namespace spectra {
     }
 
     ColorCompositionTarget DisplayPass::linear_target() noexcept {
-        return {this->linear_image, this->linear_layout, this->linear_color_space};
+        return {this->linear_image, this->linear_layout, this->linear_color_space, this->linear_storage_descriptor};
     }
 
     RenderOutput DisplayPass::linear_output(const RenderOutput renderer_output) const noexcept {
-        const vk::PipelineStageFlags2 stage = this->linear_layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::PipelineStageFlagBits2::eFragmentShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-        const vk::AccessFlags2 access = this->linear_layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::AccessFlagBits2::eShaderSampledRead : vk::AccessFlagBits2::eColorAttachmentWrite;
+        const vk::PipelineStageFlags2 stage = this->linear_layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::PipelineStageFlagBits2::eFragmentShader : this->linear_layout == vk::ImageLayout::eGeneral ? vk::PipelineStageFlagBits2::eComputeShader : vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        const vk::AccessFlags2 access = this->linear_layout == vk::ImageLayout::eShaderReadOnlyOptimal ? vk::AccessFlagBits2::eShaderSampledRead : this->linear_layout == vk::ImageLayout::eGeneral ? vk::AccessFlagBits2::eShaderStorageWrite : vk::AccessFlagBits2::eColorAttachmentWrite;
         return {this->linear_image, this->linear_sampled_descriptor, this->linear_layout, stage, access, renderer_output.color_space, renderer_output.exposure};
     }
 

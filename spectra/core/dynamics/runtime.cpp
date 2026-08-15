@@ -18,6 +18,7 @@ import vulkan;
 namespace spectra {
     namespace {
         [[nodiscard]] std::string sdk_string(const SpectraSdkString value) {
+            if (value.size == 0u) return {};
             return std::string{value.data, value.size};
         }
 
@@ -156,7 +157,8 @@ namespace spectra {
                     else if (output.kind == SpectraSdkOutputKind::Points) dataset.details = dynamics::PointDataset{};
                     else if (output.kind == SpectraSdkOutputKind::Lines) dataset.details = dynamics::SegmentDataset{};
                     else if (output.kind == SpectraSdkOutputKind::Vectors) dataset.details = dynamics::VectorDataset{};
-                    else dataset.details = dynamics::ImageDataset{};
+                    else if (output.kind == SpectraSdkOutputKind::Image) dataset.details = dynamics::ImageDataset{};
+                    else dataset.resource_kind = scene::DynamicSceneResourceKind::NeuralField;
                     provider.datasets.emplace_back(std::move(dataset));
                 }
                 provider.telemetry.reserve(source.metric_count);
@@ -377,7 +379,7 @@ namespace spectra {
 #else
             const auto entry = reinterpret_cast<const SpectraSdkApi* (*)() noexcept>(dlsym(loaded, SPECTRA_SDK_ENTRY_NAME));
 #endif
-            if (!entry) throw std::runtime_error("Provider does not export Spectra SDK ABI 1");
+            if (!entry) throw std::runtime_error("Provider does not export Spectra SDK ABI 2");
             api = entry();
             if (api->abi_version != SPECTRA_SDK_ABI_VERSION || api->struct_size != sizeof(SpectraSdkApi)) throw std::runtime_error("Provider has an incompatible Spectra SDK ABI");
             const SpectraSdkProviderDescriptionResult described = api->describe_provider();
@@ -446,6 +448,16 @@ namespace spectra {
                     } else
                         dynamic_sizes.emplace_back(element_count(output.resolution) * (field.kind == scene::VolumeFieldKind::Float ? sizeof(float) : sizeof(math::Float3)));
                 }
+            } else if (layout->kind == SpectraSdkOutputKind::HashGridRadianceField) {
+                dynamic_sizes = {
+                    static_cast<std::uint64_t>(SPECTRA_SDK_HASH_GRID_ENTRY_COUNT) * 8u,
+                    static_cast<std::uint64_t>(SPECTRA_SDK_DENSITY_INPUT_COUNT) * 2u,
+                    static_cast<std::uint64_t>(SPECTRA_SDK_DENSITY_OUTPUT_COUNT) * 2u,
+                    static_cast<std::uint64_t>(SPECTRA_SDK_RGB_INPUT_COUNT) * 2u,
+                    static_cast<std::uint64_t>(SPECTRA_SDK_RGB_HIDDEN_COUNT) * 2u,
+                    static_cast<std::uint64_t>(SPECTRA_SDK_RGB_OUTPUT_COUNT) * 2u,
+                    static_cast<std::uint64_t>(SPECTRA_SDK_OCCUPANCY_WORD_COUNT) * 4u,
+                };
             } else dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * collection_element_size(layout->kind));
 
             output.static_buffers.resize(static_sizes.size());
@@ -513,7 +525,7 @@ namespace spectra {
             ++volume.revision.content;
             ++volume.revision.topology;
             this->configuration.evaluated_scene->mark_changed(scene::SceneChange::Volume | scene::SceneChange::Structure);
-        }
+        } else if (output.descriptor.resource_kind == scene::DynamicSceneResourceKind::NeuralField) this->configuration.evaluated_scene->mark_changed(scene::SceneChange::NeuralField);
     }
 
     void DynamicsRuntime::create_system(SystemRuntime& system, const scene::DynamicSystem& declared) {
@@ -521,7 +533,8 @@ namespace spectra {
         system.telemetry.values.resize(system.provider_descriptor->telemetry.size());
         std::vector<SpectraSdkValue> parameters{};
         for (const scene::DynamicParameterValue& value : system.parameter_values) parameters.emplace_back(sdk_value(value));
-        std::string assets = this->configuration.assets.string();
+        const std::u8string encoded_assets = this->configuration.assets.generic_u8string();
+        std::string assets{reinterpret_cast<const char*>(encoded_assets.data()), encoded_assets.size()};
         SpectraSdkCreateInfo create{{assets.data(), assets.size()}, parameters.data()};
         std::ranges::copy(identity.uuid, create.vulkan_device_uuid);
         std::ranges::copy(identity.luid, create.vulkan_device_luid);
@@ -584,6 +597,17 @@ namespace spectra {
                 update.fields.emplace_back(std::move(field_view));
             }
             snapshot.scene_updates.emplace_back(std::move(update));
+        } else if (output.kind == SpectraSdkOutputKind::HashGridRadianceField && output.scene_binding) {
+            snapshot.scene_updates.emplace_back(dynamics::GpuHashGridRadianceFieldUpdate{
+                scene::NeuralFieldId{output.scene_binding->resource_id},
+                view(buffers[0]),
+                view(buffers[1]),
+                view(buffers[2]),
+                view(buffers[3]),
+                view(buffers[4]),
+                view(buffers[5]),
+                view(buffers[6]),
+            });
         }
 
         if (!this->configuration.setup.systems[system.scene_system_index].visible || commit.active_count == 0u) return;

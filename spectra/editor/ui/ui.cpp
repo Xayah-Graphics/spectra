@@ -80,6 +80,7 @@ namespace spectra {
         }
 
         [[nodiscard]] bool transform_editable(const EditorUi& editor, const SceneEntityReference entity) noexcept {
+            if (entity.kind == SceneEntityKind::NeuralField) return false;
             if (entity.kind == SceneEntityKind::Volume) return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(scene::VolumeId{entity.id});
             if (entity.kind != SceneEntityKind::Instance && entity.kind != SceneEntityKind::AreaEmitter) return entity.kind == SceneEntityKind::Camera || entity.kind == SceneEntityKind::Light;
             const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
@@ -93,6 +94,7 @@ namespace spectra {
             }
             if (entity.kind == SceneEntityKind::Camera) return std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->transform;
             if (entity.kind == SceneEntityKind::Volume) return std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id)->transform;
+            if (entity.kind == SceneEntityKind::NeuralField) return std::ranges::find(source.resources.neural_fields, scene::NeuralFieldId{entity.id}, &scene::NeuralField::id)->transform;
             if (entity.kind != SceneEntityKind::Light) return std::nullopt;
             const scene::Light& light = *std::ranges::find(source.resources.lights, scene::LightId{entity.id}, &scene::Light::id);
             return std::visit(
@@ -111,6 +113,7 @@ namespace spectra {
             if (entity.kind == SceneEntityKind::Instance) return std::ranges::find(source.resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id)->name;
             if (entity.kind == SceneEntityKind::Camera) return std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->name;
             if (entity.kind == SceneEntityKind::Volume) return std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id)->name;
+            if (entity.kind == SceneEntityKind::NeuralField) return std::ranges::find(source.resources.neural_fields, scene::NeuralFieldId{entity.id}, &scene::NeuralField::id)->name;
             if (entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Light) return std::ranges::find(source.resources.lights, scene::LightId{entity.id}, &scene::Light::id)->name;
             std::unreachable();
         }
@@ -121,6 +124,7 @@ namespace spectra {
             if (entity.kind == SceneEntityKind::Light) return "LIGHT";
             if (entity.kind == SceneEntityKind::AreaEmitter) return "AREA EMITTER";
             if (entity.kind == SceneEntityKind::Volume) return "VOLUME";
+            if (entity.kind == SceneEntityKind::NeuralField) return "NEURAL FIELD";
             return "ENTITY";
         }
 
@@ -767,6 +771,8 @@ namespace spectra {
                         add_line(std::format("{}  ·  {}{}{}", field.name, kind, field.unit.empty() ? "" : "  ·  ", field.unit), secondary);
                     }
                 }
+            } else if (entity->kind == SceneEntityKind::NeuralField) {
+                add_line("Hash Grid Radiance Field  ·  canonical v1", primary);
             }
         }
         const float status_bottom = y;
@@ -1134,7 +1140,7 @@ namespace spectra {
 
         ImGui::TextDisabled("DIAGNOSTICS");
         ImGui::BeginDisabled(!this->context.settings.guides_visible);
-        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Volume) ImGui::Checkbox("Bounds", &diagnostics.bounds);
+        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Volume || entity.kind == SceneEntityKind::NeuralField) ImGui::Checkbox("Bounds", &diagnostics.bounds);
         if (entity.kind == SceneEntityKind::Instance) {
             if (geometry || spheres) ImGui::Checkbox(spheres && !geometry ? "Sphere wireframe" : "Wireframe", &diagnostics.wireframe);
             if (geometry || spheres) ImGui::Checkbox(spheres && !geometry ? "Centers" : spheres ? "Vertices / centers" : "Vertices", &diagnostics.vertices);

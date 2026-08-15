@@ -220,7 +220,7 @@ int main(const int argument_count, const char* const* arguments) {
             "-fvk-use-c-layout",
             "-fvk-use-entrypoint-name",
             "-capability",
-            "SPIRV_1_6+spvDescriptorHeapEXT+spvMeshShadingEXT+spvRayTracingKHR+spvRayTracingPositionFetchKHR",
+            "SPIRV_1_6+spvDescriptorHeapEXT+spvMeshShadingEXT+spvRayTracingKHR+spvRayTracingPositionFetchKHR+spvCooperativeVectorNV",
             "-spirv-unified-descriptor-heap-stride",
         };
         std::vector<const char*> search_paths{};

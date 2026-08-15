@@ -16,6 +16,7 @@ namespace spectra {
         Light,
         AreaEmitter,
         Volume,
+        NeuralField,
     };
 
     export struct SceneEntityReference {

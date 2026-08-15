@@ -77,6 +77,7 @@ target_sources(
         spectra/core/render/pathtracer.ixx
         spectra/core/render/render.ixx
         spectra/core/render/display.ixx
+        spectra/core/render/composition/neural_field.ixx
         spectra/core/render/composition/diagnostics.ixx
         spectra/core/render/composition/visualization.ixx
         spectra/core/render/composition/overlay.ixx
@@ -118,6 +119,7 @@ target_sources(
         spectra/core/render/pathtracer.cpp
         spectra/core/render/render.cpp
         spectra/core/render/display.cpp
+        spectra/core/render/composition/neural_field.cpp
         spectra/core/render/composition/visualization.cpp
         spectra/core/render/composition/diagnostics.cpp
         spectra/core/render/composition/overlay.cpp

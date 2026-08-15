@@ -321,6 +321,8 @@ namespace spectra::scene {
         }
         for (const Volume& volume : this->resources.volumes)
             if (volume.visible) result.include(volume.domain.transformed(volume.transform));
+        for (const NeuralField& field : this->resources.neural_fields)
+            if (field.visible) result.include(NeuralField::local_bounds.transformed(field.transform));
         return result;
     }
 

@@ -142,6 +142,20 @@ namespace spectra {
                 });
         }
 
+        for (const scene::NeuralField& field : source_scene.resources.neural_fields) {
+            if (!field.visible) continue;
+            const SceneEntityReference entity{SceneEntityKind::NeuralField, field.id.value};
+            const bool selected = std::ranges::contains(selection.selected, entity);
+            if (scene_guides.all_bounds || (selection_diagnostics.bounds && selected))
+                boxes.push_back({
+                    field.transform.matrix,
+                    {scene::NeuralField::local_bounds.minimum.x, scene::NeuralField::local_bounds.minimum.y, scene::NeuralField::local_bounds.minimum.z, selected ? selection_diagnostics.line_width : 1.5f},
+                    {scene::NeuralField::local_bounds.maximum.x, scene::NeuralField::local_bounds.maximum.y, scene::NeuralField::local_bounds.maximum.z, 0.0f},
+                    diagnostic_color(entity, selection, {0.20f, 0.86f, 0.72f, 0.76f}),
+                    {0, 0, pick_index(entity), std::to_underlying(selected ? selection_diagnostics.depth_mode : scene::VisualizationDepthMode::Tested)},
+                });
+        }
+
         for (const scene::Camera& scene_camera : source_scene.resources.cameras) {
             const bool selected_camera = selection.active && selection.active->kind == SceneEntityKind::Camera && selection.active->id == scene_camera.id.value;
             if (!scene_guides.cameras && !(selected_camera && selection_diagnostics.camera_frustum)) continue;

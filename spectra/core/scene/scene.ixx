@@ -34,6 +34,11 @@ namespace spectra::scene {
         friend auto operator<=>(const VolumeId&, const VolumeId&) = default;
     };
 
+    export struct NeuralFieldId {
+        std::uint64_t value{};
+        friend auto operator<=>(const NeuralFieldId&, const NeuralFieldId&) = default;
+    };
+
     export struct TextureId {
         std::uint64_t value{};
         friend auto operator<=>(const TextureId&, const TextureId&) = default;
@@ -565,6 +570,15 @@ namespace spectra::scene {
         bool visible{true};
     };
 
+    export struct NeuralField {
+        static constexpr math::Bounds3 local_bounds{{0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}};
+
+        NeuralFieldId id{};
+        std::string name{};
+        math::Transform transform{};
+        bool visible{true};
+    };
+
     export struct Medium {
         MediumId id{};
         std::string name{};
@@ -787,6 +801,7 @@ namespace spectra::scene {
         Geometry,
         SphereSet,
         Volume,
+        NeuralField,
     };
 
     export enum class VisualizationViewKind : std::uint8_t {
@@ -939,6 +954,7 @@ namespace spectra::scene {
         std::vector<Geometry> geometries{};
         std::vector<SphereSet> sphere_sets{};
         std::vector<Volume> volumes{};
+        std::vector<NeuralField> neural_fields{};
         std::vector<Texture> textures{};
         std::vector<Material> materials{};
         std::vector<Medium> media{};
@@ -965,7 +981,8 @@ namespace spectra::scene {
         Metadata  = 1 << 10,
         Transport = 1 << 11,
         Structure = 1 << 12,
-        All       = 0x1fff,
+        NeuralField = 1 << 13,
+        All         = 0x3fff,
     };
 
     export [[nodiscard]] constexpr SceneChange operator|(const SceneChange left, const SceneChange right) noexcept {

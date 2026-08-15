@@ -3,8 +3,15 @@
 
 #include <cstdint>
 
-inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = 1;
-inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = "spectra_sdk_api_1";
+inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = 2;
+inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = "spectra_sdk_api_2";
+inline constexpr std::uint32_t SPECTRA_SDK_HASH_GRID_ENTRY_COUNT   = 2920448;
+inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_INPUT_COUNT     = 64 * 32;
+inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_OUTPUT_COUNT    = 16 * 64;
+inline constexpr std::uint32_t SPECTRA_SDK_RGB_INPUT_COUNT         = 64 * 32;
+inline constexpr std::uint32_t SPECTRA_SDK_RGB_HIDDEN_COUNT        = 64 * 64;
+inline constexpr std::uint32_t SPECTRA_SDK_RGB_OUTPUT_COUNT        = 16 * 64;
+inline constexpr std::uint32_t SPECTRA_SDK_OCCUPANCY_WORD_COUNT    = 128 * 128 * 128 / 32;
 
 #if defined(_WIN32)
 #define SPECTRA_SDK_EXPORT __declspec(dllexport)
@@ -65,6 +72,7 @@ enum class SpectraSdkOutputKind : std::uint32_t {
     Lines,
     Vectors,
     Image,
+    HashGridRadianceField,
     Metrics,
 };
 

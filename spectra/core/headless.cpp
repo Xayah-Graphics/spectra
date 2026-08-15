@@ -2,6 +2,7 @@ module spectra.headless;
 
 import spectra.dynamics.runtime;
 import spectra.render.composition.diagnostics;
+import spectra.render.composition.neural_field;
 import spectra.render.composition.overlay;
 import spectra.render.composition.visualization;
 import spectra.render;
@@ -93,6 +94,8 @@ namespace spectra {
         }
         std::unique_ptr<VisualizationRenderer> visualization{};
         if (output_layer == RenderOutputLayer::ComposedDisplay && compose_visualizations) visualization = std::make_unique<VisualizationRenderer>(runtime, gpu_scene, shader_directory);
+        std::unique_ptr<NeuralFieldRenderer> neural_field{};
+        if (output_layer != RenderOutputLayer::RendererLinear) neural_field = std::make_unique<NeuralFieldRenderer>(runtime, gpu_scene, shader_directory);
         std::unique_ptr<SceneDiagnosticRenderer> diagnostics{};
         if (output_layer == RenderOutputLayer::ComposedDisplay && compose_diagnostics) {
             diagnostics = std::make_unique<SceneDiagnosticRenderer>(runtime, gpu_scene, shader_directory);
@@ -128,7 +131,7 @@ namespace spectra {
                 const RenderOutput renderer_output         = render_engine.output();
                 const std::optional<DepthBufferView> depth = render_engine.depth_buffer();
                 if (output_layer != RenderOutputLayer::RendererLinear) {
-                    if (output_layer == RenderOutputLayer::RendererDisplay)
+                    if (output_layer == RenderOutputLayer::RendererDisplay && !neural_field->has_visible(document.content.evaluated.view()))
                         display->record(frame.command_buffer, renderer_output, 0.0f);
                     else {
                         const SceneGuideSettings scene_guides{.all_bounds = true};
@@ -143,6 +146,7 @@ namespace spectra {
                                 .scene_camera_view      = camera.id,
                                 .visualizations         = dynamics.visualizations(),
                                 .visualization          = visualization.get(),
+                                .neural_field           = neural_field.get(),
                                 .diagnostics            = diagnostics ? std::optional{SceneDiagnosticsComposition{*diagnostics, scene_guides, selection_diagnostics, selection}} : std::nullopt,
                                 .frame_slot_index       = frame.slot_index,
                                 .compose_visualizations = compose_visualizations,

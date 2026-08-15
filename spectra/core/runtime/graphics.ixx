@@ -45,6 +45,7 @@ namespace spectra {
         vk::PhysicalDeviceRayTracingPipelinePropertiesKHR ray_tracing_properties{};
         GpuDeviceIdentity identity{};
         bool ray_tracing_supported{};
+        bool neural_field_supported{};
 
     private:
         void select_physical_device();

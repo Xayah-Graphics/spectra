@@ -48,6 +48,7 @@ namespace spectra {
         Volume    = 1 << 1,
         Structure = 1 << 2,
         Transform = 1 << 3,
+        NeuralField = 1 << 4,
     };
 
     export [[nodiscard]] constexpr GpuSceneChange operator|(const GpuSceneChange left, const GpuSceneChange right) noexcept {
@@ -148,6 +149,23 @@ namespace spectra {
         bool cpu_data_stale{};
     };
 
+    export struct GpuNeuralBuffer {
+        GpuBuffer buffer{};
+        DescriptorLease descriptor{};
+    };
+
+    export struct GpuNeuralField {
+        scene::NeuralFieldId neural_field_id{};
+        GpuNeuralBuffer hash_grid{};
+        GpuNeuralBuffer density_input{};
+        GpuNeuralBuffer density_output{};
+        GpuNeuralBuffer rgb_input{};
+        GpuNeuralBuffer rgb_hidden{};
+        GpuNeuralBuffer rgb_output{};
+        GpuNeuralBuffer occupancy{};
+        std::uint64_t revision{};
+    };
+
     export struct GpuTextureImage {
         GpuImage image{};
         DescriptorLease image_descriptor{};
@@ -167,6 +185,7 @@ namespace spectra {
         std::span<const GpuGeometry> geometries{};
         std::span<const GpuSphereSet> sphere_sets{};
         std::span<const GpuVolume> volumes{};
+        std::span<const GpuNeuralField> neural_fields{};
         std::span<const GpuScenePrimitive> primitives{};
         std::span<const scene::InstanceId> primitive_instance_ids{};
         std::span<const GpuAccelerationEntity> acceleration_entities{};
@@ -242,6 +261,7 @@ namespace spectra {
             std::vector<GpuGeometry> geometries{};
             std::vector<GpuSphereSet> sphere_sets{};
             std::vector<GpuVolume> volumes{};
+            std::vector<GpuNeuralField> neural_fields{};
             GpuGeometry volume_region_geometry{};
             std::vector<GpuScenePrimitive> primitives{};
             std::vector<scene::InstanceId> primitive_instance_ids{};
@@ -265,6 +285,7 @@ namespace spectra {
         void synchronize_external_sphere_set(scene::SphereSetId sphere_set_id, DescriptorHandle spheres_descriptor, std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_instance_transforms(const dynamics::GpuInstanceTransformUpdate& update, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_volume(scene::VolumeId volume_id, std::span<const dynamics::GpuVolumeFieldView> fields, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_neural_field(const dynamics::GpuHashGridRadianceFieldUpdate& update, const vk::raii::CommandBuffer& command_buffer);
         void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_instance_state(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_instance_bounds(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);

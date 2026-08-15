@@ -33,6 +33,7 @@ namespace spectra {
         vk::raii::ShaderEXTs shaders{nullptr};
         DescriptorLease sampler_descriptor{};
         DescriptorLease linear_sampled_descriptor{};
+        DescriptorLease linear_storage_descriptor{};
         GpuImage linear_image{};
         vk::ImageLayout linear_layout{vk::ImageLayout::eUndefined};
         scene::SpectrumColorSpace linear_color_space{scene::SpectrumColorSpace::Srgb};

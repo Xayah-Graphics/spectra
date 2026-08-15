@@ -483,7 +483,8 @@ namespace spectra {
 
     void Rasterizer::invalidate(const scene::SceneChange changes, const GpuSceneUpdate gpu_update) noexcept {
         this->renderer.pending_changes     = this->renderer.pending_changes | changes;
-        this->renderer.pending_gpu_changes = this->renderer.pending_gpu_changes | gpu_update.gpu_changes;
+        constexpr GpuSceneChange relevant_gpu = GpuSceneChange::Geometry | GpuSceneChange::Volume | GpuSceneChange::Structure | GpuSceneChange::Transform;
+        this->renderer.pending_gpu_changes = this->renderer.pending_gpu_changes | (gpu_update.gpu_changes & relevant_gpu);
     }
 
     void Rasterizer::prepare(scene::SceneView scene_view, const RenderView& view, const vk::raii::CommandBuffer& command_buffer) {

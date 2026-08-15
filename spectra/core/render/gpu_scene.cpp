@@ -252,7 +252,7 @@ namespace spectra {
 
     void GpuScene::destroy() noexcept {
         this->context.runtime.frames.defer_destruction([attribute_clear_shader = std::move(this->resources.attribute_clear_shader), attribute_accumulation_shader = std::move(this->resources.attribute_accumulation_shader), attribute_normalization_shader = std::move(this->resources.attribute_normalization_shader), bounds_clear_shader = std::move(this->resources.bounds_clear_shader), bounds_accumulation_shader = std::move(this->resources.bounds_accumulation_shader), sphere_unpack_shader = std::move(this->resources.sphere_unpack_shader), instance_apply_shader = std::move(this->resources.instance_apply_shader), texture_images = std::move(this->resources.texture_images), acceleration_instances = std::move(this->resources.acceleration_structure_instances), primitive_transforms = std::move(this->resources.primitive_transforms), instance_bindings = std::move(this->resources.dynamic_instance_bindings), instance_bounds = std::move(this->resources.instance_bounds),
-                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), volumes = std::move(this->resources.volumes), volume_region = std::move(this->resources.volume_region_geometry), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
+                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), volumes = std::move(this->resources.volumes), neural_fields = std::move(this->resources.neural_fields), volume_region = std::move(this->resources.volume_region_geometry), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
         this->resources.texture_image_indices.clear();
         this->resources.acceleration_structure_instances_descriptor = {};
         this->resources.primitive_transforms_descriptor             = {};
@@ -287,6 +287,7 @@ namespace spectra {
             this->resources.geometries,
             this->resources.sphere_sets,
             this->resources.volumes,
+            this->resources.neural_fields,
             this->resources.primitives,
             this->resources.primitive_instance_ids,
             this->resources.acceleration_entities,
@@ -353,9 +354,15 @@ namespace spectra {
                 continue;
             }
             const auto* field = std::get_if<dynamics::GpuFieldUpdate>(&update.data);
-            if (!field) continue;
-            this->synchronize_external_volume(field->volume_id, field->fields, command_buffer);
-            this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Volume;
+            if (field) {
+                this->synchronize_external_volume(field->volume_id, field->fields, command_buffer);
+                this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Volume;
+                continue;
+            }
+            const auto* neural_field = std::get_if<dynamics::GpuHashGridRadianceFieldUpdate>(&update.data);
+            if (!neural_field) continue;
+            this->synchronize_external_neural_field(*neural_field, command_buffer);
+            this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::NeuralField;
         }
         this->end_external_updates(scene, command_buffer);
         bool instance_transforms_updated{};
@@ -421,6 +428,8 @@ namespace spectra {
             }
             this->resources.volumes.reserve(scene.resources.volumes.size());
             for (const scene::Volume& volume : scene.resources.volumes) this->resources.volumes.emplace_back(this->create_volume(volume, target));
+            this->resources.neural_fields.reserve(scene.resources.neural_fields.size());
+            for (const scene::NeuralField& field : scene.resources.neural_fields) this->resources.neural_fields.emplace_back(GpuNeuralField{.neural_field_id = field.id});
             if (this->context.runtime.graphics.ray_tracing_supported && !scene.resources.volumes.empty()) {
                 const scene::Geometry region{.name = "Internal Volume Region", .data = scene::BoxGeometry{{{0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}}}};
                 this->resources.volume_region_geometry = this->create_geometry(region, target);
@@ -1085,6 +1094,28 @@ namespace spectra {
         volume.dirty_region = scene::VolumeRegion{{}, volume.resolution};
         ++volume.revision.content;
         volume.cpu_data_stale = true;
+    }
+
+    void GpuScene::synchronize_external_neural_field(const dynamics::GpuHashGridRadianceFieldUpdate& update, const vk::raii::CommandBuffer& command_buffer) {
+        GpuNeuralField& field = *std::ranges::find(this->resources.neural_fields, update.neural_field_id, &GpuNeuralField::neural_field_id);
+        const auto copy = [this, &command_buffer](GpuNeuralBuffer& destination, const dynamics::GpuBufferView source) {
+            if (!*destination.buffer.buffer) {
+                destination.buffer = this->context.runtime.resources.create_buffer(source.buffer->size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eDeviceLocal, false);
+                destination.descriptor = this->context.runtime.frames.allocate_resource_descriptor();
+                this->context.runtime.resources.write_buffer_descriptor(destination.descriptor, vk::DescriptorType::eStorageBuffer, destination.buffer);
+            }
+            command_buffer.copyBuffer(*source.buffer->buffer, *destination.buffer.buffer, vk::BufferCopy{0u, 0u, destination.buffer.size});
+        };
+        copy(field.hash_grid, update.hash_grid);
+        copy(field.density_input, update.density_input);
+        copy(field.density_output, update.density_output);
+        copy(field.rgb_input, update.rgb_input);
+        copy(field.rgb_hidden, update.rgb_hidden);
+        copy(field.rgb_output, update.rgb_output);
+        copy(field.occupancy, update.occupancy);
+        const vk::MemoryBarrier2 dependency{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead};
+        command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &dependency});
+        ++field.revision;
     }
 
     void GpuScene::update_volumes(const scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer) {

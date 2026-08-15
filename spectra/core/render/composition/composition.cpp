@@ -6,12 +6,14 @@ namespace spectra {
     void record_render_composition(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const RenderCompositionRequest& request) {
         const bool scene_visualizations   = request.visualization && request.compose_visualizations && request.visualization->has_visible(request.scene, request.visualizations, scene::VisualizationCompositionDomain::SceneLinear);
         const bool display_visualizations = request.visualization && request.compose_visualizations && request.visualization->has_visible(request.scene, request.visualizations, scene::VisualizationCompositionDomain::DisplayReferred);
-        if (!request.depth && (scene_visualizations || display_visualizations || request.diagnostics)) throw std::runtime_error("Render composition requires Renderer depth");
+        const bool neural_field           = request.neural_field && request.neural_field->has_visible(request.scene);
+        if (!request.depth && (neural_field || scene_visualizations || display_visualizations || request.diagnostics)) throw std::runtime_error("Render composition requires Renderer depth");
 
         std::optional<RenderOutput> linear_composition{};
-        if (scene_visualizations) {
+        if (neural_field || scene_visualizations) {
             display.prepare_linear_composition(command_buffer, request.renderer_output);
-            request.visualization->record(command_buffer, display.linear_target(), *request.depth, request.scene, request.camera, request.visualizations, scene::VisualizationCompositionDomain::SceneLinear);
+            if (neural_field) request.neural_field->record(command_buffer, display.linear_target(), *request.depth, request.scene, request.camera);
+            if (scene_visualizations) request.visualization->record(command_buffer, display.linear_target(), *request.depth, request.scene, request.camera, request.visualizations, scene::VisualizationCompositionDomain::SceneLinear);
             linear_composition.emplace(display.linear_output(request.renderer_output));
         }
         display.record(command_buffer, linear_composition ? *linear_composition : request.renderer_output, request.exposure);

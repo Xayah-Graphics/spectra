@@ -3,6 +3,7 @@ export module spectra.render.composition;
 import spectra.dynamics.gpu;
 import spectra.render.contract;
 import spectra.render.composition.diagnostics;
+import spectra.render.composition.neural_field;
 import spectra.render.composition.visualization;
 import spectra.render.display;
 import spectra.scene;
@@ -25,6 +26,7 @@ namespace spectra {
         std::optional<scene::CameraId> scene_camera_view{};
         std::span<const dynamics::GpuVisualization> visualizations{};
         VisualizationRenderer* visualization{};
+        NeuralFieldRenderer* neural_field{};
         std::optional<SceneDiagnosticsComposition> diagnostics{};
         std::uint32_t frame_slot_index{};
         float exposure{};
