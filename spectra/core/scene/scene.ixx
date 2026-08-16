@@ -242,18 +242,37 @@ namespace spectra::scene {
         friend auto operator<=>(const VolumeDiagnostics&, const VolumeDiagnostics&) = default;
     };
 
+    export struct ScalarVolumeField {
+        VolumeFieldSampling sampling{VolumeFieldSampling::Cell};
+        std::vector<float> values{};
+    };
+
+    export struct VectorVolumeField {
+        VolumeFieldSampling sampling{VolumeFieldSampling::Cell};
+        VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
+        std::vector<math::Float3> values{};
+    };
+
+    export struct CategoryVolumeField {
+        VolumeFieldSampling sampling{VolumeFieldSampling::Cell};
+        std::vector<std::uint32_t> values{};
+    };
+
+    export struct MacVolumeField {
+        VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
+        std::array<std::vector<float>, 3> values{};
+    };
+
     export struct VolumeField {
         std::string id{};
         std::string name{};
         std::string unit{};
-        FieldKind kind{FieldKind::Float};
-        VolumeFieldSampling sampling{VolumeFieldSampling::Cell};
-        VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
-        std::vector<float> scalar_values{};
-        std::vector<math::Float3> vector_values{};
-        std::vector<std::uint32_t> integer_values{};
-        std::array<std::vector<float>, 3> mac_values{};
+        std::variant<ScalarVolumeField, VectorVolumeField, CategoryVolumeField, MacVolumeField> data{};
     };
+
+    export [[nodiscard]] FieldKind field_kind(const VolumeField& field) noexcept;
+    export [[nodiscard]] VolumeFieldSampling field_sampling(const VolumeField& field) noexcept;
+    export [[nodiscard]] VolumeVectorSpace field_vector_space(const VolumeField& field) noexcept;
 
     export enum class ParticleDisplayMode : std::uint8_t {
         Points,
@@ -261,13 +280,23 @@ namespace spectra::scene {
         Spheres,
     };
 
+    export struct ScalarParticleField {};
+
+    export struct VectorParticleField {
+        VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
+    };
+
+    export struct CategoryParticleField {};
+
     export struct ParticleField {
         std::string id{};
         std::string name{};
         std::string unit{};
-        FieldKind kind{FieldKind::Float};
-        VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
+        std::variant<ScalarParticleField, VectorParticleField, CategoryParticleField> data{};
     };
+
+    export [[nodiscard]] FieldKind field_kind(const ParticleField& field) noexcept;
+    export [[nodiscard]] VolumeVectorSpace field_vector_space(const ParticleField& field) noexcept;
 
     export struct ParticleVisualization {
         std::string field_id{};
@@ -865,21 +894,6 @@ namespace spectra::scene {
         friend auto operator<=>(const DynamicSystemId&, const DynamicSystemId&) = default;
     };
 
-    export enum class DynamicSceneResourceKind : std::uint8_t {
-        Geometry,
-        SphereSet,
-        ParticleSet,
-        Volume,
-        NeuralField,
-    };
-
-    export enum class VisualizationViewKind : std::uint8_t {
-        Segments = 1,
-        Vectors  = 2,
-        Image    = 3,
-        Surface  = 4,
-    };
-
     export enum class VisualizationColorSource : std::uint8_t {
         Element,
         Uniform,
@@ -956,15 +970,6 @@ namespace spectra::scene {
         std::variant<SegmentVisualization, VectorVisualization, ImageVisualization, SurfaceVisualization> data{SegmentVisualization{}};
         friend auto operator<=>(const DynamicVisualizationView&, const DynamicVisualizationView&) = default;
     };
-
-    export [[nodiscard]] constexpr VisualizationViewKind visualization_view_kind(const DynamicVisualizationView& view) noexcept {
-        return std::visit([]<typename Type>(const Type&) {
-            if constexpr (std::same_as<Type, SegmentVisualization>) return VisualizationViewKind::Segments;
-            else if constexpr (std::same_as<Type, VectorVisualization>) return VisualizationViewKind::Vectors;
-            else if constexpr (std::same_as<Type, ImageVisualization>) return VisualizationViewKind::Image;
-            else return VisualizationViewKind::Surface;
-        }, view.data);
-    }
 
     export struct DynamicSystem {
         DynamicSystemId id{};
@@ -1059,6 +1064,8 @@ namespace spectra::scene {
     };
 
     export struct Scene {
+        explicit Scene(std::string name = {}) : name(std::move(name)) {}
+
         std::string name{};
         SceneResources resources{};
         CameraId active_camera{};
@@ -1073,10 +1080,9 @@ namespace spectra::scene {
         [[nodiscard]] const Sampler& sampler() const noexcept;
         [[nodiscard]] SceneRevision revision() const noexcept;
         void acknowledge_changes() noexcept;
-        void mark_all_changed() noexcept;
-
         void mark_changed(SceneChange changes) noexcept;
 
+    private:
         SceneRevision current_revision{};
     };
 } // namespace spectra::scene

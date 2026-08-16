@@ -1,5 +1,6 @@
 module spectra.render.display;
 
+import spectra.render.runtime_abi;
 import std;
 import vulkan;
 
@@ -192,12 +193,6 @@ namespace spectra {
         const std::array shader_handles{vk::ShaderEXT{}, *this->shaders[0], *this->shaders[1]};
         command_buffer.bindShadersEXT(stages, shader_handles);
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
-        struct alignas(16) DisplayPushData {
-            DescriptorHandle source;
-            DescriptorHandle sampler;
-            float exposure;
-            std::uint32_t color_space;
-        };
         const DisplayPushData push_data{render_output.sampled_descriptor, this->sampler_descriptor, render_output.exposure + exposure, std::to_underlying(render_output.color_space)};
         this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push_data, 1}));
         command_buffer.draw(3, 1, 0, 0);

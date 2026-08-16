@@ -551,32 +551,33 @@ namespace spectra::scene {
         if (path.extension() != ".nvdb") throw std::runtime_error(std::format("Grid Volume source must use the NanoVDB format: {}", path.string()));
         const std::size_t sample_count = static_cast<std::size_t>(volume.resolution.x) * volume.resolution.y * volume.resolution.z;
         for (VolumeField& field : volume.fields) {
-            if (field.kind == FieldKind::Float) {
+            if (ScalarVolumeField* data = std::get_if<ScalarVolumeField>(&field.data)) {
                 const nanovdb::GridHandle handle = nanovdb::io::readGrid(path.string(), field.id);
                 const auto accessor = handle.grid<float>()->tree().getAccessor();
-                field.scalar_values.resize(sample_count);
+                data->values.resize(sample_count);
                 for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
                     for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
-                        for (std::uint32_t x = 0; x != volume.resolution.x; ++x) field.scalar_values[(static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x] = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
-            } else if (field.kind == FieldKind::Float3) {
+                        for (std::uint32_t x = 0; x != volume.resolution.x; ++x) data->values[(static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x] = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
+            } else if (VectorVolumeField* data = std::get_if<VectorVolumeField>(&field.data)) {
                 const nanovdb::GridHandle handle = nanovdb::io::readGrid(path.string(), field.id);
                 const auto accessor = handle.grid<nanovdb::Vec3f>()->tree().getAccessor();
-                field.vector_values.resize(sample_count);
+                data->values.resize(sample_count);
                 for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
                     for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
                         for (std::uint32_t x = 0; x != volume.resolution.x; ++x) {
                             const std::size_t index = (static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x;
                             const nanovdb::Vec3f value = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
-                            field.vector_values[index] = {value[0], value[1], value[2]};
+                            data->values[index] = {value[0], value[1], value[2]};
                         }
-            } else if (field.kind == FieldKind::UInt32) {
+            } else if (CategoryVolumeField* data = std::get_if<CategoryVolumeField>(&field.data)) {
                 const nanovdb::GridHandle handle = nanovdb::io::readGrid(path.string(), field.id);
                 const auto accessor = handle.grid<std::uint32_t>()->tree().getAccessor();
-                field.integer_values.resize(sample_count);
+                data->values.resize(sample_count);
                 for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
                     for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
-                        for (std::uint32_t x = 0; x != volume.resolution.x; ++x) field.integer_values[(static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x] = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
+                        for (std::uint32_t x = 0; x != volume.resolution.x; ++x) data->values[(static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x] = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
             } else {
+                MacVolumeField& mac = std::get<MacVolumeField>(field.data);
                 const std::array resolutions{
                     math::UInt3{volume.resolution.x + 1u, volume.resolution.y, volume.resolution.z},
                     math::UInt3{volume.resolution.x, volume.resolution.y + 1u, volume.resolution.z},
@@ -587,10 +588,10 @@ namespace spectra::scene {
                     const nanovdb::GridHandle handle = nanovdb::io::readGrid(path.string(), field.id + suffixes[component]);
                     const auto accessor = handle.grid<float>()->tree().getAccessor();
                     const math::UInt3 resolution = resolutions[component];
-                    field.mac_values[component].resize(static_cast<std::size_t>(resolution.x) * resolution.y * resolution.z);
+                    mac.values[component].resize(static_cast<std::size_t>(resolution.x) * resolution.y * resolution.z);
                     for (std::uint32_t z = 0; z != resolution.z; ++z)
                         for (std::uint32_t y = 0; y != resolution.y; ++y)
-                            for (std::uint32_t x = 0; x != resolution.x; ++x) field.mac_values[component][(static_cast<std::size_t>(z) * resolution.y + y) * resolution.x + x] = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
+                            for (std::uint32_t x = 0; x != resolution.x; ++x) mac.values[component][(static_cast<std::size_t>(z) * resolution.y + y) * resolution.x + x] = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
                 }
             }
         }

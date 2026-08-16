@@ -1,6 +1,6 @@
 module;
 
-#include "../../../sdk/internal/abi.h"
+#include <abi.h>
 
 export module spectra.dynamics.runtime;
 
@@ -74,19 +74,24 @@ namespace spectra {
         struct OutputBuffer {
             GpuBuffer gpu_buffer{};
             DescriptorLease descriptor{};
-            std::uint64_t byte_size{};
+        };
+
+        struct OutputStorage {
+            std::vector<OutputBuffer> static_buffers{};
+            std::vector<std::vector<OutputBuffer>> slots{};
         };
 
         struct OutputRuntime {
-            dynamics::DatasetDescriptor descriptor{};
+            dynamics::DatasetDescriptor descriptor;
             std::optional<scene::DynamicSceneBinding> scene_binding{};
             std::vector<scene::DynamicVisualizationView> visualizations{};
-            std::vector<OutputBuffer> static_buffers{};
-            std::vector<std::vector<OutputBuffer>> slots{};
-            std::uint32_t capacity{};
-            std::uint32_t secondary_capacity{};
-            math::UInt3 resolution{};
-            SpectraSdkOutputKind kind{};
+            OutputStorage storage{};
+
+            explicit OutputRuntime(dynamics::DatasetDescriptor descriptor) : descriptor(std::move(descriptor)) {}
+        };
+
+        struct MetricRuntime {
+            OutputStorage storage{};
         };
 
         struct TelemetryReadbackSlot {
@@ -103,6 +108,7 @@ namespace spectra {
             void* provider_instance{};
             std::vector<scene::DynamicParameterValue> parameter_values{};
             std::vector<OutputRuntime> outputs{};
+            MetricRuntime metrics{};
             GpuExternalTimelineSemaphore timeline{};
             std::uint64_t signal_value{};
             std::uint32_t current_slot{};

@@ -2,8 +2,6 @@ module;
 
 #if defined(_WIN32)
 #include <Windows.h>
-#else
-#include <unistd.h>
 #endif
 
 module spectra.runtime.resources;
@@ -40,7 +38,7 @@ namespace spectra {
         return *this;
     }
 
-    GpuBuffer::GpuBuffer(GpuBuffer&& other) noexcept : buffer(std::move(other.buffer)), address(std::exchange(other.address, 0)), size(std::exchange(other.size, 0)), mapped(std::exchange(other.mapped, nullptr)), allocation(std::move(other.allocation)), external_memory(std::move(other.external_memory)) {}
+    GpuBuffer::GpuBuffer(GpuBuffer&& other) noexcept : buffer(std::move(other.buffer)), address(std::exchange(other.address, 0)), size(std::exchange(other.size, 0)), external_memory_size(std::exchange(other.external_memory_size, 0)), mapped(std::exchange(other.mapped, nullptr)), allocation(std::move(other.allocation)), external_memory(std::move(other.external_memory)) {}
 
     GpuBuffer::~GpuBuffer() {
         this->buffer = nullptr;
@@ -51,10 +49,11 @@ namespace spectra {
         this->buffer          = nullptr;
         this->allocation      = std::move(other.allocation);
         this->external_memory = std::move(other.external_memory);
-        this->buffer          = std::move(other.buffer);
-        this->address         = std::exchange(other.address, 0);
-        this->size            = std::exchange(other.size, 0);
-        this->mapped          = std::exchange(other.mapped, nullptr);
+        this->buffer               = std::move(other.buffer);
+        this->address              = std::exchange(other.address, 0);
+        this->size                 = std::exchange(other.size, 0);
+        this->external_memory_size = std::exchange(other.external_memory_size, 0);
+        this->mapped               = std::exchange(other.mapped, nullptr);
         return *this;
     }
 
@@ -80,30 +79,22 @@ namespace spectra {
     }
 
 
-    ExternalHandle::ExternalHandle(const ExternalHandleType type, const std::uint64_t value) noexcept : type{type}, value{value} {}
+    ExternalHandle::ExternalHandle(const std::uint64_t value) noexcept : value{value} {}
 
-    ExternalHandle::ExternalHandle(ExternalHandle&& other) noexcept : type{std::exchange(other.type, ExternalHandleType::None)}, value{std::exchange(other.value, 0)} {}
+    ExternalHandle::ExternalHandle(ExternalHandle&& other) noexcept : value{std::exchange(other.value, 0)} {}
 
     ExternalHandle::~ExternalHandle() {
-        if (this->type == ExternalHandleType::None) return;
+        if (this->value == 0u) return;
 #if defined(_WIN32)
         CloseHandle(reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(this->value)));
-#else
-        close(static_cast<int>(this->value));
 #endif
     }
 
     ExternalHandle& ExternalHandle::operator=(ExternalHandle&& other) noexcept {
         if (this == &other) return *this;
         ExternalHandle replacement{std::move(other)};
-        std::swap(this->type, replacement.type);
         std::swap(this->value, replacement.value);
         return *this;
-    }
-
-    std::uint64_t ExternalHandle::release() noexcept {
-        this->type = ExternalHandleType::None;
-        return std::exchange(this->value, 0);
     }
 
     GpuResources::GpuResources(VulkanGraphics& graphics) : context{graphics} {
@@ -299,12 +290,11 @@ namespace spectra {
     }
 
     GpuBuffer GpuResources::create_external_buffer(const vk::DeviceSize size, const vk::BufferUsageFlags usage) {
-        const vk::raii::Device& device = this->context.graphics.device;
-#if defined(_WIN32)
-        const vk::ExternalMemoryBufferCreateInfo external_buffer{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32};
+#if !defined(_WIN32)
+        throw std::runtime_error("Spectra Provider GPU interop is supported only on Windows");
 #else
-        const vk::ExternalMemoryBufferCreateInfo external_buffer{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd};
-#endif
+        const vk::raii::Device& device = this->context.graphics.device;
+        const vk::ExternalMemoryBufferCreateInfo external_buffer{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32};
         GpuBuffer result{};
         result.size   = size;
         result.buffer = vk::raii::Buffer{
@@ -331,11 +321,7 @@ namespace spectra {
 
         const vk::MemoryDedicatedAllocateInfo dedicated{{}, *result.buffer};
         const vk::MemoryAllocateFlagsInfo flags{vk::MemoryAllocateFlagBits::eDeviceAddress, 0, &dedicated};
-#if defined(_WIN32)
         const vk::ExportMemoryAllocateInfo external_memory{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32, &flags};
-#else
-        const vk::ExportMemoryAllocateInfo external_memory{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd, &flags};
-#endif
         result.external_memory = vk::raii::DeviceMemory{
             device,
             vk::MemoryAllocateInfo{
@@ -344,41 +330,41 @@ namespace spectra {
                 &external_memory,
             },
         };
+        result.external_memory_size = requirements.size;
         result.buffer.bindMemory(*result.external_memory, 0);
         if (static_cast<bool>(usage & vk::BufferUsageFlagBits::eShaderDeviceAddress)) result.address = device.getBufferAddress(vk::BufferDeviceAddressInfo{*result.buffer});
         return result;
+#endif
     }
 
     ExternalHandle GpuResources::export_buffer_memory_handle(const GpuBuffer& buffer) const {
-        if (!*buffer.external_memory) throw std::runtime_error("Spectra cannot export a non-external GPU buffer");
-#if defined(_WIN32)
-        const HANDLE handle = this->context.graphics.device.getMemoryWin32HandleKHR(vk::MemoryGetWin32HandleInfoKHR{*buffer.external_memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32});
-        return {ExternalHandleType::OpaqueWin32, reinterpret_cast<std::uintptr_t>(handle)};
+#if !defined(_WIN32)
+        throw std::runtime_error("Spectra Provider GPU interop is supported only on Windows");
 #else
-        const int handle = this->context.graphics.device.getMemoryFdKHR(vk::MemoryGetFdInfoKHR{*buffer.external_memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd});
-        return {ExternalHandleType::OpaqueFileDescriptor, static_cast<std::uint64_t>(handle)};
+        if (!*buffer.external_memory) throw std::runtime_error("Spectra cannot export a non-external GPU buffer");
+        const HANDLE handle = this->context.graphics.device.getMemoryWin32HandleKHR(vk::MemoryGetWin32HandleInfoKHR{*buffer.external_memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32});
+        return ExternalHandle{reinterpret_cast<std::uintptr_t>(handle)};
 #endif
     }
 
     GpuExternalTimelineSemaphore GpuResources::create_external_simulation_timeline() {
-        const vk::SemaphoreTypeCreateInfo timeline_type{vk::SemaphoreType::eTimeline, 0};
-#if defined(_WIN32)
-        const vk::ExportSemaphoreCreateInfo export_info{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32, &timeline_type};
+#if !defined(_WIN32)
+        throw std::runtime_error("Spectra Provider GPU interop is supported only on Windows");
 #else
-        const vk::ExportSemaphoreCreateInfo export_info{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd, &timeline_type};
-#endif
+        const vk::SemaphoreTypeCreateInfo timeline_type{vk::SemaphoreType::eTimeline, 0};
+        const vk::ExportSemaphoreCreateInfo export_info{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32, &timeline_type};
         GpuExternalTimelineSemaphore result{};
         result.semaphore = vk::raii::Semaphore{this->context.graphics.device, vk::SemaphoreCreateInfo{{}, &export_info}};
         return result;
+#endif
     }
 
     ExternalHandle GpuResources::export_timeline_semaphore_handle(const GpuExternalTimelineSemaphore& timeline) const {
-#if defined(_WIN32)
-        const HANDLE handle = this->context.graphics.device.getSemaphoreWin32HandleKHR(vk::SemaphoreGetWin32HandleInfoKHR{*timeline.semaphore, vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32});
-        return {ExternalHandleType::OpaqueWin32, reinterpret_cast<std::uintptr_t>(handle)};
+#if !defined(_WIN32)
+        throw std::runtime_error("Spectra Provider GPU interop is supported only on Windows");
 #else
-        const int handle = this->context.graphics.device.getSemaphoreFdKHR(vk::SemaphoreGetFdInfoKHR{*timeline.semaphore, vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd});
-        return {ExternalHandleType::OpaqueFileDescriptor, static_cast<std::uint64_t>(handle)};
+        const HANDLE handle = this->context.graphics.device.getSemaphoreWin32HandleKHR(vk::SemaphoreGetWin32HandleInfoKHR{*timeline.semaphore, vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32});
+        return ExternalHandle{reinterpret_cast<std::uintptr_t>(handle)};
 #endif
     }
 

@@ -1,9 +1,32 @@
 module scene_diagnostic;
 
+#include <spectra/sdk/neural_field_layout.h>
+#include "shader_semantics.h"
+
+import shader_descriptor;
+
+struct DiagnosticLine {
+    float3 first;
+    float width;
+    float3 second;
+    uint depth_mode;
+    float4 color;
+    uint pick_index;
+    uint3 reserved;
+}
+
+struct DiagnosticBox {
+    float transform[16];
+    float4 minimum;
+    float4 maximum;
+    float4 color;
+    uint4 metadata;
+}
+
 struct DiagnosticPushData {
     DescriptorHandle<ByteAddressBuffer> primary;
-    uint2 secondary;
-    uint2 tertiary;
+    UntypedDescriptorHandle secondary;
+    UntypedDescriptorHandle tertiary;
     DescriptorHandle<Texture2D<float>> depth;
     uint4 metadata;
     uint4 detail;
@@ -39,7 +62,7 @@ uniform DiagnosticPushData push_data;
 float4 transform_position(float3 position) {
     const float4 value = float4(position, 1.0);
     if (push_data.detail.w != 0xffffffff) {
-        ByteAddressBuffer transforms = DescriptorHandle<ByteAddressBuffer>(push_data.tertiary);
+        ByteAddressBuffer transforms = DescriptorHandle<ByteAddressBuffer>(push_data.tertiary.value);
         const uint offset = push_data.detail.w * 64;
         return float4(dot(transforms.Load<float4>(offset), value), dot(transforms.Load<float4>(offset + 16), value), dot(transforms.Load<float4>(offset + 32), value), dot(transforms.Load<float4>(offset + 48), value));
     }
@@ -48,7 +71,7 @@ float4 transform_position(float3 position) {
 
 float3 transform_vector(float3 vector) {
     if (push_data.detail.w != 0xffffffff) {
-        ByteAddressBuffer transforms = DescriptorHandle<ByteAddressBuffer>(push_data.tertiary);
+        ByteAddressBuffer transforms = DescriptorHandle<ByteAddressBuffer>(push_data.tertiary.value);
         const uint offset = push_data.detail.w * 64;
         return float3(dot(transforms.Load<float4>(offset).xyz, vector), dot(transforms.Load<float4>(offset + 16).xyz, vector), dot(transforms.Load<float4>(offset + 32).xyz, vector));
     }
@@ -60,7 +83,7 @@ float3 transform_normal(float3 normal) {
     float3 row_1 = push_data.transform_row_1.xyz;
     float3 row_2 = push_data.transform_row_2.xyz;
     if (push_data.detail.w != 0xffffffff) {
-        ByteAddressBuffer transforms = DescriptorHandle<ByteAddressBuffer>(push_data.tertiary);
+        ByteAddressBuffer transforms = DescriptorHandle<ByteAddressBuffer>(push_data.tertiary.value);
         const uint offset = push_data.detail.w * 64;
         row_0 = transforms.Load<float4>(offset).xyz;
         row_1 = transforms.Load<float4>(offset + 16).xyz;
@@ -108,14 +131,14 @@ float ordered_float(uint value) {
 
 float3 diagnostic_color_map(float value, uint color_map) {
     value = saturate(value);
-    if (color_map == 1u) {
+    if (color_map == SPECTRA_COLOR_MAP_TURBO) {
         const float3 c0 = float3(0.19, 0.07, 0.23);
         const float3 c1 = float3(0.10, 0.78, 0.86);
         const float3 c2 = float3(0.98, 0.86, 0.18);
         return value < 0.5 ? lerp(c0, c1, value * 2.0) : lerp(c1, c2, value * 2.0 - 1.0);
     }
-    if (color_map == 2u) return lerp(float3(0.23, 0.30, 0.75), float3(0.71, 0.02, 0.15), value);
-    if (color_map == 3u) return value.xxx;
+    if (color_map == SPECTRA_COLOR_MAP_COOL_WARM) return lerp(float3(0.23, 0.30, 0.75), float3(0.71, 0.02, 0.15), value);
+    if (color_map == SPECTRA_COLOR_MAP_GRAYSCALE) return value.xxx;
     const float3 c0 = float3(0.267, 0.005, 0.329);
     const float3 c1 = float3(0.128, 0.567, 0.551);
     const float3 c2 = float3(0.993, 0.906, 0.144);
@@ -136,8 +159,8 @@ void compact_scene_diagnostic_occupancy(uint3 dispatch_thread_id : SV_DispatchTh
     const uint word_index = dispatch_thread_id.x;
     if (word_index >= 65536u) return;
     ByteAddressBuffer occupancy = push_data.primary;
-    RWByteAddressBuffer occupied_cells = DescriptorHandle<RWByteAddressBuffer>(push_data.secondary);
-    RWByteAddressBuffer draw = DescriptorHandle<RWByteAddressBuffer>(push_data.tertiary);
+    RWByteAddressBuffer occupied_cells = DescriptorHandle<RWByteAddressBuffer>(push_data.secondary.value);
+    RWByteAddressBuffer draw = DescriptorHandle<RWByteAddressBuffer>(push_data.tertiary.value);
     if (word_index == 0u) draw.Store(0u, 72u);
     uint bits = occupancy.Load<uint>(word_index * 4u);
     const uint cell_count = countbits(bits);
@@ -157,14 +180,14 @@ void compact_scene_diagnostic_occupancy(uint3 dispatch_thread_id : SV_DispatchTh
 [shader("vertex")]
 DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID) {
     const uint kind = push_data.metadata.x;
-    if (kind == 0) {
+    if (kind == SPECTRA_DIAGNOSTIC_LINES) {
         ByteAddressBuffer lines = push_data.primary;
         const uint offset = instance_id * 64;
         return make_line(lines.Load<float3>(offset), lines.Load<float3>(offset + 16), lines.Load<float>(offset + 12), lines.Load<float4>(offset + 32), asuint(lines.Load<float>(offset + 48)), asuint(lines.Load<float>(offset + 28)), vertex_id);
     }
-    if (kind == 1) {
+    if (kind == SPECTRA_DIAGNOSTIC_BOXES) {
         ByteAddressBuffer boxes = push_data.primary;
-        ByteAddressBuffer bounds = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
+        ByteAddressBuffer bounds = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
         const uint offset = instance_id * 128;
         const float4 transform_row_0 = boxes.Load<float4>(offset);
         const float4 transform_row_1 = boxes.Load<float4>(offset + 16);
@@ -193,29 +216,29 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
         const float3 second = float3(dot(transform_row_0, second_value), dot(transform_row_1, second_value), dot(transform_row_2, second_value));
         return make_line(first, second, boxes.Load<float>(offset + 76), color, metadata.z, metadata.w, vertex_id % 6);
     }
-    if (kind == 9) {
+    if (kind == SPECTRA_DIAGNOSTIC_OCCUPANCY_CELLS) {
         ByteAddressBuffer occupied_cells = push_data.primary;
         const uint linear_index = occupied_cells.Load<uint>(instance_id * 4u);
-        const uint3 coordinate = uint3(linear_index & 127u, (linear_index >> 7u) & 127u, linear_index >> 14u);
+        const uint3 coordinate = uint3(linear_index % SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION, (linear_index / SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION) % SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION, linear_index / (SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION * SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION));
         const uint edges[24] = {0,1, 1,3, 3,2, 2,0, 4,5, 5,7, 7,6, 6,4, 0,4, 1,5, 2,6, 3,7};
         const uint edge = vertex_id / 6u;
         const uint first_corner = edges[edge * 2u];
         const uint second_corner = edges[edge * 2u + 1u];
-        const float3 minimum = float3(coordinate) / 128.0;
-        const float3 first = minimum + float3(first_corner & 1u, (first_corner >> 1u) & 1u, (first_corner >> 2u) & 1u) / 128.0;
-        const float3 second = minimum + float3(second_corner & 1u, (second_corner >> 1u) & 1u, (second_corner >> 2u) & 1u) / 128.0;
+        const float3 minimum = float3(coordinate) / float(SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION);
+        const float3 first = minimum + float3(first_corner & 1u, (first_corner >> 1u) & 1u, (first_corner >> 2u) & 1u) / float(SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION);
+        const float3 second = minimum + float3(second_corner & 1u, (second_corner >> 1u) & 1u, (second_corner >> 2u) & 1u) / float(SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION);
         return make_line(first, second, push_data.parameters.x, push_data.color, 0u, 1u, vertex_id % 6u);
     }
     ByteAddressBuffer primary = push_data.primary;
-    ByteAddressBuffer secondary = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
-    if (kind == 11) {
+    ByteAddressBuffer secondary = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
+    if (kind == SPECTRA_DIAGNOSTIC_PARTICLE_VECTORS) {
         const uint arrow_index = vertex_id / 18u;
         const uint arrow_vertex = vertex_id % 18u;
         const uint source_index = arrow_index * push_data.detail.z;
         const float3 local_origin = primary.Load<float3>(source_index * 12u);
         const float3 local_vector = secondary.Load<float3>(source_index * 12u) * push_data.parameters.z;
         const float3 origin = transform_position(local_origin).xyz;
-        const float3 vector = push_data.metadata.y == 2u ? local_vector : transform_vector(local_vector);
+        const float3 vector = push_data.metadata.y == SPECTRA_VECTOR_SPACE_WORLD ? local_vector : transform_vector(local_vector);
         const float length_value = length(vector);
         const float3 direction = length_value == 0.0 ? float3(1.0, 0.0, 0.0) : vector / length_value;
         const float3 reference = abs(direction.z) < 0.9 ? float3(0.0, 0.0, 1.0) : float3(0.0, 1.0, 0.0);
@@ -232,7 +255,7 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
         output.depth_mode = push_data.metadata.w;
         return output;
     }
-    if (kind == 8) {
+    if (kind == SPECTRA_DIAGNOSTIC_SPHERE_WIREFRAME) {
         const uint line_vertex = vertex_id % 6;
         const uint segment_index = vertex_id / 6;
         const uint axis = segment_index / 32;
@@ -245,7 +268,7 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
         const float3 second_offset = axis == 0 ? float3(0.0, cos(second_angle), sin(second_angle)) : axis == 1 ? float3(cos(second_angle), 0.0, sin(second_angle)) : float3(cos(second_angle), sin(second_angle), 0.0);
         return make_line(center + first_offset * radius, center + second_offset * radius, push_data.parameters.x, push_data.color, push_data.metadata.z, push_data.metadata.w, line_vertex);
     }
-    if (kind == 2) {
+    if (kind == SPECTRA_DIAGNOSTIC_TRIANGLE_EDGES) {
         const uint edge_index = vertex_id / 6;
         const uint triangle = edge_index / 3;
         const uint edge = edge_index % 3;
@@ -253,12 +276,12 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
         const uint second_index = asuint(secondary.Load<float>((triangle * 3 + (edge + 1) % 3) * 4));
         return make_line(primary.Load<float3>(first_index * 12), primary.Load<float3>(second_index * 12), push_data.parameters.x, push_data.color, push_data.metadata.z, push_data.metadata.w, vertex_id % 6);
     }
-    if (kind == 4 || kind == 5) {
+    if (kind == SPECTRA_DIAGNOSTIC_MESH_NORMALS || kind == SPECTRA_DIAGNOSTIC_MESH_TANGENTS) {
         const uint line_index = vertex_id / 6;
         const uint source_index = line_index * push_data.detail.z;
         const float3 first = primary.Load<float3>(source_index * 12);
         const float3 source_direction = secondary.Load<float3>(source_index * 12);
-        const float3 direction = normalize(kind == 4 ? transform_normal(source_direction) : transform_vector(source_direction)) * push_data.parameters.z;
+        const float3 direction = normalize(kind == SPECTRA_DIAGNOSTIC_MESH_NORMALS ? transform_normal(source_direction) : transform_vector(source_direction)) * push_data.parameters.z;
         const float3 world_first = transform_position(first).xyz;
         const float3 world_second = world_first + direction;
         DiagnosticVertexOutput output;
@@ -287,14 +310,14 @@ DiagnosticFragmentOutput scene_diagnostic_fragment(DiagnosticVertexOutput input)
         if (dot(point, point) > 1.0) discard;
     }
     float4 color = input.color;
-    if (input.depth_mode != 2) {
+    if (input.depth_mode != SPECTRA_DEPTH_OVERLAY) {
         Texture2D<float> depth = push_data.depth;
         const bool hidden = input.position.z > depth.Load(int3(uint2(input.position.xy), 0)) + 0.00001;
-        if (hidden && input.depth_mode == 0) discard;
-        if (hidden && push_data.metadata.x == 9u) color.rgb *= 0.22;
+        if (hidden && input.depth_mode == SPECTRA_DEPTH_TESTED) discard;
+        if (hidden && push_data.metadata.x == SPECTRA_DIAGNOSTIC_OCCUPANCY_CELLS) color.rgb *= 0.22;
         else if (hidden) color.a *= 0.22;
     }
-    if (push_data.metadata.x == 9u) color.a = 1.0;
+    if (push_data.metadata.x == SPECTRA_DIAGNOSTIC_OCCUPANCY_CELLS) color.a = 1.0;
     DiagnosticFragmentOutput output = {color, input.pick_index};
     return output;
 }

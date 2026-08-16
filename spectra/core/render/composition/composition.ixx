@@ -14,7 +14,7 @@ namespace spectra {
     export struct SceneDiagnosticsComposition {
         SceneDiagnosticRenderer& renderer;
         const SceneGuideSettings& scene_guides;
-        const SelectionDiagnosticSettings& selection_diagnostics;
+        const EntityDiagnostics& entity_diagnostics;
         const SelectionState& selection;
         bool visible{true};
     };

@@ -83,8 +83,6 @@ export namespace spectra::sdk::example {
         void publish(spectra::sdk::cuda::Output& output) {
             auto frame = output.begin(nullptr);
             auto mesh = frame.mesh<"mesh">();
-            mesh.vertex_count = 3u;
-            mesh.triangle_count = 1u;
             auto spheres = frame.spheres<"spheres">(1u);
             auto volume = frame.volume<"volume">();
             auto instances = frame.instances<"instances">(1u);

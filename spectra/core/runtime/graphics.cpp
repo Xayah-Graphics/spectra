@@ -5,6 +5,7 @@ import vulkan;
 
 namespace spectra {
     namespace {
+#if defined(_WIN32)
         [[nodiscard]] constexpr std::array<const char*, 7> required_device_extensions() noexcept {
             return {
                 vk::EXTDescriptorHeapExtensionName,
@@ -12,15 +13,21 @@ namespace spectra {
                 vk::EXTShaderObjectExtensionName,
                 vk::EXTMeshShaderExtensionName,
                 vk::EXTShaderAtomicFloatExtensionName,
-#if defined(_WIN32)
                 vk::KHRExternalMemoryWin32ExtensionName,
                 vk::KHRExternalSemaphoreWin32ExtensionName,
-#else
-                vk::KHRExternalMemoryFdExtensionName,
-                vk::KHRExternalSemaphoreFdExtensionName,
-#endif
             };
         }
+#else
+        [[nodiscard]] constexpr std::array<const char*, 5> required_device_extensions() noexcept {
+            return {
+                vk::EXTDescriptorHeapExtensionName,
+                vk::KHRShaderUntypedPointersExtensionName,
+                vk::EXTShaderObjectExtensionName,
+                vk::EXTMeshShaderExtensionName,
+                vk::EXTShaderAtomicFloatExtensionName,
+            };
+        }
+#endif
 
         [[nodiscard]] constexpr std::array<const char*, 6> ray_tracing_device_extensions() noexcept {
             return {
@@ -79,16 +86,13 @@ namespace spectra {
 #if defined(_WIN32)
             constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle       = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
             constexpr vk::ExternalSemaphoreHandleTypeFlagBits external_semaphore_handle = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
-#else
-            constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle       = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
-            constexpr vk::ExternalSemaphoreHandleTypeFlagBits external_semaphore_handle = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
-#endif
             constexpr vk::BufferUsageFlags external_buffer_usage = vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress;
             const vk::ExternalMemoryProperties external_memory   = candidate.getExternalBufferProperties(vk::PhysicalDeviceExternalBufferInfo{{}, external_buffer_usage, external_memory_handle}).externalMemoryProperties;
             if (!(external_memory.externalMemoryFeatures & vk::ExternalMemoryFeatureFlagBits::eExportable) || !(external_memory.compatibleHandleTypes & external_memory_handle)) continue;
             const vk::SemaphoreTypeCreateInfo timeline_type{vk::SemaphoreType::eTimeline, 0};
             const vk::ExternalSemaphoreProperties external_semaphore = candidate.getExternalSemaphoreProperties(vk::PhysicalDeviceExternalSemaphoreInfo{external_semaphore_handle, &timeline_type});
             if (!(external_semaphore.externalSemaphoreFeatures & vk::ExternalSemaphoreFeatureFlagBits::eExportable) || !(external_semaphore.compatibleHandleTypes & external_semaphore_handle)) continue;
+#endif
 
             const std::vector<vk::QueueFamilyProperties> queue_families = candidate.getQueueFamilyProperties();
             std::uint32_t graphics_family_index                         = static_cast<std::uint32_t>(queue_families.size());

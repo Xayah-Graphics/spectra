@@ -118,35 +118,58 @@ export namespace spectra::sdk {
         VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
     };
 
-    template <FixedString Id, typename Type>
+    struct DefaultFieldOptions {};
+
+    template <FixedString Id, typename Type, typename Options>
     struct FieldDefinition {
         static constexpr FixedString id         = Id;
         static constexpr FieldKind kind         = std::same_as<Type, float> ? FieldKind::Float : std::same_as<Type, Float3> ? FieldKind::Float3 : std::same_as<Type, std::uint32_t> ? FieldKind::UInt32 : FieldKind::MacFloat3;
 
         std::string_view name{};
         std::string_view unit{};
-        VolumeFieldOptions options{};
+        Options options{};
     };
 
     template <FixedString Id, typename Type>
-    [[nodiscard]] consteval auto field(const std::string_view name, const std::string_view unit = {}, const VolumeFieldOptions options = {}) {
+    [[nodiscard]] consteval auto field(const std::string_view name, const std::string_view unit = {}) {
         static_assert(std::same_as<Type, float> || std::same_as<Type, Float3> || std::same_as<Type, std::uint32_t> || std::same_as<Type, MacFloat3>);
-        return FieldDefinition<Id, Type>{name, unit, options};
+        return FieldDefinition<Id, Type, DefaultFieldOptions>{name, unit};
     }
 
-    template <FixedString Id, OutputKind Kind, typename... Fields>
+    template <FixedString Id, typename Type>
+    [[nodiscard]] consteval auto volume_field(const std::string_view name, const std::string_view unit, const VolumeFieldOptions options) {
+        static_assert(std::same_as<Type, float> || std::same_as<Type, Float3> || std::same_as<Type, std::uint32_t> || std::same_as<Type, MacFloat3>);
+        return FieldDefinition<Id, Type, VolumeFieldOptions>{name, unit, options};
+    }
+
+    template <FixedString Id, OutputKind Kind>
     struct OutputDefinition {
         static constexpr DefinitionCategory category = DefinitionCategory::Output;
         static constexpr FixedString id               = Id;
         static constexpr OutputKind kind              = Kind;
+    };
 
-        MeshOptions mesh_options{};
+    template <FixedString Id>
+    struct MeshDefinition {
+        static constexpr DefinitionCategory category = DefinitionCategory::Output;
+        static constexpr FixedString id               = Id;
+        static constexpr OutputKind kind              = OutputKind::Mesh;
+
+        MeshOptions options{};
+    };
+
+    template <FixedString Id, OutputKind Kind, typename... Fields>
+    struct FieldOutputDefinition {
+        static constexpr DefinitionCategory category = DefinitionCategory::Output;
+        static constexpr FixedString id               = Id;
+        static constexpr OutputKind kind              = Kind;
+
         std::tuple<Fields...> fields{};
     };
 
     template <FixedString Id>
     [[nodiscard]] consteval auto mesh(const MeshOptions options = {}) {
-        return OutputDefinition<Id, OutputKind::Mesh>{options};
+        return MeshDefinition<Id>{options};
     }
 
     template <FixedString Id>
@@ -157,7 +180,7 @@ export namespace spectra::sdk {
     template <FixedString Id, typename... Fields>
     [[nodiscard]] consteval auto volume(const Fields... fields) {
         static_assert(sizeof...(Fields) != 0u);
-        return OutputDefinition<Id, OutputKind::Volume, Fields...>{{}, {fields...}};
+        return FieldOutputDefinition<Id, OutputKind::Volume, Fields...>{{fields...}};
     }
 
     template <FixedString Id>
@@ -168,7 +191,8 @@ export namespace spectra::sdk {
     template <FixedString Id, typename... Fields>
     [[nodiscard]] consteval auto particles(const Fields... fields) {
         static_assert(((std::remove_cvref_t<Fields>::kind != FieldKind::MacFloat3) && ...));
-        return OutputDefinition<Id, OutputKind::Particles, Fields...>{{}, {fields...}};
+        static_assert((std::same_as<std::remove_cvref_t<decltype(std::declval<Fields>().options)>, DefaultFieldOptions> && ...));
+        return FieldOutputDefinition<Id, OutputKind::Particles, Fields...>{{fields...}};
     }
 
     template <FixedString Id>

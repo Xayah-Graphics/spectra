@@ -243,17 +243,18 @@ namespace spectra {
 
     bool ViewportInteraction::entity_exists(const SceneEntityReference entity) const noexcept {
         const scene::SceneResources& resources = this->context.document.content.evaluated.resources;
-        if (entity.kind == SceneEntityKind::Instance) return std::ranges::contains(resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id);
-        if (entity.kind == SceneEntityKind::Camera) return std::ranges::contains(resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id);
-        if (entity.kind == SceneEntityKind::Light) return std::ranges::contains(resources.lights, scene::LightId{entity.id}, &scene::Light::id);
-        if (entity.kind == SceneEntityKind::ParticleSet) return std::ranges::contains(resources.particle_sets, scene::ParticleSetId{entity.id}, &scene::ParticleSet::id);
-        if (entity.kind == SceneEntityKind::Volume) return std::ranges::contains(resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id);
-        if (entity.kind == SceneEntityKind::NeuralField) return std::ranges::contains(resources.neural_fields, scene::NeuralFieldId{entity.id}, &scene::NeuralField::id);
-        if (entity.kind != SceneEntityKind::AreaEmitter) return false;
-        const auto instance = std::ranges::find(resources.instances, scene::InstanceId{entity.owner}, &scene::Instance::id);
+        if (const scene::InstanceId* id = std::get_if<scene::InstanceId>(&entity.data)) return std::ranges::contains(resources.instances, *id, &scene::Instance::id);
+        if (const scene::CameraId* id = std::get_if<scene::CameraId>(&entity.data)) return std::ranges::contains(resources.cameras, *id, &scene::Camera::id);
+        if (const scene::LightId* id = std::get_if<scene::LightId>(&entity.data)) return std::ranges::contains(resources.lights, *id, &scene::Light::id);
+        if (const scene::ParticleSetId* id = std::get_if<scene::ParticleSetId>(&entity.data)) return std::ranges::contains(resources.particle_sets, *id, &scene::ParticleSet::id);
+        if (const scene::VolumeId* id = std::get_if<scene::VolumeId>(&entity.data)) return std::ranges::contains(resources.volumes, *id, &scene::Volume::id);
+        if (const scene::NeuralFieldId* id = std::get_if<scene::NeuralFieldId>(&entity.data)) return std::ranges::contains(resources.neural_fields, *id, &scene::NeuralField::id);
+        const SceneEntityReference::AreaEmitter* emitter = std::get_if<SceneEntityReference::AreaEmitter>(&entity.data);
+        if (!emitter) return false;
+        const auto instance = std::ranges::find(resources.instances, emitter->instance, &scene::Instance::id);
         if (instance == resources.instances.end()) return false;
         const scene::Prototype& prototype = *std::ranges::find(resources.prototypes, instance->prototype, &scene::Prototype::id);
-        return entity.subindex < prototype.primitives.size() && prototype.primitives[entity.subindex].area_light == scene::LightId{entity.id};
+        return emitter->primitive_index < prototype.primitives.size() && prototype.primitives[emitter->primitive_index].area_light == emitter->light;
     }
 
     math::Bounds3 ViewportInteraction::navigation_bounds() const noexcept {
@@ -285,8 +286,10 @@ namespace spectra {
 
     std::optional<math::Bounds3> ViewportInteraction::entity_bounds(const SceneEntityReference entity) const noexcept {
         const scene::Scene& source = this->context.document.content.evaluated;
-        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter) {
-            const scene::InstanceId instance_id{entity.kind == SceneEntityKind::Instance ? entity.id : entity.owner};
+        const scene::InstanceId* selected_instance = std::get_if<scene::InstanceId>(&entity.data);
+        const SceneEntityReference::AreaEmitter* selected_emitter = std::get_if<SceneEntityReference::AreaEmitter>(&entity.data);
+        if (selected_instance || selected_emitter) {
+            const scene::InstanceId instance_id = selected_instance ? *selected_instance : selected_emitter->instance;
             const auto instance                             = std::ranges::find(source.resources.instances, instance_id, &scene::Instance::id);
             const std::size_t index                         = static_cast<std::size_t>(instance - source.resources.instances.begin());
             const std::span<const math::Bounds3> gpu_bounds = this->context.gpu_scene.view().resolved_instance_bounds;
@@ -295,22 +298,23 @@ namespace spectra {
         }
         const math::Bounds3 scene_bounds = this->effective_scene_bounds();
         const float extent               = std::max(scene_bounds.radius() * 0.05f, 0.05f);
-        if (entity.kind == SceneEntityKind::Volume) {
-            const scene::Volume& volume = *std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id);
+        if (const scene::VolumeId* id = std::get_if<scene::VolumeId>(&entity.data)) {
+            const scene::Volume& volume = *std::ranges::find(source.resources.volumes, *id, &scene::Volume::id);
             return volume.domain.transformed(volume.transform);
         }
-        if (entity.kind == SceneEntityKind::ParticleSet) return scene::particle_set_bounds(*std::ranges::find(source.resources.particle_sets, scene::ParticleSetId{entity.id}, &scene::ParticleSet::id));
-        if (entity.kind == SceneEntityKind::NeuralField) {
-            const scene::NeuralField& field = *std::ranges::find(source.resources.neural_fields, scene::NeuralFieldId{entity.id}, &scene::NeuralField::id);
+        if (const scene::ParticleSetId* id = std::get_if<scene::ParticleSetId>(&entity.data)) return scene::particle_set_bounds(*std::ranges::find(source.resources.particle_sets, *id, &scene::ParticleSet::id));
+        if (const scene::NeuralFieldId* id = std::get_if<scene::NeuralFieldId>(&entity.data)) {
+            const scene::NeuralField& field = *std::ranges::find(source.resources.neural_fields, *id, &scene::NeuralField::id);
             return scene::NeuralField::local_bounds.transformed(field.transform);
         }
-        if (entity.kind == SceneEntityKind::Camera) {
-            const scene::Camera& camera = *std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id);
+        if (const scene::CameraId* id = std::get_if<scene::CameraId>(&entity.data)) {
+            const scene::Camera& camera = *std::ranges::find(source.resources.cameras, *id, &scene::Camera::id);
             const math::Float3 position = camera.frame().position;
             return math::Bounds3{position - math::Float3{extent, extent, extent}, position + math::Float3{extent, extent, extent}};
         }
-        if (entity.kind != SceneEntityKind::Light) return std::nullopt;
-        const scene::Light& light = *std::ranges::find(source.resources.lights, scene::LightId{entity.id}, &scene::Light::id);
+        const scene::LightId* light_id = std::get_if<scene::LightId>(&entity.data);
+        if (!light_id) return std::nullopt;
+        const scene::Light& light = *std::ranges::find(source.resources.lights, *light_id, &scene::Light::id);
         return std::visit(
             [&](const auto& data) -> std::optional<math::Bounds3> {
                 if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointLight> || std::same_as<std::remove_cvref_t<decltype(data)>, scene::SpotLight>) {

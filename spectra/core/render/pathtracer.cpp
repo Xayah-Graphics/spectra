@@ -1,5 +1,6 @@
 module spectra.render.pathtracer;
 
+import spectra.render.runtime_abi;
 import spectra.render.pathtracer.abi;
 import spectra.render.pathtracer.scene;
 import std;
@@ -580,17 +581,6 @@ namespace spectra {
             };
             const std::array<std::uint32_t, 4> brick_minimum{expanded.minimum.x * 16u / resolution.x, expanded.minimum.y * 16u / resolution.y, expanded.minimum.z * 16u / resolution.z, 0};
             const std::array<std::uint32_t, 4> brick_maximum{std::min(16u, (expanded.maximum.x * 16u + resolution.x - 1u) / resolution.x), std::min(16u, (expanded.maximum.y * 16u + resolution.y - 1u) / resolution.y), std::min(16u, (expanded.maximum.z * 16u + resolution.z - 1u) / resolution.z), 0};
-            struct alignas(16) MajorantPushData {
-                DescriptorHandle density;
-                DescriptorHandle sigma_a;
-                DescriptorHandle sigma_s;
-                DescriptorHandle majorant;
-                std::array<std::uint32_t, 4> resolution;
-                std::array<std::uint32_t, 4> brick_minimum;
-                std::array<std::uint32_t, 4> brick_maximum;
-                std::array<std::uint32_t, 4> metadata;
-            };
-            static_assert(sizeof(MajorantPushData) == 96);
             const MajorantPushData push_data{density_descriptor, sigma_a_descriptor, sigma_s_descriptor, gpu_data.majorant.descriptor, {resolution.x, resolution.y, resolution.z, 0}, brick_minimum, brick_maximum, {majorant_mode, majorant_flags, 0, 0}};
             command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::VolumeMajorant));
             this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
@@ -605,22 +595,6 @@ namespace spectra {
 
     void PathTracer::update_dynamic_lights(const vk::raii::CommandBuffer& command_buffer) {
         if (this->scene.dynamic_area_lights.empty()) return;
-        struct alignas(16) DynamicAreaLightPushData {
-            DescriptorHandle positions{};
-            DescriptorHandle indices{};
-            DescriptorHandle radii{};
-            DescriptorHandle normals{};
-            DescriptorHandle texture_coordinates{};
-            DescriptorHandle transforms{};
-            DescriptorHandle lights{};
-            DescriptorHandle shapes{};
-            std::array<std::uint32_t, 4> range{};
-            std::array<std::uint32_t, 4> metadata{};
-            std::array<float, 4> geometry_parameters{};
-            std::array<float, 4> emission_parameters{};
-            std::array<float, 4> selection_parameters{};
-        };
-        static_assert(sizeof(DynamicAreaLightPushData) == 144);
         const GpuSceneView gpu_scene = this->context.gpu_scene.view();
         const auto push_for_range    = [&](const PathDynamicAreaLightRange& range) {
             DynamicAreaLightPushData push{};
@@ -664,12 +638,6 @@ namespace spectra {
             command_buffer.dispatch(1, 1, 1);
         }
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &shape_dependency});
-        struct alignas(16) DynamicLightSelectionPushData {
-            DescriptorHandle lights{};
-            std::uint32_t light_count{};
-            std::uint32_t sampler_kind{};
-        };
-        static_assert(sizeof(DynamicLightSelectionPushData) == 16);
         const DynamicLightSelectionPushData selection_push{this->scene.light_table.descriptor, this->scene.light_count, static_cast<std::uint32_t>(this->scene.transport_settings.light_sampler)};
         command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::DynamicLightSelection));
         this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&selection_push, 1}));
@@ -679,15 +647,6 @@ namespace spectra {
             command_buffer.fillBuffer(*this->scene.light_bvh_counters.buffer, 0, this->scene.light_bvh_counters.size, 0);
             const vk::MemoryBarrier2 counter_dependency{vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite};
             command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, 1, &counter_dependency});
-            struct alignas(16) DynamicLightBvhPushData {
-                DescriptorHandle lights{};
-                DescriptorHandle shapes{};
-                DescriptorHandle nodes{};
-                DescriptorHandle counters{};
-                std::uint32_t node_count{};
-                std::array<std::uint32_t, 3> reserved{};
-            };
-            static_assert(sizeof(DynamicLightBvhPushData) == 48);
             const DynamicLightBvhPushData bvh_push{this->scene.light_table.descriptor, this->scene.light_shapes.descriptor, this->scene.light_bvh_nodes.descriptor, this->scene.light_bvh_counters_descriptor, this->scene.light_bvh_node_count};
             command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->context.pathtracer.shader(PathTracerComputeShader::DynamicLightBvh));
             this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&bvh_push, 1}));

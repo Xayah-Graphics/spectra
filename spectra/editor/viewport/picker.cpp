@@ -1,5 +1,6 @@
 module spectra.editor.viewport.picker;
 
+import spectra.render.editor_abi;
 import std;
 import vulkan;
 
@@ -110,24 +111,6 @@ namespace spectra {
         const std::vector<scene::NeuralField>::const_iterator neural_field = std::ranges::find_if(source_scene.resources.neural_fields, [](const scene::NeuralField& field) { return field.visible; });
         slot.neural_field = neural_field == source_scene.resources.neural_fields.end() ? std::nullopt : std::optional{neural_field->id};
 
-        struct alignas(16) PickPushData {
-            vk::DeviceAddress acceleration_structure_address;
-            DescriptorHandle result_descriptor;
-            DescriptorHandle primitive_descriptor;
-            DescriptorHandle depth_descriptor;
-            std::array<std::uint32_t, 2> camera_metadata;
-            std::array<std::uint32_t, 2> pixel;
-            std::array<float, 4> camera_transform_row_0;
-            std::array<float, 4> camera_transform_row_1;
-            std::array<float, 4> camera_transform_row_2;
-            std::array<float, 2> screen;
-            float near_plane;
-            float far_plane;
-            std::array<float, 4> neural_field_inverse_row_0;
-            std::array<float, 4> neural_field_inverse_row_1;
-            std::array<float, 4> neural_field_inverse_row_2;
-        };
-        static_assert(sizeof(PickPushData) == 160);
         std::array<std::uint32_t, 2> camera_metadata{};
         std::array<float, 2> screen{};
         float near_plane{};

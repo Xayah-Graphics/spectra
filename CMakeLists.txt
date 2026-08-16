@@ -50,6 +50,7 @@ include(cmake/Shaders.cmake)
 # Spectra Core
 # ============================================================================
 add_library(spectra_core STATIC)
+target_include_directories(spectra_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/internal")
 target_sources(
         spectra_core
         PUBLIC
@@ -88,6 +89,7 @@ target_sources(
         FILES
         "${SPECTRA_RASTER_ABI_MODULE}"
         "${SPECTRA_PATH_TRACER_ABI_MODULE}"
+        "${SPECTRA_RUNTIME_ABI_MODULE}"
         PRIVATE
         FILE_SET generated_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
@@ -108,6 +110,7 @@ target_sources(
         spectra/core/scene/scene.cpp
         spectra/core/scene/asset_import.cpp
         spectra/core/scene/format.cpp
+        spectra/core/scene/format_read.cpp
         spectra/core/scene/document.cpp
         spectra/core/dynamics/runtime.cpp
         spectra/core/render/contract.cpp
@@ -135,9 +138,6 @@ target_link_libraries(
         spectra::tinyexr
         spectra::nanovdb
 )
-if (UNIX AND NOT APPLE)
-    target_link_libraries(spectra_core PRIVATE dl)
-endif ()
 add_dependencies(spectra_core spectra_shaders)
 
 
@@ -165,6 +165,11 @@ if (SPECTRA_BUILD_UI)
             spectra/editor/ui/imgui.ixx
             spectra/editor/ui/ui.ixx
             PRIVATE
+            FILE_SET generated_editor_modules TYPE CXX_MODULES
+            BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
+            FILES
+            "${SPECTRA_EDITOR_ABI_MODULE}"
+            PRIVATE
             spectra/editor/editor.cpp
             spectra/editor/platform/window.cpp
             spectra/editor/platform/presentation.cpp
@@ -173,6 +178,7 @@ if (SPECTRA_BUILD_UI)
             spectra/editor/viewport/picker.cpp
             spectra/editor/ui/imgui.cpp
             spectra/editor/ui/ui.cpp
+            spectra/editor/ui/ui_diagnostics.cpp
     )
     target_compile_definitions(
             spectra_editor

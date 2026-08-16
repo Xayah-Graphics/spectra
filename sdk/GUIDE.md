@@ -1,4 +1,4 @@
-# Spectra SDK 1.3
+# Spectra SDK 2.0
 
 Spectra SDK lets a CUDA simulation publish typed GPU resources without implementing Spectra's binary ABI, Vulkan external-memory import, or semaphore protocol.
 
@@ -57,13 +57,13 @@ export namespace project {
 
 ## GPU outputs
 
-Declare only the resources a project publishes. SDK 1.3 provides `mesh`, `spheres`, `volume`, `instances`, `particles`, `lines`, `vectors`, `image`, `hash_grid_radiance_field`, and `cameras`. A Volume declares its fields explicitly:
+Declare only the resources a project publishes. SDK 2.0 provides `mesh`, `spheres`, `volume`, `instances`, `particles`, `lines`, `vectors`, `image`, `hash_grid_radiance_field`, and `cameras`. A Volume declares its fields explicitly:
 
 ```cpp
 spectra::sdk::volume<"smoke">(
     spectra::sdk::field<"density", float>("Density"),
     spectra::sdk::field<"temperature", float>("Temperature", "K"),
-    spectra::sdk::field<"velocity", spectra::sdk::MacFloat3>(
+    spectra::sdk::volume_field<"velocity", spectra::sdk::MacFloat3>(
         "Velocity", "m/s",
         {.sampling = spectra::sdk::VolumeFieldSampling::Cell, .vector_space = spectra::sdk::VolumeVectorSpace::World}
     )
@@ -150,8 +150,6 @@ void Provider::publish(spectra::sdk::cuda::Output& output) {
 
     launch_surface(simulation.stream(), surface.positions.data(), surface.normals.data());
     launch_springs(simulation.stream(), springs.data());
-    surface.vertex_count = vertex_count;
-    surface.triangle_count = triangle_count;
     frame.metric<"energy">().upload(simulation.energy());
     frame.commit();
 }
@@ -164,7 +162,7 @@ CUDA translation units include `<spectra/sdk/cuda_types.h>` and write the exact 
 ## CMake
 
 ```cmake
-find_package(SpectraSDK 1.3 CONFIG REQUIRED)
+find_package(SpectraSDK 2.0.1 CONFIG REQUIRED)
 
 spectra_add_provider(
         cloth-provider

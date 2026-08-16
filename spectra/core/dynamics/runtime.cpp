@@ -2,11 +2,10 @@ module;
 
 #if defined(_WIN32)
 #include <Windows.h>
-#else
-#include <dlfcn.h>
 #endif
 
-#include "../../../sdk/internal/abi.h"
+#include <spectra/sdk/cuda_types.h>
+#include <abi.h>
 
 #undef interface
 
@@ -37,29 +36,89 @@ namespace spectra {
             return result;
         }
 
+        [[nodiscard]] scene::DynamicParameterKind scene_parameter_kind(const SpectraSdkValueKind kind) noexcept {
+            switch (kind) {
+                case SpectraSdkValueKind::Boolean: return scene::DynamicParameterKind::Boolean;
+                case SpectraSdkValueKind::Integer: return scene::DynamicParameterKind::Integer;
+                case SpectraSdkValueKind::Float: return scene::DynamicParameterKind::Float;
+                case SpectraSdkValueKind::Float3: return scene::DynamicParameterKind::Float3;
+                case SpectraSdkValueKind::Enumeration: return scene::DynamicParameterKind::Enumeration;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] SpectraSdkValueKind sdk_parameter_kind(const scene::DynamicParameterKind kind) noexcept {
+            switch (kind) {
+                case scene::DynamicParameterKind::Boolean: return SpectraSdkValueKind::Boolean;
+                case scene::DynamicParameterKind::Integer: return SpectraSdkValueKind::Integer;
+                case scene::DynamicParameterKind::Float: return SpectraSdkValueKind::Float;
+                case scene::DynamicParameterKind::Float3: return SpectraSdkValueKind::Float3;
+                case scene::DynamicParameterKind::Enumeration: return SpectraSdkValueKind::Enumeration;
+            }
+            std::unreachable();
+        }
+
         [[nodiscard]] scene::DynamicParameterValue scene_value(const SpectraSdkValue& value) noexcept {
-            return {static_cast<scene::DynamicParameterKind>(value.kind), value.integer, {value.floating[0], value.floating[1], value.floating[2]}};
+            return {scene_parameter_kind(value.kind), value.integer, {value.floating[0], value.floating[1], value.floating[2]}};
         }
 
         [[nodiscard]] SpectraSdkValue sdk_value(const scene::DynamicParameterValue& value) noexcept {
-            return {static_cast<SpectraSdkValueKind>(value.kind), value.integer, {value.floating[0], value.floating[1], value.floating[2]}};
+            return {sdk_parameter_kind(value.kind), value.integer, {value.floating[0], value.floating[1], value.floating[2]}};
         }
 
         [[nodiscard]] SpectraSdkExternalHandle sdk_handle(const ExternalHandle& value) noexcept {
-            return {value.type == ExternalHandleType::OpaqueWin32 ? SpectraSdkExternalHandleType::OpaqueWin32 : SpectraSdkExternalHandleType::OpaqueFileDescriptor, value.value};
+            return {value.value};
+        }
+
+        [[nodiscard]] dynamics::ParameterApplication parameter_application(const SpectraSdkParameterApplication application) noexcept {
+            switch (application) {
+                case SpectraSdkParameterApplication::Live: return dynamics::ParameterApplication::Live;
+                case SpectraSdkParameterApplication::Reset: return dynamics::ParameterApplication::Reset;
+                case SpectraSdkParameterApplication::Recreate: return dynamics::ParameterApplication::Recreate;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] scene::FieldKind field_kind(const SpectraSdkFieldKind kind) noexcept {
+            switch (kind) {
+                case SpectraSdkFieldKind::Float: return scene::FieldKind::Float;
+                case SpectraSdkFieldKind::Float3: return scene::FieldKind::Float3;
+                case SpectraSdkFieldKind::UInt32: return scene::FieldKind::UInt32;
+                case SpectraSdkFieldKind::MacFloat3: return scene::FieldKind::MacFloat3;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] scene::VolumeFieldSampling field_sampling(const SpectraSdkVolumeFieldSampling sampling) noexcept {
+            switch (sampling) {
+                case SpectraSdkVolumeFieldSampling::Cell: return scene::VolumeFieldSampling::Cell;
+                case SpectraSdkVolumeFieldSampling::Vertex: return scene::VolumeFieldSampling::Vertex;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] scene::VolumeVectorSpace vector_space(const SpectraSdkVolumeVectorSpace space) noexcept {
+            switch (space) {
+                case SpectraSdkVolumeVectorSpace::Grid: return scene::VolumeVectorSpace::Grid;
+                case SpectraSdkVolumeVectorSpace::Local: return scene::VolumeVectorSpace::Local;
+                case SpectraSdkVolumeVectorSpace::World: return scene::VolumeVectorSpace::World;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] dynamics::TelemetryKind telemetry_kind(const SpectraSdkValueKind kind) noexcept {
+            switch (kind) {
+                case SpectraSdkValueKind::Boolean: return dynamics::TelemetryKind::Boolean;
+                case SpectraSdkValueKind::Integer:
+                case SpectraSdkValueKind::Enumeration: return dynamics::TelemetryKind::Integer;
+                case SpectraSdkValueKind::Float: return dynamics::TelemetryKind::Float;
+                case SpectraSdkValueKind::Float3: return dynamics::TelemetryKind::Float3;
+            }
+            std::unreachable();
         }
 
         [[nodiscard]] std::uint64_t element_count(const math::UInt3 extent) noexcept {
             return static_cast<std::uint64_t>(extent.x) * extent.y * extent.z;
-        }
-
-        [[nodiscard]] std::uint32_t collection_element_size(const SpectraSdkOutputKind kind) noexcept {
-            if (kind == SpectraSdkOutputKind::Spheres) return 16u;
-            if (kind == SpectraSdkOutputKind::Instances) return 72u;
-            if (kind == SpectraSdkOutputKind::Lines) return 48u;
-            if (kind == SpectraSdkOutputKind::Vectors) return 48u;
-            if (kind == SpectraSdkOutputKind::Image) return 16u;
-            return 32u;
         }
 
         struct OutputExportLifetime {
@@ -78,6 +137,10 @@ namespace spectra {
     }
 
     void DynamicsRuntime::initialize(const std::filesystem::path& scene_path, const scene::Scene& source_scene, scene::Scene& evaluated_scene) {
+#if !defined(_WIN32)
+        this->destroy();
+        throw std::runtime_error("Spectra dynamic Providers are supported only on Windows");
+#else
         this->destroy();
         try {
             this->configuration.source_scene    = &source_scene;
@@ -93,11 +156,7 @@ namespace spectra {
 
             std::vector<std::filesystem::path> provider_paths{};
             for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator{this->configuration.assets}) {
-#if defined(_WIN32)
                 if (entry.is_regular_file() && entry.path().filename().string().ends_with(".spectra-provider.dll")) provider_paths.emplace_back(entry.path());
-#else
-                if (entry.is_regular_file() && entry.path().filename().string().ends_with(".spectra-provider.so")) provider_paths.emplace_back(entry.path());
-#endif
             }
             std::ranges::sort(provider_paths);
             for (const std::filesystem::path& path : provider_paths) {
@@ -117,7 +176,7 @@ namespace spectra {
                         .unit             = sdk_string(parameter.unit),
                         .section_id       = sdk_string(parameter.section),
                         .description      = sdk_string(parameter.description),
-                        .application_mode = static_cast<dynamics::ParameterApplication>(parameter.application),
+                        .application_mode = parameter_application(parameter.application),
                         .value            = scene_value(parameter.default_value),
                         .minimum          = scene_value(parameter.minimum),
                         .maximum          = scene_value(parameter.maximum),
@@ -129,10 +188,8 @@ namespace spectra {
                 provider.datasets.reserve(source.output_count);
                 for (std::uint64_t index = 0; index != source.output_count; ++index) {
                     const SpectraSdkOutputDescriptor& output = source.outputs[index];
-                    dynamics::DatasetDescriptor dataset{.id = sdk_string(output.id)};
-                    if (output.kind == SpectraSdkOutputKind::Mesh) dataset.resource_kind = scene::DynamicSceneResourceKind::Geometry, dataset.details = dynamics::TriangleMeshDataset{0u, 0u, dynamics::MeshUpdateMode::Deformable, output.mesh_attributes};
-                    else if (output.kind == SpectraSdkOutputKind::Spheres) dataset.resource_kind = scene::DynamicSceneResourceKind::SphereSet, dataset.details = dynamics::SphereSetDataset{};
-                    else if (output.kind == SpectraSdkOutputKind::Volume || output.kind == SpectraSdkOutputKind::Particles) {
+                    const std::string id = sdk_string(output.id);
+                    if (output.kind == SpectraSdkOutputKind::Volume || output.kind == SpectraSdkOutputKind::Particles) {
                         std::vector<dynamics::FieldDescriptor> fields{};
                         std::uint32_t buffer_offset{};
                         for (std::uint64_t field_index = 0; field_index != output.field_count; ++field_index) {
@@ -142,33 +199,36 @@ namespace spectra {
                                 sdk_string(source_field.id),
                                 sdk_string(source_field.name),
                                 sdk_string(source_field.unit),
-                                static_cast<scene::FieldKind>(source_field.kind),
-                                static_cast<scene::VolumeFieldSampling>(source_field.sampling),
-                                static_cast<scene::VolumeVectorSpace>(source_field.vector_space),
+                                field_kind(source_field.kind),
+                                field_sampling(source_field.sampling),
+                                vector_space(source_field.vector_space),
                                 buffer_offset,
                                 buffer_count
                             );
                             buffer_offset += buffer_count;
                         }
-                        if (output.kind == SpectraSdkOutputKind::Volume) {
-                            dataset.resource_kind = scene::DynamicSceneResourceKind::Volume;
-                            dataset.details       = dynamics::FieldDataset{.fields = std::move(fields)};
-                        } else {
-                            dataset.resource_kind = scene::DynamicSceneResourceKind::ParticleSet;
-                            dataset.details       = dynamics::ParticleSetDataset{.fields = std::move(fields)};
-                        }
-                    } else if (output.kind == SpectraSdkOutputKind::Instances) dataset.details = dynamics::InstanceTransformDataset{};
-                    else if (output.kind == SpectraSdkOutputKind::Lines) dataset.details = dynamics::SegmentDataset{};
-                    else if (output.kind == SpectraSdkOutputKind::Vectors) dataset.details = dynamics::VectorDataset{};
-                    else if (output.kind == SpectraSdkOutputKind::Image) dataset.details = dynamics::ImageDataset{};
-                    else if (output.kind == SpectraSdkOutputKind::Cameras) dataset.details = dynamics::CameraDataset{};
-                    else dataset.resource_kind = scene::DynamicSceneResourceKind::NeuralField;
-                    provider.datasets.emplace_back(std::move(dataset));
+                        if (output.kind == SpectraSdkOutputKind::Volume) provider.datasets.emplace_back(id, dynamics::FieldDataset{.fields = std::move(fields)});
+                        else provider.datasets.emplace_back(id, dynamics::ParticleSetDataset{.fields = std::move(fields)});
+                        continue;
+                    }
+                    switch (output.kind) {
+                        case SpectraSdkOutputKind::Mesh: provider.datasets.emplace_back(id, dynamics::TriangleMeshDataset{0u, 0u, output.mesh_attributes}); break;
+                        case SpectraSdkOutputKind::Spheres: provider.datasets.emplace_back(id, dynamics::SphereSetDataset{}); break;
+                        case SpectraSdkOutputKind::Instances: provider.datasets.emplace_back(id, dynamics::InstanceTransformDataset{}); break;
+                        case SpectraSdkOutputKind::Lines: provider.datasets.emplace_back(id, dynamics::SegmentDataset{}); break;
+                        case SpectraSdkOutputKind::Vectors: provider.datasets.emplace_back(id, dynamics::VectorDataset{}); break;
+                        case SpectraSdkOutputKind::Image: provider.datasets.emplace_back(id, dynamics::ImageDataset{}); break;
+                        case SpectraSdkOutputKind::HashGridRadianceField: provider.datasets.emplace_back(id, dynamics::HashGridRadianceFieldDataset{}); break;
+                        case SpectraSdkOutputKind::Cameras: provider.datasets.emplace_back(id, dynamics::CameraDataset{}); break;
+                        case SpectraSdkOutputKind::Volume:
+                        case SpectraSdkOutputKind::Particles:
+                        case SpectraSdkOutputKind::Metrics: std::unreachable();
+                    }
                 }
                 provider.telemetry.reserve(source.metric_count);
                 for (std::uint64_t index = 0; index != source.metric_count; ++index) {
                     const SpectraSdkMetricDescriptor& metric = source.metrics[index];
-                    provider.telemetry.emplace_back(sdk_string(metric.id), sdk_string(metric.name), sdk_string(metric.unit), sdk_string(metric.section), static_cast<dynamics::TelemetryKind>(metric.kind), metric.plot != 0u);
+                    provider.telemetry.emplace_back(sdk_string(metric.id), sdk_string(metric.name), sdk_string(metric.unit), sdk_string(metric.section), telemetry_kind(metric.kind), metric.plot != 0u);
                 }
                 library.provider = std::move(provider);
                 if (this->providers.by_id.contains(library.provider.id)) throw std::runtime_error(std::format("Multiple Provider DLLs declare '{}'", library.provider.id));
@@ -197,6 +257,7 @@ namespace spectra {
             this->destroy();
             throw;
         }
+#endif
     }
 
     void DynamicsRuntime::destroy() noexcept {
@@ -248,18 +309,18 @@ namespace spectra {
             return std::ranges::any_of(system.outputs, [&prototype](const OutputRuntime& output) {
                 if (!output.scene_binding) return false;
                 return std::ranges::any_of(prototype.primitives, [&output](const scene::Primitive& primitive) {
-                    return (output.descriptor.resource_kind == scene::DynamicSceneResourceKind::Geometry && output.scene_binding->resource_id == primitive.geometry.value) || (output.descriptor.resource_kind == scene::DynamicSceneResourceKind::SphereSet && output.scene_binding->resource_id == primitive.spheres.value);
+                    return (std::holds_alternative<dynamics::TriangleMeshDataset>(output.descriptor.details) && output.scene_binding->resource_id == primitive.geometry.value) || (std::holds_alternative<dynamics::SphereSetDataset>(output.descriptor.details) && output.scene_binding->resource_id == primitive.spheres.value);
                 });
             });
         });
     }
 
     bool DynamicsRuntime::controls(const scene::VolumeId volume_id) const noexcept {
-        return std::ranges::any_of(this->systems.values, [volume_id](const SystemRuntime& system) { return std::ranges::any_of(system.outputs, [volume_id](const OutputRuntime& output) { return output.scene_binding && output.descriptor.resource_kind == scene::DynamicSceneResourceKind::Volume && output.scene_binding->resource_id == volume_id.value; }); });
+        return std::ranges::any_of(this->systems.values, [volume_id](const SystemRuntime& system) { return std::ranges::any_of(system.outputs, [volume_id](const OutputRuntime& output) { return output.scene_binding && std::holds_alternative<dynamics::FieldDataset>(output.descriptor.details) && output.scene_binding->resource_id == volume_id.value; }); });
     }
 
     bool DynamicsRuntime::controls(const scene::ParticleSetId particle_set_id) const noexcept {
-        return std::ranges::any_of(this->systems.values, [particle_set_id](const SystemRuntime& system) { return std::ranges::any_of(system.outputs, [particle_set_id](const OutputRuntime& output) { return output.scene_binding && output.descriptor.resource_kind == scene::DynamicSceneResourceKind::ParticleSet && output.scene_binding->resource_id == particle_set_id.value; }); });
+        return std::ranges::any_of(this->systems.values, [particle_set_id](const SystemRuntime& system) { return std::ranges::any_of(system.outputs, [particle_set_id](const OutputRuntime& output) { return output.scene_binding && std::holds_alternative<dynamics::ParticleSetDataset>(output.descriptor.details) && output.scene_binding->resource_id == particle_set_id.value; }); });
     }
 
     bool DynamicsRuntime::controls(const scene::CameraId camera_id) const noexcept {
@@ -352,9 +413,9 @@ namespace spectra {
         if (!this->publication.snapshot_pending) return;
         for (SystemRuntime& system : this->systems.values) {
             if (system.provider_descriptor->telemetry.empty()) continue;
-            const OutputRuntime& metrics = system.outputs.back();
             TelemetryReadbackSlot& readback = system.telemetry_readback[frame_slot_index];
-            command_buffer.copyBuffer(*metrics.slots[system.current_slot][0].gpu_buffer.buffer, *readback.buffer.buffer, vk::BufferCopy{0u, 0u, metrics.slots[system.current_slot][0].byte_size});
+            const OutputBuffer& metrics = system.metrics.storage.slots[system.current_slot][0];
+            command_buffer.copyBuffer(*metrics.gpu_buffer.buffer, *readback.buffer.buffer, vk::BufferCopy{0u, 0u, metrics.gpu_buffer.size});
             readback.simulation_step    = this->clock.simulation_step;
             readback.simulation_seconds = this->timeline().seconds;
             readback.pending            = true;
@@ -380,43 +441,32 @@ namespace spectra {
     }
 
     DynamicsRuntime::ProviderLibrary::ProviderLibrary(const std::filesystem::path& library_path) {
+#if !defined(_WIN32)
+        throw std::runtime_error("Spectra dynamic Providers are supported only on Windows");
+#else
         const std::filesystem::path canonical = std::filesystem::weakly_canonical(library_path);
-#if defined(_WIN32)
         const HMODULE loaded = LoadLibraryW(canonical.c_str());
         if (!loaded) throw std::runtime_error(std::format("Windows failed to load Provider: {}", canonical.string()));
-#else
-        void* loaded = dlopen(canonical.c_str(), RTLD_NOW | RTLD_LOCAL);
-        if (!loaded) throw std::runtime_error(std::format("Linux failed to load Provider: {}", dlerror()));
-#endif
         try {
-#if defined(_WIN32)
             const auto entry = reinterpret_cast<const SpectraSdkApi* (*)() noexcept>(GetProcAddress(loaded, SPECTRA_SDK_ENTRY_NAME));
-#else
-            const auto entry = reinterpret_cast<const SpectraSdkApi* (*)() noexcept>(dlsym(loaded, SPECTRA_SDK_ENTRY_NAME));
-#endif
-            if (!entry) throw std::runtime_error("Provider does not export Spectra SDK ABI 4");
+            if (!entry) throw std::runtime_error(std::format("Provider does not export Spectra SDK ABI {}", SPECTRA_SDK_ABI_VERSION));
             api = entry();
             if (api->abi_version != SPECTRA_SDK_ABI_VERSION || api->struct_size != sizeof(SpectraSdkApi)) throw std::runtime_error("Provider has an incompatible Spectra SDK ABI");
             const SpectraSdkProviderDescriptionResult described = api->describe_provider();
             check_sdk_result(described.result, "description");
             descriptor = described.descriptor;
         } catch (...) {
-#if defined(_WIN32)
             FreeLibrary(loaded);
-#else
-            dlclose(loaded);
-#endif
             throw;
         }
         library_handle = loaded;
+#endif
     }
 
     DynamicsRuntime::ProviderLibrary::~ProviderLibrary() {
         if (!library_handle) return;
 #if defined(_WIN32)
         FreeLibrary(static_cast<HMODULE>(library_handle));
-#else
-        dlclose(library_handle);
 #endif
     }
 
@@ -428,27 +478,32 @@ namespace spectra {
             std::unique_ptr<OutputExportLifetime> lifetime = std::make_unique<OutputExportLifetime>();
             SystemRuntime& system = *runtime.publication.configuring_system;
             const std::size_t index = static_cast<std::size_t>(layout->output_index);
-            if (index == system.outputs.size()) system.outputs.emplace_back(OutputRuntime{.descriptor = {.id = "__metrics"}});
-            OutputRuntime& output       = system.outputs[index];
-            output.kind                 = layout->kind;
-            output.capacity             = layout->primary_capacity;
-            output.secondary_capacity   = layout->secondary_capacity;
-            output.resolution           = {layout->resolution[0], layout->resolution[1], layout->resolution[2]};
-            if (auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details)) mesh->vertex_capacity = output.capacity, mesh->index_capacity = output.secondary_capacity * 3u, mesh->attributes = layout->mesh_attributes;
-            else if (auto* spheres = std::get_if<dynamics::SphereSetDataset>(&output.descriptor.details)) spheres->capacity = output.capacity;
-            else if (auto* instances = std::get_if<dynamics::InstanceTransformDataset>(&output.descriptor.details)) instances->capacity = output.capacity;
-            else if (auto* particles = std::get_if<dynamics::ParticleSetDataset>(&output.descriptor.details)) particles->capacity = output.capacity, particles->radius = layout->particle_radius;
-            else if (auto* lines = std::get_if<dynamics::SegmentDataset>(&output.descriptor.details)) lines->capacity = output.capacity;
-            else if (auto* vectors = std::get_if<dynamics::VectorDataset>(&output.descriptor.details)) vectors->capacity = output.capacity;
-            else if (auto* volume = std::get_if<dynamics::FieldDataset>(&output.descriptor.details)) volume->resolution = output.resolution;
-            else if (auto* image = std::get_if<dynamics::ImageDataset>(&output.descriptor.details)) image->extent = {output.resolution.x, output.resolution.y};
-            else if (auto* cameras = std::get_if<dynamics::CameraDataset>(&output.descriptor.details)) {
-                cameras->extent = {output.resolution.x, output.resolution.y};
-                cameras->cameras.clear();
-                cameras->cameras.reserve(layout->camera_count);
+            OutputRuntime* output = layout->kind == SpectraSdkOutputKind::Metrics ? nullptr : &system.outputs[index];
+            OutputStorage& storage = output ? output->storage : system.metrics.storage;
+            const math::UInt3 resolution{layout->resolution[0], layout->resolution[1], layout->resolution[2]};
+            if (output && std::get_if<dynamics::TriangleMeshDataset>(&output->descriptor.details)) {
+                dynamics::TriangleMeshDataset& mesh = std::get<dynamics::TriangleMeshDataset>(output->descriptor.details);
+                mesh.vertex_capacity = layout->primary_capacity;
+                mesh.index_capacity  = layout->secondary_capacity * 3u;
+                mesh.attributes      = layout->mesh_attributes;
+            } else if (output && std::get_if<dynamics::SphereSetDataset>(&output->descriptor.details)) std::get<dynamics::SphereSetDataset>(output->descriptor.details).capacity = layout->primary_capacity;
+            else if (output && std::get_if<dynamics::InstanceTransformDataset>(&output->descriptor.details)) std::get<dynamics::InstanceTransformDataset>(output->descriptor.details).capacity = layout->primary_capacity;
+            else if (output && std::get_if<dynamics::ParticleSetDataset>(&output->descriptor.details)) {
+                dynamics::ParticleSetDataset& particles = std::get<dynamics::ParticleSetDataset>(output->descriptor.details);
+                particles.capacity = layout->primary_capacity;
+                particles.radius   = layout->particle_radius;
+            } else if (output && std::get_if<dynamics::SegmentDataset>(&output->descriptor.details)) std::get<dynamics::SegmentDataset>(output->descriptor.details).capacity = layout->primary_capacity;
+            else if (output && std::get_if<dynamics::VectorDataset>(&output->descriptor.details)) std::get<dynamics::VectorDataset>(output->descriptor.details).capacity = layout->primary_capacity;
+            else if (output && std::get_if<dynamics::FieldDataset>(&output->descriptor.details)) std::get<dynamics::FieldDataset>(output->descriptor.details).resolution = resolution;
+            else if (output && std::get_if<dynamics::ImageDataset>(&output->descriptor.details)) std::get<dynamics::ImageDataset>(output->descriptor.details).extent = {resolution.x, resolution.y};
+            else if (output && std::get_if<dynamics::CameraDataset>(&output->descriptor.details)) {
+                dynamics::CameraDataset& cameras = std::get<dynamics::CameraDataset>(output->descriptor.details);
+                cameras.extent = {resolution.x, resolution.y};
+                cameras.cameras.clear();
+                cameras.cameras.reserve(layout->camera_count);
                 for (std::uint64_t camera_index = 0; camera_index != layout->camera_count; ++camera_index) {
                     const SpectraSdkCamera& camera = layout->cameras[camera_index];
-                    cameras->cameras.emplace_back(
+                    cameras.cameras.emplace_back(
                         math::Float3{camera.right[0], camera.right[1], camera.right[2]},
                         math::Float3{camera.down[0], camera.down[1], camera.down[2]},
                         math::Float3{camera.forward[0], camera.forward[1], camera.forward[2]},
@@ -463,67 +518,71 @@ namespace spectra {
             std::vector<std::uint64_t> dynamic_sizes{};
             if (layout->kind == SpectraSdkOutputKind::Mesh) {
                 if (layout->secondary_capacity != 0u) static_sizes.emplace_back(static_cast<std::uint64_t>(layout->secondary_capacity) * 3u * sizeof(std::uint32_t));
-                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::TextureCoordinate)) != 0u) static_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * 8u);
-                dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * 12u);
-                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Normal)) != 0u) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * 12u);
-                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Tangent)) != 0u) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * 12u);
-                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * 16u);
-                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Scalar)) != 0u) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * 4u);
+                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::TextureCoordinate)) != 0u) static_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float2));
+                dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float3));
+                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Normal)) != 0u) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float3));
+                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Tangent)) != 0u) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float3));
+                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float4));
+                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Scalar)) != 0u) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(float));
             } else if (layout->kind == SpectraSdkOutputKind::Volume) {
-                const auto& fields = std::get<dynamics::FieldDataset>(output.descriptor.details).fields;
+                const auto& fields = std::get<dynamics::FieldDataset>(output->descriptor.details).fields;
                 for (const dynamics::FieldDescriptor& field : fields) {
                     if (field.kind == scene::FieldKind::MacFloat3) {
-                        dynamic_sizes.emplace_back(static_cast<std::uint64_t>(output.resolution.x + 1u) * output.resolution.y * output.resolution.z * sizeof(float));
-                        dynamic_sizes.emplace_back(static_cast<std::uint64_t>(output.resolution.x) * (output.resolution.y + 1u) * output.resolution.z * sizeof(float));
-                        dynamic_sizes.emplace_back(static_cast<std::uint64_t>(output.resolution.x) * output.resolution.y * (output.resolution.z + 1u) * sizeof(float));
+                        dynamic_sizes.emplace_back(static_cast<std::uint64_t>(resolution.x + 1u) * resolution.y * resolution.z * sizeof(float));
+                        dynamic_sizes.emplace_back(static_cast<std::uint64_t>(resolution.x) * (resolution.y + 1u) * resolution.z * sizeof(float));
+                        dynamic_sizes.emplace_back(static_cast<std::uint64_t>(resolution.x) * resolution.y * (resolution.z + 1u) * sizeof(float));
                     } else
-                        dynamic_sizes.emplace_back(element_count(output.resolution) * (field.kind == scene::FieldKind::Float ? sizeof(float) : field.kind == scene::FieldKind::Float3 ? sizeof(math::Float3) : sizeof(std::uint32_t)));
+                        dynamic_sizes.emplace_back(element_count(resolution) * (field.kind == scene::FieldKind::Float ? sizeof(float) : field.kind == scene::FieldKind::Float3 ? sizeof(sdk::Float3) : sizeof(std::uint32_t)));
                 }
             } else if (layout->kind == SpectraSdkOutputKind::Particles) {
-                dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(math::Float3));
-                for (const dynamics::FieldDescriptor& field : std::get<dynamics::ParticleSetDataset>(output.descriptor.details).fields) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * (field.kind == scene::FieldKind::Float ? sizeof(float) : field.kind == scene::FieldKind::Float3 ? sizeof(math::Float3) : sizeof(std::uint32_t)));
+                dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float3));
+                for (const dynamics::FieldDescriptor& field : std::get<dynamics::ParticleSetDataset>(output->descriptor.details).fields) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * (field.kind == scene::FieldKind::Float ? sizeof(float) : field.kind == scene::FieldKind::Float3 ? sizeof(sdk::Float3) : sizeof(std::uint32_t)));
             } else if (layout->kind == SpectraSdkOutputKind::HashGridRadianceField) {
                 dynamic_sizes = {
-                    static_cast<std::uint64_t>(SPECTRA_SDK_HASH_GRID_ENTRY_COUNT) * 8u,
-                    static_cast<std::uint64_t>(SPECTRA_SDK_DENSITY_INPUT_COUNT) * 2u,
-                    static_cast<std::uint64_t>(SPECTRA_SDK_DENSITY_OUTPUT_COUNT) * 2u,
-                    static_cast<std::uint64_t>(SPECTRA_SDK_RGB_INPUT_COUNT) * 2u,
-                    static_cast<std::uint64_t>(SPECTRA_SDK_RGB_HIDDEN_COUNT) * 2u,
-                    static_cast<std::uint64_t>(SPECTRA_SDK_RGB_OUTPUT_COUNT) * 2u,
-                    static_cast<std::uint64_t>(SPECTRA_SDK_OCCUPANCY_WORD_COUNT) * 4u,
+                    static_cast<std::uint64_t>(SPECTRA_SDK_HASH_GRID_ENTRY_COUNT) * sizeof(sdk::Half4),
+                    static_cast<std::uint64_t>(SPECTRA_SDK_DENSITY_INPUT_COUNT) * sizeof(sdk::Half),
+                    static_cast<std::uint64_t>(SPECTRA_SDK_DENSITY_OUTPUT_COUNT) * sizeof(sdk::Half),
+                    static_cast<std::uint64_t>(SPECTRA_SDK_RGB_INPUT_COUNT) * sizeof(sdk::Half),
+                    static_cast<std::uint64_t>(SPECTRA_SDK_RGB_HIDDEN_COUNT) * sizeof(sdk::Half),
+                    static_cast<std::uint64_t>(SPECTRA_SDK_RGB_OUTPUT_COUNT) * sizeof(sdk::Half),
+                    static_cast<std::uint64_t>(SPECTRA_SDK_OCCUPANCY_WORD_COUNT) * sizeof(std::uint32_t),
                 };
             } else if (layout->kind == SpectraSdkOutputKind::Cameras)
-                static_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * output.resolution.x * output.resolution.y * 4u);
-            else dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * collection_element_size(layout->kind));
+                static_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * resolution.x * resolution.y * sizeof(sdk::Rgba8));
+            else if (layout->kind == SpectraSdkOutputKind::Spheres) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Sphere));
+            else if (layout->kind == SpectraSdkOutputKind::Instances) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Instance));
+            else if (layout->kind == SpectraSdkOutputKind::Lines) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Line));
+            else if (layout->kind == SpectraSdkOutputKind::Vectors) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Vector));
+            else if (layout->kind == SpectraSdkOutputKind::Image) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float4));
+            else if (layout->kind == SpectraSdkOutputKind::Metrics) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(SpectraSdkMetricValue));
+            else std::unreachable();
 
-            output.static_buffers.resize(static_sizes.size());
+            storage.static_buffers.resize(static_sizes.size());
             lifetime->fixed.resize(static_sizes.size());
             lifetime->fixed_handles.resize(static_sizes.size());
             for (std::size_t buffer = 0; buffer != static_sizes.size(); ++buffer) {
-                OutputBuffer& destination = output.static_buffers[buffer];
-                destination.byte_size     = static_sizes[buffer];
-                destination.gpu_buffer    = runtime.context.runtime.resources.create_external_buffer(destination.byte_size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress);
+                OutputBuffer& destination = storage.static_buffers[buffer];
+                destination.gpu_buffer    = runtime.context.runtime.resources.create_external_buffer(static_sizes[buffer], vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eShaderDeviceAddress);
                 destination.descriptor    = runtime.context.runtime.frames.allocate_resource_descriptor();
-                runtime.context.runtime.resources.write_buffer_descriptor(destination.descriptor.handle(), vk::DescriptorType::eStorageBuffer, destination.gpu_buffer);
+                runtime.context.runtime.resources.write_buffer_descriptor(destination.descriptor, vk::DescriptorType::eStorageBuffer, destination.gpu_buffer);
                 lifetime->fixed_handles[buffer] = runtime.context.runtime.resources.export_buffer_memory_handle(destination.gpu_buffer);
-                lifetime->fixed[buffer]         = {sdk_handle(lifetime->fixed_handles[buffer]), destination.byte_size};
+                lifetime->fixed[buffer]         = {sdk_handle(lifetime->fixed_handles[buffer]), destination.gpu_buffer.external_memory_size, destination.gpu_buffer.size};
             }
-            output.slots.resize(VulkanFrames::frames_in_flight);
+            storage.slots.resize(VulkanFrames::frames_in_flight);
             lifetime->buffers.resize(VulkanFrames::frames_in_flight);
             lifetime->handles.resize(VulkanFrames::frames_in_flight);
             lifetime->slots.resize(VulkanFrames::frames_in_flight);
             for (std::uint32_t slot = 0; slot != VulkanFrames::frames_in_flight; ++slot) {
-                output.slots[slot].resize(dynamic_sizes.size());
+                storage.slots[slot].resize(dynamic_sizes.size());
                 lifetime->buffers[slot].resize(dynamic_sizes.size());
                 lifetime->handles[slot].resize(dynamic_sizes.size());
                 for (std::size_t buffer = 0; buffer != dynamic_sizes.size(); ++buffer) {
-                    OutputBuffer& destination = output.slots[slot][buffer];
-                    destination.byte_size     = dynamic_sizes[buffer];
-                    destination.gpu_buffer    = runtime.context.runtime.resources.create_external_buffer(destination.byte_size, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eShaderDeviceAddress);
+                    OutputBuffer& destination = storage.slots[slot][buffer];
+                    destination.gpu_buffer    = runtime.context.runtime.resources.create_external_buffer(dynamic_sizes[buffer], vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eShaderDeviceAddress);
                     destination.descriptor    = runtime.context.runtime.frames.allocate_resource_descriptor();
-                    runtime.context.runtime.resources.write_buffer_descriptor(destination.descriptor.handle(), vk::DescriptorType::eStorageBuffer, destination.gpu_buffer);
+                    runtime.context.runtime.resources.write_buffer_descriptor(destination.descriptor, vk::DescriptorType::eStorageBuffer, destination.gpu_buffer);
                     lifetime->handles[slot][buffer] = runtime.context.runtime.resources.export_buffer_memory_handle(destination.gpu_buffer);
-                    lifetime->buffers[slot][buffer] = {sdk_handle(lifetime->handles[slot][buffer]), destination.byte_size};
+                    lifetime->buffers[slot][buffer] = {sdk_handle(lifetime->handles[slot][buffer]), destination.gpu_buffer.external_memory_size, destination.gpu_buffer.size};
                 }
                 lifetime->slots[slot] = {lifetime->buffers[slot].data(), lifetime->buffers[slot].size()};
             }
@@ -562,7 +621,7 @@ namespace spectra {
             const math::Bounds3 bounds = this->configuration.evaluated_scene->view().bounds();
             const math::Float3 center  = bounds.center();
             const float clip_margin    = std::max(bounds.diagonal().length() * 0.0001f, 0.00001f);
-            const dynamics::GpuBufferView pixels{&output.static_buffers[0].gpu_buffer, output.static_buffers[0].descriptor.handle()};
+            const dynamics::GpuBufferView pixels{&output.storage.static_buffers[0].gpu_buffer, output.storage.static_buffers[0].descriptor};
             for (std::size_t index = 0; index != cameras->cameras.size(); ++index) {
                 const dynamics::CameraDescriptor& source = cameras->cameras[index];
                 float minimum_depth = std::numeric_limits<float>::max();
@@ -609,14 +668,25 @@ namespace spectra {
             return;
         }
         if (!output.scene_binding) return;
-        if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details)) this->outputs.mesh_bindings.emplace_back(scene::GeometryId{output.scene_binding->resource_id}, dynamics::MeshUpdateMode::Deformable, mesh->vertex_capacity, mesh->index_capacity);
+        if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details)) {
+            const auto view = [](const OutputBuffer& buffer) { return dynamics::GpuBufferView{&buffer.gpu_buffer, buffer.descriptor}; };
+            const std::optional indices = mesh->index_capacity == 0u ? std::nullopt : std::optional{view(output.storage.static_buffers[0])};
+            const bool has_uv = (mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::TextureCoordinate)) != 0u;
+            this->outputs.mesh_bindings.emplace_back(scene::GeometryId{output.scene_binding->resource_id}, mesh->vertex_capacity, mesh->index_capacity, indices, has_uv ? std::optional{view(output.storage.static_buffers.back())} : std::nullopt);
+        }
         else if (const auto* spheres = std::get_if<dynamics::SphereSetDataset>(&output.descriptor.details)) this->outputs.sphere_set_bindings.emplace_back(scene::SphereSetId{output.scene_binding->resource_id}, spheres->capacity);
         else if (const auto* particles = std::get_if<dynamics::ParticleSetDataset>(&output.descriptor.details)) {
             scene::ParticleSet& particle_set = *std::ranges::find(this->configuration.evaluated_scene->resources.particle_sets, scene::ParticleSetId{output.scene_binding->resource_id}, &scene::ParticleSet::id);
             particle_set.radius = particles->radius;
             particle_set.fields.clear();
             particle_set.fields.reserve(particles->fields.size());
-            for (const dynamics::FieldDescriptor& descriptor : particles->fields) particle_set.fields.emplace_back(descriptor.id, descriptor.name, descriptor.unit, descriptor.kind, descriptor.vector_space);
+            for (const dynamics::FieldDescriptor& descriptor : particles->fields) {
+                std::variant<scene::ScalarParticleField, scene::VectorParticleField, scene::CategoryParticleField> data{};
+                if (descriptor.kind == scene::FieldKind::Float) data = scene::ScalarParticleField{};
+                else if (descriptor.kind == scene::FieldKind::Float3) data = scene::VectorParticleField{descriptor.vector_space};
+                else data = scene::CategoryParticleField{};
+                particle_set.fields.emplace_back(descriptor.id, descriptor.name, descriptor.unit, std::move(data));
+            }
             ++particle_set.revision.content;
             ++particle_set.revision.topology;
             this->configuration.evaluated_scene->mark_changed(scene::SceneChange::Particle | scene::SceneChange::Structure);
@@ -624,14 +694,21 @@ namespace spectra {
         else if (const auto* field = std::get_if<dynamics::FieldDataset>(&output.descriptor.details)) {
             scene::Volume& volume   = *std::ranges::find(this->configuration.evaluated_scene->resources.volumes, scene::VolumeId{output.scene_binding->resource_id}, &scene::Volume::id);
             scene::GridVolume& grid = std::get<scene::GridVolume>(volume.data);
-            grid.resolution = output.resolution;
+            grid.resolution = field->resolution;
             grid.fields.clear();
             grid.fields.reserve(field->fields.size());
-            for (const dynamics::FieldDescriptor& descriptor : field->fields) grid.fields.emplace_back(descriptor.id, descriptor.name, descriptor.unit, descriptor.kind, descriptor.sampling, descriptor.vector_space);
+            for (const dynamics::FieldDescriptor& descriptor : field->fields) {
+                std::variant<scene::ScalarVolumeField, scene::VectorVolumeField, scene::CategoryVolumeField, scene::MacVolumeField> data{};
+                if (descriptor.kind == scene::FieldKind::Float) data = scene::ScalarVolumeField{descriptor.sampling};
+                else if (descriptor.kind == scene::FieldKind::Float3) data = scene::VectorVolumeField{descriptor.sampling, descriptor.vector_space};
+                else if (descriptor.kind == scene::FieldKind::UInt32) data = scene::CategoryVolumeField{descriptor.sampling};
+                else data = scene::MacVolumeField{descriptor.vector_space};
+                grid.fields.emplace_back(descriptor.id, descriptor.name, descriptor.unit, std::move(data));
+            }
             ++volume.revision.content;
             ++volume.revision.topology;
             this->configuration.evaluated_scene->mark_changed(scene::SceneChange::Volume | scene::SceneChange::Structure);
-        } else if (output.descriptor.resource_kind == scene::DynamicSceneResourceKind::NeuralField) this->configuration.evaluated_scene->mark_changed(scene::SceneChange::NeuralField);
+        } else if (std::holds_alternative<dynamics::HashGridRadianceFieldDataset>(output.descriptor.details)) this->configuration.evaluated_scene->mark_changed(scene::SceneChange::NeuralField);
     }
 
     void DynamicsRuntime::create_system(SystemRuntime& system, const scene::DynamicSystem& declared) {
@@ -650,8 +727,7 @@ namespace spectra {
         check_sdk_result(created.result, "creation");
         system.provider_instance = created.provider;
         for (const dynamics::DatasetDescriptor& descriptor : system.provider_descriptor->datasets) {
-            OutputRuntime& output = system.outputs.emplace_back();
-            output.descriptor     = descriptor;
+            OutputRuntime& output = system.outputs.emplace_back(descriptor);
             this->bind_output(output, declared);
         }
         system.timeline = this->context.runtime.resources.create_external_simulation_timeline();
@@ -668,8 +744,10 @@ namespace spectra {
             throw;
         }
         this->publication.configuring_system = nullptr;
+        this->context.runtime.resources.wait_external_timeline(system.timeline, 1u);
+        this->context.runtime.resources.signal_external_timeline(system.timeline, 2u);
         if (!system.provider_descriptor->telemetry.empty()) {
-            const std::uint64_t bytes = system.provider_descriptor->telemetry.size() * 32u;
+            const std::uint64_t bytes = system.provider_descriptor->telemetry.size() * sizeof(SpectraSdkMetricValue);
             for (TelemetryReadbackSlot& slot : system.telemetry_readback) slot.buffer = this->context.runtime.resources.create_buffer(bytes, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         }
     }
@@ -681,35 +759,31 @@ namespace spectra {
     }
 
     void DynamicsRuntime::append_output(const SystemRuntime& system, const OutputRuntime& output, const SpectraSdkOutputCommit& commit, dynamics::DynamicSnapshot& snapshot) const {
-        const std::vector<OutputBuffer>& buffers = output.slots[system.current_slot];
-        const auto view = [](const OutputBuffer& buffer) { return dynamics::GpuBufferView{&buffer.gpu_buffer, buffer.descriptor.handle()}; };
-        if (output.kind == SpectraSdkOutputKind::Mesh && output.scene_binding) {
-            const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details);
+        const std::vector<OutputBuffer>& buffers = output.storage.slots[system.current_slot];
+        const auto view = [](const OutputBuffer& buffer) { return dynamics::GpuBufferView{&buffer.gpu_buffer, buffer.descriptor}; };
+        if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details); mesh && output.scene_binding) {
             std::size_t index{};
-            dynamics::GpuTriangleMeshUpdate update{.geometry_id = scene::GeometryId{output.scene_binding->resource_id}, .positions = view(buffers[index++]), .indices = output.secondary_capacity == 0u ? std::nullopt : std::optional{view(output.static_buffers[0])}, .vertex_count = commit.active_count, .index_count = commit.secondary_count * 3u};
+            dynamics::GpuTriangleMeshUpdate update{.geometry_id = scene::GeometryId{output.scene_binding->resource_id}, .positions = view(buffers[index++])};
             if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Normal)) != 0u) update.normals = view(buffers[index++]);
             if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Tangent)) != 0u) update.tangents = view(buffers[index++]);
-            if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::TextureCoordinate)) != 0u) update.texture_coordinates = view(output.static_buffers.back());
             if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u) ++index;
             snapshot.scene_updates.emplace_back(std::move(update));
-        } else if (output.kind == SpectraSdkOutputKind::Spheres && output.scene_binding) snapshot.scene_updates.emplace_back(dynamics::GpuSphereSetUpdate{scene::SphereSetId{output.scene_binding->resource_id}, view(buffers[0]), commit.active_count});
-        else if (output.kind == SpectraSdkOutputKind::Particles && output.scene_binding) {
-            const auto& dataset = std::get<dynamics::ParticleSetDataset>(output.descriptor.details);
+        } else if (std::holds_alternative<dynamics::SphereSetDataset>(output.descriptor.details) && output.scene_binding) snapshot.scene_updates.emplace_back(dynamics::GpuSphereSetUpdate{scene::SphereSetId{output.scene_binding->resource_id}, view(buffers[0]), commit.active_count});
+        else if (const auto* particles = std::get_if<dynamics::ParticleSetDataset>(&output.descriptor.details); particles && output.scene_binding) {
             dynamics::GpuParticleSetUpdate update{.particle_set_id = scene::ParticleSetId{output.scene_binding->resource_id}, .positions = view(buffers[0]), .count = commit.active_count};
-            for (const dynamics::FieldDescriptor& field : dataset.fields) update.fields.emplace_back(field, std::vector{view(buffers[field.buffer_offset + 1u])});
+            for (const dynamics::FieldDescriptor& field : particles->fields) update.fields.emplace_back(field, std::vector{view(buffers[field.buffer_offset + 1u])});
             snapshot.scene_updates.emplace_back(std::move(update));
         }
-        else if (output.kind == SpectraSdkOutputKind::Instances) snapshot.scene_updates.emplace_back(dynamics::GpuInstanceTransformUpdate{view(buffers[0]), commit.active_count});
-        else if (output.kind == SpectraSdkOutputKind::Volume && output.scene_binding) {
-            const auto& dataset = std::get<dynamics::FieldDataset>(output.descriptor.details);
+        else if (std::holds_alternative<dynamics::InstanceTransformDataset>(output.descriptor.details)) snapshot.scene_updates.emplace_back(dynamics::GpuInstanceTransformUpdate{view(buffers[0]), commit.active_count});
+        else if (const auto* field_dataset = std::get_if<dynamics::FieldDataset>(&output.descriptor.details); field_dataset && output.scene_binding) {
             dynamics::GpuFieldUpdate update{.volume_id = scene::VolumeId{output.scene_binding->resource_id}};
-            for (const dynamics::FieldDescriptor& field : dataset.fields) {
+            for (const dynamics::FieldDescriptor& field : field_dataset->fields) {
                 dynamics::GpuFieldView field_view{.field = field};
                 for (std::uint32_t component = 0; component != field.buffer_count; ++component) field_view.values.emplace_back(view(buffers[field.buffer_offset + component]));
                 update.fields.emplace_back(std::move(field_view));
             }
             snapshot.scene_updates.emplace_back(std::move(update));
-        } else if (output.kind == SpectraSdkOutputKind::HashGridRadianceField && output.scene_binding) {
+        } else if (std::holds_alternative<dynamics::HashGridRadianceFieldDataset>(output.descriptor.details) && output.scene_binding) {
             snapshot.scene_updates.emplace_back(dynamics::GpuHashGridRadianceFieldUpdate{
                 scene::NeuralFieldId{output.scene_binding->resource_id},
                 view(buffers[0]),
@@ -727,18 +801,17 @@ namespace spectra {
             math::Transform transform{};
             if (visualization.anchor.value != 0u) transform = std::ranges::find(this->configuration.source_scene->resources.instances, visualization.anchor, &scene::Instance::id)->transform;
             dynamics::VisualizationStyle style{visualization, transform};
-            if (output.kind == SpectraSdkOutputKind::Lines) snapshot.visualizations.emplace_back(dynamics::GpuSegmentVisualization{style, view(buffers[0]), commit.active_count});
-            else if (output.kind == SpectraSdkOutputKind::Vectors) snapshot.visualizations.emplace_back(dynamics::GpuVectorVisualization{style, view(buffers[0]), commit.active_count});
-            else if (output.kind == SpectraSdkOutputKind::Image) snapshot.visualizations.emplace_back(dynamics::GpuImageVisualization{style, std::get<dynamics::ImageDataset>(output.descriptor.details), view(buffers[0])});
-            else if (output.kind == SpectraSdkOutputKind::Mesh) {
-                const auto& mesh = std::get<dynamics::TriangleMeshDataset>(output.descriptor.details);
+            if (std::holds_alternative<dynamics::SegmentDataset>(output.descriptor.details)) snapshot.visualizations.emplace_back(dynamics::GpuSegmentVisualization{style, view(buffers[0]), commit.active_count});
+            else if (std::holds_alternative<dynamics::VectorDataset>(output.descriptor.details)) snapshot.visualizations.emplace_back(dynamics::GpuVectorVisualization{style, view(buffers[0]), commit.active_count});
+            else if (const auto* image = std::get_if<dynamics::ImageDataset>(&output.descriptor.details)) snapshot.visualizations.emplace_back(dynamics::GpuImageVisualization{style, *image, view(buffers[0])});
+            else if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details)) {
                 std::size_t scalar_index{1u};
-                if ((mesh.attributes & std::to_underlying(SpectraSdkMeshAttribute::Normal)) != 0u) ++scalar_index;
-                if ((mesh.attributes & std::to_underlying(SpectraSdkMeshAttribute::Tangent)) != 0u) ++scalar_index;
-                const std::optional<dynamics::GpuBufferView> colors = (mesh.attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u ? std::optional{view(buffers[scalar_index])} : std::nullopt;
-                if ((mesh.attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u) ++scalar_index;
-                const std::optional<dynamics::GpuBufferView> scalars = (mesh.attributes & std::to_underlying(SpectraSdkMeshAttribute::Scalar)) != 0u ? std::optional{view(buffers[scalar_index])} : std::nullopt;
-                snapshot.visualizations.emplace_back(dynamics::GpuSurfaceVisualization{style, view(buffers[0]), output.secondary_capacity == 0u ? std::nullopt : std::optional{view(output.static_buffers[0])}, colors, scalars, commit.active_count, commit.secondary_count * 3u});
+                if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Normal)) != 0u) ++scalar_index;
+                if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Tangent)) != 0u) ++scalar_index;
+                const std::optional<dynamics::GpuBufferView> colors = (mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u ? std::optional{view(buffers[scalar_index])} : std::nullopt;
+                if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u) ++scalar_index;
+                const std::optional<dynamics::GpuBufferView> scalars = (mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Scalar)) != 0u ? std::optional{view(buffers[scalar_index])} : std::nullopt;
+                snapshot.visualizations.emplace_back(dynamics::GpuSurfaceVisualization{style, view(buffers[0]), mesh->index_capacity == 0u ? std::nullopt : std::optional{view(output.storage.static_buffers[0])}, colors, scalars, mesh->vertex_capacity, mesh->index_capacity});
             }
         }
     }
@@ -764,7 +837,7 @@ namespace spectra {
             system.signal_value = commit.signal_value;
             system.output_pending = true;
             for (std::size_t index = 0; index != system.outputs.size(); ++index)
-                if (system.outputs[index].kind != SpectraSdkOutputKind::Metrics && system.outputs[index].kind != SpectraSdkOutputKind::Cameras) this->append_output(system, system.outputs[index], commit.outputs[index], snapshot);
+                if (!std::holds_alternative<dynamics::CameraDataset>(system.outputs[index].descriptor.details)) this->append_output(system, system.outputs[index], commit.outputs[index], snapshot);
         }
         this->publication.snapshot          = std::move(snapshot);
         this->publication.snapshot_pending  = true;

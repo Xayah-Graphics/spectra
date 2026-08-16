@@ -2,6 +2,7 @@ module raster_volume;
 
 import raster_scene;
 import raster_texture;
+import color;
 
 struct RasterVolumePushData {
     DescriptorHandle<RWTexture2D<float4>> output;
@@ -508,18 +509,18 @@ float volume_density(
         StructuredBuffer<float3> emission_field =
             volume.emission_field;
         const uint color_space = (flags >> 8) & 255;
-        sigma_a = raster_to_linear_srgb(
+        sigma_a = color_to_linear_srgb(
             (flags & 1) != 0
                 ? sample_vector(sigma_a_field, volume.metadata.yzw, coordinate, (flags & (1u << 19u)) != 0)
                 : float3(1.0),
             color_space) * volume.scales.x;
-        sigma_s = raster_to_linear_srgb(
+        sigma_s = color_to_linear_srgb(
             (flags & 2) != 0
                 ? sample_vector(sigma_s_field, volume.metadata.yzw, coordinate, (flags & (1u << 20u)) != 0)
                 : float3(1.0),
             color_space) * volume.scales.x;
         emission = (flags & 4) != 0
-            ? sigma_a * raster_to_linear_srgb(sample_vector(emission_field, volume.metadata.yzw, coordinate, (flags & (1u << 21u)) != 0), color_space) * volume.scales.y
+            ? sigma_a * color_to_linear_srgb(sample_vector(emission_field, volume.metadata.yzw, coordinate, (flags & (1u << 21u)) != 0), color_space) * volume.scales.y
             : float3(0.0);
         return
             max(
@@ -796,7 +797,7 @@ void raster_volume(
     float3 color =
         radiance +
         transmittance *
-            raster_to_linear_srgb(
+            color_to_linear_srgb(
                 surface.xyz,
                 uint(push_data.film.z));
     const float maximum_component =
@@ -809,7 +810,7 @@ void raster_volume(
         color *= push_data.film.x / maximum_component;
     output[pixel] =
         float4(
-            raster_from_linear_srgb(
+            color_from_linear_srgb(
                 color,
                 uint(push_data.film.z)),
             surface.w);

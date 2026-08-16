@@ -10,10 +10,6 @@ namespace spectra::dynamics {
         Recreate,
     };
 
-    export enum class MeshUpdateMode : std::uint32_t {
-        Deformable,
-    };
-
     export struct FieldDescriptor {
         std::string id{};
         std::string name{};
@@ -28,7 +24,6 @@ namespace spectra::dynamics {
     export struct TriangleMeshDataset {
         std::uint32_t vertex_capacity{};
         std::uint32_t index_capacity{};
-        MeshUpdateMode update_mode{MeshUpdateMode::Deformable};
         std::uint32_t attributes{};
     };
 
@@ -78,10 +73,14 @@ namespace spectra::dynamics {
         std::vector<CameraDescriptor> cameras{};
     };
 
+    export struct HashGridRadianceFieldDataset {};
+
     export struct DatasetDescriptor {
         std::string id{};
-        std::optional<scene::DynamicSceneResourceKind> resource_kind{};
-        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, ParticleSetDataset, SegmentDataset, VectorDataset, FieldDataset, ImageDataset, CameraDataset> details{TriangleMeshDataset{}};
+        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, ParticleSetDataset, SegmentDataset, VectorDataset, FieldDataset, ImageDataset, CameraDataset, HashGridRadianceFieldDataset> details;
+
+        template <typename Details>
+        DatasetDescriptor(std::string id, Details details) : id(std::move(id)), details(std::move(details)) {}
     };
 
     export struct ParameterDescriptor {

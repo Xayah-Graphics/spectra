@@ -5,11 +5,16 @@ module;
 
 module spectra.render.rasterizer;
 
+import spectra.render.runtime_abi;
 import std;
 import vulkan;
 
 namespace spectra {
     namespace {
+        static_assert(std::to_underlying(scene::SpectrumColorSpace::Srgb) == shader_semantics::color_space_srgb);
+        static_assert(std::to_underlying(scene::SpectrumColorSpace::Rec2020) == shader_semantics::color_space_rec2020);
+        static_assert(std::to_underlying(scene::SpectrumColorSpace::Aces2065_1) == shader_semantics::color_space_aces2065_1);
+
         constexpr std::uint32_t invalid_raster_index = std::numeric_limits<std::uint32_t>::max();
 
         [[nodiscard]] math::Float3 raster_linear_srgb(const math::Float3 value, const scene::SpectrumColorSpace color_space) noexcept {
@@ -529,7 +534,7 @@ namespace spectra {
     }
 
     void Rasterizer::initialize_scene(const scene::SceneView scene) {
-        this->context.runtime.frames.retire_frame();
+        static_cast<void>(this->context.runtime.frames.retire_frame());
         this->scene.zero_volume_field_descriptor            = this->context.runtime.frames.allocate_resource_descriptor();
         this->scene.uploaded_revision                       = scene.revision;
         this->renderer.camera                               = scene.camera;
@@ -672,7 +677,7 @@ namespace spectra {
             if (const auto* data = std::get_if<scene::GridVolume>(&volume.data)) {
                 const auto vertex_sampled = [data](const std::string_view id) {
                     const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
-                    return found != data->fields.end() && found->sampling == scene::VolumeFieldSampling::Vertex ? 1u : 0u;
+                    return found != data->fields.end() && scene::field_sampling(*found) == scene::VolumeFieldSampling::Vertex ? 1u : 0u;
                 };
                 const bool rgb                   = rendering.density_field.empty() && (!rendering.sigma_a_field.empty() || !rendering.sigma_s_field.empty() || !rendering.emission_field.empty());
                 record.metadata                 = {rgb ? 1u : 0u, data->resolution.x, data->resolution.y, data->resolution.z};
@@ -773,19 +778,6 @@ namespace spectra {
 
     void Rasterizer::update_area_emitters(const vk::raii::CommandBuffer& command_buffer) {
         if (this->scene.area_emitters.empty()) return;
-        struct alignas(16) RasterAreaEmissionPushData {
-            DescriptorHandle positions{};
-            DescriptorHandle indices{};
-            DescriptorHandle radii{};
-            DescriptorHandle transforms{};
-            DescriptorHandle area_lights{};
-            std::uint64_t reserved{};
-            std::array<std::uint32_t, 4> range{};
-            std::array<float, 4> geometry_parameters{};
-            std::array<float, 4> emission_parameters{};
-            std::array<float, 4> source_radiance{};
-        };
-        static_assert(sizeof(RasterAreaEmissionPushData) == 112);
         const GpuSceneView gpu_scene = this->context.gpu_scene.view();
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
         command_buffer.bindShadersEXT(vk::ShaderStageFlagBits::eCompute, *this->scene.area_emission_shader);

@@ -162,6 +162,44 @@ namespace spectra::scene {
         return result;
     }
 
+    FieldKind field_kind(const VolumeField& field) noexcept {
+        return std::visit([]<typename Type>(const Type&) {
+            if constexpr (std::same_as<Type, ScalarVolumeField>) return FieldKind::Float;
+            else if constexpr (std::same_as<Type, VectorVolumeField>) return FieldKind::Float3;
+            else if constexpr (std::same_as<Type, CategoryVolumeField>) return FieldKind::UInt32;
+            else return FieldKind::MacFloat3;
+        }, field.data);
+    }
+
+    VolumeFieldSampling field_sampling(const VolumeField& field) noexcept {
+        return std::visit([]<typename Type>(const Type& data) {
+            if constexpr (std::same_as<Type, MacVolumeField>) return VolumeFieldSampling::Cell;
+            else return data.sampling;
+        }, field.data);
+    }
+
+    VolumeVectorSpace field_vector_space(const VolumeField& field) noexcept {
+        return std::visit([]<typename Type>(const Type& data) {
+            if constexpr (std::same_as<Type, VectorVolumeField> || std::same_as<Type, MacVolumeField>) return data.vector_space;
+            else return VolumeVectorSpace::Local;
+        }, field.data);
+    }
+
+    FieldKind field_kind(const ParticleField& field) noexcept {
+        return std::visit([]<typename Type>(const Type&) {
+            if constexpr (std::same_as<Type, ScalarParticleField>) return FieldKind::Float;
+            else if constexpr (std::same_as<Type, VectorParticleField>) return FieldKind::Float3;
+            else return FieldKind::UInt32;
+        }, field.data);
+    }
+
+    VolumeVectorSpace field_vector_space(const ParticleField& field) noexcept {
+        return std::visit([]<typename Type>(const Type& data) {
+            if constexpr (std::same_as<Type, VectorParticleField>) return data.vector_space;
+            else return VolumeVectorSpace::Local;
+        }, field.data);
+    }
+
     math::Bounds3 particle_set_bounds(const ParticleSet& particles) noexcept {
         return particles.domain.transformed(particles.transform);
     }
@@ -386,10 +424,6 @@ namespace spectra::scene {
 
     void Scene::acknowledge_changes() noexcept {
         this->current_revision.changes = SceneChange::None;
-    }
-
-    void Scene::mark_all_changed() noexcept {
-        this->mark_changed(SceneChange::All);
     }
 
     void Scene::mark_changed(const SceneChange changes) noexcept {

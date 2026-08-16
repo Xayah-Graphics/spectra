@@ -19,7 +19,6 @@ namespace spectra {
     export enum class GpuMeshUpdateMode : std::uint8_t {
         Immutable,
         Deformable,
-        TopologyChanging,
     };
 
     export enum class AccelerationGeometryKind : std::uint8_t {
@@ -232,8 +231,8 @@ namespace spectra {
         [[nodiscard]] const GpuTextureImage& texture_image(const scene::Texture& texture, vk::Format format) const;
         [[nodiscard]] GpuSceneView view() const noexcept;
         void retire_frame(std::uint32_t frame_slot_index);
-        [[nodiscard]] GpuSceneUpdate apply(const dynamics::DynamicSnapshot& snapshot, scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] GpuSceneUpdate synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        [[nodiscard]] GpuSceneUpdate apply(const dynamics::DynamicSnapshot& snapshot, scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
+        [[nodiscard]] GpuSceneUpdate synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
 
     private:
         struct {
@@ -266,6 +265,7 @@ namespace spectra {
             math::Bounds3 resolved_scene_bounds{math::Bounds3::empty()};
             std::array<GpuBuffer, VulkanFrames::frames_in_flight> frame_scratch{};
             std::array<vk::DeviceSize, VulkanFrames::frames_in_flight> scratch_offsets{};
+            std::uint32_t recording_frame_slot{};
             scene::SceneRevision synchronized_revision{};
             std::vector<scene::GeometryId> external_geometries{};
             std::vector<scene::SphereSetId> external_sphere_sets{};
@@ -298,7 +298,7 @@ namespace spectra {
         [[nodiscard]] vk::DeviceAddress acquire_acceleration_scratch(vk::DeviceSize size);
         void update_bottom_level(GpuGeometry& geometry, const scene::Geometry& source_geometry, const vk::raii::CommandBuffer& command_buffer);
         void generate_missing_attributes(GpuGeometry& geometry, bool generate_normals, bool generate_tangents, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_external_geometry(scene::GeometryId geometry_id, const GpuBuffer* positions, const GpuBuffer* normals, const GpuBuffer* tangents, const GpuBuffer* texture_coordinates, const GpuBuffer* indices, std::uint32_t vertex_count, std::uint32_t index_count, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_geometry(scene::GeometryId geometry_id, const GpuBuffer* positions, const GpuBuffer* normals, const GpuBuffer* tangents, const vk::raii::CommandBuffer& command_buffer);
         void update_sphere_set(GpuSphereSet& spheres, const scene::SphereSet& source_spheres, const vk::raii::CommandBuffer& command_buffer);
         void update_sphere_set_acceleration(GpuSphereSet& spheres, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_sphere_set(scene::SphereSetId sphere_set_id, DescriptorHandle spheres_descriptor, std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer);

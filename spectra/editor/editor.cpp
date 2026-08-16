@@ -69,7 +69,7 @@ namespace spectra {
         void reload_scene();
         void destroy_rendering() noexcept;
         void rebuild_rendering();
-        [[nodiscard]] bool prepare_rendering(const vk::raii::CommandBuffer& command_buffer, vk::Extent2D extent);
+        [[nodiscard]] bool prepare_rendering(const vk::raii::CommandBuffer& command_buffer, vk::Extent2D extent, std::uint32_t frame_slot_index);
         void record_editor_overlays(const vk::raii::CommandBuffer& command_buffer, bool show_axes);
     };
 
@@ -118,14 +118,16 @@ namespace spectra {
                         this->ui.notify(error.what(), true);
                     }
                 this->imgui.resize_viewport(frame->presentation_target.extent);
-                const vk::Extent2D viewport_extent = this->display.image.extent;
-                if (this->prepare_rendering(frame->frame.command_buffer, viewport_extent)) {
+                const vk::Extent2D viewport_extent = this->display.target().image.extent;
+                if (this->prepare_rendering(frame->frame.command_buffer, viewport_extent, frame->frame.slot_index)) {
                     this->render_engine.record(frame->frame.command_buffer, frame->frame.slot_index);
                     const RenderOutput output                  = this->render_engine.output();
                     const std::optional<DepthBufferView> depth = this->render_engine.depth_buffer();
+                    EntityDiagnostics default_diagnostics{};
+                    const EntityDiagnostics& entity_diagnostics = this->viewport.view.selection.active ? this->viewport_settings.entity_diagnostics.try_emplace(*this->viewport.view.selection.active).first->second : default_diagnostics;
                     std::optional<CameraReferenceVisualization> camera_reference{};
-                    if (this->viewport.view.selection.active && this->viewport.view.selection.active->kind == SceneEntityKind::Camera) {
-                        const scene::CameraId camera_id{this->viewport.view.selection.active->id};
+                    if (this->viewport.view.selection.active && std::holds_alternative<scene::CameraId>(this->viewport.view.selection.active->data)) {
+                        const scene::CameraId camera_id = std::get<scene::CameraId>(this->viewport.view.selection.active->data);
                         if (const dynamics::CameraReferenceImage* reference = this->dynamics.camera_reference(camera_id)) {
                             const scene::Camera& camera = *std::ranges::find(this->document.content.evaluated.resources.cameras, camera_id, &scene::Camera::id);
                             const bool viewing_reference = this->viewport.view.source == CameraSource::Scene && this->viewport.view.scene_camera == camera_id;
@@ -141,7 +143,7 @@ namespace spectra {
                                 overlay_width,
                                 overlay_height,
                             };
-                            camera_reference = CameraReferenceVisualization{reference, &camera, overlay_rect, this->viewport_settings.selection_diagnostics.camera_gt_overlay, this->viewport_settings.selection_diagnostics.camera_gt_plane};
+                            camera_reference = CameraReferenceVisualization{reference, &camera, overlay_rect, entity_diagnostics.camera_gt_overlay, entity_diagnostics.camera_gt_plane};
                         }
                     }
                     record_render_composition(frame->frame.command_buffer, this->display,
@@ -154,7 +156,7 @@ namespace spectra {
                             .visualizations         = this->dynamics.visualizations(),
                             .visualization          = &this->visualization,
                             .neural_field           = &this->neural_field,
-                            .diagnostics            = SceneDiagnosticsComposition{this->diagnostics, this->viewport_settings.scene_guides, this->viewport_settings.selection_diagnostics, this->viewport.view.selection, this->viewport_settings.guides_visible},
+                            .diagnostics            = SceneDiagnosticsComposition{this->diagnostics, this->viewport_settings.scene_guides, entity_diagnostics, this->viewport.view.selection, this->viewport_settings.guides_visible},
                             .camera_reference       = camera_reference,
                             .frame_slot_index       = frame->frame.slot_index,
                             .exposure               = this->viewport_settings.exposure,
@@ -184,6 +186,7 @@ namespace spectra {
             this->document.content.source    = std::move(next_scene);
             this->document.content.evaluated = this->document.content.source;
             this->document.content.path      = path;
+            this->viewport_settings.entity_diagnostics.clear();
             if (this->document.content.source.dynamic_setup) this->dynamics.initialize(path, this->document.content.source, this->document.content.evaluated);
             this->rebuild_rendering();
             this->viewport.initialize_from_scene();
@@ -267,13 +270,13 @@ namespace spectra {
         if (!pick.ready) return;
         std::optional<SceneEntityReference> entity{};
         if (pick.diagnostic_pick_index) entity = this->diagnostics.pick_entity(frame_slot_index, *pick.diagnostic_pick_index);
-        if (!entity && pick.neural_field) entity = SceneEntityReference{SceneEntityKind::NeuralField, pick.neural_field->value};
+        if (!entity && pick.neural_field) entity = SceneEntityReference{*pick.neural_field};
         if (!entity && pick.entity) {
             if (pick.entity->kind == GpuAccelerationEntityKind::Primitive) {
                 const GpuScenePrimitive& primitive = this->gpu_scene.view().primitives[pick.entity->resource_index];
-                entity = SceneEntityReference{SceneEntityKind::Instance, this->document.content.evaluated.resources.instances[primitive.scene_instance_index].id.value};
+                entity = SceneEntityReference{this->document.content.evaluated.resources.instances[primitive.scene_instance_index].id};
             } else
-                entity = SceneEntityReference{SceneEntityKind::Volume, this->document.content.evaluated.resources.volumes[pick.entity->resource_index].id.value};
+                entity = SceneEntityReference{this->document.content.evaluated.resources.volumes[pick.entity->resource_index].id};
         }
         if (!pick.select) {
             this->viewport.view.selection.hovered = entity;
@@ -323,17 +326,17 @@ namespace spectra {
         this->rendering.synchronized_scene_revision = this->document.content.evaluated.revision().number;
     }
 
-    bool EditorApplication::prepare_rendering(const vk::raii::CommandBuffer& command_buffer, const vk::Extent2D extent) {
+    bool EditorApplication::prepare_rendering(const vk::raii::CommandBuffer& command_buffer, const vk::Extent2D extent, const std::uint32_t frame_slot_index) {
         GpuSceneUpdate gpu_update{};
         bool gpu_scene_synchronized{};
         if (const dynamics::DynamicSnapshot* snapshot = this->dynamics.acquire_snapshot()) {
-            gpu_update             = this->gpu_scene.apply(*snapshot, this->document.content.evaluated.view(), command_buffer);
+            gpu_update             = this->gpu_scene.apply(*snapshot, this->document.content.evaluated.view(), command_buffer, frame_slot_index);
             gpu_scene_synchronized = true;
         }
 
         const scene::SceneRevision revision = this->document.content.evaluated.revision();
         const bool scene_changed            = revision.number != this->rendering.synchronized_scene_revision;
-        if (scene_changed && !gpu_scene_synchronized) gpu_update = this->gpu_scene.synchronize(this->document.content.evaluated.view(), command_buffer);
+        if (scene_changed && !gpu_scene_synchronized) gpu_update = this->gpu_scene.synchronize(this->document.content.evaluated.view(), command_buffer, frame_slot_index);
         const scene::SceneChange scene_changes = (scene_changed ? revision.changes : scene::SceneChange::None) | gpu_update.scene_changes;
         if (scene_changes != scene::SceneChange::None || gpu_update.gpu_changes != GpuSceneChange::None) {
             scene::SceneView synchronized_scene = this->document.content.evaluated.view();
@@ -358,9 +361,7 @@ namespace spectra {
         if (scene_changed) this->document.content.evaluated.acknowledge_changes();
         if (this->document.content.source.revision().changes != scene::SceneChange::None) this->document.content.source.acknowledge_changes();
         const bool renderer_ready = this->render_engine.prepare(this->document.content.evaluated.view(), RenderView{this->viewport.view.render_camera, extent, this->viewport.view.render_camera_revision}, command_buffer);
-        if (this->dynamics.initialized()) {
-            this->dynamics.record_telemetry(command_buffer, this->runtime.frames.frame.current_slot_index);
-        }
+        if (this->dynamics.initialized()) this->dynamics.record_telemetry(command_buffer, frame_slot_index);
         this->dynamics.consume_snapshot();
         return renderer_ready;
     }
@@ -368,18 +369,16 @@ namespace spectra {
     void EditorApplication::record_editor_overlays(const vk::raii::CommandBuffer& command_buffer, const bool show_axes) {
         std::vector<scene::InstanceId> selected_instances{};
         for (const SceneEntityReference entity : this->viewport.view.selection.selected) {
-            if (entity.kind == SceneEntityKind::Instance)
-                selected_instances.emplace_back(entity.id);
-            else if (entity.kind == SceneEntityKind::AreaEmitter)
-                selected_instances.emplace_back(entity.owner);
+            if (const scene::InstanceId* instance = std::get_if<scene::InstanceId>(&entity.data)) selected_instances.emplace_back(*instance);
+            else if (const SceneEntityReference::AreaEmitter* emitter = std::get_if<SceneEntityReference::AreaEmitter>(&entity.data)) selected_instances.emplace_back(emitter->instance);
         }
         const auto instance_id = [](const std::optional<SceneEntityReference> entity) -> std::optional<scene::InstanceId> {
             if (!entity) return std::nullopt;
-            if (entity->kind == SceneEntityKind::Instance) return scene::InstanceId{entity->id};
-            if (entity->kind == SceneEntityKind::AreaEmitter) return scene::InstanceId{entity->owner};
+            if (const scene::InstanceId* instance = std::get_if<scene::InstanceId>(&entity->data)) return *instance;
+            if (const SceneEntityReference::AreaEmitter* emitter = std::get_if<SceneEntityReference::AreaEmitter>(&entity->data)) return emitter->instance;
             return std::nullopt;
         };
-        this->overlay.record(command_buffer, this->display, this->viewport.view.render_camera,
+        this->overlay.record(command_buffer, this->display.target(), this->viewport.view.render_camera,
             ViewportOverlayState{
                 .selected_instances = selected_instances,
                 .active_instance    = instance_id(this->viewport.view.selection.active),

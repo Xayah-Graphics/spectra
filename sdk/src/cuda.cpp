@@ -27,7 +27,8 @@ namespace spectra::sdk::cuda {
                 cudaExternalMemoryHandleDesc description{};
                 description.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
                 description.handle.win32.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(source.memory.value));
-                description.size                = source.byte_size;
+                description.size                = source.allocation_size;
+                description.flags               = cudaExternalMemoryDedicated;
                 const cudaError_t import_result = cudaImportExternalMemory(&memory, &description);
                 check_cuda(import_result, "cudaImportExternalMemory");
                 cudaExternalMemoryBufferDesc buffer{};
@@ -61,7 +62,7 @@ namespace spectra::sdk::cuda {
 
         struct OutputState {
             std::string id{};
-            OutputKind kind{};
+            SpectraSdkOutputKind kind{};
             MeshAttribute mesh_attributes{};
             std::vector<std::string> field_ids{};
             std::vector<FieldKind> field_kinds{};
@@ -139,7 +140,19 @@ namespace spectra::sdk::cuda {
         }
 
         [[nodiscard]] SpectraSdkOutputKind abi_kind(const OutputKind kind) noexcept {
-            return static_cast<SpectraSdkOutputKind>(kind);
+            switch (kind) {
+                case OutputKind::Mesh: return SpectraSdkOutputKind::Mesh;
+                case OutputKind::Spheres: return SpectraSdkOutputKind::Spheres;
+                case OutputKind::Volume: return SpectraSdkOutputKind::Volume;
+                case OutputKind::Instances: return SpectraSdkOutputKind::Instances;
+                case OutputKind::Particles: return SpectraSdkOutputKind::Particles;
+                case OutputKind::Lines: return SpectraSdkOutputKind::Lines;
+                case OutputKind::Vectors: return SpectraSdkOutputKind::Vectors;
+                case OutputKind::Image: return SpectraSdkOutputKind::Image;
+                case OutputKind::HashGridRadianceField: return SpectraSdkOutputKind::HashGridRadianceField;
+                case OutputKind::Cameras: return SpectraSdkOutputKind::Cameras;
+            }
+            std::unreachable();
         }
 
         [[nodiscard]] RawView raw_view(const ImportedBuffer& buffer, const std::uint64_t element_size) noexcept {
@@ -170,7 +183,7 @@ namespace spectra::sdk::cuda {
         State& state              = setup_state(source);
         OutputState& output       = state.outputs.emplace_back();
         output.id                 = id;
-        output.kind               = kind;
+        output.kind               = abi_kind(kind);
         output.mesh_attributes    = attributes;
         output.field_ids.assign(field_ids.begin(), field_ids.end());
         output.field_kinds.assign(field_kinds.begin(), field_kinds.end());
@@ -195,7 +208,7 @@ namespace spectra::sdk::cuda {
         OutputState& output       = output_state(state, id);
         output.primary_capacity   = vertex_capacity;
         output.secondary_capacity = triangle_capacity;
-        const SpectraSdkOutputLayout layout{output_index(state, output), abi_kind(output.kind), vertex_capacity, triangle_capacity, {}, std::to_underlying(output.mesh_attributes)};
+        const SpectraSdkOutputLayout layout{output_index(state, output), output.kind, vertex_capacity, triangle_capacity, {}, std::to_underlying(output.mesh_attributes)};
         request_output(state, output, layout);
         const RawView triangles = triangle_capacity == 0u ? RawView{} : raw_view(output.fixed_buffers[0], sizeof(std::uint32_t));
         const bool has_uv        = contains(output.mesh_attributes, MeshAttribute::TextureCoordinate);
@@ -212,7 +225,7 @@ namespace spectra::sdk::cuda {
         for (const Camera& camera : cameras) encoded.emplace_back(std::bit_cast<SpectraSdkCamera>(camera));
         const SpectraSdkOutputLayout layout{
             output_index(state, output),
-            abi_kind(output.kind),
+            output.kind,
             output.primary_capacity,
             0u,
             {width, height, output.primary_capacity},
@@ -237,7 +250,7 @@ namespace spectra::sdk::cuda {
         State& state            = setup_state(source);
         OutputState& output     = output_state(state, id);
         output.primary_capacity = capacity;
-        const SpectraSdkOutputLayout layout{output_index(state, output), abi_kind(output.kind), capacity, 0u, {}, 0u, radius};
+        const SpectraSdkOutputLayout layout{output_index(state, output), output.kind, capacity, 0u, {}, 0u, radius};
         request_output(state, output, layout);
     }
 
@@ -246,7 +259,7 @@ namespace spectra::sdk::cuda {
         OutputState& output     = output_state(state, id);
         output.resolution       = resolution;
         output.primary_capacity = resolution.x * resolution.y * resolution.z;
-        const SpectraSdkOutputLayout layout{output_index(state, output), abi_kind(output.kind), output.primary_capacity, 0u, {resolution.x, resolution.y, resolution.z}};
+        const SpectraSdkOutputLayout layout{output_index(state, output), output.kind, output.primary_capacity, 0u, {resolution.x, resolution.y, resolution.z}};
         request_output(state, output, layout);
     }
 
@@ -255,7 +268,7 @@ namespace spectra::sdk::cuda {
         OutputState& output     = output_state(state, id);
         output.resolution       = extent;
         output.primary_capacity = extent.x * extent.y;
-        const SpectraSdkOutputLayout layout{output_index(state, output), abi_kind(output.kind), output.primary_capacity, 0u, {extent.x, extent.y, 1u}};
+        const SpectraSdkOutputLayout layout{output_index(state, output), output.kind, output.primary_capacity, 0u, {extent.x, extent.y, 1u}};
         request_output(state, output, layout);
     }
 
@@ -263,7 +276,7 @@ namespace spectra::sdk::cuda {
         State& state          = setup_state(source);
         OutputState& output   = output_state(state, id);
         output.primary_capacity = SPECTRA_SDK_HASH_GRID_ENTRY_COUNT;
-        const SpectraSdkOutputLayout layout{output_index(state, output), abi_kind(output.kind), output.primary_capacity};
+        const SpectraSdkOutputLayout layout{output_index(state, output), output.kind, output.primary_capacity};
         request_output(state, output, layout);
     }
 
@@ -272,7 +285,7 @@ namespace spectra::sdk::cuda {
         if (!state.metric_ids.empty()) {
             OutputState& output     = state.outputs.emplace_back();
             output.id               = "__metrics";
-            output.kind             = static_cast<OutputKind>(SpectraSdkOutputKind::Metrics);
+            output.kind             = SpectraSdkOutputKind::Metrics;
             output.primary_capacity = static_cast<std::uint32_t>(state.metric_ids.size());
             const SpectraSdkOutputLayout layout{output_index(state, output), SpectraSdkOutputKind::Metrics, output.primary_capacity};
             request_output(state, output, layout);
@@ -282,6 +295,11 @@ namespace spectra::sdk::cuda {
         }
         state.commits.resize(state.outputs.size());
         check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize setup");
+        cudaExternalSemaphoreSignalParams parameters{};
+        parameters.params.fence.value = 1u;
+        check_cuda(cudaSignalExternalSemaphoresAsync(&state.timeline, &parameters, 1u, nullptr), "cudaSignalExternalSemaphoresAsync setup");
+        check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize setup signal");
+        state.ready_value = 1u;
     }
 
     Output::Output(Setup& setup) noexcept : state(setup.state) {
@@ -314,7 +332,7 @@ namespace spectra::sdk::cuda {
             check_cuda(cudaWaitExternalSemaphoresAsync(&state.timeline, &parameters, 1u, state.stream), "cudaWaitExternalSemaphoresAsync");
         }
         state.commits.assign(state.outputs.size(), {});
-        return {this->state};
+        return Frame{this->state};
     }
 
     RawMeshView frame_mesh_internal(void* source, const std::string_view id) {
@@ -330,7 +348,7 @@ namespace spectra::sdk::cuda {
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
         commit.active_count             = output.primary_capacity;
         commit.secondary_count          = output.secondary_capacity;
-        return {positions, normals, tangents, colors, scalars, &commit.active_count, &commit.secondary_count};
+        return {positions, normals, tangents, colors, scalars};
     }
 
     RawView frame_collection_internal(void* source, const std::string_view id, const std::uint32_t active_count) {
@@ -338,7 +356,7 @@ namespace spectra::sdk::cuda {
         OutputState& output   = output_state(state, id);
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
         commit.active_count             = active_count;
-        return raw_view(output.slots[state.next_slot][0], output.kind == OutputKind::Spheres ? sizeof(Sphere) : output.kind == OutputKind::Instances ? sizeof(Instance) : output.kind == OutputKind::Lines ? sizeof(Line) : sizeof(Vector));
+        return raw_view(output.slots[state.next_slot][0], output.kind == SpectraSdkOutputKind::Spheres ? sizeof(Sphere) : output.kind == SpectraSdkOutputKind::Instances ? sizeof(Instance) : output.kind == SpectraSdkOutputKind::Lines ? sizeof(Line) : sizeof(Vector));
     }
 
     RawParticlesView frame_particles_internal(void* source, const std::string_view id, const std::uint32_t active_count) {
@@ -386,7 +404,7 @@ namespace spectra::sdk::cuda {
         OutputState& output = *static_cast<OutputState*>(source);
         const auto found = std::ranges::find(output.field_ids, id);
         const std::size_t index = static_cast<std::size_t>(std::distance(output.field_ids.begin(), found));
-        const std::size_t offset = output.field_buffer_offsets[index] + (output.kind == OutputKind::Particles ? 1u : 0u);
+        const std::size_t offset = output.field_buffer_offsets[index] + (output.kind == SpectraSdkOutputKind::Particles ? 1u : 0u);
         const std::uint64_t element_size = output.field_kinds[index] == FieldKind::Float ? sizeof(float) : output.field_kinds[index] == FieldKind::Float3 ? sizeof(Float3) : sizeof(std::uint32_t);
         return raw_view(output.slots[*output.current_slot][offset], element_size);
     }

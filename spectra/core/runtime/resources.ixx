@@ -41,6 +41,7 @@ namespace spectra {
         vk::raii::Buffer buffer{nullptr};
         vk::DeviceAddress address{};
         vk::DeviceSize size{};
+        vk::DeviceSize external_memory_size{};
         void* mapped{};
 
         GpuBuffer() = default;
@@ -88,25 +89,16 @@ namespace spectra {
         GpuExternalTimelineSemaphore& operator=(const GpuExternalTimelineSemaphore&)     = delete;
     };
 
-    export enum class ExternalHandleType : std::uint32_t {
-        None,
-        OpaqueWin32,
-        OpaqueFileDescriptor,
-    };
-
     export struct ExternalHandle {
         ExternalHandle() = default;
-        ExternalHandle(ExternalHandleType type, std::uint64_t value) noexcept;
+        explicit ExternalHandle(std::uint64_t value) noexcept;
         ExternalHandle(ExternalHandle&& other) noexcept;
         ~ExternalHandle();
         ExternalHandle& operator=(ExternalHandle&& other) noexcept;
         ExternalHandle(const ExternalHandle&)            = delete;
         ExternalHandle& operator=(const ExternalHandle&) = delete;
 
-        ExternalHandleType type{ExternalHandleType::None};
         std::uint64_t value{};
-
-        [[nodiscard]] std::uint64_t release() noexcept;
     };
 
     export struct GpuResources {

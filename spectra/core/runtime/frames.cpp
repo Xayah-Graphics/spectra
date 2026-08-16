@@ -57,8 +57,8 @@ namespace spectra {
         this->deferred.sampler_indices.clear();
     }
 
-    void VulkanFrames::retire_frame() {
-        if (this->frame.retired) return;
+    std::uint32_t VulkanFrames::retire_frame() {
+        if (this->frame.retired) return this->frame.current_slot_index;
         const vk::raii::Fence& fence = this->frame.fences[this->frame.current_slot_index];
         if (this->context.graphics.device.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra frame fence wait failed");
         this->frame.completed_serial = std::max(this->frame.completed_serial, this->frame.submitted_serials[this->frame.current_slot_index]);
@@ -82,10 +82,11 @@ namespace spectra {
         this->frame.submit_waits[this->frame.current_slot_index].clear();
         this->frame.submit_signals[this->frame.current_slot_index].clear();
         this->frame.retired = true;
+        return this->frame.current_slot_index;
     }
 
     FrameContext VulkanFrames::begin_frame() {
-        this->retire_frame();
+        static_cast<void>(this->retire_frame());
         const vk::raii::CommandBuffer& command_buffer = this->frame.command_buffers[this->frame.current_slot_index];
         command_buffer.reset();
         command_buffer.begin(vk::CommandBufferBeginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit});

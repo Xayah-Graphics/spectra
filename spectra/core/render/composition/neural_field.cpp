@@ -1,34 +1,14 @@
+module;
+
+#include <spectra/sdk/neural_field_layout.h>
+
 module spectra.render.composition.neural_field;
 
+import spectra.render.runtime_abi;
 import std;
 import vulkan;
 
 namespace spectra {
-    namespace {
-        struct alignas(16) NeuralFieldPushData {
-            DescriptorHandle output{};
-            DescriptorHandle depth{};
-            DescriptorHandle hash_grid{};
-            DescriptorHandle density_input{};
-            DescriptorHandle density_output{};
-            DescriptorHandle rgb_input{};
-            DescriptorHandle rgb_hidden{};
-            DescriptorHandle rgb_output{};
-            DescriptorHandle occupancy{};
-            std::array<std::uint32_t, 4> metadata{};
-            std::array<float, 4> camera_clip{};
-            std::array<float, 4> inverse_transform_row_0{};
-            std::array<float, 4> inverse_transform_row_1{};
-            std::array<float, 4> inverse_transform_row_2{};
-            std::array<float, 4> camera_position{};
-            std::array<float, 4> camera_right{};
-            std::array<float, 4> camera_up{};
-            std::array<float, 4> camera_forward{};
-        };
-
-        static_assert(sizeof(NeuralFieldPushData) == 224);
-    } // namespace
-
     NeuralFieldRenderer::NeuralFieldRenderer(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory) : context{runtime, gpu_scene, std::move(shader_directory)} {
         if (!this->context.runtime.graphics.neural_field_supported) return;
         const std::vector<std::uint32_t> code = load_spirv(this->context.shader_directory / "neural_field_render.spv");
@@ -142,15 +122,15 @@ namespace spectra {
             this->context.runtime.resources.write_buffer_descriptor(result.descriptor, vk::DescriptorType::eStorageBuffer, result.buffer);
             return result;
         };
-        replacement.density_input  = create_matrix(source.density_input.buffer, 64, 32);
-        replacement.density_output = create_matrix(source.density_output.buffer, 16, 64);
-        replacement.rgb_input      = create_matrix(source.rgb_input.buffer, 64, 32);
-        replacement.rgb_hidden     = create_matrix(source.rgb_hidden.buffer, 64, 64);
-        replacement.rgb_output     = create_matrix(source.rgb_output.buffer, 16, 64);
+        const auto& dimensions = sdk::neural_field_layout::matrix_dimensions;
+        replacement.density_input  = create_matrix(source.density_input.buffer, dimensions[0][0], dimensions[0][1]);
+        replacement.density_output = create_matrix(source.density_output.buffer, dimensions[1][0], dimensions[1][1]);
+        replacement.rgb_input      = create_matrix(source.rgb_input.buffer, dimensions[2][0], dimensions[2][1]);
+        replacement.rgb_hidden     = create_matrix(source.rgb_hidden.buffer, dimensions[3][0], dimensions[3][1]);
+        replacement.rgb_output     = create_matrix(source.rgb_output.buffer, dimensions[4][0], dimensions[4][1]);
         std::array<std::size_t, 5> destination_sizes{replacement.density_input.size, replacement.density_output.size, replacement.rgb_input.size, replacement.rgb_hidden.size, replacement.rgb_output.size};
         const std::array<const GpuBuffer*, 5> sources{&source.density_input.buffer, &source.density_output.buffer, &source.rgb_input.buffer, &source.rgb_hidden.buffer, &source.rgb_output.buffer};
         const std::array<OptimizedMatrix*, 5> destinations{&replacement.density_input, &replacement.density_output, &replacement.rgb_input, &replacement.rgb_hidden, &replacement.rgb_output};
-        constexpr std::array<std::array<std::uint32_t, 2>, 5> dimensions{{{64, 32}, {16, 64}, {64, 32}, {64, 64}, {16, 64}}};
         std::array<vk::ConvertCooperativeVectorMatrixInfoNV, 5> conversions{};
         for (std::size_t index = 0; index != conversions.size(); ++index)
             conversions[index] = {

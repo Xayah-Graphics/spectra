@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.4.0)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
-set(SPECTRA_SDK_VERSION 1.3.0)
+set(SPECTRA_SDK_VERSION 2.0.1)
 project(SpectraSDK VERSION ${SPECTRA_SDK_VERSION} LANGUAGES CXX)
 
 if (NOT WIN32)
@@ -32,7 +32,9 @@ target_sources(
         PUBLIC
         FILE_SET public_headers TYPE HEADERS
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/spectra/sdk/cuda_types.h"
+        FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/spectra/sdk/cuda_types.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/spectra/sdk/neural_field_layout.h"
         PUBLIC
         FILE_SET public_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/modules"

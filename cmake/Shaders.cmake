@@ -8,6 +8,8 @@ set(SPECTRA_PATH_TRACER_SHADER_OUTPUT_DIR "${SPECTRA_SHADER_OUTPUT_DIR}/pathtrac
 set(SPECTRA_SHADER_STAMP "${SPECTRA_SHADER_OUTPUT_DIR}/build.stamp")
 set(SPECTRA_PATH_TRACER_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/pathtracer/abi.ixx")
 set(SPECTRA_RASTER_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/rasterizer/abi.ixx")
+set(SPECTRA_RUNTIME_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/runtime/abi.ixx")
+set(SPECTRA_EDITOR_ABI_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/editor/abi.ixx")
 set(SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE "${CMAKE_CURRENT_BINARY_DIR}/generated/pathtracer/shader_entries.ixx")
 
 set(SPECTRA_SHADER_RUNTIME_ENTRIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/entries_runtime.txt")
@@ -41,6 +43,12 @@ endfunction()
 spectra_collect_shader_spv_outputs("${SPECTRA_SHADER_RUNTIME_ENTRIES}" SPECTRA_RUNTIME_SHADER_SPV_OUTPUTS)
 spectra_collect_shader_spv_outputs("${SPECTRA_SHADER_PATH_TRACER_ENTRIES}" SPECTRA_PATH_TRACER_SHADER_SPV_OUTPUTS)
 set(SPECTRA_SHADER_SPV_OUTPUTS ${SPECTRA_RUNTIME_SHADER_SPV_OUTPUTS} ${SPECTRA_PATH_TRACER_SHADER_SPV_OUTPUTS})
+set(SPECTRA_SHADER_ABI_OUTPUTS "${SPECTRA_PATH_TRACER_ABI_MODULE}" "${SPECTRA_RASTER_ABI_MODULE}" "${SPECTRA_RUNTIME_ABI_MODULE}")
+set(SPECTRA_SHADER_ABI_TYPES
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/abi.types"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/raster_abi.types"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/runtime_abi.types"
+)
 
 file(
         GLOB
@@ -49,7 +57,8 @@ file(
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/*.slang"
 )
 list(APPEND SPECTRA_SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/shader_semantics.h")
-set(SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders")
+list(APPEND SPECTRA_SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include/spectra/sdk/neural_field_layout.h")
+set(SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include")
 if (SPECTRA_BUILD_UI)
     file(
             GLOB
@@ -62,13 +71,14 @@ if (SPECTRA_BUILD_UI)
     list(PREPEND SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders")
     spectra_collect_shader_spv_outputs("${SPECTRA_SHADER_EDITOR_ENTRIES}" SPECTRA_EDITOR_SHADER_SPV_OUTPUTS)
     list(APPEND SPECTRA_SHADER_SPV_OUTPUTS ${SPECTRA_EDITOR_SHADER_SPV_OUTPUTS})
+    list(APPEND SPECTRA_SHADER_ABI_OUTPUTS "${SPECTRA_EDITOR_ABI_MODULE}")
+    list(APPEND SPECTRA_SHADER_ABI_TYPES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/editor_abi.types")
 endif ()
 
 add_custom_command(
         OUTPUT "${SPECTRA_SHADER_STAMP}"
         BYPRODUCTS
-        "${SPECTRA_PATH_TRACER_ABI_MODULE}"
-        "${SPECTRA_RASTER_ABI_MODULE}"
+        ${SPECTRA_SHADER_ABI_OUTPUTS}
         "${SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE}"
         ${SPECTRA_SHADER_SPV_OUTPUTS}
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_SHADER_OUTPUT_DIR}"
@@ -79,6 +89,10 @@ add_custom_command(
         "${SPECTRA_PATH_TRACER_ABI_MODULE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/raster_abi.types"
         "${SPECTRA_RASTER_ABI_MODULE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/runtime_abi.types"
+        "${SPECTRA_RUNTIME_ABI_MODULE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/editor/shaders/editor_abi.types"
+        "${SPECTRA_EDITOR_ABI_MODULE}"
         "${SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE}"
         "${SPECTRA_SHADER_OUTPUT_DIR}"
         "${SPECTRA_SHADER_RUNTIME_ENTRIES}"
@@ -90,8 +104,7 @@ add_custom_command(
         DEPENDS
         spectra_shader_compiler
         "$<TARGET_FILE:spectra::slang>"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/abi.types"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/raster_abi.types"
+        ${SPECTRA_SHADER_ABI_TYPES}
         ${SPECTRA_SHADER_ENTRY_FILES}
         ${SPECTRA_SHADER_SOURCES}
         VERBATIM

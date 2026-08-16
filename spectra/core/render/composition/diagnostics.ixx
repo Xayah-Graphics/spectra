@@ -1,7 +1,6 @@
 export module spectra.render.composition.diagnostics;
 
 import spectra.render.contract;
-import spectra.render.display;
 import spectra.render.gpu_scene;
 import spectra.runtime;
 import spectra.scene;
@@ -21,13 +20,26 @@ namespace spectra {
     };
 
     export struct SceneEntityReference {
-        SceneEntityKind kind{SceneEntityKind::None};
-        std::uint64_t id{};
-        std::uint64_t owner{};
-        std::uint32_t subindex{};
+        struct AreaEmitter {
+            scene::LightId light{};
+            scene::InstanceId instance{};
+            std::uint32_t primitive_index{};
+
+            friend auto operator<=>(const AreaEmitter&, const AreaEmitter&) = default;
+        };
+
+        std::variant<std::monostate, scene::InstanceId, scene::CameraId, scene::LightId, AreaEmitter, scene::ParticleSetId, scene::VolumeId, scene::NeuralFieldId> data{};
+
+        SceneEntityReference() = default;
+
+        template <typename Type>
+        explicit SceneEntityReference(Type value) noexcept : data{value} {}
 
         friend auto operator<=>(const SceneEntityReference&, const SceneEntityReference&) = default;
     };
+
+    export [[nodiscard]] SceneEntityKind scene_entity_kind(const SceneEntityReference& entity) noexcept;
+    export [[nodiscard]] std::uint64_t scene_entity_id(const SceneEntityReference& entity) noexcept;
 
     export struct SelectionState {
         std::vector<SceneEntityReference> selected{};
@@ -41,7 +53,7 @@ namespace spectra {
         bool lights{};
     };
 
-    export struct SelectionDiagnosticSettings {
+    export struct EntityDiagnostics {
         bool bounds{true};
         bool wireframe{};
         bool vertices{};
@@ -72,7 +84,7 @@ namespace spectra {
         SceneDiagnosticRenderer& operator=(SceneDiagnosticRenderer&&)      = delete;
 
         void initialize();
-        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, scene::SceneView scene, const scene::Camera& camera, std::optional<scene::CameraId> scene_camera_view, const SceneGuideSettings& scene_guides, const SelectionDiagnosticSettings& selection_diagnostics, const SelectionState& selection, bool visible);
+        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, ColorCompositionTarget target, DepthBufferView depth, scene::SceneView scene, const scene::Camera& camera, std::optional<scene::CameraId> scene_camera_view, const SceneGuideSettings& scene_guides, const EntityDiagnostics& entity_diagnostics, const SelectionState& selection, bool visible);
         [[nodiscard]] const GpuImage& pick_image() const noexcept;
         [[nodiscard]] std::optional<SceneEntityReference> pick_entity(std::uint32_t frame_slot_index, std::uint32_t pick_index) const noexcept;
 

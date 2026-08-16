@@ -25,10 +25,6 @@ namespace spectra {
             return this->value;
         }
 
-        [[nodiscard]] DescriptorHandle handle() const noexcept {
-            return this->value;
-        }
-
         void reset() noexcept;
 
     private:
@@ -63,7 +59,7 @@ namespace spectra {
         VulkanFrames& operator=(const VulkanFrames&) = delete;
         VulkanFrames& operator=(VulkanFrames&&)      = delete;
 
-        void retire_frame();
+        [[nodiscard]] std::uint32_t retire_frame();
         [[nodiscard]] FrameContext begin_frame();
         [[nodiscard]] std::uint32_t submit_frame();
         void wait_frame(std::uint32_t frame_slot_index) const;
@@ -78,6 +74,7 @@ namespace spectra {
         void enqueue_wait(vk::SemaphoreSubmitInfo wait);
         void enqueue_signal(vk::SemaphoreSubmitInfo signal);
 
+    private:
         struct {
             VulkanGraphics& graphics;
             GpuResources& resources;

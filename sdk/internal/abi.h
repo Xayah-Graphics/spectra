@@ -2,22 +2,19 @@
 #define SPECTRA_SDK_INTERNAL_ABI_H
 
 #include <cstdint>
+#include <spectra/sdk/neural_field_layout.h>
 
-inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = 4;
-inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = "spectra_sdk_api_4";
-inline constexpr std::uint32_t SPECTRA_SDK_HASH_GRID_ENTRY_COUNT   = 2920448;
-inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_INPUT_COUNT     = 64 * 32;
-inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_OUTPUT_COUNT    = 16 * 64;
-inline constexpr std::uint32_t SPECTRA_SDK_RGB_INPUT_COUNT         = 64 * 32;
-inline constexpr std::uint32_t SPECTRA_SDK_RGB_HIDDEN_COUNT        = 64 * 64;
-inline constexpr std::uint32_t SPECTRA_SDK_RGB_OUTPUT_COUNT        = 16 * 64;
-inline constexpr std::uint32_t SPECTRA_SDK_OCCUPANCY_WORD_COUNT    = 128 * 128 * 128 / 32;
+inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = 6;
+inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = "spectra_sdk_api_6";
+inline constexpr std::uint32_t SPECTRA_SDK_HASH_GRID_ENTRY_COUNT = spectra::sdk::neural_field_layout::hash_grid_entry_count;
+inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_INPUT_COUNT = SPECTRA_NEURAL_FIELD_DENSITY_INPUT_ROWS * SPECTRA_NEURAL_FIELD_DENSITY_INPUT_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_OUTPUT_COUNT = SPECTRA_NEURAL_FIELD_DENSITY_OUTPUT_ROWS * SPECTRA_NEURAL_FIELD_DENSITY_OUTPUT_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_RGB_INPUT_COUNT = SPECTRA_NEURAL_FIELD_RGB_INPUT_ROWS * SPECTRA_NEURAL_FIELD_RGB_INPUT_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_RGB_HIDDEN_COUNT = SPECTRA_NEURAL_FIELD_RGB_HIDDEN_ROWS * SPECTRA_NEURAL_FIELD_RGB_HIDDEN_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_RGB_OUTPUT_COUNT = SPECTRA_NEURAL_FIELD_RGB_OUTPUT_ROWS * SPECTRA_NEURAL_FIELD_RGB_OUTPUT_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_OCCUPANCY_WORD_COUNT = spectra::sdk::neural_field_layout::occupancy_word_count;
 
-#if defined(_WIN32)
 #define SPECTRA_SDK_EXPORT __declspec(dllexport)
-#else
-#define SPECTRA_SDK_EXPORT __attribute__((visibility("default")))
-#endif
 
 struct SpectraSdkString {
     const char* data;
@@ -148,18 +145,13 @@ struct SpectraSdkProviderDescriptor {
     std::uint64_t metric_count;
 };
 
-enum class SpectraSdkExternalHandleType : std::uint32_t {
-    OpaqueWin32,
-    OpaqueFileDescriptor,
-};
-
 struct SpectraSdkExternalHandle {
-    SpectraSdkExternalHandleType type;
     std::uint64_t value;
 };
 
 struct SpectraSdkGpuBuffer {
     SpectraSdkExternalHandle memory;
+    std::uint64_t allocation_size;
     std::uint64_t byte_size;
 };
 
@@ -205,6 +197,11 @@ struct SpectraSdkOutputCommit {
     std::uint32_t secondary_count;
 };
 
+struct SpectraSdkMetricValue {
+    double floating[3];
+    std::int64_t integer;
+};
+
 struct SpectraSdkFrameCommit {
     std::uint32_t slot_index;
     std::uint64_t signal_value;
@@ -246,6 +243,7 @@ struct SpectraSdkApi {
 
 static_assert(sizeof(SpectraSdkValue) == 40);
 static_assert(sizeof(SpectraSdkCamera) == 64);
+static_assert(sizeof(SpectraSdkGpuBuffer) == 24);
 static_assert(sizeof(SpectraSdkOutputCommit) == 8);
 static_assert(sizeof(SpectraSdkApi) == 72);
 

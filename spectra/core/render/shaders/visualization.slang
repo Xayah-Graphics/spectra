@@ -1,10 +1,13 @@
 module visualization;
 
-import sdk_output;
+#include "shader_semantics.h"
+
+import color;
+import shader_descriptor;
 
 struct VisualizationPushData {
-    uint2 primary;
-    uint2 secondary;
+    UntypedDescriptorHandle primary;
+    UntypedDescriptorHandle secondary;
     DescriptorHandle<Texture2D<float>> depth;
     uint color_space;
     uint reserved;
@@ -55,49 +58,26 @@ float4 project_position(float4 position) {
 
 float4 load_image_pixel(ByteAddressBuffer pixels, uint pixel_index) {
     float4 value = pixels.Load<float4>(pixel_index * 16);
-    if (push_data.color_space == 1)
-        value.rgb = float3(
-            dot(float3(1.660491, -0.587641, -0.072850), value.rgb),
-            dot(float3(-0.124550, 1.132900, -0.008349), value.rgb),
-            dot(float3(-0.018151, -0.100579, 1.118730), value.rgb));
-    else if (push_data.color_space == 2)
-        value.rgb = float3(
-            dot(float3(2.521686, -1.134130, -0.387556), value.rgb),
-            dot(float3(-0.276479, 1.372719, -0.096240), value.rgb),
-            dot(float3(-0.015378, -0.152975, 1.168353), value.rgb));
-    if (push_data.detail.x == 1)
-        value.rgb = float3(
-            dot(float3(0.627404, 0.329283, 0.043313), value.rgb),
-            dot(float3(0.069097, 0.919540, 0.011362), value.rgb),
-            dot(float3(0.016391, 0.088013, 0.895595), value.rgb));
-    else if (push_data.detail.x == 2)
-        value.rgb = float3(
-            dot(float3(0.439586, 0.383929, 0.176533), value.rgb),
-            dot(float3(0.089540, 0.814750, 0.095684), value.rgb),
-            dot(float3(0.017387, 0.108739, 0.873821), value.rgb));
+    value.rgb = color_from_linear_srgb(color_to_linear_srgb(value.rgb, push_data.color_space), push_data.detail.x);
     return value;
-}
-
-float srgb_eotf(float value) {
-    return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4);
 }
 
 float4 load_reference_pixel(ByteAddressBuffer pixels, uint pixel_index) {
     const uint packed = pixels.Load<uint>(pixel_index * 4);
     const float4 encoded = float4(packed & 255u, (packed >> 8u) & 255u, (packed >> 16u) & 255u, packed >> 24u) * (1.0 / 255.0);
-    const float3 linear = float3(srgb_eotf(encoded.r), srgb_eotf(encoded.g), srgb_eotf(encoded.b));
+    const float3 linear = srgb_eotf(encoded.rgb);
     return float4(linear * encoded.a, 1.0);
 }
 
 float4 element_visualization_color(float4 element_color, float scalar) {
-    if (push_data.detail.z == 1) return push_data.color;
-    if (push_data.detail.z == 2) return float4(visualization_color_map((scalar - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z), push_data.detail.w), element_color.a * push_data.color.a);
+    if (push_data.detail.z == SPECTRA_COLOR_SOURCE_UNIFORM) return push_data.color;
+    if (push_data.detail.z == SPECTRA_COLOR_SOURCE_SCALAR) return float4(visualization_color_map((scalar - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z), push_data.detail.w), element_color.a * push_data.color.a);
     return element_color * push_data.color;
 }
 
 float3 visualization_color_map(float value, uint color_map) {
     value = saturate(value);
-    if (color_map == 1) {
+    if (color_map == SPECTRA_COLOR_MAP_TURBO) {
         const float4 k_red = float4(0.13572138, 4.61539260, -42.66032258, 132.13108234);
         const float2 k_red_tail = float2(-152.94239396, 59.28637943);
         const float4 k_green = float4(0.09140261, 2.19418839, 4.84296658, -14.18503333);
@@ -108,8 +88,8 @@ float3 visualization_color_map(float value, uint color_map) {
         const float2 tail = float2(powers.w * value, powers.w * value * value);
         return saturate(float3(dot(k_red, powers) + dot(k_red_tail, tail), dot(k_green, powers) + dot(k_green_tail, tail), dot(k_blue, powers) + dot(k_blue_tail, tail)));
     }
-    if (color_map == 2) return lerp(float3(0.23, 0.30, 0.75), float3(0.71, 0.02, 0.15), value);
-    if (color_map == 3) return value.xxx;
+    if (color_map == SPECTRA_COLOR_MAP_COOL_WARM) return lerp(float3(0.23, 0.30, 0.75), float3(0.71, 0.02, 0.15), value);
+    if (color_map == SPECTRA_COLOR_MAP_GRAYSCALE) return value.xxx;
     const float3 c0 = float3(0.267, 0.005, 0.329);
     const float3 c1 = float3(0.128, 0.567, 0.551);
     const float3 c2 = float3(0.993, 0.906, 0.144);
@@ -164,14 +144,14 @@ float3 sample_float3_field(ByteAddressBuffer field, float3 position, bool vertex
 }
 
 float sample_volume_scalar(float3 position) {
-    ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+    ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
     return sample_float_field(primary, position, uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x), 0.5, (push_data.metadata.y >> 8) != 0);
 }
 
 float3 sample_volume_vector(float3 position) {
-    ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
-    if ((push_data.metadata.y & 255) == 1) return sample_float3_field(primary, position, (push_data.metadata.y >> 8) != 0);
-    ByteAddressBuffer secondary = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
+    ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
+    if ((push_data.metadata.y & 255) == SPECTRA_FIELD_FLOAT3) return sample_float3_field(primary, position, (push_data.metadata.y >> 8) != 0);
+    ByteAddressBuffer secondary = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
     ByteAddressBuffer tertiary = DescriptorHandle<ByteAddressBuffer>(uint2(push_data.color_space, push_data.reserved));
     const uint3 base_resolution = uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
     return float3(
@@ -186,24 +166,24 @@ float3 vector_to_grid(float3 vector) {
 
 float volume_mapping(float3 position) {
     const uint field_kind = push_data.metadata.y & 255;
-    if (field_kind == 0) return sample_volume_scalar(position);
-    if (field_kind == 2) {
-        ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+    if (field_kind == SPECTRA_FIELD_FLOAT) return sample_volume_scalar(position);
+    if (field_kind == SPECTRA_FIELD_UINT32) {
+        ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
         const uint3 resolution = uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
         const uint3 coordinate = min(uint3(position * float3(resolution)), resolution - 1);
         return float(primary.Load<uint>(volume_index(coordinate, resolution) * 4));
     }
     const float3 value = sample_volume_vector(position);
-    if (push_data.metadata.z == 0 || push_data.metadata.z == 1) return length(value);
-    if (push_data.metadata.z == 2) return value.x;
-    if (push_data.metadata.z == 3) return value.y;
-    if (push_data.metadata.z == 4) return value.z;
+    if (push_data.metadata.z == SPECTRA_FIELD_MAPPING_VALUE || push_data.metadata.z == SPECTRA_FIELD_MAPPING_MAGNITUDE) return length(value);
+    if (push_data.metadata.z == SPECTRA_FIELD_MAPPING_X) return value.x;
+    if (push_data.metadata.z == SPECTRA_FIELD_MAPPING_Y) return value.y;
+    if (push_data.metadata.z == SPECTRA_FIELD_MAPPING_Z) return value.z;
     const float3 delta = 1.0 / float3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
     const float3 dx = (sample_volume_vector(position + float3(delta.x, 0.0, 0.0)) - sample_volume_vector(position - float3(delta.x, 0.0, 0.0))) / (2.0 * delta.x);
     const float3 dy = (sample_volume_vector(position + float3(0.0, delta.y, 0.0)) - sample_volume_vector(position - float3(0.0, delta.y, 0.0))) / (2.0 * delta.y);
     const float3 dz = (sample_volume_vector(position + float3(0.0, 0.0, delta.z)) - sample_volume_vector(position - float3(0.0, 0.0, delta.z))) / (2.0 * delta.z);
-    if (push_data.metadata.z == 5) return dx.x + dy.y + dz.z;
-    if (push_data.metadata.z == 6) return length(float3(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x));
+    if (push_data.metadata.z == SPECTRA_FIELD_MAPPING_DIVERGENCE) return dx.x + dy.y + dz.z;
+    if (push_data.metadata.z == SPECTRA_FIELD_MAPPING_CURL_MAGNITUDE) return length(float3(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x));
     const float3x3 gradient = float3x3(dx, dy, dz);
     const float3x3 strain = 0.5 * (gradient + transpose(gradient));
     const float3x3 rotation = 0.5 * (gradient - transpose(gradient));
@@ -211,7 +191,7 @@ float volume_mapping(float3 position) {
 }
 
 float4 volume_color(float value) {
-    if ((push_data.metadata.y & 255) == 2) return float4(categorical_color((uint)value) * push_data.color.rgb, push_data.color.w);
+    if ((push_data.metadata.y & 255) == SPECTRA_FIELD_UINT32) return float4(categorical_color((uint)value) * push_data.color.rgb, push_data.color.w);
     const float normalized = (value - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z);
     return float4(visualization_color_map(normalized, (uint)push_data.screen_rect.w) * push_data.color.rgb, push_data.color.w);
 }
@@ -282,19 +262,19 @@ float3 integrate_volume_vector(float3 position, float direction) {
 [shader("vertex")]
 VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID) {
     const uint kind = push_data.metadata.x;
-    if (kind == 5) {
-        ByteAddressBuffer positions = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
-        ByteAddressBuffer field = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
+    if (kind == SPECTRA_VISUALIZATION_PARTICLES) {
+        ByteAddressBuffer positions = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
+        ByteAddressBuffer field = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
         const float3 center = positions.Load<float3>(instance_id * 12);
         float4 color = push_data.color;
-        if (push_data.metadata.y == 0) {
+        if (push_data.metadata.y == SPECTRA_PARTICLE_POINTS) {
             const float value = field.Load<float>(instance_id * 4);
             color.rgb = visualization_color_map((value - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z), push_data.detail.z);
-        } else if (push_data.metadata.y == 1) {
+        } else if (push_data.metadata.y == SPECTRA_PARTICLE_DISCS) {
             const float3 value = field.Load<float3>(instance_id * 12);
             const float scalar = push_data.detail.y <= 1 ? length(value) : push_data.detail.y == 2 ? value.x : push_data.detail.y == 3 ? value.y : value.z;
             color.rgb = visualization_color_map((scalar - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z), push_data.detail.z);
-        } else if (push_data.metadata.y == 2)
+        } else if (push_data.metadata.y == SPECTRA_PARTICLE_SPHERES)
             color.rgb = categorical_color(field.Load<uint>(instance_id * 4));
         const float2 corners[6] = {float2(-1, -1), float2(1, -1), float2(1, 1), float2(-1, -1), float2(1, 1), float2(-1, 1)};
         const float2 corner = corners[vertex_id];
@@ -314,18 +294,18 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         VisualizationVertexOutput output = {position, color, corner * 0.5 + 0.5, glyph | (shading << 8), 2, float4(project_position(transform_position(center)).zw, radius, 0.0)};
         return output;
     }
-    if (kind == 1) {
-        StructuredBuffer<SdkLine> lines = DescriptorHandle<StructuredBuffer<SdkLine>>(push_data.primary);
-        const SdkLine line = lines[instance_id];
-        return make_line(sdk_float3(line.first_position), sdk_float3(line.second_position), line.width * push_data.parameters.x, element_visualization_color(sdk_float4(line.color), line.scalar), vertex_id);
+    if (kind == SPECTRA_VISUALIZATION_SEGMENTS) {
+        ByteAddressBuffer lines = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
+        const uint offset = instance_id * 48u;
+        return make_line(lines.Load<float3>(offset), lines.Load<float3>(offset + 16u), lines.Load<float>(offset + 12u) * push_data.parameters.x, element_visualization_color(lines.Load<float4>(offset + 28u), lines.Load<float>(offset + 44u)), vertex_id);
     }
-    if (kind == 2) {
-        StructuredBuffer<SdkVector> vectors = DescriptorHandle<StructuredBuffer<SdkVector>>(push_data.primary);
-        const SdkVector element = vectors[instance_id];
-        const float3 origin = sdk_float3(element.origin);
-        const float3 vector = sdk_float3(element.vector) * push_data.parameters.y;
-        const float width = element.width * push_data.parameters.x;
-        const float4 color = element_visualization_color(sdk_float4(element.color), element.scalar);
+    if (kind == SPECTRA_VISUALIZATION_VECTORS) {
+        ByteAddressBuffer vectors = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
+        const uint offset = instance_id * 48u;
+        const float3 origin = vectors.Load<float3>(offset);
+        const float3 vector = vectors.Load<float3>(offset + 16u) * push_data.parameters.y;
+        const float width = vectors.Load<float>(offset + 12u) * push_data.parameters.x;
+        const float4 color = element_visualization_color(vectors.Load<float4>(offset + 28u), vectors.Load<float>(offset + 44u));
         const float length_value = length(vector);
         const float3 direction = length_value == 0.0 ? float3(1.0, 0.0, 0.0) : vector / length_value;
         const float3 reference = abs(direction.z) < 0.9 ? float3(0.0, 0.0, 1.0) : float3(0.0, 1.0, 0.0);
@@ -335,21 +315,21 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         const float3 second = part == 0 ? origin + vector : origin + vector - direction * length_value * 0.28 + (part == 1 ? side : -side);
         return make_line(first, second, width, color, vertex_id % 6);
     }
-    if (kind == 3) {
+    if (kind == SPECTRA_VISUALIZATION_IMAGE) {
         const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
         const float2 uv = corners[vertex_id];
         const float2 screen = push_data.screen_rect.xy + uv * push_data.screen_rect.zw;
         VisualizationVertexOutput output = {float4(screen.x * 2.0 - 1.0, 1.0 - screen.y * 2.0, 0.0, 1.0), push_data.color, uv, 0, 1, 0.0};
         return output;
     }
-    if (kind == 15) {
+    if (kind == SPECTRA_VISUALIZATION_REFERENCE_OVERLAY) {
         const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
         const float2 uv = corners[vertex_id];
         const float2 screen = push_data.screen_rect.xy + uv * push_data.screen_rect.zw;
         VisualizationVertexOutput output = {float4(screen.x * 2.0 - 1.0, 1.0 - screen.y * 2.0, 0.0, 1.0), push_data.color, uv, push_data.detail.x, 3, 0.0};
         return output;
     }
-    if (kind == 16) {
+    if (kind == SPECTRA_VISUALIZATION_REFERENCE_PLANE) {
         const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
         const float2 uv = corners[vertex_id];
         const float2 screen = float2(lerp(push_data.screen_rect.x, push_data.screen_rect.z, uv.x), lerp(push_data.screen_rect.w, push_data.screen_rect.y, uv.y));
@@ -358,7 +338,7 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         VisualizationVertexOutput output = {project_position(transform_position(local)), push_data.color, uv, push_data.detail.x, 3, 0.0};
         return output;
     }
-    if (kind == 8 || kind == 14) {
+    if (kind == SPECTRA_VISUALIZATION_VOLUME_SLICE || kind == SPECTRA_VISUALIZATION_VOLUME_LIC) {
         const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};
         const float2 uv = corners[vertex_id];
         VisualizationVertexOutput output = {project_position(float4(volume_slice_position(uv), 1.0)), push_data.color, uv, 0, 0, 0.0};
@@ -370,7 +350,7 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         VisualizationVertexOutput output = {float4(ndc, 0.0, 1.0), push_data.color, ndc * 0.5 + 0.5, 0, 0, 0.0};
         return output;
     }
-    if (kind == 12) {
+    if (kind == SPECTRA_VISUALIZATION_VOLUME_GLYPHS) {
         const uint sampling = push_data.detail.z;
         const uint z = instance_id / (sampling * sampling);
         const uint y = (instance_id / sampling) % sampling;
@@ -386,7 +366,7 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         const float3 second = part == 0 ? origin + vector : origin + vector - direction * length_value * 0.28 + (part == 1 ? side : -side);
         return make_volume_line(first, second, push_data.parameters.x, volume_color(volume_mapping(origin)), vertex_id % 6);
     }
-    if (kind == 13) {
+    if (kind == SPECTRA_VISUALIZATION_VOLUME_STREAMLINES) {
         const uint segment = instance_id % push_data.detail.w;
         const uint seed_index = instance_id / push_data.detail.w;
         const uint sampling = push_data.detail.z;
@@ -402,12 +382,12 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         const float3 second = integrate_volume_vector(first, direction);
         return make_volume_line(first, second, push_data.parameters.x, volume_color(volume_mapping(first)), vertex_id);
     }
-    if (kind == 17) {
+    if (kind == SPECTRA_VISUALIZATION_VOLUME_CELLS) {
         const uint3 resolution = uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
         const uint z = instance_id / (resolution.x * resolution.y);
         const uint y = (instance_id / resolution.x) % resolution.y;
         const uint x = instance_id % resolution.x;
-        ByteAddressBuffer values = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+        ByteAddressBuffer values = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
         const uint category = values.Load<uint>(instance_id * 4);
         const uint edges[24] = {0, 1, 1, 3, 3, 2, 2, 0, 4, 5, 5, 7, 7, 6, 6, 4, 0, 4, 1, 5, 2, 6, 3, 7};
         const float3 corners[8] = {float3(0, 0, 0), float3(1, 0, 0), float3(0, 1, 0), float3(1, 1, 0), float3(0, 0, 1), float3(1, 0, 1), float3(0, 1, 1), float3(1, 1, 1)};
@@ -419,14 +399,14 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         const float4 color = float4(categorical_color(category) * push_data.color.rgb, visible ? push_data.color.a : 0.0);
         return make_volume_line(first, second, push_data.parameters.x, color, vertex_id % 6);
     }
-    ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
-    ByteAddressBuffer indices = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
+    ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
+    ByteAddressBuffer indices = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
     const uint position_index = push_data.metadata.z == 0 ? vertex_id : asuint(indices.Load<float>(vertex_id * 4));
     float4 surface_color = push_data.color;
-    if (push_data.detail.z == 0) {
+    if (push_data.detail.z == SPECTRA_COLOR_SOURCE_ELEMENT) {
         StructuredBuffer<float4> colors = DescriptorHandle<StructuredBuffer<float4>>(uint2(push_data.color_space, push_data.reserved));
         surface_color = element_visualization_color(colors[position_index], 0.0);
-    } else if (push_data.detail.z == 2) {
+    } else if (push_data.detail.z == SPECTRA_COLOR_SOURCE_SCALAR) {
         StructuredBuffer<float> scalars = DescriptorHandle<StructuredBuffer<float>>(uint2(push_data.color_space, push_data.reserved));
         surface_color = element_visualization_color(float4(1.0), scalars[position_index]);
     }
@@ -458,11 +438,11 @@ float4 visualization_fragment(VisualizationVertexOutput input) : SV_Target0 {
     float4 color = input.color;
     float visualization_depth = input.position.z;
     const uint kind = push_data.metadata.x;
-    if (kind == 8) {
+    if (kind == SPECTRA_VISUALIZATION_VOLUME_SLICE) {
         color = volume_color(volume_mapping(volume_slice_position(input.texture_coordinates)));
         color.a *= push_data.screen_rect.y;
     }
-    if (kind == 14) {
+    if (kind == SPECTRA_VISUALIZATION_VOLUME_LIC) {
         const float3 origin = volume_slice_position(input.texture_coordinates);
         const float spacing = 1.0 / max(max(push_data.dimensions.z, push_data.dimensions.w), push_data.detail.x);
         float convolution = volume_noise(origin);
@@ -506,7 +486,7 @@ float4 visualization_fragment(VisualizationVertexOutput input) : SV_Target0 {
         if (ray_maximum <= ray_minimum) discard;
         const uint step_count = max(push_data.detail.w, 8u);
         const float step_length = (ray_maximum - ray_minimum) / float(step_count);
-        if (kind == 9) {
+        if (kind == SPECTRA_VISUALIZATION_VOLUME_RAY_MARCH) {
             float4 accumulated = 0.0;
             for (uint step = 0; step != step_count; ++step) {
                 const float3 position = near_grid + direction * (ray_minimum + (float(step) + 0.5) * step_length);
@@ -520,7 +500,7 @@ float4 visualization_fragment(VisualizationVertexOutput input) : SV_Target0 {
                 if (accumulated.a > 0.995) break;
             }
             color = accumulated;
-        } else if (kind == 10) {
+        } else if (kind == SPECTRA_VISUALIZATION_VOLUME_MIP) {
             float maximum = push_data.parameters.z;
             float maximum_distance = ray_minimum;
             for (uint step = 0; step != step_count; ++step) {
@@ -561,7 +541,7 @@ float4 visualization_fragment(VisualizationVertexOutput input) : SV_Target0 {
         if (color.a == 0.0) discard;
     }
     if (input.sample_image == 1) {
-        ByteAddressBuffer pixels = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
+        ByteAddressBuffer pixels = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
         const uint2 coordinate = min(uint2(input.texture_coordinates * float2(push_data.dimensions.z, push_data.dimensions.w)), uint2(push_data.dimensions.z - 1, push_data.dimensions.w - 1));
         const uint layer_offset = input.image_layer * push_data.dimensions.z * push_data.dimensions.w;
         color *= load_image_pixel(pixels, layer_offset + coordinate.y * push_data.dimensions.z + coordinate.x);
@@ -585,7 +565,7 @@ float4 visualization_fragment(VisualizationVertexOutput input) : SV_Target0 {
         }
     }
     if (input.sample_image == 3) {
-        ByteAddressBuffer pixels = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+        ByteAddressBuffer pixels = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
         const uint2 coordinate = min(uint2(input.texture_coordinates * float2(push_data.dimensions.z, push_data.dimensions.w)), uint2(push_data.dimensions.z - 1, push_data.dimensions.w - 1));
         const uint layer_offset = input.image_layer * push_data.dimensions.z * push_data.dimensions.w;
         color *= load_reference_pixel(pixels, layer_offset + coordinate.y * push_data.dimensions.z + coordinate.x);

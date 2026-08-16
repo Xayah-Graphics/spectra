@@ -1134,15 +1134,19 @@ namespace spectra {
             if (const auto* data = std::get_if<scene::GridVolume>(&volume.data)) {
                 const auto vertex_sampled = [data](const std::string_view id) {
                     const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
-                    return found != data->fields.end() && found->sampling == scene::VolumeFieldSampling::Vertex ? 1u : 0u;
+                    return found != data->fields.end() && scene::field_sampling(*found) == scene::VolumeFieldSampling::Vertex ? 1u : 0u;
                 };
                 const auto scalar_values = [data](const std::string_view id) -> std::span<const float> {
                     const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
-                    return found == data->fields.end() ? std::span<const float>{} : std::span<const float>{found->scalar_values};
+                    if (found == data->fields.end()) return {};
+                    const scene::ScalarVolumeField* field = std::get_if<scene::ScalarVolumeField>(&found->data);
+                    return field ? std::span<const float>{field->values} : std::span<const float>{};
                 };
                 const auto vector_values = [data](const std::string_view id) -> std::span<const math::Float3> {
                     const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
-                    return found == data->fields.end() ? std::span<const math::Float3>{} : std::span<const math::Float3>{found->vector_values};
+                    if (found == data->fields.end()) return {};
+                    const scene::VectorVolumeField* field = std::get_if<scene::VectorVolumeField>(&found->data);
+                    return field ? std::span<const math::Float3>{field->values} : std::span<const math::Float3>{};
                 };
                 const bool rgb                = rendering.density_field.empty() && (!rendering.sigma_a_field.empty() || !rendering.sigma_s_field.empty() || !rendering.emission_field.empty());
                 prepared_volume.resolution    = data->resolution;

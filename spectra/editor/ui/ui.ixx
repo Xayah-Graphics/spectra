@@ -21,10 +21,10 @@ namespace spectra {
         float exposure{};
         bool guides_visible{true};
         bool hud_visible{true};
-        bool telemetry_visible{};
+        bool telemetry_visible{true};
         bool selection_outline{true};
         SceneGuideSettings scene_guides{};
-        SelectionDiagnosticSettings selection_diagnostics{};
+        std::map<SceneEntityReference, EntityDiagnostics> entity_diagnostics{};
     };
 
     export struct EditorActions {

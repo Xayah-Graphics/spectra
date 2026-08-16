@@ -1,103 +1,98 @@
+module;
+
+#include "../shaders/shader_semantics.h"
+
 module spectra.render.composition.visualization;
 
+import spectra.render.runtime_abi;
 import std;
 import vulkan;
 
 namespace spectra {
     namespace {
-        struct alignas(16) VisualizationPushData {
-            DescriptorHandle primary{};
-            DescriptorHandle secondary{};
-            DescriptorHandle depth{};
-            std::uint32_t color_space{};
-            std::uint32_t reserved{};
-            std::array<std::uint32_t, 4> metadata{};
-            std::array<std::uint32_t, 4> dimensions{};
-            std::array<std::uint32_t, 4> detail{};
-            std::array<float, 4> parameters{};
-            std::array<float, 4> color{};
-            std::array<float, 4> screen_rect{};
-            std::array<float, 4> transform_row_0{};
-            std::array<float, 4> transform_row_1{};
-            std::array<float, 4> transform_row_2{};
-            std::array<float, 4> transform_row_3{};
-            std::array<float, 4> view_projection_row_0{};
-            std::array<float, 4> view_projection_row_1{};
-            std::array<float, 4> view_projection_row_2{};
-            std::array<float, 4> view_projection_row_3{};
-        };
-
-        static_assert(sizeof(VisualizationPushData) == 256);
-
-        struct ResolvedVisualization {
-            const dynamics::VisualizationStyle* style{};
-            DescriptorHandle primary{};
-            DescriptorHandle secondary{};
-            DescriptorHandle attribute{};
-            std::uint32_t active_count{};
-            std::uint32_t secondary_count{};
-            std::array<std::uint32_t, 2> image_extent{};
-            scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
-            math::Transform transform{};
-            scene::VisualizationViewKind kind{scene::VisualizationViewKind::Segments};
-            scene::VisualizationColorSource color_source{scene::VisualizationColorSource::Element};
-            scene::VisualizationColorMap color_map{scene::VisualizationColorMap::Viridis};
-            math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
-            float width{1.0f};
-            float scale{1.0f};
-            float scalar_minimum{};
-            float scalar_maximum{1.0f};
-            bool image{};
-        };
-
-        [[nodiscard]] ResolvedVisualization resolve_visualization(const dynamics::GpuVisualization& source) noexcept {
-            ResolvedVisualization result{};
-            std::visit(
-                [&result](const auto& value) {
-                    result.style     = &value.style;
-                    result.transform = value.style.transform;
-                    result.kind      = scene::visualization_view_kind(value.style.view);
-                    std::visit(
-                        [&result](const auto& data) {
-                            if constexpr (requires { data.width; }) result.width = data.width;
-                            if constexpr (requires { data.scale; }) result.scale = data.scale;
-                            if constexpr (requires { data.scalar_minimum; }) {
-                                result.scalar_minimum = data.scalar_minimum;
-                                result.scalar_maximum = data.scalar_maximum;
-                                result.color_source   = data.color_source;
-                                result.color_map      = data.color_map;
-                            }
-                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ImageVisualization>) result.screen_rect = data.screen_rect;
-                        },
-                        value.style.view.data);
-                    if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuSegmentVisualization>) {
-                        result.primary      = value.segments.descriptor;
-                        result.active_count = value.count;
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuVectorVisualization>) {
-                        result.primary      = value.vectors.descriptor;
-                        result.active_count = value.count;
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuImageVisualization>) {
-                        result.primary           = value.pixels.descriptor;
-                        result.active_count      = 1;
-                        result.image_extent      = value.image.extent;
-                        result.color_space       = value.image.color_space;
-                        result.image             = true;
-                    } else {
-                        result.primary = value.positions.descriptor;
-                        if (value.indices) result.secondary = value.indices->descriptor;
-                        if (result.color_source == scene::VisualizationColorSource::Element && value.colors) result.attribute = value.colors->descriptor;
-                        if (result.color_source == scene::VisualizationColorSource::Element && !value.colors) result.color_source = scene::VisualizationColorSource::Uniform;
-                        if (result.color_source == scene::VisualizationColorSource::Scalar && value.scalars) result.attribute = value.scalars->descriptor;
-                        if (result.color_source == scene::VisualizationColorSource::Scalar && !value.scalars) result.color_source = scene::VisualizationColorSource::Uniform;
-                        result.active_count    = value.vertex_count;
-                        result.secondary_count = value.index_count;
-                    }
-                    if (!result.secondary) result.secondary = result.primary;
-                },
-                source.data);
-            return result;
+        [[nodiscard]] constexpr std::uint32_t shader_depth_mode(const scene::VisualizationDepthMode mode) noexcept {
+            switch (mode) {
+                case scene::VisualizationDepthMode::Tested: return shader_semantics::depth_tested;
+                case scene::VisualizationDepthMode::XRay: return shader_semantics::depth_xray;
+                case scene::VisualizationDepthMode::Overlay: return shader_semantics::depth_overlay;
+            }
+            std::unreachable();
         }
 
+        [[nodiscard]] constexpr std::uint32_t shader_color_source(const scene::VisualizationColorSource source) noexcept {
+            switch (source) {
+                case scene::VisualizationColorSource::Element: return shader_semantics::color_source_element;
+                case scene::VisualizationColorSource::Uniform: return shader_semantics::color_source_uniform;
+                case scene::VisualizationColorSource::Scalar: return shader_semantics::color_source_scalar;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] constexpr std::uint32_t shader_color_map(const scene::VisualizationColorMap map) noexcept {
+            switch (map) {
+                case scene::VisualizationColorMap::Viridis: return shader_semantics::color_map_viridis;
+                case scene::VisualizationColorMap::Turbo: return shader_semantics::color_map_turbo;
+                case scene::VisualizationColorMap::CoolWarm: return shader_semantics::color_map_cool_warm;
+                case scene::VisualizationColorMap::Grayscale: return shader_semantics::color_map_grayscale;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] constexpr std::uint32_t shader_field_kind(const scene::FieldKind kind) noexcept {
+            switch (kind) {
+                case scene::FieldKind::Float: return shader_semantics::field_float;
+                case scene::FieldKind::Float3: return shader_semantics::field_float3;
+                case scene::FieldKind::UInt32: return shader_semantics::field_uint32;
+                case scene::FieldKind::MacFloat3: return shader_semantics::field_mac_float3;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] constexpr std::uint32_t shader_field_sampling(const scene::VolumeFieldSampling sampling) noexcept {
+            switch (sampling) {
+                case scene::VolumeFieldSampling::Cell: return shader_semantics::field_sampling_cell;
+                case scene::VolumeFieldSampling::Vertex: return shader_semantics::field_sampling_vertex;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] constexpr std::uint32_t shader_field_mapping(const scene::FieldMapping mapping) noexcept {
+            switch (mapping) {
+                case scene::FieldMapping::Value: return shader_semantics::field_mapping_value;
+                case scene::FieldMapping::Magnitude: return shader_semantics::field_mapping_magnitude;
+                case scene::FieldMapping::X: return shader_semantics::field_mapping_x;
+                case scene::FieldMapping::Y: return shader_semantics::field_mapping_y;
+                case scene::FieldMapping::Z: return shader_semantics::field_mapping_z;
+                case scene::FieldMapping::Divergence: return shader_semantics::field_mapping_divergence;
+                case scene::FieldMapping::CurlMagnitude: return shader_semantics::field_mapping_curl_magnitude;
+                case scene::FieldMapping::QCriterion: return shader_semantics::field_mapping_q_criterion;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] constexpr std::uint32_t shader_particle_display(const scene::ParticleDisplayMode display) noexcept {
+            switch (display) {
+                case scene::ParticleDisplayMode::Points: return shader_semantics::particle_points;
+                case scene::ParticleDisplayMode::Discs: return shader_semantics::particle_discs;
+                case scene::ParticleDisplayMode::Spheres: return shader_semantics::particle_spheres;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] constexpr std::uint32_t shader_volume_mode(const scene::VolumeDiagnosticMode mode) noexcept {
+            switch (mode) {
+                case scene::VolumeDiagnosticMode::Slice: return shader_semantics::visualization_volume_slice;
+                case scene::VolumeDiagnosticMode::Cells: return shader_semantics::visualization_volume_cells;
+                case scene::VolumeDiagnosticMode::RayMarch: return shader_semantics::visualization_volume_ray_march;
+                case scene::VolumeDiagnosticMode::MaximumIntensityProjection: return shader_semantics::visualization_volume_mip;
+                case scene::VolumeDiagnosticMode::Isosurface: return shader_semantics::visualization_volume_isosurface;
+                case scene::VolumeDiagnosticMode::Glyphs: return shader_semantics::visualization_volume_glyphs;
+                case scene::VolumeDiagnosticMode::Streamlines: return shader_semantics::visualization_volume_streamlines;
+                case scene::VolumeDiagnosticMode::Lic: return shader_semantics::visualization_volume_lic;
+                case scene::VolumeDiagnosticMode::Off: break;
+            }
+            std::unreachable();
+        }
     } // namespace
 
     VisualizationRenderer::VisualizationRenderer(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory) : context{runtime, gpu_scene, std::move(shader_directory)} {
@@ -155,43 +150,96 @@ namespace spectra {
         std::array<float, 3> camera_depth{};
         std::visit([&camera_depth](const auto& data) { camera_depth = {data.near_plane, data.far_plane, std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData> ? 1.0f : 0.0f}; }, camera.data);
         for (const dynamics::GpuVisualization& source : views) {
-            const ResolvedVisualization dataset         = resolve_visualization(source);
-            const scene::DynamicVisualizationView& view = dataset.style->view;
-            if (!view.visible || view.composition_domain != domain || dataset.active_count == 0) continue;
-            const std::array<float, 16>& transform = dataset.transform.matrix;
-            std::array<std::uint32_t, 4> detail{0, 0, static_cast<std::uint32_t>(dataset.color_source), static_cast<std::uint32_t>(dataset.color_map)};
-            if (dataset.image) detail[0] = static_cast<std::uint32_t>(target.color_space);
-            std::array<float, 4> screen_rect{dataset.screen_rect.x, dataset.screen_rect.y, dataset.screen_rect.z, dataset.screen_rect.w};
-            VisualizationPushData push{
-                dataset.primary,
-                dataset.secondary,
-                depth.descriptor,
-                dataset.image ? static_cast<std::uint32_t>(dataset.color_space) : dataset.attribute.slot_index,
-                dataset.attribute.reserved,
-                {static_cast<std::uint32_t>(dataset.kind), dataset.active_count, dataset.secondary_count, static_cast<std::uint32_t>(view.depth_mode)},
-                {target.image.extent.width, target.image.extent.height, dataset.image ? dataset.image_extent[0] : 0u, dataset.image ? dataset.image_extent[1] : 0u},
-                detail,
-                {dataset.width, dataset.scale, dataset.scalar_minimum, dataset.scalar_maximum},
-                {view.color.x, view.color.y, view.color.z, view.color.w},
-                screen_rect,
-                {transform[0], transform[1], transform[2], transform[3]},
-                {transform[4], transform[5], transform[6], transform[7]},
-                {transform[8], transform[9], transform[10], transform[11]},
-                {transform[12], transform[13], transform[14], transform[15]},
-                {view_projection[0], view_projection[1], view_projection[2], view_projection[3]},
-                {view_projection[4], view_projection[5], view_projection[6], view_projection[7]},
-                {view_projection[8], view_projection[9], view_projection[10], view_projection[11]},
-                {view_projection[12], view_projection[13], view_projection[14], view_projection[15]},
-            };
-            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
-            if (dataset.kind == scene::VisualizationViewKind::Segments)
-                command_buffer.draw(6, dataset.active_count, 0, 0);
-            else if (dataset.kind == scene::VisualizationViewKind::Vectors)
-                command_buffer.draw(18, dataset.active_count, 0, 0);
-            else if (dataset.kind == scene::VisualizationViewKind::Image)
-                command_buffer.draw(6, 1, 0, 0);
-            else
-                command_buffer.draw(dataset.secondary_count != 0 ? dataset.secondary_count : dataset.active_count, 1, 0, 0);
+            std::visit([&](const auto& dataset) {
+                const scene::DynamicVisualizationView& view = dataset.style.view;
+                const std::array<float, 16>& transform = dataset.style.transform.matrix;
+                DescriptorHandle primary{};
+                DescriptorHandle secondary{};
+                DescriptorHandle attribute{};
+                std::uint32_t active_count{};
+                std::uint32_t secondary_count{};
+                std::uint32_t kind{};
+                std::array<std::uint32_t, 2> image_extent{};
+                std::uint32_t color_space{};
+                std::uint32_t color_source = shader_semantics::color_source_element;
+                std::uint32_t color_map = shader_semantics::color_map_viridis;
+                math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
+                float width{1.0f};
+                float scale{1.0f};
+                float scalar_minimum{};
+                float scalar_maximum{1.0f};
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(dataset)>, dynamics::GpuSegmentVisualization>) {
+                    const scene::SegmentVisualization& style = std::get<scene::SegmentVisualization>(view.data);
+                    primary        = dataset.segments.descriptor;
+                    active_count   = dataset.count;
+                    kind           = shader_semantics::visualization_segments;
+                    width          = style.width;
+                    scalar_minimum = style.scalar_minimum;
+                    scalar_maximum = style.scalar_maximum;
+                    color_source   = shader_color_source(style.color_source);
+                    color_map      = shader_color_map(style.color_map);
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(dataset)>, dynamics::GpuVectorVisualization>) {
+                    const scene::VectorVisualization& style = std::get<scene::VectorVisualization>(view.data);
+                    primary        = dataset.vectors.descriptor;
+                    active_count   = dataset.count;
+                    kind           = shader_semantics::visualization_vectors;
+                    width          = style.width;
+                    scale          = style.scale;
+                    scalar_minimum = style.scalar_minimum;
+                    scalar_maximum = style.scalar_maximum;
+                    color_source   = shader_color_source(style.color_source);
+                    color_map      = shader_color_map(style.color_map);
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(dataset)>, dynamics::GpuImageVisualization>) {
+                    primary      = dataset.pixels.descriptor;
+                    active_count = 1u;
+                    kind         = shader_semantics::visualization_image;
+                    image_extent = dataset.image.extent;
+                    color_space  = std::to_underlying(dataset.image.color_space);
+                    screen_rect  = std::get<scene::ImageVisualization>(view.data).screen_rect;
+                } else {
+                    const scene::SurfaceVisualization& style = std::get<scene::SurfaceVisualization>(view.data);
+                    primary         = dataset.positions.descriptor;
+                    secondary       = dataset.indices ? dataset.indices->descriptor : primary;
+                    active_count    = dataset.vertex_count;
+                    secondary_count = dataset.index_count;
+                    kind            = shader_semantics::visualization_surface;
+                    scalar_minimum  = style.scalar_minimum;
+                    scalar_maximum  = style.scalar_maximum;
+                    color_source    = shader_color_source(style.color_source);
+                    color_map       = shader_color_map(style.color_map);
+                    if (style.color_source == scene::VisualizationColorSource::Element && dataset.colors) attribute = dataset.colors->descriptor;
+                    else if (style.color_source == scene::VisualizationColorSource::Scalar && dataset.scalars) attribute = dataset.scalars->descriptor;
+                    else color_source = shader_semantics::color_source_uniform;
+                }
+                if (!view.visible || view.composition_domain != domain || active_count == 0u) return;
+                if (!secondary) secondary = primary;
+                const VisualizationPushData push{
+                    primary,
+                    secondary,
+                    depth.descriptor,
+                    std::same_as<std::remove_cvref_t<decltype(dataset)>, dynamics::GpuImageVisualization> ? color_space : attribute.slot_index,
+                    attribute.reserved,
+                    {kind, active_count, secondary_count, shader_depth_mode(view.depth_mode)},
+                    {target.image.extent.width, target.image.extent.height, image_extent[0], image_extent[1]},
+                    {std::same_as<std::remove_cvref_t<decltype(dataset)>, dynamics::GpuImageVisualization> ? std::to_underlying(target.color_space) : 0u, 0u, color_source, color_map},
+                    {width, scale, scalar_minimum, scalar_maximum},
+                    {view.color.x, view.color.y, view.color.z, view.color.w},
+                    {screen_rect.x, screen_rect.y, screen_rect.z, screen_rect.w},
+                    {transform[0], transform[1], transform[2], transform[3]},
+                    {transform[4], transform[5], transform[6], transform[7]},
+                    {transform[8], transform[9], transform[10], transform[11]},
+                    {transform[12], transform[13], transform[14], transform[15]},
+                    {view_projection[0], view_projection[1], view_projection[2], view_projection[3]},
+                    {view_projection[4], view_projection[5], view_projection[6], view_projection[7]},
+                    {view_projection[8], view_projection[9], view_projection[10], view_projection[11]},
+                    {view_projection[12], view_projection[13], view_projection[14], view_projection[15]},
+                };
+                this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(dataset)>, dynamics::GpuSegmentVisualization>) command_buffer.draw(6u, active_count, 0u, 0u);
+                else if constexpr (std::same_as<std::remove_cvref_t<decltype(dataset)>, dynamics::GpuVectorVisualization>) command_buffer.draw(18u, active_count, 0u, 0u);
+                else if constexpr (std::same_as<std::remove_cvref_t<decltype(dataset)>, dynamics::GpuImageVisualization>) command_buffer.draw(6u, 1u, 0u, 0u);
+                else command_buffer.draw(secondary_count != 0u ? secondary_count : active_count, 1u, 0u, 0u);
+            }, source.data);
         }
         const GpuSceneView gpu_scene = this->context.gpu_scene.view();
         const scene::CameraMatrices camera_matrices = camera.matrices();
@@ -206,7 +254,7 @@ namespace spectra {
                 if (!visualization.field_id.empty()) {
                     const GpuParticleField& field = *std::ranges::find(gpu_particles.fields, visualization.field_id, &GpuParticleField::id);
                     attribute  = field.descriptor;
-                    field_kind = std::to_underlying(field.kind);
+                    field_kind = shader_field_kind(field.kind);
                 }
                 const std::array<float, 16>& transform = particles.transform.matrix;
                 const VisualizationPushData push{
@@ -215,9 +263,9 @@ namespace spectra {
                     depth.descriptor,
                     0u,
                     0u,
-                    {5u, field_kind, gpu_particles.count, std::to_underlying(visualization.depth_mode)},
+                    {shader_semantics::visualization_particles, field_kind, gpu_particles.count, shader_depth_mode(visualization.depth_mode)},
                     {target.image.extent.width, target.image.extent.height, 0u, 0u},
-                    {std::to_underlying(visualization.display), std::to_underlying(visualization.mapping), std::to_underlying(visualization.color_map), 0u},
+                    {shader_particle_display(visualization.display), shader_field_mapping(visualization.mapping), shader_color_map(visualization.color_map), 0u},
                     {visualization.display == scene::ParticleDisplayMode::Points ? visualization.point_size : particles.radius * visualization.radius_scale, 0.0f, visualization.minimum, visualization.maximum},
                     {visualization.color.x, visualization.color.y, visualization.color.z, visualization.color.w},
                     {camera_depth[0], camera_depth[1], camera_depth[2], 0.0f},
@@ -275,12 +323,12 @@ namespace spectra {
                 depth.descriptor,
                 field.kind == scene::FieldKind::UInt32 ? diagnostics.category_mask : tertiary.slot_index,
                 field.kind == scene::FieldKind::UInt32 ? 0u : tertiary.reserved,
-                {diagnostics.mode == scene::VolumeDiagnosticMode::Slice ? 8u : diagnostics.mode == scene::VolumeDiagnosticMode::Cells ? 17u : 6u + std::to_underlying(diagnostics.mode), static_cast<std::uint32_t>(std::to_underlying(field.kind)) | (static_cast<std::uint32_t>(std::to_underlying(field.sampling)) << 8u), std::to_underlying(diagnostics.mapping), std::to_underlying(diagnostics.depth_mode)},
+                {shader_volume_mode(diagnostics.mode), shader_field_kind(field.kind) | (shader_field_sampling(field.sampling) << 8u), shader_field_mapping(diagnostics.mapping), shader_depth_mode(diagnostics.depth_mode)},
                 {target.image.extent.width, target.image.extent.height, grid->resolution.x, grid->resolution.y},
                 {grid->resolution.z, diagnostics.axis, diagnostics.sampling, diagnostics.steps},
                 {diagnostics.width, diagnostics.scale, diagnostics.minimum, diagnostics.maximum},
                 {diagnostics.color.x, diagnostics.color.y, diagnostics.color.z, diagnostics.color.w},
-                {diagnostics.slice_position, diagnostics.opacity, diagnostics.threshold, static_cast<float>(std::to_underlying(diagnostics.color_map))},
+                {diagnostics.slice_position, diagnostics.opacity, diagnostics.threshold, static_cast<float>(shader_color_map(diagnostics.color_map))},
                 {transform[0], transform[1], transform[2], transform[3]},
                 {transform[4], transform[5], transform[6], transform[7]},
                 {transform[8], transform[9], transform[10], transform[11]},
@@ -335,8 +383,8 @@ namespace spectra {
                 command_buffer.draw(6, 1, 0, 0);
             };
             if (camera_reference->plane)
-                draw_reference(16u, {tangent, reference_camera.focal_distance, 0.0f, 0.0f}, {reference_camera.screen_window.minimum.x, reference_camera.screen_window.minimum.y, reference_camera.screen_window.maximum.x, reference_camera.screen_window.maximum.y}, std::to_underlying(scene::VisualizationDepthMode::Tested));
-            if (camera_reference->overlay) draw_reference(15u, {}, camera_reference->overlay_rect, std::to_underlying(scene::VisualizationDepthMode::Overlay));
+                draw_reference(shader_semantics::visualization_reference_plane, {tangent, reference_camera.focal_distance, 0.0f, 0.0f}, {reference_camera.screen_window.minimum.x, reference_camera.screen_window.minimum.y, reference_camera.screen_window.maximum.x, reference_camera.screen_window.maximum.y}, shader_semantics::depth_tested);
+            if (camera_reference->overlay) draw_reference(shader_semantics::visualization_reference_overlay, {}, camera_reference->overlay_rect, shader_semantics::depth_overlay);
         }
         command_buffer.endRendering();
         const vk::ImageMemoryBarrier2 target_to_sample{vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *target.image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};

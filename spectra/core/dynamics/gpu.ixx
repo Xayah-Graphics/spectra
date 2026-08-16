@@ -33,11 +33,6 @@ namespace spectra::dynamics {
         GpuBufferView positions{};
         std::optional<GpuBufferView> normals{};
         std::optional<GpuBufferView> tangents{};
-        std::optional<GpuBufferView> texture_coordinates{};
-        std::optional<GpuBufferView> indices{};
-        std::uint32_t vertex_count{};
-        std::uint32_t index_count{};
-        MeshUpdateMode update_mode{MeshUpdateMode::Deformable};
     };
 
     export struct GpuSphereSetUpdate {
@@ -117,9 +112,10 @@ namespace spectra::dynamics {
 
     export struct MeshOutputBinding {
         scene::GeometryId geometry_id{};
-        MeshUpdateMode update_mode{MeshUpdateMode::Deformable};
         std::uint32_t vertex_capacity{};
         std::uint32_t index_capacity{};
+        std::optional<GpuBufferView> indices{};
+        std::optional<GpuBufferView> texture_coordinates{};
     };
 
     export struct SphereSetOutputBinding {

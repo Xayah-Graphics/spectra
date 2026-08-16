@@ -1,7 +1,12 @@
 module neural_field;
 
+#include <spectra/sdk/neural_field_layout.h>
+
+import color;
+import shader_descriptor;
+
 struct NeuralFieldPushData {
-    uint2 output;
+    UntypedDescriptorHandle output;
     DescriptorHandle<Texture2D<float>> depth;
     DescriptorHandle<ByteAddressBuffer> hash_grid;
     DescriptorHandle<ByteAddressBuffer> density_input;
@@ -24,7 +29,17 @@ struct NeuralFieldPushData {
 [vk::push_constant]
 uniform NeuralFieldPushData push_data;
 
-static const uint grid_offsets[9] = {0, 4096, 36864, 299008, 823296, 1347584, 1871872, 2396160, 2920448};
+static const uint grid_offsets[SPECTRA_NEURAL_FIELD_LEVEL_COUNT + 1u] = {
+    SPECTRA_NEURAL_FIELD_GRID_OFFSET_0,
+    SPECTRA_NEURAL_FIELD_GRID_OFFSET_1,
+    SPECTRA_NEURAL_FIELD_GRID_OFFSET_2,
+    SPECTRA_NEURAL_FIELD_GRID_OFFSET_3,
+    SPECTRA_NEURAL_FIELD_GRID_OFFSET_4,
+    SPECTRA_NEURAL_FIELD_GRID_OFFSET_5,
+    SPECTRA_NEURAL_FIELD_GRID_OFFSET_6,
+    SPECTRA_NEURAL_FIELD_GRID_OFFSET_7,
+    SPECTRA_NEURAL_FIELD_GRID_OFFSET_8,
+};
 
 uint grid_index(uint size, uint resolution, uint3 coordinate) {
     const uint64_t dense = uint64_t(resolution) * uint64_t(resolution) * uint64_t(resolution);
@@ -36,7 +51,7 @@ CoopVec<float16_t, 32> encode_position(float3 position) {
     ByteAddressBuffer grid = push_data.hash_grid;
     CoopVec<float16_t, 32> encoded;
     [ForceUnroll]
-    for (uint level = 0; level != 8; ++level) {
+    for (uint level = 0; level != SPECTRA_NEURAL_FIELD_LEVEL_COUNT; ++level) {
         const uint resolution = 16u << level;
         const uint level_offset = grid_offsets[level];
         const uint size = grid_offsets[level + 1] - level_offset;
@@ -44,16 +59,16 @@ CoopVec<float16_t, 32> encode_position(float3 position) {
         const uint3 base = uint3(floor(scaled));
         const float3 fraction = scaled - float3(base);
         [ForceUnroll]
-        for (uint feature = 0; feature != 4; ++feature) {
+        for (uint feature = 0; feature != SPECTRA_NEURAL_FIELD_FEATURE_COUNT; ++feature) {
             float16_t value = float16_t(0.0);
             [ForceUnroll]
             for (uint corner = 0; corner != 8; ++corner) {
                 const uint3 high = uint3(corner & 1u, (corner >> 1u) & 1u, (corner >> 2u) & 1u);
                 const float3 weight = lerp(1.0 - fraction, fraction, float3(high));
-                const uint index = (level_offset + grid_index(size, resolution, base + high)) * 4u + feature;
+                const uint index = (level_offset + grid_index(size, resolution, base + high)) * SPECTRA_NEURAL_FIELD_FEATURE_COUNT + feature;
                 value = fma(float16_t(weight.x * weight.y * weight.z), grid.Load<float16_t>(index * 2u), value);
             }
-            encoded[level * 4u + feature] = value;
+            encoded[level * SPECTRA_NEURAL_FIELD_FEATURE_COUNT + feature] = value;
         }
     }
     return encoded;
@@ -187,25 +202,8 @@ bool intersect_domain(float3 origin, float3 direction, out float minimum, out fl
     return maximum > max(minimum, 0.0);
 }
 
-float3 srgb_eotf(float3 value) {
-    return float3(
-        value.x <= 0.04045 ? value.x / 12.92 : pow((value.x + 0.055) / 1.055, 2.4),
-        value.y <= 0.04045 ? value.y / 12.92 : pow((value.y + 0.055) / 1.055, 2.4),
-        value.z <= 0.04045 ? value.z / 12.92 : pow((value.z + 0.055) / 1.055, 2.4));
-}
-
 float3 output_color_space(float3 linear_srgb) {
-    if (push_data.metadata.z == 1)
-        return float3(
-            dot(float3(0.627404, 0.329283, 0.043313), linear_srgb),
-            dot(float3(0.069097, 0.919540, 0.011362), linear_srgb),
-            dot(float3(0.016391, 0.088013, 0.895595), linear_srgb));
-    if (push_data.metadata.z == 2)
-        return float3(
-            dot(float3(0.439586, 0.383929, 0.176533), linear_srgb),
-            dot(float3(0.089540, 0.814750, 0.095684), linear_srgb),
-            dot(float3(0.017387, 0.108739, 0.873821), linear_srgb));
-    return linear_srgb;
+    return color_from_linear_srgb(linear_srgb, push_data.metadata.z);
 }
 
 uint morton_component(uint value) {
@@ -216,11 +214,11 @@ uint morton_component(uint value) {
 }
 
 float advance_to_next_occupancy_cell(float distance, float3 position, float3 direction, float3 inverse_direction, float step) {
-    const float3 cell = (position - 0.5) * 128.0;
+    const float3 cell = (position - 0.5) * float(SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION);
     const float3 direction_sign = float3(direction.x >= 0.0 ? 1.0 : -1.0, direction.y >= 0.0 ? 1.0 : -1.0, direction.z >= 0.0 ? 1.0 : -1.0);
     const float3 boundary = floor(cell + 0.5 + 0.5 * direction_sign);
     const float3 cell_distance = (boundary - cell) * inverse_direction;
-    const float target = distance + max(min(min(cell_distance.x, cell_distance.y), cell_distance.z) / 128.0, 0.0);
+    const float target = distance + max(min(min(cell_distance.x, cell_distance.y), cell_distance.z) / float(SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION), 0.0);
     return distance + ceil(max((target - distance) / step, 0.5)) * step;
 }
 
@@ -264,7 +262,7 @@ void render_neural_field(uint3 dispatch_thread_id : SV_DispatchThreadID) {
     while (distance < maximum) {
         float3 position = fma(local_direction, distance, local_origin);
         while (distance < maximum) {
-            const uint3 coordinate = min(uint3(position * 128.0), 127u);
+            const uint3 coordinate = min(uint3(position * float(SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION)), SPECTRA_NEURAL_FIELD_OCCUPANCY_RESOLUTION - 1u);
             const uint occupancy_index = morton_component(coordinate.x) | (morton_component(coordinate.y) << 1u) | (morton_component(coordinate.z) << 2u);
             if ((occupancy[occupancy_index >> 5u] & (1u << (occupancy_index & 31u))) != 0u) break;
             distance = advance_to_next_occupancy_cell(distance, position, local_direction, inverse_local_direction, step);
@@ -278,7 +276,7 @@ void render_neural_field(uint3 dispatch_thread_id : SV_DispatchThreadID) {
         if (transmittance < 1.0e-4) break;
         distance += step;
     }
-    RWTexture2D<float4> output = DescriptorHandle<RWTexture2D<float4>>(push_data.output);
+    RWTexture2D<float4> output = DescriptorHandle<RWTexture2D<float4>>(push_data.output.value);
     const float4 base = output[pixel];
     output[pixel] = float4(output_color_space(srgb_eotf(radiance)) + transmittance * base.xyz, 1.0);
 }

@@ -62,7 +62,7 @@ namespace spectra {
         const auto consume_dynamic_snapshot = [&]() {
             const FrameContext frame = runtime.frames.begin_frame();
             gpu_scene.retire_frame(frame.slot_index);
-            static_cast<void>(gpu_scene.apply(*dynamics.acquire_snapshot(), document.content.evaluated.view(), frame.command_buffer));
+            static_cast<void>(gpu_scene.apply(*dynamics.acquire_snapshot(), document.content.evaluated.view(), frame.command_buffer, frame.slot_index));
             dynamics.record_telemetry(frame.command_buffer, frame.slot_index);
             dynamics.consume_snapshot();
             const std::uint32_t submitted_slot = runtime.frames.submit_frame();
@@ -135,7 +135,7 @@ namespace spectra {
                         display->record(frame.command_buffer, renderer_output, 0.0f);
                     else {
                         const SceneGuideSettings scene_guides{.all_bounds = true};
-                        const SelectionDiagnosticSettings selection_diagnostics{};
+                        const EntityDiagnostics entity_diagnostics{};
                         const SelectionState selection{};
                         record_render_composition(frame.command_buffer, *display,
                             RenderCompositionRequest{
@@ -147,7 +147,7 @@ namespace spectra {
                                 .visualizations         = dynamics.visualizations(),
                                 .visualization          = visualization.get(),
                                 .neural_field           = neural_field.get(),
-                                .diagnostics            = diagnostics ? std::optional{SceneDiagnosticsComposition{*diagnostics, scene_guides, selection_diagnostics, selection}} : std::nullopt,
+                                .diagnostics            = diagnostics ? std::optional{SceneDiagnosticsComposition{*diagnostics, scene_guides, entity_diagnostics, selection}} : std::nullopt,
                                 .frame_slot_index       = frame.slot_index,
                                 .compose_visualizations = compose_visualizations,
                             });
@@ -159,9 +159,10 @@ namespace spectra {
                             outlined[0] = scene::InstanceId{*request.outlined_instance};
                             selected    = outlined;
                         }
-                        overlay->record(frame.command_buffer, *display, camera, ViewportOverlayState{.selected_instances = selected, .axes_plane = request.axes_plane, .axes_visible = request.axes});
+                        overlay->record(frame.command_buffer, display->target(), camera, ViewportOverlayState{.selected_instances = selected, .axes_plane = request.axes_plane, .axes_visible = request.axes});
                     }
-                    record_display_readback(runtime, frame.command_buffer, display->image, display->layout, display_readback);
+                    const ColorCompositionTarget display_target = display->target();
+                    record_display_readback(runtime, frame.command_buffer, display_target.image, display_target.layout, display_readback);
                 }
                 record_linear_readback(runtime, frame.command_buffer, renderer_output, linear_readback);
             }

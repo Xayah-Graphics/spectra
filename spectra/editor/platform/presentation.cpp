@@ -30,8 +30,7 @@ namespace spectra {
         const vk::Extent2D framebuffer_extent{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
         if (this->presentation.extent != framebuffer_extent) this->recreate_swapchain();
 
-        this->context.frames.retire_frame();
-        const std::uint32_t frame_slot_index = this->context.frames.frame.current_slot_index;
+        const std::uint32_t frame_slot_index = this->context.frames.retire_frame();
         vk::ResultValue<std::uint32_t> acquired{vk::Result::eSuccess, 0};
         try {
             acquired = this->presentation.swapchain.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->presentation.image_available[frame_slot_index]);

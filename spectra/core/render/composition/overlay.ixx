@@ -1,6 +1,6 @@
 export module spectra.render.composition.overlay;
 
-import spectra.render.display;
+import spectra.render.contract;
 import spectra.render.gpu_scene;
 import spectra.runtime;
 import spectra.scene;
@@ -28,7 +28,7 @@ namespace spectra {
 
         void initialize();
         void destroy() noexcept;
-        void record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const scene::Camera& camera, const ViewportOverlayState& state);
+        void record(const vk::raii::CommandBuffer& command_buffer, ColorCompositionTarget target, const scene::Camera& camera, const ViewportOverlayState& state);
 
     private:
         struct {

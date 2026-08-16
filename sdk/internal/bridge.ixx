@@ -21,6 +21,68 @@ export namespace spectra::sdk::internal {
         return {value.data(), value.size()};
     }
 
+    [[nodiscard]] constexpr SpectraSdkParameterApplication abi_parameter_application(const ParameterApplication application) noexcept {
+        switch (application) {
+            case ParameterApplication::Live: return SpectraSdkParameterApplication::Live;
+            case ParameterApplication::Reset: return SpectraSdkParameterApplication::Reset;
+            case ParameterApplication::Recreate: return SpectraSdkParameterApplication::Recreate;
+        }
+        std::unreachable();
+    }
+
+    [[nodiscard]] constexpr SpectraSdkOutputKind abi_output_kind(const OutputKind kind) noexcept {
+        switch (kind) {
+            case OutputKind::Mesh: return SpectraSdkOutputKind::Mesh;
+            case OutputKind::Spheres: return SpectraSdkOutputKind::Spheres;
+            case OutputKind::Volume: return SpectraSdkOutputKind::Volume;
+            case OutputKind::Instances: return SpectraSdkOutputKind::Instances;
+            case OutputKind::Particles: return SpectraSdkOutputKind::Particles;
+            case OutputKind::Lines: return SpectraSdkOutputKind::Lines;
+            case OutputKind::Vectors: return SpectraSdkOutputKind::Vectors;
+            case OutputKind::Image: return SpectraSdkOutputKind::Image;
+            case OutputKind::HashGridRadianceField: return SpectraSdkOutputKind::HashGridRadianceField;
+            case OutputKind::Cameras: return SpectraSdkOutputKind::Cameras;
+        }
+        std::unreachable();
+    }
+
+    [[nodiscard]] constexpr SpectraSdkFieldKind abi_field_kind(const FieldKind kind) noexcept {
+        switch (kind) {
+            case FieldKind::Float: return SpectraSdkFieldKind::Float;
+            case FieldKind::Float3: return SpectraSdkFieldKind::Float3;
+            case FieldKind::UInt32: return SpectraSdkFieldKind::UInt32;
+            case FieldKind::MacFloat3: return SpectraSdkFieldKind::MacFloat3;
+        }
+        std::unreachable();
+    }
+
+    [[nodiscard]] constexpr SpectraSdkVolumeFieldSampling abi_field_sampling(const VolumeFieldSampling sampling) noexcept {
+        switch (sampling) {
+            case VolumeFieldSampling::Cell: return SpectraSdkVolumeFieldSampling::Cell;
+            case VolumeFieldSampling::Vertex: return SpectraSdkVolumeFieldSampling::Vertex;
+        }
+        std::unreachable();
+    }
+
+    [[nodiscard]] constexpr SpectraSdkVolumeVectorSpace abi_vector_space(const VolumeVectorSpace space) noexcept {
+        switch (space) {
+            case VolumeVectorSpace::Grid: return SpectraSdkVolumeVectorSpace::Grid;
+            case VolumeVectorSpace::Local: return SpectraSdkVolumeVectorSpace::Local;
+            case VolumeVectorSpace::World: return SpectraSdkVolumeVectorSpace::World;
+        }
+        std::unreachable();
+    }
+
+    [[nodiscard]] constexpr std::uint32_t abi_mesh_attributes(const MeshAttribute attributes) noexcept {
+        std::uint32_t result{};
+        if (contains(attributes, MeshAttribute::Normal)) result |= std::to_underlying(SpectraSdkMeshAttribute::Normal);
+        if (contains(attributes, MeshAttribute::Tangent)) result |= std::to_underlying(SpectraSdkMeshAttribute::Tangent);
+        if (contains(attributes, MeshAttribute::TextureCoordinate)) result |= std::to_underlying(SpectraSdkMeshAttribute::TextureCoordinate);
+        if (contains(attributes, MeshAttribute::Color)) result |= std::to_underlying(SpectraSdkMeshAttribute::Color);
+        if (contains(attributes, MeshAttribute::Scalar)) result |= std::to_underlying(SpectraSdkMeshAttribute::Scalar);
+        return result;
+    }
+
     template <typename Type>
     [[nodiscard]] constexpr SpectraSdkValueKind value_kind() noexcept {
         if constexpr (std::same_as<Type, bool>) return SpectraSdkValueKind::Boolean;
@@ -108,7 +170,7 @@ export namespace spectra::sdk::internal {
                                     abi_string(value.unit),
                                     abi_string(value.options.description),
                                     abi_string(value.options.section),
-                                    static_cast<SpectraSdkParameterApplication>(value.options.application),
+                                    abi_parameter_application(value.options.application),
                                     abi_value(defaults.*std::remove_cvref_t<decltype(value)>::member),
                                     abi_value(static_cast<decltype(member_value(std::remove_cvref_t<decltype(value)>::member))>(value.options.minimum)),
                                     abi_value(static_cast<decltype(member_value(std::remove_cvref_t<decltype(value)>::member))>(value.options.maximum)),
@@ -118,20 +180,32 @@ export namespace spectra::sdk::internal {
                                 };
                             } else if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Output) {
                                 std::vector<SpectraSdkFieldDescriptor>& values = fields[output_index];
-                                std::apply(
-                                    [&values](const auto&... field) {
-                                        (values.emplace_back(
-                                            abi_string(std::remove_cvref_t<decltype(field)>::id.view()),
-                                            abi_string(field.name),
-                                            abi_string(field.unit),
-                                            static_cast<SpectraSdkFieldKind>(std::remove_cvref_t<decltype(field)>::kind),
-                                            static_cast<SpectraSdkVolumeFieldSampling>(field.options.sampling),
-                                            static_cast<SpectraSdkVolumeVectorSpace>(field.options.vector_space)
-                                        ), ...);
-                                    },
-                                    value.fields
-                                );
-                                outputs[output_index++] = {abi_string(std::remove_cvref_t<decltype(value)>::id.view()), static_cast<SpectraSdkOutputKind>(std::remove_cvref_t<decltype(value)>::kind), std::to_underlying(value.mesh_options.attributes), values.data(), values.size()};
+                                if constexpr (requires { value.fields; }) {
+                                    std::apply(
+                                        [&values](const auto&... field) {
+                                            (values.emplace_back(
+                                                abi_string(std::remove_cvref_t<decltype(field)>::id.view()),
+                                                abi_string(field.name),
+                                                abi_string(field.unit),
+                                                abi_field_kind(std::remove_cvref_t<decltype(field)>::kind),
+                                                [&field] {
+                                                    if constexpr (std::same_as<std::remove_cvref_t<decltype(field.options)>, VolumeFieldOptions>) return abi_field_sampling(field.options.sampling);
+                                                    return SpectraSdkVolumeFieldSampling::Cell;
+                                                }(),
+                                                [&field] {
+                                                    if constexpr (std::same_as<std::remove_cvref_t<decltype(field.options)>, VolumeFieldOptions>) return abi_vector_space(field.options.vector_space);
+                                                    return SpectraSdkVolumeVectorSpace::Local;
+                                                }()
+                                            ), ...);
+                                        },
+                                        value.fields
+                                    );
+                                }
+                                const MeshAttribute attributes = []<typename Definition>(const Definition& definition) {
+                                    if constexpr (requires { definition.options.attributes; }) return definition.options.attributes;
+                                    return MeshAttribute{};
+                                }(value);
+                                outputs[output_index++] = {abi_string(std::remove_cvref_t<decltype(value)>::id.view()), abi_output_kind(std::remove_cvref_t<decltype(value)>::kind), abi_mesh_attributes(attributes), values.data(), values.size()};
                             } else {
                                 constexpr SpectraSdkValueKind kind = std::remove_cvref_t<decltype(value)>::is_boolean ? SpectraSdkValueKind::Boolean : std::remove_cvref_t<decltype(value)>::is_integral ? SpectraSdkValueKind::Integer : std::remove_cvref_t<decltype(value)>::is_floating ? SpectraSdkValueKind::Float : SpectraSdkValueKind::Float3;
                                 metrics[metric_index++] = {abi_string(std::remove_cvref_t<decltype(value)>::id.view()), abi_string(value.name), abi_string(value.unit), abi_string(value.section), kind, static_cast<std::uint8_t>(value.plot)};

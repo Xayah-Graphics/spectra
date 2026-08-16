@@ -1,14 +1,12 @@
 module dataset_sphere_unpack;
 
-import sdk_output;
-
 struct SphereAabb {
     float3 minimum;
     float3 maximum;
 }
 
 struct SphereUnpackPushData {
-    DescriptorHandle<StructuredBuffer<SdkSphere>> source;
+    DescriptorHandle<ByteAddressBuffer> source;
     DescriptorHandle<RWStructuredBuffer<float3>> positions;
     DescriptorHandle<RWStructuredBuffer<float>> radii;
     DescriptorHandle<RWStructuredBuffer<SphereAabb>> axis_aligned_boxes;
@@ -24,13 +22,14 @@ uniform SphereUnpackPushData push_data;
 void unpack_dataset_spheres(uint3 dispatch_thread_id : SV_DispatchThreadID) {
     const uint sphere_index = dispatch_thread_id.x;
     if (sphere_index >= push_data.sphere_count) return;
-    StructuredBuffer<SdkSphere> source = push_data.source;
+    ByteAddressBuffer source = push_data.source;
     RWStructuredBuffer<float3> positions = push_data.positions;
     RWStructuredBuffer<float> radii = push_data.radii;
     RWStructuredBuffer<SphereAabb> axis_aligned_boxes = push_data.axis_aligned_boxes;
-    const SdkSphere sphere = source[sphere_index];
-    const float3 position = sdk_float3(sphere.position);
+    const uint offset = sphere_index * 16u;
+    const float3 position = source.Load<float3>(offset);
+    const float radius = source.Load<float>(offset + 12u);
     positions[sphere_index] = position;
-    radii[sphere_index] = sphere.radius;
-    axis_aligned_boxes[sphere_index] = {position - sphere.radius, position + sphere.radius};
+    radii[sphere_index] = radius;
+    axis_aligned_boxes[sphere_index] = {position - radius, position + radius};
 }

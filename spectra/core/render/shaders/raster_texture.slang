@@ -1,6 +1,7 @@
 module raster_texture;
 
 import raster_scene;
+import color;
 
 public struct RasterTextureContext {
     public float3 position;
@@ -266,50 +267,6 @@ float raster_checkerboard_weight(
                 radius.y);
 }
 
-public float3 raster_to_linear_srgb(
-    float3 value,
-    uint color_space) {
-    if (color_space == 1)
-        return float3(
-            1.660491 * value.x -
-                0.587641 * value.y -
-                0.072850 * value.z,
-            -0.124550 * value.x +
-                1.132900 * value.y -
-                0.008349 * value.z,
-            -0.018151 * value.x -
-                0.100579 * value.y +
-                1.118730 * value.z);
-    if (color_space == 2)
-        return float3(
-            2.521686 * value.x -
-                1.134130 * value.y -
-                0.387556 * value.z,
-            -0.276479 * value.x +
-                1.372719 * value.y -
-                0.096240 * value.z,
-            -0.015378 * value.x -
-                0.152975 * value.y +
-                1.168353 * value.z);
-    return value;
-}
-
-public float3 raster_from_linear_srgb(
-    float3 value,
-    uint color_space) {
-    if (color_space == 1)
-        return float3(
-            0.627404 * value.x + 0.329283 * value.y + 0.043313 * value.z,
-            0.069097 * value.x + 0.919540 * value.y + 0.011362 * value.z,
-            0.016391 * value.x + 0.088013 * value.y + 0.895595 * value.z);
-    if (color_space == 2)
-        return float3(
-            0.439701 * value.x + 0.382978 * value.y + 0.177335 * value.z,
-            0.089792 * value.x + 0.813423 * value.y + 0.096762 * value.z,
-            0.017544 * value.x + 0.111544 * value.y + 0.870704 * value.z);
-    return value;
-}
-
 float4 raster_image_value(
     RasterImageTexture texture,
     RasterTextureMapping mapping,
@@ -437,7 +394,7 @@ public float4 evaluate_raster_texture(
             }
             else {
                 value.xyz =
-                    raster_to_linear_srgb(
+                    color_to_linear_srgb(
                         sampled.xyz,
                         uint(
                             texture

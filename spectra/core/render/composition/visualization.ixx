@@ -29,6 +29,7 @@ namespace spectra {
         [[nodiscard]] bool has_visible(scene::SceneView scene, std::span<const dynamics::GpuVisualization> views, scene::VisualizationCompositionDomain domain) const noexcept;
         void record(const vk::raii::CommandBuffer& command_buffer, ColorCompositionTarget target, DepthBufferView depth, scene::SceneView scene, const scene::Camera& camera, std::span<const dynamics::GpuVisualization> views, scene::VisualizationCompositionDomain domain, const CameraReferenceVisualization* camera_reference);
 
+    private:
         struct {
             VulkanRuntime& runtime;
             GpuScene& gpu_scene;

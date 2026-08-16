@@ -1,7 +1,5 @@
 module dataset_instance_apply;
 
-import sdk_output;
-
 struct SceneTransform {
     float4 row_0;
     float4 row_1;
@@ -17,7 +15,7 @@ struct InstanceBinding {
 }
 
 struct InstanceApplyPushData {
-    DescriptorHandle<StructuredBuffer<SdkInstance>> updates;
+    DescriptorHandle<ByteAddressBuffer> updates;
     DescriptorHandle<StructuredBuffer<InstanceBinding>> bindings;
     DescriptorHandle<RWStructuredBuffer<SceneTransform>> transforms;
     DescriptorHandle<RWByteAddressBuffer> acceleration_instances;
@@ -28,15 +26,15 @@ struct InstanceApplyPushData {
 [vk::push_constant]
 uniform InstanceApplyPushData push_data;
 
-float4 transform_row(SdkTransform transform, uint row) {
-    return float4(transform.matrix[row * 4], transform.matrix[row * 4 + 1], transform.matrix[row * 4 + 2], transform.matrix[row * 4 + 3]);
+float4 transform_row(ByteAddressBuffer updates, uint offset, uint row) {
+    return updates.Load<float4>(offset + row * 16u);
 }
 
-SceneTransform multiply_transform(SdkTransform parent, SceneTransform child) {
-    const float4 parent_0 = transform_row(parent, 0);
-    const float4 parent_1 = transform_row(parent, 1);
-    const float4 parent_2 = transform_row(parent, 2);
-    const float4 parent_3 = transform_row(parent, 3);
+SceneTransform multiply_transform(ByteAddressBuffer updates, uint offset, SceneTransform child) {
+    const float4 parent_0 = transform_row(updates, offset, 0u);
+    const float4 parent_1 = transform_row(updates, offset, 1u);
+    const float4 parent_2 = transform_row(updates, offset, 2u);
+    const float4 parent_3 = transform_row(updates, offset, 3u);
     const float4 column_0 = float4(child.row_0.x, child.row_1.x, child.row_2.x, child.row_3.x);
     const float4 column_1 = float4(child.row_0.y, child.row_1.y, child.row_2.y, child.row_3.y);
     const float4 column_2 = float4(child.row_0.z, child.row_1.z, child.row_2.z, child.row_3.z);
@@ -54,14 +52,14 @@ SceneTransform multiply_transform(SdkTransform parent, SceneTransform child) {
 void apply_instance_transforms(uint3 dispatch_thread_id : SV_DispatchThreadID) {
     const uint primitive_index = dispatch_thread_id.x;
     if (primitive_index >= push_data.primitive_count) return;
-    StructuredBuffer<SdkInstance> updates = push_data.updates;
+    ByteAddressBuffer updates = push_data.updates;
     StructuredBuffer<InstanceBinding> bindings = push_data.bindings;
     const InstanceBinding binding = bindings[primitive_index];
     for (uint update_index = 0; update_index < push_data.update_count; ++update_index) {
-        const SdkInstance update = updates[update_index];
-        const uint2 update_id = uint2(uint(update.instance_id), uint(update.instance_id >> 32));
+        const uint update_offset = update_index * 72u;
+        const uint2 update_id = updates.Load<uint2>(update_offset);
         if (any(update_id != binding.instance_id)) continue;
-        const SceneTransform transform = multiply_transform(update.transform, binding.primitive_from_instance);
+        const SceneTransform transform = multiply_transform(updates, update_offset + 8u, binding.primitive_from_instance);
         RWStructuredBuffer<SceneTransform> transforms = push_data.transforms;
         transforms[primitive_index] = transform;
         if (binding.acceleration_index != 0xffffffff) {

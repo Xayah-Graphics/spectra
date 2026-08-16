@@ -25,6 +25,7 @@ namespace spectra {
         [[nodiscard]] ColorCompositionTarget target() noexcept;
         void record(const vk::raii::CommandBuffer& command_buffer, RenderOutput render_output, float exposure);
 
+    private:
         struct {
             VulkanRuntime& runtime;
             std::filesystem::path shader_directory{};

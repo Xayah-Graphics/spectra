@@ -7,6 +7,11 @@ export module spectra.sdk.cuda;
 export import spectra.sdk;
 import std;
 
+namespace spectra::sdk::internal {
+    template <typename Provider>
+    struct ProviderBridge;
+}
+
 namespace spectra::sdk::cuda {
     struct RawView {
         void* data{};
@@ -19,8 +24,6 @@ namespace spectra::sdk::cuda {
         RawView tangents{};
         RawView colors{};
         RawView scalars{};
-        std::uint32_t* active_count{};
-        std::uint32_t* triangle_count{};
     };
 
     struct RawMeshSetupView {
@@ -107,8 +110,6 @@ namespace spectra::sdk::cuda {
         std::span<Float3> tangents{};
         std::span<Float4> colors{};
         std::span<float> scalars{};
-        std::uint32_t& vertex_count;
-        std::uint32_t& triangle_count;
     };
 
     export struct Image {
@@ -126,10 +127,11 @@ namespace spectra::sdk::cuda {
         std::span<std::uint32_t> occupancy{};
     };
 
+    export struct Frame;
+    export struct Output;
     export struct MacField;
 
     export struct Volume {
-        void* state{};
         UInt3 resolution{};
 
         template <FixedString Id, typename Type>
@@ -140,10 +142,16 @@ namespace spectra::sdk::cuda {
 
         template <FixedString Id>
         [[nodiscard]] MacField field() const;
+
+    private:
+        friend Frame;
+
+        Volume(void* state, const UInt3 resolution) : resolution(resolution), state(state) {}
+
+        void* state{};
     };
 
     export struct Particles {
-        void* state{};
         std::span<Float3> positions{};
 
         template <FixedString Id, typename Type>
@@ -151,6 +159,13 @@ namespace spectra::sdk::cuda {
             const RawView view = field_internal(state, Id.view());
             return {static_cast<Type*>(view.data), view.count};
         }
+
+    private:
+        friend Frame;
+
+        Particles(void* state, const std::span<Float3> positions) : positions(positions), state(state) {}
+
+        void* state{};
     };
 
     export struct MacField {
@@ -176,9 +191,6 @@ namespace spectra::sdk::cuda {
     }
 
     export struct Metric {
-        void* state{};
-        std::string_view id{};
-
         template <typename Type>
         void upload(const Type source) const noexcept {
             MetricValue value{};
@@ -191,18 +203,17 @@ namespace spectra::sdk::cuda {
             }
             upload_metric_internal(state, id, value);
         }
+
+    private:
+        friend Frame;
+
+        Metric(void* state, const std::string_view id) : state(state), id(id) {}
+
+        void* state{};
+        std::string_view id{};
     };
 
     export struct Setup {
-        void* state{};
-
-        explicit Setup(const void* sink);
-        ~Setup();
-        Setup(Setup&& other) noexcept;
-        Setup& operator=(Setup&& other) noexcept;
-        Setup(const Setup&)            = delete;
-        Setup& operator=(const Setup&) = delete;
-
         template <FixedString Id>
         [[nodiscard]] MeshSetup mesh(const std::uint32_t vertex_capacity, const std::uint32_t triangle_capacity) {
             const RawMeshSetupView view = setup_mesh_internal(state, Id.view(), vertex_capacity, triangle_capacity);
@@ -258,6 +269,18 @@ namespace spectra::sdk::cuda {
             setup_hash_grid_radiance_field_internal(state, Id.view());
         }
 
+    private:
+        template <typename Provider>
+        friend struct spectra::sdk::internal::ProviderBridge;
+        friend Output;
+
+        explicit Setup(const void* sink);
+        ~Setup();
+        Setup(Setup&& other) noexcept;
+        Setup& operator=(Setup&& other) noexcept;
+        Setup(const Setup&)            = delete;
+        Setup& operator=(const Setup&) = delete;
+
         void complete();
 
         template <typename... Definitions>
@@ -269,14 +292,20 @@ namespace spectra::sdk::cuda {
                         if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Output) {
                             std::vector<std::string_view> field_ids{};
                             std::vector<FieldKind> field_kinds{};
-                            std::apply(
-                                [&field_ids, &field_kinds](const auto&... field) {
-                                    (field_ids.emplace_back(std::remove_cvref_t<decltype(field)>::id.view()), ...);
-                                    (field_kinds.emplace_back(std::remove_cvref_t<decltype(field)>::kind), ...);
-                                },
-                                value.fields
-                            );
-                            register_output_internal(state, std::remove_cvref_t<decltype(value)>::id.view(), std::remove_cvref_t<decltype(value)>::kind, value.mesh_options.attributes, field_ids, field_kinds);
+                            if constexpr (requires { value.fields; }) {
+                                std::apply(
+                                    [&field_ids, &field_kinds](const auto&... field) {
+                                        (field_ids.emplace_back(std::remove_cvref_t<decltype(field)>::id.view()), ...);
+                                        (field_kinds.emplace_back(std::remove_cvref_t<decltype(field)>::kind), ...);
+                                    },
+                                    value.fields
+                                );
+                            }
+                            const MeshAttribute attributes = []<typename Definition>(const Definition& definition) {
+                                if constexpr (requires { definition.options.attributes; }) return definition.options.attributes;
+                                return MeshAttribute{};
+                            }(value);
+                            register_output_internal(state, std::remove_cvref_t<decltype(value)>::id.view(), std::remove_cvref_t<decltype(value)>::kind, attributes, field_ids, field_kinds);
                         } else if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Metric)
                             metric_ids.emplace_back(std::remove_cvref_t<decltype(value)>::id.view());
                     }(definition), ...);
@@ -285,11 +314,11 @@ namespace spectra::sdk::cuda {
             );
             configure_metrics_internal(state, metric_ids);
         }
+
+        void* state{};
     };
 
     export struct Frame {
-        void* state{};
-
         template <FixedString Id>
         [[nodiscard]] Mesh mesh() const {
             const RawMeshView view = frame_mesh_internal(state, Id.view());
@@ -299,8 +328,6 @@ namespace spectra::sdk::cuda {
                 {static_cast<Float3*>(view.tangents.data), view.tangents.count},
                 {static_cast<Float4*>(view.colors.data), view.colors.count},
                 {static_cast<float*>(view.scalars.data), view.scalars.count},
-                *view.active_count,
-                *view.triangle_count,
             };
         }
 
@@ -366,10 +393,21 @@ namespace spectra::sdk::cuda {
         }
 
         void commit();
+
+    private:
+        friend Output;
+
+        explicit Frame(void* state) : state(state) {}
+
+        void* state{};
     };
 
     export struct Output {
-        void* state{};
+        [[nodiscard]] Frame begin(void* stream) const;
+
+    private:
+        template <typename Provider>
+        friend struct spectra::sdk::internal::ProviderBridge;
 
         Output() = default;
         explicit Output(Setup& setup) noexcept;
@@ -380,7 +418,8 @@ namespace spectra::sdk::cuda {
         Output& operator=(const Output&) = delete;
 
         void prepare(void* commit) const noexcept;
-        [[nodiscard]] Frame begin(void* stream) const;
         void synchronize() const;
+
+        void* state{};
     };
 }

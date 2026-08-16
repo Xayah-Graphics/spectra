@@ -2,6 +2,7 @@ module raster_fragment;
 
 import raster_scene;
 import raster_texture;
+import color;
 
 struct RasterFragmentOutput {
     float4 color : SV_Target;
@@ -16,7 +17,7 @@ static const float3 raster_wire_light_color = float3(0.55, 0.65, 0.72);
 uniform RasterPushData push_data;
 
 RasterFragmentOutput raster_wireframe_output(float fragment_depth, float alpha) {
-    return {float4(raster_from_linear_srgb(raster_wire_light_color, push_data.attributes.w), alpha), fragment_depth};
+    return {float4(color_from_linear_srgb(raster_wire_light_color, push_data.attributes.w), alpha), fragment_depth};
 }
 
 float raster_float_parameter(float value, uint texture, RasterSceneBindings bindings, RasterTextureContext context) {
@@ -276,5 +277,5 @@ RasterFragmentOutput raster_fragment(RasterVertex input) {
     color = max(color, float3(0.0));
     const float maximum_component = max(color.x, max(color.y, color.z));
     if (push_data.film.y != 0.0 && maximum_component > push_data.film.x) color *= push_data.film.x / maximum_component;
-    return {float4(raster_from_linear_srgb(color, push_data.attributes.w), 1.0), fragment_depth};
+    return {float4(color_from_linear_srgb(color, push_data.attributes.w), 1.0), fragment_depth};
 }

@@ -8,6 +8,7 @@ namespace {
         std::string name{};
         std::string cpp_type{};
         std::size_t offset{};
+        std::size_t alignment{};
     };
 
     struct ReflectedType {
@@ -54,6 +55,7 @@ namespace {
         if (kind == slang::TypeReflection::Kind::Array) return std::format("std::array<{}, {}>", reflected_cpp_type(type->getElementType()), type->getElementCount());
         const std::string_view name = type->getName() ? type->getName() : "";
         if (name.starts_with("DescriptorHandle")) return "DescriptorHandle";
+        if (name == "UntypedDescriptorHandle") return "DescriptorHandle";
         if (kind == slang::TypeReflection::Kind::Struct || kind == slang::TypeReflection::Kind::Specialized) return std::string{name};
         throw std::runtime_error(std::format("Shader ABI type '{}' has unsupported reflection kind {}", name, static_cast<int>(kind)));
     }
@@ -127,6 +129,7 @@ namespace {
                     field->getName(),
                     reflected_cpp_type(field->getType()),
                     field->getOffset(),
+                    static_cast<std::size_t>(field->getTypeLayout()->getAlignment()),
                 });
             }
             types.push_back(std::move(reflected));
@@ -141,7 +144,7 @@ namespace {
                << "namespace " << namespace_name << " {\n";
         for (const ReflectedType& type : types) {
             output << "    export struct alignas(" << type.alignment << ") " << type.name << " {\n";
-            for (const ReflectedField& field : type.fields) output << "        " << field.cpp_type << " " << field.name << "{};\n";
+            for (const ReflectedField& field : type.fields) output << "        alignas(" << field.alignment << ") " << field.cpp_type << " " << field.name << "{};\n";
             output << "    };\n\n";
         }
         for (const ReflectedType& type : types) {
@@ -224,8 +227,8 @@ int main(const int argument_count, const char* const* arguments) {
             "-spirv-unified-descriptor-heap-stride",
         };
         std::vector<const char*> search_paths{};
-        search_paths.reserve(argument_count - 11);
-        for (int index = 11; index != argument_count; ++index) search_paths.push_back(arguments[index]);
+        search_paths.reserve(argument_count - 15);
+        for (int index = 15; index != argument_count; ++index) search_paths.push_back(arguments[index]);
         slang::TargetDesc target_description{
             .format  = SLANG_SPIRV,
             .profile = global_session->findProfile("sm_6_6"),
@@ -256,12 +259,18 @@ int main(const int argument_count, const char* const* arguments) {
         write_if_different(arguments[2], path_abi_module.data(), path_abi_module.size(), "generated Path Tracer shader ABI module");
         const std::string raster_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[3]), "spectra.render.rasterizer.abi", "spectra");
         write_if_different(arguments[4], raster_abi_module.data(), raster_abi_module.size(), "generated Rasterizer shader ABI module");
-        std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[7]);
-        shader_entries.append_range(load_shader_entries(arguments[8]));
-        if (std::string_view{arguments[10]} == "ON") shader_entries.append_range(load_shader_entries(arguments[9]));
+        const std::string runtime_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[5]), "spectra.render.runtime_abi", "spectra");
+        write_if_different(arguments[6], runtime_abi_module.data(), runtime_abi_module.size(), "generated runtime shader ABI module");
+        if (std::string_view{arguments[14]} == "ON") {
+            const std::string editor_abi_module = generate_abi_module(*default_session, load_abi_type_entries(arguments[7]), "spectra.render.editor_abi", "spectra");
+            write_if_different(arguments[8], editor_abi_module.data(), editor_abi_module.size(), "generated editor shader ABI module");
+        }
+        std::vector<ShaderEntry> shader_entries = load_shader_entries(arguments[11]);
+        shader_entries.append_range(load_shader_entries(arguments[12]));
+        if (std::string_view{arguments[14]} == "ON") shader_entries.append_range(load_shader_entries(arguments[13]));
         const std::string shader_entries_module = generate_shader_entries_module(shader_entries);
-        write_if_different(arguments[5], shader_entries_module.data(), shader_entries_module.size(), "generated Path Tracer shader entry module");
-        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.optimized ? *optimized_session : *default_session, entry, arguments[6]);
+        write_if_different(arguments[9], shader_entries_module.data(), shader_entries_module.size(), "generated Path Tracer shader entry module");
+        for (const ShaderEntry& entry : shader_entries) compile_shader(entry.optimized ? *optimized_session : *default_session, entry, arguments[10]);
     } catch (const std::exception& error) {
         std::println(std::cerr, "{}", error.what());
         return 1;

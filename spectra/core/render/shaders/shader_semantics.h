@@ -70,6 +70,76 @@
 #define SPECTRA_ILLUMINANT_D65            1u
 #define SPECTRA_ILLUMINANT_D60            2u
 
+#define SPECTRA_VISUALIZATION_SEGMENTS          1u
+#define SPECTRA_VISUALIZATION_VECTORS           2u
+#define SPECTRA_VISUALIZATION_IMAGE             3u
+#define SPECTRA_VISUALIZATION_SURFACE           4u
+#define SPECTRA_VISUALIZATION_PARTICLES         5u
+#define SPECTRA_VISUALIZATION_VOLUME_SLICE      8u
+#define SPECTRA_VISUALIZATION_VOLUME_RAY_MARCH  9u
+#define SPECTRA_VISUALIZATION_VOLUME_MIP        10u
+#define SPECTRA_VISUALIZATION_VOLUME_ISOSURFACE 11u
+#define SPECTRA_VISUALIZATION_VOLUME_GLYPHS     12u
+#define SPECTRA_VISUALIZATION_VOLUME_STREAMLINES 13u
+#define SPECTRA_VISUALIZATION_VOLUME_LIC        14u
+#define SPECTRA_VISUALIZATION_REFERENCE_OVERLAY 15u
+#define SPECTRA_VISUALIZATION_REFERENCE_PLANE   16u
+#define SPECTRA_VISUALIZATION_VOLUME_CELLS      17u
+
+#define SPECTRA_DIAGNOSTIC_LINES            0u
+#define SPECTRA_DIAGNOSTIC_BOXES            1u
+#define SPECTRA_DIAGNOSTIC_TRIANGLE_EDGES   2u
+#define SPECTRA_DIAGNOSTIC_MESH_VERTICES    3u
+#define SPECTRA_DIAGNOSTIC_MESH_NORMALS     4u
+#define SPECTRA_DIAGNOSTIC_MESH_TANGENTS    5u
+#define SPECTRA_DIAGNOSTIC_SPHERE_CENTERS   6u
+#define SPECTRA_DIAGNOSTIC_SPHERE_WIREFRAME 8u
+#define SPECTRA_DIAGNOSTIC_OCCUPANCY_CELLS  9u
+#define SPECTRA_DIAGNOSTIC_PARTICLE_POINTS  10u
+#define SPECTRA_DIAGNOSTIC_PARTICLE_VECTORS 11u
+
+#define SPECTRA_FIELD_FLOAT      0u
+#define SPECTRA_FIELD_FLOAT3     1u
+#define SPECTRA_FIELD_UINT32     2u
+#define SPECTRA_FIELD_MAC_FLOAT3 3u
+
+#define SPECTRA_DEPTH_TESTED  0u
+#define SPECTRA_DEPTH_XRAY    1u
+#define SPECTRA_DEPTH_OVERLAY 2u
+
+#define SPECTRA_COLOR_SOURCE_ELEMENT 0u
+#define SPECTRA_COLOR_SOURCE_UNIFORM 1u
+#define SPECTRA_COLOR_SOURCE_SCALAR  2u
+
+#define SPECTRA_COLOR_MAP_VIRIDIS   0u
+#define SPECTRA_COLOR_MAP_TURBO     1u
+#define SPECTRA_COLOR_MAP_COOL_WARM 2u
+#define SPECTRA_COLOR_MAP_GRAYSCALE 3u
+
+#define SPECTRA_FIELD_MAPPING_VALUE          0u
+#define SPECTRA_FIELD_MAPPING_MAGNITUDE      1u
+#define SPECTRA_FIELD_MAPPING_X              2u
+#define SPECTRA_FIELD_MAPPING_Y              3u
+#define SPECTRA_FIELD_MAPPING_Z              4u
+#define SPECTRA_FIELD_MAPPING_DIVERGENCE     5u
+#define SPECTRA_FIELD_MAPPING_CURL_MAGNITUDE 6u
+#define SPECTRA_FIELD_MAPPING_Q_CRITERION     7u
+
+#define SPECTRA_FIELD_SAMPLING_CELL   0u
+#define SPECTRA_FIELD_SAMPLING_VERTEX 1u
+
+#define SPECTRA_VECTOR_SPACE_GRID  0u
+#define SPECTRA_VECTOR_SPACE_LOCAL 1u
+#define SPECTRA_VECTOR_SPACE_WORLD 2u
+
+#define SPECTRA_PARTICLE_POINTS  0u
+#define SPECTRA_PARTICLE_DISCS   1u
+#define SPECTRA_PARTICLE_SPHERES 2u
+
+#define SPECTRA_COLOR_SPACE_SRGB       0u
+#define SPECTRA_COLOR_SPACE_REC2020    1u
+#define SPECTRA_COLOR_SPACE_ACES2065_1 2u
+
 #ifdef __cplusplus
 #include <cstdint>
 
@@ -142,6 +212,76 @@ namespace spectra::shader_semantics {
     inline constexpr std::uint32_t illuminant_none           = SPECTRA_ILLUMINANT_NONE;
     inline constexpr std::uint32_t illuminant_d65            = SPECTRA_ILLUMINANT_D65;
     inline constexpr std::uint32_t illuminant_d60            = SPECTRA_ILLUMINANT_D60;
+
+    inline constexpr std::uint32_t visualization_segments           = SPECTRA_VISUALIZATION_SEGMENTS;
+    inline constexpr std::uint32_t visualization_vectors            = SPECTRA_VISUALIZATION_VECTORS;
+    inline constexpr std::uint32_t visualization_image              = SPECTRA_VISUALIZATION_IMAGE;
+    inline constexpr std::uint32_t visualization_surface            = SPECTRA_VISUALIZATION_SURFACE;
+    inline constexpr std::uint32_t visualization_particles          = SPECTRA_VISUALIZATION_PARTICLES;
+    inline constexpr std::uint32_t visualization_volume_slice       = SPECTRA_VISUALIZATION_VOLUME_SLICE;
+    inline constexpr std::uint32_t visualization_volume_ray_march   = SPECTRA_VISUALIZATION_VOLUME_RAY_MARCH;
+    inline constexpr std::uint32_t visualization_volume_mip         = SPECTRA_VISUALIZATION_VOLUME_MIP;
+    inline constexpr std::uint32_t visualization_volume_isosurface  = SPECTRA_VISUALIZATION_VOLUME_ISOSURFACE;
+    inline constexpr std::uint32_t visualization_volume_glyphs      = SPECTRA_VISUALIZATION_VOLUME_GLYPHS;
+    inline constexpr std::uint32_t visualization_volume_streamlines = SPECTRA_VISUALIZATION_VOLUME_STREAMLINES;
+    inline constexpr std::uint32_t visualization_volume_lic         = SPECTRA_VISUALIZATION_VOLUME_LIC;
+    inline constexpr std::uint32_t visualization_reference_overlay  = SPECTRA_VISUALIZATION_REFERENCE_OVERLAY;
+    inline constexpr std::uint32_t visualization_reference_plane    = SPECTRA_VISUALIZATION_REFERENCE_PLANE;
+    inline constexpr std::uint32_t visualization_volume_cells       = SPECTRA_VISUALIZATION_VOLUME_CELLS;
+
+    inline constexpr std::uint32_t diagnostic_lines            = SPECTRA_DIAGNOSTIC_LINES;
+    inline constexpr std::uint32_t diagnostic_boxes            = SPECTRA_DIAGNOSTIC_BOXES;
+    inline constexpr std::uint32_t diagnostic_triangle_edges   = SPECTRA_DIAGNOSTIC_TRIANGLE_EDGES;
+    inline constexpr std::uint32_t diagnostic_mesh_vertices    = SPECTRA_DIAGNOSTIC_MESH_VERTICES;
+    inline constexpr std::uint32_t diagnostic_mesh_normals     = SPECTRA_DIAGNOSTIC_MESH_NORMALS;
+    inline constexpr std::uint32_t diagnostic_mesh_tangents    = SPECTRA_DIAGNOSTIC_MESH_TANGENTS;
+    inline constexpr std::uint32_t diagnostic_sphere_centers   = SPECTRA_DIAGNOSTIC_SPHERE_CENTERS;
+    inline constexpr std::uint32_t diagnostic_sphere_wireframe = SPECTRA_DIAGNOSTIC_SPHERE_WIREFRAME;
+    inline constexpr std::uint32_t diagnostic_occupancy_cells  = SPECTRA_DIAGNOSTIC_OCCUPANCY_CELLS;
+    inline constexpr std::uint32_t diagnostic_particle_points  = SPECTRA_DIAGNOSTIC_PARTICLE_POINTS;
+    inline constexpr std::uint32_t diagnostic_particle_vectors = SPECTRA_DIAGNOSTIC_PARTICLE_VECTORS;
+
+    inline constexpr std::uint32_t field_float      = SPECTRA_FIELD_FLOAT;
+    inline constexpr std::uint32_t field_float3     = SPECTRA_FIELD_FLOAT3;
+    inline constexpr std::uint32_t field_uint32     = SPECTRA_FIELD_UINT32;
+    inline constexpr std::uint32_t field_mac_float3 = SPECTRA_FIELD_MAC_FLOAT3;
+
+    inline constexpr std::uint32_t depth_tested  = SPECTRA_DEPTH_TESTED;
+    inline constexpr std::uint32_t depth_xray    = SPECTRA_DEPTH_XRAY;
+    inline constexpr std::uint32_t depth_overlay = SPECTRA_DEPTH_OVERLAY;
+
+    inline constexpr std::uint32_t color_source_element = SPECTRA_COLOR_SOURCE_ELEMENT;
+    inline constexpr std::uint32_t color_source_uniform = SPECTRA_COLOR_SOURCE_UNIFORM;
+    inline constexpr std::uint32_t color_source_scalar  = SPECTRA_COLOR_SOURCE_SCALAR;
+
+    inline constexpr std::uint32_t color_map_viridis   = SPECTRA_COLOR_MAP_VIRIDIS;
+    inline constexpr std::uint32_t color_map_turbo     = SPECTRA_COLOR_MAP_TURBO;
+    inline constexpr std::uint32_t color_map_cool_warm = SPECTRA_COLOR_MAP_COOL_WARM;
+    inline constexpr std::uint32_t color_map_grayscale = SPECTRA_COLOR_MAP_GRAYSCALE;
+
+    inline constexpr std::uint32_t field_mapping_value          = SPECTRA_FIELD_MAPPING_VALUE;
+    inline constexpr std::uint32_t field_mapping_magnitude      = SPECTRA_FIELD_MAPPING_MAGNITUDE;
+    inline constexpr std::uint32_t field_mapping_x              = SPECTRA_FIELD_MAPPING_X;
+    inline constexpr std::uint32_t field_mapping_y              = SPECTRA_FIELD_MAPPING_Y;
+    inline constexpr std::uint32_t field_mapping_z              = SPECTRA_FIELD_MAPPING_Z;
+    inline constexpr std::uint32_t field_mapping_divergence     = SPECTRA_FIELD_MAPPING_DIVERGENCE;
+    inline constexpr std::uint32_t field_mapping_curl_magnitude = SPECTRA_FIELD_MAPPING_CURL_MAGNITUDE;
+    inline constexpr std::uint32_t field_mapping_q_criterion    = SPECTRA_FIELD_MAPPING_Q_CRITERION;
+
+    inline constexpr std::uint32_t field_sampling_cell   = SPECTRA_FIELD_SAMPLING_CELL;
+    inline constexpr std::uint32_t field_sampling_vertex = SPECTRA_FIELD_SAMPLING_VERTEX;
+
+    inline constexpr std::uint32_t vector_space_grid  = SPECTRA_VECTOR_SPACE_GRID;
+    inline constexpr std::uint32_t vector_space_local = SPECTRA_VECTOR_SPACE_LOCAL;
+    inline constexpr std::uint32_t vector_space_world = SPECTRA_VECTOR_SPACE_WORLD;
+
+    inline constexpr std::uint32_t particle_points  = SPECTRA_PARTICLE_POINTS;
+    inline constexpr std::uint32_t particle_discs   = SPECTRA_PARTICLE_DISCS;
+    inline constexpr std::uint32_t particle_spheres = SPECTRA_PARTICLE_SPHERES;
+
+    inline constexpr std::uint32_t color_space_srgb       = SPECTRA_COLOR_SPACE_SRGB;
+    inline constexpr std::uint32_t color_space_rec2020    = SPECTRA_COLOR_SPACE_REC2020;
+    inline constexpr std::uint32_t color_space_aces2065_1 = SPECTRA_COLOR_SPACE_ACES2065_1;
 } // namespace spectra::shader_semantics
 #endif
 

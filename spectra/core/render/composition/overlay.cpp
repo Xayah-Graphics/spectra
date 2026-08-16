@@ -1,44 +1,11 @@
 module spectra.render.composition.overlay;
 
 import spectra.render.contract;
+import spectra.render.runtime_abi;
 import std;
 import vulkan;
 
 namespace spectra {
-    namespace {
-        struct alignas(16) MaskPushData {
-            DescriptorHandle positions;
-            DescriptorHandle indices;
-            DescriptorHandle radii;
-            DescriptorHandle transforms;
-            std::uint32_t scene_primitive_index;
-            std::uint32_t element_count;
-            std::uint32_t draw_kind;
-            std::uint32_t reserved_0;
-            std::array<float, 4> color;
-            std::array<float, 4> view_projection_row_0;
-            std::array<float, 4> view_projection_row_1;
-            std::array<float, 4> view_projection_row_2;
-            std::array<float, 4> view_projection_row_3;
-        };
-        static_assert(sizeof(MaskPushData) == 128);
-
-        struct alignas(16) AxesPushData {
-            std::array<float, 4> view_projection_row_0;
-            std::array<float, 4> view_projection_row_1;
-            std::array<float, 4> view_projection_row_2;
-            std::array<float, 4> view_projection_row_3;
-            std::array<float, 4> inverse_view_projection_row_0;
-            std::array<float, 4> inverse_view_projection_row_1;
-            std::array<float, 4> inverse_view_projection_row_2;
-            std::array<float, 4> inverse_view_projection_row_3;
-            std::array<std::uint32_t, 4> metadata;
-        };
-        static_assert(sizeof(AxesPushData) == 144);
-
-
-    } // namespace
-
     ViewportOverlay::ViewportOverlay(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory) : context{runtime, gpu_scene, std::move(shader_directory)} {}
 
     ViewportOverlay::~ViewportOverlay() {
@@ -63,7 +30,7 @@ namespace spectra {
         this->overlay.depth_layout = vk::ImageLayout::eUndefined;
     }
 
-    void ViewportOverlay::record(const vk::raii::CommandBuffer& command_buffer, DisplayPass& display, const scene::Camera& camera, const ViewportOverlayState& state) {
+    void ViewportOverlay::record(const vk::raii::CommandBuffer& command_buffer, ColorCompositionTarget target, const scene::Camera& camera, const ViewportOverlayState& state) {
         std::vector<std::uint32_t> selected_indices{};
         std::vector<std::uint32_t> active_indices{};
         std::vector<std::uint32_t> hovered_indices{};
@@ -75,9 +42,9 @@ namespace spectra {
         for (const scene::InstanceId instance : state.selected_instances) collect(instance, selected_indices);
         if (state.active_instance) collect(*state.active_instance, active_indices);
         if (state.hovered_instance) collect(*state.hovered_instance, hovered_indices);
-        const vk::Extent2D extent = display.image.extent;
-        this->record_impl(command_buffer, *display.image.image, *display.image.view, display.layout, extent, vk::Rect2D{{0, 0}, extent}, camera, selected_indices, active_indices, hovered_indices, state.axes_plane, state.axes_visible, state.outline_visible);
-        display.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        const vk::Extent2D extent = target.image.extent;
+        this->record_impl(command_buffer, *target.image.image, *target.image.view, target.layout, extent, vk::Rect2D{{0, 0}, extent}, camera, selected_indices, active_indices, hovered_indices, state.axes_plane, state.axes_visible, state.outline_visible);
+        target.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 
 
@@ -447,12 +414,6 @@ namespace spectra {
             };
             command_buffer.bindShadersEXT(outline_stages, outline_handles);
             this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
-            struct alignas(16) OutlinePushData {
-                DescriptorHandle mask;
-                DescriptorHandle sampler;
-                std::array<float, 2> inverse_extent;
-                std::array<std::uint32_t, 2> reserved;
-            };
             const OutlinePushData outline_push{
                 this->overlay.mask_descriptor,
                 this->overlay.sampler_descriptor,
