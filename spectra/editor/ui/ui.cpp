@@ -81,6 +81,7 @@ namespace spectra {
 
         [[nodiscard]] bool transform_editable(const EditorUi& editor, const SceneEntityReference entity) noexcept {
             if (entity.kind == SceneEntityKind::NeuralField) return false;
+            if (entity.kind == SceneEntityKind::ParticleSet) return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(scene::ParticleSetId{entity.id});
             if (entity.kind == SceneEntityKind::Volume) return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(scene::VolumeId{entity.id});
             if (entity.kind == SceneEntityKind::Camera) return !editor.context.dynamics.initialized() || !editor.context.dynamics.controls(scene::CameraId{entity.id});
             if (entity.kind != SceneEntityKind::Instance && entity.kind != SceneEntityKind::AreaEmitter) return entity.kind == SceneEntityKind::Light;
@@ -94,6 +95,7 @@ namespace spectra {
                 return std::ranges::find(source.resources.instances, id, &scene::Instance::id)->transform;
             }
             if (entity.kind == SceneEntityKind::Camera) return std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->transform;
+            if (entity.kind == SceneEntityKind::ParticleSet) return std::ranges::find(source.resources.particle_sets, scene::ParticleSetId{entity.id}, &scene::ParticleSet::id)->transform;
             if (entity.kind == SceneEntityKind::Volume) return std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id)->transform;
             if (entity.kind == SceneEntityKind::NeuralField) return std::ranges::find(source.resources.neural_fields, scene::NeuralFieldId{entity.id}, &scene::NeuralField::id)->transform;
             if (entity.kind != SceneEntityKind::Light) return std::nullopt;
@@ -113,6 +115,7 @@ namespace spectra {
         [[nodiscard]] const std::string& entity_name(const scene::Scene& source, const SceneEntityReference entity) noexcept {
             if (entity.kind == SceneEntityKind::Instance) return std::ranges::find(source.resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id)->name;
             if (entity.kind == SceneEntityKind::Camera) return std::ranges::find(source.resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id)->name;
+            if (entity.kind == SceneEntityKind::ParticleSet) return std::ranges::find(source.resources.particle_sets, scene::ParticleSetId{entity.id}, &scene::ParticleSet::id)->name;
             if (entity.kind == SceneEntityKind::Volume) return std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id)->name;
             if (entity.kind == SceneEntityKind::NeuralField) return std::ranges::find(source.resources.neural_fields, scene::NeuralFieldId{entity.id}, &scene::NeuralField::id)->name;
             if (entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Light) return std::ranges::find(source.resources.lights, scene::LightId{entity.id}, &scene::Light::id)->name;
@@ -124,6 +127,7 @@ namespace spectra {
             if (entity.kind == SceneEntityKind::Camera) return "CAMERA";
             if (entity.kind == SceneEntityKind::Light) return "LIGHT";
             if (entity.kind == SceneEntityKind::AreaEmitter) return "AREA EMITTER";
+            if (entity.kind == SceneEntityKind::ParticleSet) return "PARTICLE SET";
             if (entity.kind == SceneEntityKind::Volume) return "VOLUME";
             if (entity.kind == SceneEntityKind::NeuralField) return "NEURAL FIELD";
             return "ENTITY";
@@ -388,6 +392,9 @@ namespace spectra {
         } else if (entity.kind == SceneEntityKind::Volume) {
             this->context.document.update_volume_transform(this->context.document.content.source, scene::VolumeId{entity.id}, transform);
             this->context.document.update_volume_transform(this->context.document.content.evaluated, scene::VolumeId{entity.id}, std::move(transform));
+        } else if (entity.kind == SceneEntityKind::ParticleSet) {
+            this->context.document.update_particle_set_transform(this->context.document.content.source, scene::ParticleSetId{entity.id}, transform);
+            this->context.document.update_particle_set_transform(this->context.document.content.evaluated, scene::ParticleSetId{entity.id}, std::move(transform));
         }
     }
 
@@ -788,9 +795,16 @@ namespace spectra {
                 if (const auto* grid = std::get_if<scene::GridVolume>(&volume.data)) {
                     add_line(std::format("{} × {} × {}  ·  {} fields", grid->resolution.x, grid->resolution.y, grid->resolution.z, grid->fields.size()), primary);
                     for (const scene::VolumeField& field : grid->fields) {
-                        const char* kind = field.kind == scene::VolumeFieldKind::Float ? "scalar" : field.kind == scene::VolumeFieldKind::Float3 ? "vector" : "MAC vector";
+                        const char* kind = field.kind == scene::FieldKind::Float ? "scalar" : field.kind == scene::FieldKind::Float3 ? "vector" : field.kind == scene::FieldKind::UInt32 ? "category" : "MAC vector";
                         add_line(std::format("{}  ·  {}{}{}", field.name, kind, field.unit.empty() ? "" : "  ·  ", field.unit), secondary);
                     }
+                }
+            } else if (entity->kind == SceneEntityKind::ParticleSet) {
+                const scene::ParticleSet& particles = *std::ranges::find(scene.resources.particle_sets, scene::ParticleSetId{entity->id}, &scene::ParticleSet::id);
+                add_line(std::format("Radius {:.5g}  ·  {} fields", particles.radius, particles.fields.size()), primary);
+                for (const scene::ParticleField& field : particles.fields) {
+                    const char* kind = field.kind == scene::FieldKind::Float ? "scalar" : field.kind == scene::FieldKind::Float3 ? "vector" : "category";
+                    add_line(std::format("{}  ·  {}{}{}", field.name, kind, field.unit.empty() ? "" : "  ·  ", field.unit), secondary);
                 }
             } else if (entity->kind == SceneEntityKind::NeuralField) {
                 add_line("Hash Grid Radiance Field  ·  canonical v1", primary);
@@ -1176,7 +1190,7 @@ namespace spectra {
 
         ImGui::TextDisabled("DIAGNOSTICS");
         ImGui::BeginDisabled(!this->context.settings.guides_visible);
-        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::Volume || entity.kind == SceneEntityKind::NeuralField) ImGui::Checkbox("Bounds", &diagnostics.bounds);
+        if (entity.kind == SceneEntityKind::Instance || entity.kind == SceneEntityKind::AreaEmitter || entity.kind == SceneEntityKind::ParticleSet || entity.kind == SceneEntityKind::Volume || entity.kind == SceneEntityKind::NeuralField) ImGui::Checkbox("Bounds", &diagnostics.bounds);
         if (entity.kind == SceneEntityKind::Instance) {
             if (geometry || spheres) ImGui::Checkbox(spheres && !geometry ? "Sphere wireframe" : "Wireframe", &diagnostics.wireframe);
             if (geometry || spheres) ImGui::Checkbox(spheres && !geometry ? "Centers" : spheres ? "Vertices / centers" : "Vertices", &diagnostics.vertices);
@@ -1226,12 +1240,109 @@ namespace spectra {
         }
         ImGui::EndDisabled();
 
-        if (entity.kind == SceneEntityKind::Volume) {
+        if (entity.kind == SceneEntityKind::ParticleSet) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            this->draw_particle_diagnostics(*std::ranges::find(evaluated.resources.particle_sets, scene::ParticleSetId{entity.id}, &scene::ParticleSet::id));
+        } else if (entity.kind == SceneEntityKind::Volume) {
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
             this->draw_volume_diagnostics(*std::ranges::find(evaluated.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id));
         }
+    }
+
+    void EditorUi::draw_particle_diagnostics(const scene::ParticleSet& particles) {
+        ImGui::PushID(&particles);
+        ImGui::TextDisabled("PARTICLE VISUALIZATION / %s", particles.name.c_str());
+        scene::ParticleVisualization visualization = particles.visualization;
+        scene::ParticleDiagnostics diagnostics      = particles.diagnostics;
+        bool visualization_changed{};
+        bool diagnostics_changed{};
+
+        const auto selected_field = visualization.field_id.empty() ? particles.fields.end() : std::ranges::find(particles.fields, visualization.field_id, &scene::ParticleField::id);
+        const char* field_preview = selected_field == particles.fields.end() ? "Uniform" : selected_field->name.c_str();
+        if (ImGui::BeginCombo("Field", field_preview)) {
+            if (ImGui::Selectable("Uniform", selected_field == particles.fields.end()) && !visualization.field_id.empty()) {
+                visualization.field_id.clear();
+                visualization.mapping = scene::FieldMapping::Value;
+                visualization_changed = true;
+            }
+            for (std::size_t index = 0; index != particles.fields.size(); ++index) {
+                const scene::ParticleField& field = particles.fields[index];
+                ImGui::PushID(static_cast<int>(index));
+                if (ImGui::Selectable(field.name.c_str(), selected_field != particles.fields.end() && field.id == selected_field->id) && field.id != visualization.field_id) {
+                    visualization.field_id = field.id;
+                    visualization.mapping  = field.kind == scene::FieldKind::Float3 ? scene::FieldMapping::Magnitude : scene::FieldMapping::Value;
+                    visualization_changed  = true;
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+
+        constexpr const char* displays[] = {"Points", "Discs", "Spheres"};
+        int display                      = static_cast<int>(std::to_underlying(visualization.display));
+        if (ImGui::Combo("Display", &display, displays, 3)) visualization.display = static_cast<scene::ParticleDisplayMode>(display), visualization_changed = true;
+        const auto active_field = visualization.field_id.empty() ? particles.fields.end() : std::ranges::find(particles.fields, visualization.field_id, &scene::ParticleField::id);
+        const bool continuous_field = active_field != particles.fields.end() && active_field->kind != scene::FieldKind::UInt32;
+        if (active_field != particles.fields.end() && active_field->kind == scene::FieldKind::Float3) {
+            constexpr const char* mappings[] = {"Magnitude", "X", "Y", "Z"};
+            int mapping                     = static_cast<int>(std::to_underlying(visualization.mapping)) - 1;
+            if (ImGui::Combo("Mapping", &mapping, mappings, 4)) visualization.mapping = static_cast<scene::FieldMapping>(mapping + 1), visualization_changed = true;
+        }
+        if (continuous_field) {
+            constexpr const char* color_maps[] = {"Viridis", "Turbo", "Cool-Warm", "Grayscale"};
+            int color_map = static_cast<int>(std::to_underlying(visualization.color_map));
+            if (ImGui::Combo("Color map", &color_map, color_maps, 4)) visualization.color_map = static_cast<scene::VisualizationColorMap>(color_map), visualization_changed = true;
+            visualization_changed = ImGui::DragFloatRange2("Range", &visualization.minimum, &visualization.maximum, 0.01f, 0.0f, 0.0f, "%.5g", "%.5g") || visualization_changed;
+        }
+        visualization_changed = ImGui::ColorEdit4("Tint", &visualization.color.x, ImGuiColorEditFlags_Float) || visualization_changed;
+        if (visualization.display == scene::ParticleDisplayMode::Points)
+            visualization_changed = ImGui::DragFloat("Point size", &visualization.point_size, 0.25f, 1.0f, 32.0f, "%.2f px") || visualization_changed;
+        else
+            visualization_changed = ImGui::DragFloat("Radius scale", &visualization.radius_scale, 0.01f, 0.01f, 10.0f, "%.3g") || visualization_changed;
+        constexpr const char* depth_modes[] = {"Tested", "X-Ray", "Overlay"};
+        int depth_mode                      = static_cast<int>(std::to_underlying(visualization.depth_mode));
+        if (ImGui::Combo("Depth", &depth_mode, depth_modes, 3)) visualization.depth_mode = static_cast<scene::VisualizationDepthMode>(depth_mode), visualization_changed = true;
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("VECTOR DIAGNOSTICS");
+        const auto selected_vector = diagnostics.vector_field.empty() ? particles.fields.end() : std::ranges::find(particles.fields, diagnostics.vector_field, &scene::ParticleField::id);
+        const char* vector_preview = selected_vector == particles.fields.end() ? "Off" : selected_vector->name.c_str();
+        if (ImGui::BeginCombo("Vector field", vector_preview)) {
+            if (ImGui::Selectable("Off", selected_vector == particles.fields.end()) && !diagnostics.vector_field.empty()) diagnostics.vector_field.clear(), diagnostics_changed = true;
+            for (std::size_t index = 0; index != particles.fields.size(); ++index) {
+                const scene::ParticleField& field = particles.fields[index];
+                if (field.kind != scene::FieldKind::Float3) continue;
+                ImGui::PushID(static_cast<int>(index));
+                if (ImGui::Selectable(field.name.c_str(), selected_vector != particles.fields.end() && field.id == selected_vector->id) && field.id != diagnostics.vector_field) diagnostics.vector_field = field.id, diagnostics_changed = true;
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        if (!diagnostics.vector_field.empty()) {
+            constexpr const char* color_maps[] = {"Viridis", "Turbo", "Cool-Warm", "Grayscale"};
+            constexpr std::uint32_t minimum_sampling = 1u;
+            constexpr std::uint32_t maximum_sampling = 1024u;
+            int color_map = static_cast<int>(std::to_underlying(diagnostics.color_map));
+            if (ImGui::Combo("Vector color map", &color_map, color_maps, 4)) diagnostics.color_map = static_cast<scene::VisualizationColorMap>(color_map), diagnostics_changed = true;
+            diagnostics_changed = ImGui::DragFloatRange2("Vector range", &diagnostics.minimum, &diagnostics.maximum, 0.01f, 0.0f, 0.0f, "%.5g", "%.5g") || diagnostics_changed;
+            diagnostics_changed = ImGui::DragFloat("Vector scale", &diagnostics.scale, 0.001f) || diagnostics_changed;
+            diagnostics_changed = ImGui::DragFloat("Vector width", &diagnostics.width, 0.1f, 0.25f, 8.0f, "%.2f px") || diagnostics_changed;
+            diagnostics_changed = ImGui::DragScalar("Vector sampling", ImGuiDataType_U32, &diagnostics.sampling, 1.0f, &minimum_sampling, &maximum_sampling, "%u") || diagnostics_changed;
+        }
+
+        if (visualization_changed) {
+            this->context.document.update_particle_set_visualization(this->context.document.content.source, particles.id, visualization);
+            this->context.document.update_particle_set_visualization(this->context.document.content.evaluated, particles.id, std::move(visualization));
+        }
+        if (diagnostics_changed) {
+            this->context.document.update_particle_set_diagnostics(this->context.document.content.source, particles.id, diagnostics);
+            this->context.document.update_particle_set_diagnostics(this->context.document.content.evaluated, particles.id, std::move(diagnostics));
+        }
+        ImGui::PopID();
     }
 
     void EditorUi::draw_volume_diagnostics(const scene::Volume& volume) {
@@ -1254,7 +1365,7 @@ namespace spectra {
                 if (ImGui::Selectable(field.name.c_str(), field.id == selected_field->id) && field.id != diagnostics.field_id) {
                     diagnostics.field_id = field.id;
                     diagnostics.mode     = scene::VolumeDiagnosticMode::Off;
-                    diagnostics.mapping  = field.kind == scene::VolumeFieldKind::Float ? scene::VolumeFieldMapping::Value : scene::VolumeFieldMapping::Magnitude;
+                    diagnostics.mapping  = field.kind == scene::FieldKind::Float3 || field.kind == scene::FieldKind::MacFloat3 ? scene::FieldMapping::Magnitude : scene::FieldMapping::Value;
                     selected_field       = grid->fields.begin() + static_cast<std::ptrdiff_t>(index);
                     changed              = true;
                 }
@@ -1263,17 +1374,56 @@ namespace spectra {
             ImGui::EndCombo();
         }
 
-        const bool vector_field = selected_field->kind != scene::VolumeFieldKind::Float;
-        constexpr const char* modes[] = {"Off", "Slice", "Ray March", "Maximum Intensity", "Isosurface", "Glyphs", "Streamlines", "LIC"};
-        int mode = static_cast<int>(std::to_underlying(diagnostics.mode));
-        if (ImGui::Combo("Diagnostics", &mode, modes, vector_field ? 8 : 5)) {
-            diagnostics.mode = static_cast<scene::VolumeDiagnosticMode>(mode);
-            if (diagnostics.field_id.empty()) {
-                diagnostics.field_id = selected_field->id;
-                diagnostics.mapping  = vector_field ? scene::VolumeFieldMapping::Magnitude : scene::VolumeFieldMapping::Value;
+        const bool vector_field      = selected_field->kind == scene::FieldKind::Float3 || selected_field->kind == scene::FieldKind::MacFloat3;
+        const bool categorical_field = selected_field->kind == scene::FieldKind::UInt32;
+        constexpr std::array scalar_modes{
+            scene::VolumeDiagnosticMode::Off,
+            scene::VolumeDiagnosticMode::Slice,
+            scene::VolumeDiagnosticMode::RayMarch,
+            scene::VolumeDiagnosticMode::MaximumIntensityProjection,
+            scene::VolumeDiagnosticMode::Isosurface,
+        };
+        constexpr std::array vector_modes{
+            scene::VolumeDiagnosticMode::Off,
+            scene::VolumeDiagnosticMode::Slice,
+            scene::VolumeDiagnosticMode::Glyphs,
+            scene::VolumeDiagnosticMode::Streamlines,
+            scene::VolumeDiagnosticMode::Lic,
+        };
+        constexpr std::array categorical_modes{
+            scene::VolumeDiagnosticMode::Off,
+            scene::VolumeDiagnosticMode::Slice,
+            scene::VolumeDiagnosticMode::Cells,
+        };
+        constexpr std::array scalar_mode_names{"Off", "Slice", "Ray March", "Maximum Intensity", "Isosurface"};
+        constexpr std::array vector_mode_names{"Off", "Slice", "Glyphs", "Streamlines", "LIC"};
+        constexpr std::array categorical_mode_names{"Off", "Slice", "Cells"};
+        if (categorical_field) {
+            std::size_t mode_index = std::ranges::find(categorical_modes, diagnostics.mode) - categorical_modes.begin();
+            if (mode_index == categorical_modes.size()) mode_index = 0;
+            if (ImGui::BeginCombo("Diagnostics", categorical_mode_names[mode_index])) {
+                for (std::size_t index = 0; index != categorical_modes.size(); ++index)
+                    if (ImGui::Selectable(categorical_mode_names[index], index == mode_index) && index != mode_index) diagnostics.mode = categorical_modes[index], changed = true;
+                ImGui::EndCombo();
             }
-            changed = true;
+        } else if (vector_field) {
+            std::size_t mode_index = std::ranges::find(vector_modes, diagnostics.mode) - vector_modes.begin();
+            if (mode_index == vector_modes.size()) mode_index = 0;
+            if (ImGui::BeginCombo("Diagnostics", vector_mode_names[mode_index])) {
+                for (std::size_t index = 0; index != vector_modes.size(); ++index)
+                    if (ImGui::Selectable(vector_mode_names[index], index == mode_index) && index != mode_index) diagnostics.mode = vector_modes[index], changed = true;
+                ImGui::EndCombo();
+            }
+        } else {
+            std::size_t mode_index = std::ranges::find(scalar_modes, diagnostics.mode) - scalar_modes.begin();
+            if (mode_index == scalar_modes.size()) mode_index = 0;
+            if (ImGui::BeginCombo("Diagnostics", scalar_mode_names[mode_index])) {
+                for (std::size_t index = 0; index != scalar_modes.size(); ++index)
+                    if (ImGui::Selectable(scalar_mode_names[index], index == mode_index) && index != mode_index) diagnostics.mode = scalar_modes[index], changed = true;
+                ImGui::EndCombo();
+            }
         }
+        if (diagnostics.field_id.empty()) diagnostics.field_id = selected_field->id, changed = true;
         if (diagnostics.mode != scene::VolumeDiagnosticMode::Off) {
             constexpr const char* mappings[] = {"Value", "Magnitude", "X", "Y", "Z", "Divergence", "Curl Magnitude", "Q Criterion"};
             constexpr const char* color_maps[] = {"Viridis", "Turbo", "Cool-Warm", "Grayscale"};
@@ -1284,10 +1434,21 @@ namespace spectra {
             constexpr std::uint32_t minimum_sampling = 1u;
             constexpr std::uint32_t maximum_sampling = 256u;
             int mapping = static_cast<int>(std::to_underlying(diagnostics.mapping));
-            if (vector_field && ImGui::Combo("Mapping", &mapping, mappings, 8)) diagnostics.mapping = static_cast<scene::VolumeFieldMapping>(mapping), changed = true;
-            int color_map = static_cast<int>(std::to_underlying(diagnostics.color_map));
-            if (ImGui::Combo("Color map", &color_map, color_maps, 4)) diagnostics.color_map = static_cast<scene::VisualizationColorMap>(color_map), changed = true;
-            changed = ImGui::DragFloatRange2("Range", &diagnostics.minimum, &diagnostics.maximum, 0.01f, 0.0f, 0.0f, "%.5g", "%.5g") || changed;
+            if (vector_field && ImGui::Combo("Mapping", &mapping, mappings, 8)) diagnostics.mapping = static_cast<scene::FieldMapping>(mapping), changed = true;
+            if (!categorical_field) {
+                int color_map = static_cast<int>(std::to_underlying(diagnostics.color_map));
+                if (ImGui::Combo("Color map", &color_map, color_maps, 4)) diagnostics.color_map = static_cast<scene::VisualizationColorMap>(color_map), changed = true;
+                changed = ImGui::DragFloatRange2("Range", &diagnostics.minimum, &diagnostics.maximum, 0.01f, 0.0f, 0.0f, "%.5g", "%.5g") || changed;
+            } else {
+                ImGui::TextDisabled("Categories");
+                for (std::uint32_t category = 0; category != 32; ++category) {
+                    if (category % 8 != 0) ImGui::SameLine();
+                    ImGui::PushID(static_cast<int>(category));
+                    bool enabled = (diagnostics.category_mask & (1u << category)) != 0;
+                    if (ImGui::Checkbox(std::format("{}", category).c_str(), &enabled)) diagnostics.category_mask ^= 1u << category, changed = true;
+                    ImGui::PopID();
+                }
+            }
             changed = ImGui::ColorEdit4("Tint", &diagnostics.color.x, ImGuiColorEditFlags_Float) || changed;
             if (diagnostics.mode == scene::VolumeDiagnosticMode::Slice || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) {
                 int axis = static_cast<int>(diagnostics.axis);
@@ -1296,6 +1457,7 @@ namespace spectra {
             }
             if (diagnostics.mode == scene::VolumeDiagnosticMode::RayMarch || diagnostics.mode == scene::VolumeDiagnosticMode::MaximumIntensityProjection || diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface || diagnostics.mode == scene::VolumeDiagnosticMode::Slice || diagnostics.mode == scene::VolumeDiagnosticMode::Lic) changed = ImGui::DragFloat("Opacity", &diagnostics.opacity, 0.01f, 0.0f, 10.0f) || changed;
             if (diagnostics.mode == scene::VolumeDiagnosticMode::Isosurface) changed = ImGui::DragFloat("Threshold", &diagnostics.threshold, 0.01f) || changed;
+            if (diagnostics.mode == scene::VolumeDiagnosticMode::Cells) changed = ImGui::DragFloat("Width", &diagnostics.width, 0.1f, 0.25f, 8.0f, "%.2f px") || changed;
             if (diagnostics.mode == scene::VolumeDiagnosticMode::Glyphs || diagnostics.mode == scene::VolumeDiagnosticMode::Streamlines) {
                 changed = ImGui::DragFloat("Scale", &diagnostics.scale, 0.001f) || changed;
                 changed = ImGui::DragFloat("Width", &diagnostics.width, 0.1f, 0.25f, 8.0f, "%.2f px") || changed;

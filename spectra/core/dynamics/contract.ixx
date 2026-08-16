@@ -14,11 +14,11 @@ namespace spectra::dynamics {
         Deformable,
     };
 
-    export struct VolumeFieldDescriptor {
+    export struct FieldDescriptor {
         std::string id{};
         std::string name{};
         std::string unit{};
-        scene::VolumeFieldKind kind{scene::VolumeFieldKind::Float};
+        scene::FieldKind kind{scene::FieldKind::Float};
         scene::VolumeFieldSampling sampling{scene::VolumeFieldSampling::Cell};
         scene::VolumeVectorSpace vector_space{scene::VolumeVectorSpace::Local};
         std::uint32_t buffer_offset{};
@@ -40,8 +40,10 @@ namespace spectra::dynamics {
         std::uint32_t capacity{};
     };
 
-    export struct PointDataset {
+    export struct ParticleSetDataset {
         std::uint32_t capacity{};
+        float radius{};
+        std::vector<FieldDescriptor> fields{};
     };
 
     export struct SegmentDataset {
@@ -54,7 +56,7 @@ namespace spectra::dynamics {
 
     export struct FieldDataset {
         math::UInt3 resolution{};
-        std::vector<VolumeFieldDescriptor> fields{};
+        std::vector<FieldDescriptor> fields{};
     };
 
     export struct ImageDataset {
@@ -79,7 +81,7 @@ namespace spectra::dynamics {
     export struct DatasetDescriptor {
         std::string id{};
         std::optional<scene::DynamicSceneResourceKind> resource_kind{};
-        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, PointDataset, SegmentDataset, VectorDataset, FieldDataset, ImageDataset, CameraDataset> details{TriangleMeshDataset{}};
+        std::variant<TriangleMeshDataset, SphereSetDataset, InstanceTransformDataset, ParticleSetDataset, SegmentDataset, VectorDataset, FieldDataset, ImageDataset, CameraDataset> details{TriangleMeshDataset{}};
     };
 
     export struct ParameterDescriptor {

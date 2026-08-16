@@ -246,6 +246,7 @@ namespace spectra {
         if (entity.kind == SceneEntityKind::Instance) return std::ranges::contains(resources.instances, scene::InstanceId{entity.id}, &scene::Instance::id);
         if (entity.kind == SceneEntityKind::Camera) return std::ranges::contains(resources.cameras, scene::CameraId{entity.id}, &scene::Camera::id);
         if (entity.kind == SceneEntityKind::Light) return std::ranges::contains(resources.lights, scene::LightId{entity.id}, &scene::Light::id);
+        if (entity.kind == SceneEntityKind::ParticleSet) return std::ranges::contains(resources.particle_sets, scene::ParticleSetId{entity.id}, &scene::ParticleSet::id);
         if (entity.kind == SceneEntityKind::Volume) return std::ranges::contains(resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id);
         if (entity.kind == SceneEntityKind::NeuralField) return std::ranges::contains(resources.neural_fields, scene::NeuralFieldId{entity.id}, &scene::NeuralField::id);
         if (entity.kind != SceneEntityKind::AreaEmitter) return false;
@@ -269,6 +270,8 @@ namespace spectra {
         }
         for (const scene::Volume& volume : source.resources.volumes)
             if (volume.visible) bounds.include(volume.domain.transformed(volume.transform));
+        for (const scene::ParticleSet& particles : source.resources.particle_sets)
+            if (particles.visible) bounds.include(scene::particle_set_bounds(particles));
         for (const scene::NeuralField& field : source.resources.neural_fields)
             if (field.visible) bounds.include(scene::NeuralField::local_bounds.transformed(field.transform));
         return bounds;
@@ -296,6 +299,7 @@ namespace spectra {
             const scene::Volume& volume = *std::ranges::find(source.resources.volumes, scene::VolumeId{entity.id}, &scene::Volume::id);
             return volume.domain.transformed(volume.transform);
         }
+        if (entity.kind == SceneEntityKind::ParticleSet) return scene::particle_set_bounds(*std::ranges::find(source.resources.particle_sets, scene::ParticleSetId{entity.id}, &scene::ParticleSet::id));
         if (entity.kind == SceneEntityKind::NeuralField) {
             const scene::NeuralField& field = *std::ranges::find(source.resources.neural_fields, scene::NeuralFieldId{entity.id}, &scene::NeuralField::id);
             return scene::NeuralField::local_bounds.transformed(field.transform);

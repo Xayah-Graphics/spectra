@@ -127,8 +127,25 @@ namespace spectra {
         this->mark_change(target_scene, scene::SceneChange::Volume);
     }
 
+    void SceneDocument::update_particle_set_transform(scene::Scene& target_scene, const scene::ParticleSetId particle_set_id, math::Transform transform) {
+        scene::ParticleSet& resource = *std::ranges::find(target_scene.resources.particle_sets, particle_set_id, &scene::ParticleSet::id);
+        resource.transform           = std::move(transform);
+        ++resource.revision.content;
+        this->mark_change(target_scene, scene::SceneChange::Particle);
+    }
+
     void SceneDocument::update_volume_diagnostics(scene::Scene& target_scene, const scene::VolumeId volume_id, scene::VolumeDiagnostics diagnostics) {
         std::ranges::find(target_scene.resources.volumes, volume_id, &scene::Volume::id)->diagnostics = std::move(diagnostics);
+        this->mark_change(target_scene, scene::SceneChange::Metadata);
+    }
+
+    void SceneDocument::update_particle_set_visualization(scene::Scene& target_scene, const scene::ParticleSetId particle_set_id, scene::ParticleVisualization visualization) {
+        std::ranges::find(target_scene.resources.particle_sets, particle_set_id, &scene::ParticleSet::id)->visualization = std::move(visualization);
+        this->mark_change(target_scene, scene::SceneChange::Metadata);
+    }
+
+    void SceneDocument::update_particle_set_diagnostics(scene::Scene& target_scene, const scene::ParticleSetId particle_set_id, scene::ParticleDiagnostics diagnostics) {
+        std::ranges::find(target_scene.resources.particle_sets, particle_set_id, &scene::ParticleSet::id)->diagnostics = std::move(diagnostics);
         this->mark_change(target_scene, scene::SceneChange::Metadata);
     }
 

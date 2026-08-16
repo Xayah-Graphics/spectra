@@ -71,13 +71,6 @@ namespace spectra::sdk {
         Transform transform{};
     };
 
-    struct Point {
-        Float3 position{};
-        float radius{};
-        Float4 color{};
-        float scalar{};
-    };
-
     struct Line {
         Float3 first_position{};
         float width{};
@@ -105,7 +98,6 @@ namespace spectra::sdk {
     static_assert(std::is_standard_layout_v<Transform> && std::is_trivially_copyable_v<Transform> && sizeof(Transform) == 64u);
     static_assert(std::is_standard_layout_v<Sphere> && std::is_trivially_copyable_v<Sphere> && sizeof(Sphere) == 16u);
     static_assert(std::is_standard_layout_v<Instance> && std::is_trivially_copyable_v<Instance> && sizeof(Instance) == 72u);
-    static_assert(std::is_standard_layout_v<Point> && std::is_trivially_copyable_v<Point> && sizeof(Point) == 36u);
     static_assert(std::is_standard_layout_v<Line> && std::is_trivially_copyable_v<Line> && sizeof(Line) == 48u);
     static_assert(std::is_standard_layout_v<Vector> && std::is_trivially_copyable_v<Vector> && sizeof(Vector) == 48u);
     static_assert(offsetof(Line, width) == 12u && offsetof(Line, second_position) == 16u && offsetof(Line, color) == 28u && offsetof(Line, scalar) == 44u);

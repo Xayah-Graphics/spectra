@@ -127,6 +127,7 @@ namespace spectra {
         void draw_top_strip(ImVec2 position, ImVec2 size, EditorActions& actions);
         void draw_selection_panel(const PanelRect& panel, bool transform_editable);
         void draw_selection_diagnostics(SceneEntityReference entity);
+        void draw_particle_diagnostics(const scene::ParticleSet& particles);
         void draw_volume_diagnostics(const scene::Volume& volume);
         void draw_view_settings(EditorActions& actions);
         void draw_simulation_settings();

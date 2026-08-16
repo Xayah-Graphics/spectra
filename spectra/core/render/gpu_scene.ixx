@@ -43,12 +43,13 @@ namespace spectra {
     };
 
     export enum class GpuSceneChange : std::uint8_t {
-        None      = 0,
-        Geometry  = 1 << 0,
-        Volume    = 1 << 1,
-        Structure = 1 << 2,
-        Transform = 1 << 3,
+        None        = 0,
+        Geometry    = 1 << 0,
+        Volume      = 1 << 1,
+        Structure   = 1 << 2,
+        Transform   = 1 << 3,
         NeuralField = 1 << 4,
+        Particle    = 1 << 5,
     };
 
     export [[nodiscard]] constexpr GpuSceneChange operator|(const GpuSceneChange left, const GpuSceneChange right) noexcept {
@@ -133,11 +134,27 @@ namespace spectra {
         std::string id{};
         std::string name{};
         std::string unit{};
-        scene::VolumeFieldKind kind{scene::VolumeFieldKind::Float};
+        scene::FieldKind kind{scene::FieldKind::Float};
         scene::VolumeFieldSampling sampling{scene::VolumeFieldSampling::Cell};
         scene::VolumeVectorSpace vector_space{scene::VolumeVectorSpace::Local};
         std::vector<GpuBuffer> buffers{};
         std::vector<DescriptorLease> descriptors{};
+    };
+
+    export struct GpuParticleField {
+        std::string id{};
+        std::string name{};
+        std::string unit{};
+        scene::FieldKind kind{scene::FieldKind::Float};
+        scene::VolumeVectorSpace vector_space{scene::VolumeVectorSpace::Local};
+        DescriptorHandle descriptor{};
+    };
+
+    export struct GpuParticleSet {
+        scene::ParticleSetId particle_set_id{};
+        DescriptorHandle positions{};
+        std::vector<GpuParticleField> fields{};
+        std::uint32_t count{};
     };
 
     export struct GpuVolume {
@@ -184,6 +201,7 @@ namespace spectra {
     export struct GpuSceneView {
         std::span<const GpuGeometry> geometries{};
         std::span<const GpuSphereSet> sphere_sets{};
+        std::span<const GpuParticleSet> particle_sets{};
         std::span<const GpuVolume> volumes{};
         std::span<const GpuNeuralField> neural_fields{};
         std::span<const GpuScenePrimitive> primitives{};
@@ -260,6 +278,7 @@ namespace spectra {
             std::uint64_t dynamic_structure_revision{};
             std::vector<GpuGeometry> geometries{};
             std::vector<GpuSphereSet> sphere_sets{};
+            std::vector<GpuParticleSet> particle_sets{};
             std::vector<GpuVolume> volumes{};
             std::vector<GpuNeuralField> neural_fields{};
             GpuGeometry volume_region_geometry{};
@@ -284,7 +303,8 @@ namespace spectra {
         void update_sphere_set_acceleration(GpuSphereSet& spheres, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_sphere_set(scene::SphereSetId sphere_set_id, DescriptorHandle spheres_descriptor, std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer);
         void synchronize_external_instance_transforms(const dynamics::GpuInstanceTransformUpdate& update, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_external_volume(scene::VolumeId volume_id, std::span<const dynamics::GpuVolumeFieldView> fields, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_volume(scene::VolumeId volume_id, std::span<const dynamics::GpuFieldView> fields, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_particle_set(const dynamics::GpuParticleSetUpdate& update);
         void synchronize_external_neural_field(const dynamics::GpuHashGridRadianceFieldUpdate& update, const vk::raii::CommandBuffer& command_buffer);
         void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_instance_state(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);

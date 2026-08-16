@@ -16,6 +16,7 @@ namespace spectra {
         const SceneGuideSettings& scene_guides;
         const SelectionDiagnosticSettings& selection_diagnostics;
         const SelectionState& selection;
+        bool visible{true};
     };
 
     export struct RenderCompositionRequest {

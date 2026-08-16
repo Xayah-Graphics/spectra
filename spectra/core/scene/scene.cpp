@@ -162,6 +162,10 @@ namespace spectra::scene {
         return result;
     }
 
+    math::Bounds3 particle_set_bounds(const ParticleSet& particles) noexcept {
+        return particles.domain.transformed(particles.transform);
+    }
+
     BlackbodySpectrum::BlackbodySpectrum(const float temperature) noexcept : temperature(temperature) {
         if (temperature <= 0.0f) return;
         constexpr float speed_of_light     = 299792458.0f;
@@ -321,6 +325,8 @@ namespace spectra::scene {
         }
         for (const Volume& volume : this->resources.volumes)
             if (volume.visible) result.include(volume.domain.transformed(volume.transform));
+        for (const ParticleSet& particles : this->resources.particle_sets)
+            if (particles.visible) result.include(particle_set_bounds(particles));
         for (const NeuralField& field : this->resources.neural_fields)
             if (field.visible) result.include(NeuralField::local_bounds.transformed(field.transform));
         return result;

@@ -34,6 +34,7 @@ namespace spectra {
         [[nodiscard]] std::span<const dynamics::GpuVisualization> visualizations() const noexcept;
         [[nodiscard]] bool controls(scene::InstanceId instance_id) const noexcept;
         [[nodiscard]] bool controls(scene::VolumeId volume_id) const noexcept;
+        [[nodiscard]] bool controls(scene::ParticleSetId particle_set_id) const noexcept;
         [[nodiscard]] bool controls(scene::CameraId camera_id) const noexcept;
         [[nodiscard]] const dynamics::CameraReferenceImage* camera_reference(scene::CameraId camera_id) const noexcept;
 

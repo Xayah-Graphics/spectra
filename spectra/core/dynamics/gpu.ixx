@@ -23,8 +23,8 @@ namespace spectra::dynamics {
         std::uint32_t layer{};
     };
 
-    export struct GpuVolumeFieldView {
-        VolumeFieldDescriptor field{};
+    export struct GpuFieldView {
+        FieldDescriptor field{};
         std::vector<GpuBufferView> values{};
     };
 
@@ -46,6 +46,13 @@ namespace spectra::dynamics {
         std::uint32_t count{};
     };
 
+    export struct GpuParticleSetUpdate {
+        scene::ParticleSetId particle_set_id{};
+        GpuBufferView positions{};
+        std::vector<GpuFieldView> fields{};
+        std::uint32_t count{};
+    };
+
     export struct GpuInstanceTransformUpdate {
         GpuBufferView instances{};
         std::uint32_t count{};
@@ -53,7 +60,7 @@ namespace spectra::dynamics {
 
     export struct GpuFieldUpdate {
         scene::VolumeId volume_id{};
-        std::vector<GpuVolumeFieldView> fields{};
+        std::vector<GpuFieldView> fields{};
     };
 
     export struct GpuHashGridRadianceFieldUpdate {
@@ -68,18 +75,12 @@ namespace spectra::dynamics {
     };
 
     export struct GpuSceneUpdate {
-        std::variant<GpuTriangleMeshUpdate, GpuSphereSetUpdate, GpuInstanceTransformUpdate, GpuFieldUpdate, GpuHashGridRadianceFieldUpdate> data{};
+        std::variant<GpuTriangleMeshUpdate, GpuSphereSetUpdate, GpuParticleSetUpdate, GpuInstanceTransformUpdate, GpuFieldUpdate, GpuHashGridRadianceFieldUpdate> data{};
     };
 
     export struct VisualizationStyle {
         scene::DynamicVisualizationView view{};
         math::Transform transform{};
-    };
-
-    export struct GpuPointVisualization {
-        VisualizationStyle style{};
-        GpuBufferView points{};
-        std::uint32_t count{};
     };
 
     export struct GpuSegmentVisualization {
@@ -111,7 +112,7 @@ namespace spectra::dynamics {
     };
 
     export struct GpuVisualization {
-        std::variant<GpuPointVisualization, GpuSegmentVisualization, GpuVectorVisualization, GpuImageVisualization, GpuSurfaceVisualization> data{};
+        std::variant<GpuSegmentVisualization, GpuVectorVisualization, GpuImageVisualization, GpuSurfaceVisualization> data{};
     };
 
     export struct MeshOutputBinding {

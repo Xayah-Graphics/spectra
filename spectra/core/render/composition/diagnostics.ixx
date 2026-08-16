@@ -15,6 +15,7 @@ namespace spectra {
         Camera,
         Light,
         AreaEmitter,
+        ParticleSet,
         Volume,
         NeuralField,
     };
@@ -71,7 +72,7 @@ namespace spectra {
         SceneDiagnosticRenderer& operator=(SceneDiagnosticRenderer&&)      = delete;
 
         void initialize();
-        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, scene::SceneView scene, const scene::Camera& camera, std::optional<scene::CameraId> scene_camera_view, const SceneGuideSettings& scene_guides, const SelectionDiagnosticSettings& selection_diagnostics, const SelectionState& selection);
+        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, scene::SceneView scene, const scene::Camera& camera, std::optional<scene::CameraId> scene_camera_view, const SceneGuideSettings& scene_guides, const SelectionDiagnosticSettings& selection_diagnostics, const SelectionState& selection, bool visible);
         [[nodiscard]] const GpuImage& pick_image() const noexcept;
         [[nodiscard]] std::optional<SceneEntityReference> pick_entity(std::uint32_t frame_slot_index, std::uint32_t pick_index) const noexcept;
 

@@ -64,7 +64,7 @@ namespace spectra::sdk::cuda {
             OutputKind kind{};
             MeshAttribute mesh_attributes{};
             std::vector<std::string> field_ids{};
-            std::vector<VolumeFieldKind> field_kinds{};
+            std::vector<FieldKind> field_kinds{};
             std::vector<std::size_t> field_buffer_offsets{};
             UInt3 resolution{};
             std::uint32_t primary_capacity{};
@@ -166,7 +166,7 @@ namespace spectra::sdk::cuda {
         return *this;
     }
 
-    void register_output_internal(void* source, const std::string_view id, const OutputKind kind, const MeshAttribute attributes, const std::span<const std::string_view> field_ids, const std::span<const VolumeFieldKind> field_kinds) {
+    void register_output_internal(void* source, const std::string_view id, const OutputKind kind, const MeshAttribute attributes, const std::span<const std::string_view> field_ids, const std::span<const FieldKind> field_kinds) {
         State& state              = setup_state(source);
         OutputState& output       = state.outputs.emplace_back();
         output.id                 = id;
@@ -176,9 +176,9 @@ namespace spectra::sdk::cuda {
         output.field_kinds.assign(field_kinds.begin(), field_kinds.end());
         output.field_buffer_offsets.reserve(field_kinds.size());
         std::size_t buffer_offset{};
-        for (const VolumeFieldKind field_kind : field_kinds) {
+        for (const FieldKind field_kind : field_kinds) {
             output.field_buffer_offsets.push_back(buffer_offset);
-            buffer_offset += field_kind == VolumeFieldKind::MacFloat3 ? 3u : 1u;
+            buffer_offset += field_kind == FieldKind::MacFloat3 ? 3u : 1u;
         }
         output.current_slot = &state.next_slot;
     }
@@ -217,6 +217,7 @@ namespace spectra::sdk::cuda {
             0u,
             {width, height, output.primary_capacity},
             0u,
+            0.0f,
             encoded.data(),
             encoded.size(),
         };
@@ -229,6 +230,14 @@ namespace spectra::sdk::cuda {
         OutputState& output     = output_state(state, id);
         output.primary_capacity = capacity;
         const SpectraSdkOutputLayout layout{output_index(state, output), abi_kind(kind), capacity};
+        request_output(state, output, layout);
+    }
+
+    void setup_particles_internal(void* source, const std::string_view id, const std::uint32_t capacity, const float radius) {
+        State& state            = setup_state(source);
+        OutputState& output     = output_state(state, id);
+        output.primary_capacity = capacity;
+        const SpectraSdkOutputLayout layout{output_index(state, output), abi_kind(output.kind), capacity, 0u, {}, 0u, radius};
         request_output(state, output, layout);
     }
 
@@ -329,7 +338,15 @@ namespace spectra::sdk::cuda {
         OutputState& output   = output_state(state, id);
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
         commit.active_count             = active_count;
-        return raw_view(output.slots[state.next_slot][0], output.kind == OutputKind::Spheres ? sizeof(Sphere) : output.kind == OutputKind::Instances ? sizeof(Instance) : output.kind == OutputKind::Points ? sizeof(Point) : output.kind == OutputKind::Lines ? sizeof(Line) : sizeof(Vector));
+        return raw_view(output.slots[state.next_slot][0], output.kind == OutputKind::Spheres ? sizeof(Sphere) : output.kind == OutputKind::Instances ? sizeof(Instance) : output.kind == OutputKind::Lines ? sizeof(Line) : sizeof(Vector));
+    }
+
+    RawParticlesView frame_particles_internal(void* source, const std::string_view id, const std::uint32_t active_count) {
+        State& state          = setup_state(source);
+        OutputState& output   = output_state(state, id);
+        SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
+        commit.active_count             = active_count;
+        return {&output, raw_view(output.slots[state.next_slot][0], sizeof(Float3))};
     }
 
     RawVolumeView frame_volume_internal(void* source, const std::string_view id) {
@@ -365,11 +382,13 @@ namespace spectra::sdk::cuda {
         };
     }
 
-    RawView volume_field_internal(void* source, const std::string_view id) {
+    RawView field_internal(void* source, const std::string_view id) {
         OutputState& output = *static_cast<OutputState*>(source);
         const auto found = std::ranges::find(output.field_ids, id);
         const std::size_t index = static_cast<std::size_t>(std::distance(output.field_ids.begin(), found));
-        return raw_view(output.slots[*output.current_slot][output.field_buffer_offsets[index]], output.field_kinds[index] == VolumeFieldKind::Float ? sizeof(float) : sizeof(Float3));
+        const std::size_t offset = output.field_buffer_offsets[index] + (output.kind == OutputKind::Particles ? 1u : 0u);
+        const std::uint64_t element_size = output.field_kinds[index] == FieldKind::Float ? sizeof(float) : output.field_kinds[index] == FieldKind::Float3 ? sizeof(Float3) : sizeof(std::uint32_t);
+        return raw_view(output.slots[*output.current_slot][offset], element_size);
     }
 
     RawMacFieldView volume_mac_field_internal(void* source, const std::string_view id) {

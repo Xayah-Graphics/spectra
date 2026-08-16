@@ -106,6 +106,22 @@ float ordered_float(uint value) {
     return asfloat(bits);
 }
 
+float3 diagnostic_color_map(float value, uint color_map) {
+    value = saturate(value);
+    if (color_map == 1u) {
+        const float3 c0 = float3(0.19, 0.07, 0.23);
+        const float3 c1 = float3(0.10, 0.78, 0.86);
+        const float3 c2 = float3(0.98, 0.86, 0.18);
+        return value < 0.5 ? lerp(c0, c1, value * 2.0) : lerp(c1, c2, value * 2.0 - 1.0);
+    }
+    if (color_map == 2u) return lerp(float3(0.23, 0.30, 0.75), float3(0.71, 0.02, 0.15), value);
+    if (color_map == 3u) return value.xxx;
+    const float3 c0 = float3(0.267, 0.005, 0.329);
+    const float3 c1 = float3(0.128, 0.567, 0.551);
+    const float3 c2 = float3(0.993, 0.906, 0.144);
+    return value < 0.5 ? lerp(c0, c1, value * 2.0) : lerp(c1, c2, value * 2.0 - 1.0);
+}
+
 uint compact_morton_component(uint value) {
     value &= 0x49249249u;
     value = (value ^ (value >> 2u)) & 0xC30C30C3u;
@@ -192,6 +208,30 @@ DiagnosticVertexOutput scene_diagnostic_vertex(uint vertex_id : SV_VertexID, uin
     }
     ByteAddressBuffer primary = push_data.primary;
     ByteAddressBuffer secondary = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
+    if (kind == 11) {
+        const uint arrow_index = vertex_id / 18u;
+        const uint arrow_vertex = vertex_id % 18u;
+        const uint source_index = arrow_index * push_data.detail.z;
+        const float3 local_origin = primary.Load<float3>(source_index * 12u);
+        const float3 local_vector = secondary.Load<float3>(source_index * 12u) * push_data.parameters.z;
+        const float3 origin = transform_position(local_origin).xyz;
+        const float3 vector = push_data.metadata.y == 2u ? local_vector : transform_vector(local_vector);
+        const float length_value = length(vector);
+        const float3 direction = length_value == 0.0 ? float3(1.0, 0.0, 0.0) : vector / length_value;
+        const float3 reference = abs(direction.z) < 0.9 ? float3(0.0, 0.0, 1.0) : float3(0.0, 1.0, 0.0);
+        const float3 side = normalize(cross(direction, reference)) * length_value * 0.18;
+        const uint part = arrow_vertex / 6u;
+        const float3 first = part == 0u ? origin : origin + vector;
+        const float3 second = part == 0u ? origin + vector : origin + vector - direction * length_value * 0.28 + (part == 1u ? side : -side);
+        DiagnosticVertexOutput output;
+        output.position = wide_line_position(project_position(float4(first, 1.0)), project_position(float4(second, 1.0)), arrow_vertex % 6u, push_data.parameters.x);
+        output.color = float4(diagnostic_color_map((length_value - push_data.parameters.w) / (push_data.color.w - push_data.parameters.w), (uint)push_data.color.z), 1.0);
+        output.texture_coordinates = 0.0;
+        output.point = 0u;
+        output.pick_index = push_data.metadata.z;
+        output.depth_mode = push_data.metadata.w;
+        return output;
+    }
     if (kind == 8) {
         const uint line_vertex = vertex_id % 6;
         const uint segment_index = vertex_id / 6;

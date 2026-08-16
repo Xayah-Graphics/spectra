@@ -26,10 +26,15 @@ export namespace spectra::sdk::example {
             spectra::sdk::spheres<"spheres">(),
             spectra::sdk::volume<"volume">(
                 spectra::sdk::field<"density", float>("Density"),
-                spectra::sdk::field<"velocity", spectra::sdk::Float3>("Velocity")
+                spectra::sdk::field<"velocity", spectra::sdk::Float3>("Velocity"),
+                spectra::sdk::field<"cell", std::uint32_t>("Cell")
             ),
             spectra::sdk::instances<"instances">(),
-            spectra::sdk::points<"points">(),
+            spectra::sdk::particles<"particles">(
+                spectra::sdk::field<"velocity", spectra::sdk::Float3>("Velocity"),
+                spectra::sdk::field<"density", float>("Density"),
+                spectra::sdk::field<"phase", std::uint32_t>("Phase")
+            ),
             spectra::sdk::lines<"lines">(),
             spectra::sdk::vectors<"vectors">(),
             spectra::sdk::image<"image">(),
@@ -49,7 +54,7 @@ export namespace spectra::sdk::example {
             setup.spheres<"spheres">(1u);
             setup.volume<"volume">({2u, 2u, 2u});
             setup.instances<"instances">(1u);
-            setup.points<"points">(1u);
+            setup.particles<"particles">(1u, 0.01F);
             setup.lines<"lines">(1u);
             setup.vectors<"vectors">(1u);
             setup.image<"image">(2u, 2u);
@@ -83,7 +88,7 @@ export namespace spectra::sdk::example {
             auto spheres = frame.spheres<"spheres">(1u);
             auto volume = frame.volume<"volume">();
             auto instances = frame.instances<"instances">(1u);
-            auto points = frame.points<"points">(1u);
+            auto particles = frame.particles<"particles">(1u);
             auto lines = frame.lines<"lines">(1u);
             auto vectors = frame.vectors<"vectors">(1u);
             auto image = frame.image<"image">();
@@ -92,8 +97,12 @@ export namespace spectra::sdk::example {
             static_cast<void>(spheres.data());
             static_cast<void>(volume.field<"density", float>().data());
             static_cast<void>(volume.field<"velocity", spectra::sdk::Float3>().data());
+            static_cast<void>(volume.field<"cell", std::uint32_t>().data());
             static_cast<void>(instances.data());
-            static_cast<void>(points.data());
+            static_cast<void>(particles.positions.data());
+            static_cast<void>(particles.field<"velocity", spectra::sdk::Float3>().data());
+            static_cast<void>(particles.field<"density", float>().data());
+            static_cast<void>(particles.field<"phase", std::uint32_t>().data());
             static_cast<void>(lines.data());
             static_cast<void>(vectors.data());
             static_cast<void>(image.pixels.data());

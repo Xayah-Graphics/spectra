@@ -154,13 +154,13 @@ namespace spectra {
                             .visualizations         = this->dynamics.visualizations(),
                             .visualization          = &this->visualization,
                             .neural_field           = &this->neural_field,
-                            .diagnostics            = this->viewport_settings.guides_visible ? std::optional{SceneDiagnosticsComposition{this->diagnostics, this->viewport_settings.scene_guides, this->viewport_settings.selection_diagnostics, this->viewport.view.selection}} : std::nullopt,
+                            .diagnostics            = SceneDiagnosticsComposition{this->diagnostics, this->viewport_settings.scene_guides, this->viewport_settings.selection_diagnostics, this->viewport.view.selection, this->viewport_settings.guides_visible},
                             .camera_reference       = camera_reference,
                             .frame_slot_index       = frame->frame.slot_index,
                             .exposure               = this->viewport_settings.exposure,
                             .compose_visualizations = true,
                         });
-                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->document.content.evaluated.view(), this->viewport.view.render_camera, *depth, this->viewport_settings.guides_visible ? &this->diagnostics.pick_image() : nullptr);
+                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->document.content.evaluated.view(), this->viewport.view.render_camera, *depth, &this->diagnostics.pick_image());
                     this->record_editor_overlays(frame->frame.command_buffer, actions.show_axes);
                 }
             }

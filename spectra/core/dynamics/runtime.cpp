@@ -56,7 +56,6 @@ namespace spectra {
         [[nodiscard]] std::uint32_t collection_element_size(const SpectraSdkOutputKind kind) noexcept {
             if (kind == SpectraSdkOutputKind::Spheres) return 16u;
             if (kind == SpectraSdkOutputKind::Instances) return 72u;
-            if (kind == SpectraSdkOutputKind::Points) return 36u;
             if (kind == SpectraSdkOutputKind::Lines) return 48u;
             if (kind == SpectraSdkOutputKind::Vectors) return 48u;
             if (kind == SpectraSdkOutputKind::Image) return 16u;
@@ -133,17 +132,17 @@ namespace spectra {
                     dynamics::DatasetDescriptor dataset{.id = sdk_string(output.id)};
                     if (output.kind == SpectraSdkOutputKind::Mesh) dataset.resource_kind = scene::DynamicSceneResourceKind::Geometry, dataset.details = dynamics::TriangleMeshDataset{0u, 0u, dynamics::MeshUpdateMode::Deformable, output.mesh_attributes};
                     else if (output.kind == SpectraSdkOutputKind::Spheres) dataset.resource_kind = scene::DynamicSceneResourceKind::SphereSet, dataset.details = dynamics::SphereSetDataset{};
-                    else if (output.kind == SpectraSdkOutputKind::Volume) {
-                        dynamics::FieldDataset field{};
+                    else if (output.kind == SpectraSdkOutputKind::Volume || output.kind == SpectraSdkOutputKind::Particles) {
+                        std::vector<dynamics::FieldDescriptor> fields{};
                         std::uint32_t buffer_offset{};
-                        for (std::uint64_t field_index = 0; field_index != output.volume_field_count; ++field_index) {
-                            const SpectraSdkVolumeFieldDescriptor& source_field = output.volume_fields[field_index];
-                            const std::uint32_t buffer_count = source_field.kind == SpectraSdkVolumeFieldKind::MacFloat3 ? 3u : 1u;
-                            field.fields.emplace_back(
+                        for (std::uint64_t field_index = 0; field_index != output.field_count; ++field_index) {
+                            const SpectraSdkFieldDescriptor& source_field = output.fields[field_index];
+                            const std::uint32_t buffer_count = source_field.kind == SpectraSdkFieldKind::MacFloat3 ? 3u : 1u;
+                            fields.emplace_back(
                                 sdk_string(source_field.id),
                                 sdk_string(source_field.name),
                                 sdk_string(source_field.unit),
-                                static_cast<scene::VolumeFieldKind>(source_field.kind),
+                                static_cast<scene::FieldKind>(source_field.kind),
                                 static_cast<scene::VolumeFieldSampling>(source_field.sampling),
                                 static_cast<scene::VolumeVectorSpace>(source_field.vector_space),
                                 buffer_offset,
@@ -151,10 +150,14 @@ namespace spectra {
                             );
                             buffer_offset += buffer_count;
                         }
-                        dataset.resource_kind = scene::DynamicSceneResourceKind::Volume;
-                        dataset.details       = std::move(field);
+                        if (output.kind == SpectraSdkOutputKind::Volume) {
+                            dataset.resource_kind = scene::DynamicSceneResourceKind::Volume;
+                            dataset.details       = dynamics::FieldDataset{.fields = std::move(fields)};
+                        } else {
+                            dataset.resource_kind = scene::DynamicSceneResourceKind::ParticleSet;
+                            dataset.details       = dynamics::ParticleSetDataset{.fields = std::move(fields)};
+                        }
                     } else if (output.kind == SpectraSdkOutputKind::Instances) dataset.details = dynamics::InstanceTransformDataset{};
-                    else if (output.kind == SpectraSdkOutputKind::Points) dataset.details = dynamics::PointDataset{};
                     else if (output.kind == SpectraSdkOutputKind::Lines) dataset.details = dynamics::SegmentDataset{};
                     else if (output.kind == SpectraSdkOutputKind::Vectors) dataset.details = dynamics::VectorDataset{};
                     else if (output.kind == SpectraSdkOutputKind::Image) dataset.details = dynamics::ImageDataset{};
@@ -253,6 +256,10 @@ namespace spectra {
 
     bool DynamicsRuntime::controls(const scene::VolumeId volume_id) const noexcept {
         return std::ranges::any_of(this->systems.values, [volume_id](const SystemRuntime& system) { return std::ranges::any_of(system.outputs, [volume_id](const OutputRuntime& output) { return output.scene_binding && output.descriptor.resource_kind == scene::DynamicSceneResourceKind::Volume && output.scene_binding->resource_id == volume_id.value; }); });
+    }
+
+    bool DynamicsRuntime::controls(const scene::ParticleSetId particle_set_id) const noexcept {
+        return std::ranges::any_of(this->systems.values, [particle_set_id](const SystemRuntime& system) { return std::ranges::any_of(system.outputs, [particle_set_id](const OutputRuntime& output) { return output.scene_binding && output.descriptor.resource_kind == scene::DynamicSceneResourceKind::ParticleSet && output.scene_binding->resource_id == particle_set_id.value; }); });
     }
 
     bool DynamicsRuntime::controls(const scene::CameraId camera_id) const noexcept {
@@ -387,7 +394,7 @@ namespace spectra {
 #else
             const auto entry = reinterpret_cast<const SpectraSdkApi* (*)() noexcept>(dlsym(loaded, SPECTRA_SDK_ENTRY_NAME));
 #endif
-            if (!entry) throw std::runtime_error("Provider does not export Spectra SDK ABI 3");
+            if (!entry) throw std::runtime_error("Provider does not export Spectra SDK ABI 4");
             api = entry();
             if (api->abi_version != SPECTRA_SDK_ABI_VERSION || api->struct_size != sizeof(SpectraSdkApi)) throw std::runtime_error("Provider has an incompatible Spectra SDK ABI");
             const SpectraSdkProviderDescriptionResult described = api->describe_provider();
@@ -430,7 +437,7 @@ namespace spectra {
             if (auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details)) mesh->vertex_capacity = output.capacity, mesh->index_capacity = output.secondary_capacity * 3u, mesh->attributes = layout->mesh_attributes;
             else if (auto* spheres = std::get_if<dynamics::SphereSetDataset>(&output.descriptor.details)) spheres->capacity = output.capacity;
             else if (auto* instances = std::get_if<dynamics::InstanceTransformDataset>(&output.descriptor.details)) instances->capacity = output.capacity;
-            else if (auto* points = std::get_if<dynamics::PointDataset>(&output.descriptor.details)) points->capacity = output.capacity;
+            else if (auto* particles = std::get_if<dynamics::ParticleSetDataset>(&output.descriptor.details)) particles->capacity = output.capacity, particles->radius = layout->particle_radius;
             else if (auto* lines = std::get_if<dynamics::SegmentDataset>(&output.descriptor.details)) lines->capacity = output.capacity;
             else if (auto* vectors = std::get_if<dynamics::VectorDataset>(&output.descriptor.details)) vectors->capacity = output.capacity;
             else if (auto* volume = std::get_if<dynamics::FieldDataset>(&output.descriptor.details)) volume->resolution = output.resolution;
@@ -464,14 +471,17 @@ namespace spectra {
                 if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Scalar)) != 0u) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * 4u);
             } else if (layout->kind == SpectraSdkOutputKind::Volume) {
                 const auto& fields = std::get<dynamics::FieldDataset>(output.descriptor.details).fields;
-                for (const dynamics::VolumeFieldDescriptor& field : fields) {
-                    if (field.kind == scene::VolumeFieldKind::MacFloat3) {
+                for (const dynamics::FieldDescriptor& field : fields) {
+                    if (field.kind == scene::FieldKind::MacFloat3) {
                         dynamic_sizes.emplace_back(static_cast<std::uint64_t>(output.resolution.x + 1u) * output.resolution.y * output.resolution.z * sizeof(float));
                         dynamic_sizes.emplace_back(static_cast<std::uint64_t>(output.resolution.x) * (output.resolution.y + 1u) * output.resolution.z * sizeof(float));
                         dynamic_sizes.emplace_back(static_cast<std::uint64_t>(output.resolution.x) * output.resolution.y * (output.resolution.z + 1u) * sizeof(float));
                     } else
-                        dynamic_sizes.emplace_back(element_count(output.resolution) * (field.kind == scene::VolumeFieldKind::Float ? sizeof(float) : sizeof(math::Float3)));
+                        dynamic_sizes.emplace_back(element_count(output.resolution) * (field.kind == scene::FieldKind::Float ? sizeof(float) : field.kind == scene::FieldKind::Float3 ? sizeof(math::Float3) : sizeof(std::uint32_t)));
                 }
+            } else if (layout->kind == SpectraSdkOutputKind::Particles) {
+                dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(math::Float3));
+                for (const dynamics::FieldDescriptor& field : std::get<dynamics::ParticleSetDataset>(output.descriptor.details).fields) dynamic_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * (field.kind == scene::FieldKind::Float ? sizeof(float) : field.kind == scene::FieldKind::Float3 ? sizeof(math::Float3) : sizeof(std::uint32_t)));
             } else if (layout->kind == SpectraSdkOutputKind::HashGridRadianceField) {
                 dynamic_sizes = {
                     static_cast<std::uint64_t>(SPECTRA_SDK_HASH_GRID_ENTRY_COUNT) * 8u,
@@ -601,13 +611,23 @@ namespace spectra {
         if (!output.scene_binding) return;
         if (const auto* mesh = std::get_if<dynamics::TriangleMeshDataset>(&output.descriptor.details)) this->outputs.mesh_bindings.emplace_back(scene::GeometryId{output.scene_binding->resource_id}, dynamics::MeshUpdateMode::Deformable, mesh->vertex_capacity, mesh->index_capacity);
         else if (const auto* spheres = std::get_if<dynamics::SphereSetDataset>(&output.descriptor.details)) this->outputs.sphere_set_bindings.emplace_back(scene::SphereSetId{output.scene_binding->resource_id}, spheres->capacity);
+        else if (const auto* particles = std::get_if<dynamics::ParticleSetDataset>(&output.descriptor.details)) {
+            scene::ParticleSet& particle_set = *std::ranges::find(this->configuration.evaluated_scene->resources.particle_sets, scene::ParticleSetId{output.scene_binding->resource_id}, &scene::ParticleSet::id);
+            particle_set.radius = particles->radius;
+            particle_set.fields.clear();
+            particle_set.fields.reserve(particles->fields.size());
+            for (const dynamics::FieldDescriptor& descriptor : particles->fields) particle_set.fields.emplace_back(descriptor.id, descriptor.name, descriptor.unit, descriptor.kind, descriptor.vector_space);
+            ++particle_set.revision.content;
+            ++particle_set.revision.topology;
+            this->configuration.evaluated_scene->mark_changed(scene::SceneChange::Particle | scene::SceneChange::Structure);
+        }
         else if (const auto* field = std::get_if<dynamics::FieldDataset>(&output.descriptor.details)) {
             scene::Volume& volume   = *std::ranges::find(this->configuration.evaluated_scene->resources.volumes, scene::VolumeId{output.scene_binding->resource_id}, &scene::Volume::id);
             scene::GridVolume& grid = std::get<scene::GridVolume>(volume.data);
             grid.resolution = output.resolution;
             grid.fields.clear();
             grid.fields.reserve(field->fields.size());
-            for (const dynamics::VolumeFieldDescriptor& descriptor : field->fields) grid.fields.emplace_back(descriptor.id, descriptor.name, descriptor.unit, descriptor.kind, descriptor.sampling, descriptor.vector_space);
+            for (const dynamics::FieldDescriptor& descriptor : field->fields) grid.fields.emplace_back(descriptor.id, descriptor.name, descriptor.unit, descriptor.kind, descriptor.sampling, descriptor.vector_space);
             ++volume.revision.content;
             ++volume.revision.topology;
             this->configuration.evaluated_scene->mark_changed(scene::SceneChange::Volume | scene::SceneChange::Structure);
@@ -673,12 +693,18 @@ namespace spectra {
             if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u) ++index;
             snapshot.scene_updates.emplace_back(std::move(update));
         } else if (output.kind == SpectraSdkOutputKind::Spheres && output.scene_binding) snapshot.scene_updates.emplace_back(dynamics::GpuSphereSetUpdate{scene::SphereSetId{output.scene_binding->resource_id}, view(buffers[0]), commit.active_count});
+        else if (output.kind == SpectraSdkOutputKind::Particles && output.scene_binding) {
+            const auto& dataset = std::get<dynamics::ParticleSetDataset>(output.descriptor.details);
+            dynamics::GpuParticleSetUpdate update{.particle_set_id = scene::ParticleSetId{output.scene_binding->resource_id}, .positions = view(buffers[0]), .count = commit.active_count};
+            for (const dynamics::FieldDescriptor& field : dataset.fields) update.fields.emplace_back(field, std::vector{view(buffers[field.buffer_offset + 1u])});
+            snapshot.scene_updates.emplace_back(std::move(update));
+        }
         else if (output.kind == SpectraSdkOutputKind::Instances) snapshot.scene_updates.emplace_back(dynamics::GpuInstanceTransformUpdate{view(buffers[0]), commit.active_count});
         else if (output.kind == SpectraSdkOutputKind::Volume && output.scene_binding) {
             const auto& dataset = std::get<dynamics::FieldDataset>(output.descriptor.details);
             dynamics::GpuFieldUpdate update{.volume_id = scene::VolumeId{output.scene_binding->resource_id}};
-            for (const dynamics::VolumeFieldDescriptor& field : dataset.fields) {
-                dynamics::GpuVolumeFieldView field_view{.field = field};
+            for (const dynamics::FieldDescriptor& field : dataset.fields) {
+                dynamics::GpuFieldView field_view{.field = field};
                 for (std::uint32_t component = 0; component != field.buffer_count; ++component) field_view.values.emplace_back(view(buffers[field.buffer_offset + component]));
                 update.fields.emplace_back(std::move(field_view));
             }
@@ -701,8 +727,7 @@ namespace spectra {
             math::Transform transform{};
             if (visualization.anchor.value != 0u) transform = std::ranges::find(this->configuration.source_scene->resources.instances, visualization.anchor, &scene::Instance::id)->transform;
             dynamics::VisualizationStyle style{visualization, transform};
-            if (output.kind == SpectraSdkOutputKind::Points) snapshot.visualizations.emplace_back(dynamics::GpuPointVisualization{style, view(buffers[0]), commit.active_count});
-            else if (output.kind == SpectraSdkOutputKind::Lines) snapshot.visualizations.emplace_back(dynamics::GpuSegmentVisualization{style, view(buffers[0]), commit.active_count});
+            if (output.kind == SpectraSdkOutputKind::Lines) snapshot.visualizations.emplace_back(dynamics::GpuSegmentVisualization{style, view(buffers[0]), commit.active_count});
             else if (output.kind == SpectraSdkOutputKind::Vectors) snapshot.visualizations.emplace_back(dynamics::GpuVectorVisualization{style, view(buffers[0]), commit.active_count});
             else if (output.kind == SpectraSdkOutputKind::Image) snapshot.visualizations.emplace_back(dynamics::GpuImageVisualization{style, std::get<dynamics::ImageDataset>(output.descriptor.details), view(buffers[0])});
             else if (output.kind == SpectraSdkOutputKind::Mesh) {

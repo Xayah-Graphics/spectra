@@ -29,6 +29,11 @@ namespace spectra::scene {
         friend auto operator<=>(const SphereSetId&, const SphereSetId&) = default;
     };
 
+    export struct ParticleSetId {
+        std::uint64_t value{};
+        friend auto operator<=>(const ParticleSetId&, const ParticleSetId&) = default;
+    };
+
     export struct VolumeId {
         std::uint64_t value{};
         friend auto operator<=>(const VolumeId&, const VolumeId&) = default;
@@ -157,9 +162,10 @@ namespace spectra::scene {
 
     export [[nodiscard]] math::Bounds3 sphere_set_bounds(const SphereSet& spheres) noexcept;
 
-    export enum class VolumeFieldKind : std::uint8_t {
+    export enum class FieldKind : std::uint8_t {
         Float,
         Float3,
+        UInt32,
         MacFloat3,
     };
 
@@ -195,6 +201,7 @@ namespace spectra::scene {
     export enum class VolumeDiagnosticMode : std::uint8_t {
         Off,
         Slice,
+        Cells,
         RayMarch,
         MaximumIntensityProjection,
         Isosurface,
@@ -203,7 +210,7 @@ namespace spectra::scene {
         Lic,
     };
 
-    export enum class VolumeFieldMapping : std::uint8_t {
+    export enum class FieldMapping : std::uint8_t {
         Value,
         Magnitude,
         X,
@@ -217,7 +224,7 @@ namespace spectra::scene {
     export struct VolumeDiagnostics {
         std::string field_id{};
         VolumeDiagnosticMode mode{VolumeDiagnosticMode::Off};
-        VolumeFieldMapping mapping{VolumeFieldMapping::Value};
+        FieldMapping mapping{FieldMapping::Value};
         VisualizationDepthMode depth_mode{VisualizationDepthMode::Tested};
         VisualizationColorMap color_map{VisualizationColorMap::Viridis};
         math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
@@ -231,6 +238,7 @@ namespace spectra::scene {
         std::uint32_t axis{2};
         std::uint32_t sampling{8};
         std::uint32_t steps{32};
+        std::uint32_t category_mask{0xfffffffeu};
         friend auto operator<=>(const VolumeDiagnostics&, const VolumeDiagnostics&) = default;
     };
 
@@ -238,13 +246,68 @@ namespace spectra::scene {
         std::string id{};
         std::string name{};
         std::string unit{};
-        VolumeFieldKind kind{VolumeFieldKind::Float};
+        FieldKind kind{FieldKind::Float};
         VolumeFieldSampling sampling{VolumeFieldSampling::Cell};
         VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
         std::vector<float> scalar_values{};
         std::vector<math::Float3> vector_values{};
+        std::vector<std::uint32_t> integer_values{};
         std::array<std::vector<float>, 3> mac_values{};
     };
+
+    export enum class ParticleDisplayMode : std::uint8_t {
+        Points,
+        Discs,
+        Spheres,
+    };
+
+    export struct ParticleField {
+        std::string id{};
+        std::string name{};
+        std::string unit{};
+        FieldKind kind{FieldKind::Float};
+        VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
+    };
+
+    export struct ParticleVisualization {
+        std::string field_id{};
+        ParticleDisplayMode display{ParticleDisplayMode::Discs};
+        FieldMapping mapping{FieldMapping::Value};
+        VisualizationDepthMode depth_mode{VisualizationDepthMode::Tested};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        math::Float4 color{0.18f, 0.55f, 1.0f, 1.0f};
+        float minimum{};
+        float maximum{1.0f};
+        float radius_scale{1.0f};
+        float point_size{2.0f};
+        friend auto operator<=>(const ParticleVisualization&, const ParticleVisualization&) = default;
+    };
+
+    export struct ParticleDiagnostics {
+        std::string vector_field{};
+        VisualizationColorMap color_map{VisualizationColorMap::Turbo};
+        float minimum{};
+        float maximum{1.0f};
+        float scale{0.1f};
+        float width{1.5f};
+        std::uint32_t sampling{8u};
+        friend auto operator<=>(const ParticleDiagnostics&, const ParticleDiagnostics&) = default;
+    };
+
+    export struct ParticleSet {
+        ParticleSetId id{};
+        std::string name{};
+        ResourceRevision revision{};
+        math::Bounds3 domain{};
+        math::Transform transform{};
+        float radius{0.01f};
+        std::vector<ParticleField> fields{};
+        ParticleVisualization visualization{};
+        ParticleDiagnostics diagnostics{};
+        bool visible{true};
+    };
+
+    export [[nodiscard]] math::Bounds3 particle_set_bounds(const ParticleSet& particles) noexcept;
 
     export struct GridVolume {
         math::UInt3 resolution{};
@@ -805,28 +868,16 @@ namespace spectra::scene {
     export enum class DynamicSceneResourceKind : std::uint8_t {
         Geometry,
         SphereSet,
+        ParticleSet,
         Volume,
         NeuralField,
     };
 
     export enum class VisualizationViewKind : std::uint8_t {
-        Points,
-        Segments,
-        Vectors,
-        Image,
-        Surface,
-    };
-
-    export enum class PointGlyph : std::uint8_t {
-        ScreenDisc,
-        WorldDisc,
-        Sphere,
-        Cross,
-    };
-
-    export enum class PointShading : std::uint8_t {
-        Unlit,
-        Lit,
+        Segments = 1,
+        Vectors  = 2,
+        Image    = 3,
+        Surface  = 4,
     };
 
     export enum class VisualizationColorSource : std::uint8_t {
@@ -860,18 +911,6 @@ namespace spectra::scene {
         std::string dataset_id{};
         std::uint64_t resource_id{};
         friend auto operator<=>(const DynamicSceneBinding&, const DynamicSceneBinding&) = default;
-    };
-
-    export struct PointVisualization {
-        float width{1.0f};
-        float scale{1.0f};
-        float scalar_minimum{};
-        float scalar_maximum{1.0f};
-        PointGlyph glyph{PointGlyph::ScreenDisc};
-        PointShading shading{PointShading::Unlit};
-        VisualizationColorSource color_source{VisualizationColorSource::Element};
-        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
-        friend auto operator<=>(const PointVisualization&, const PointVisualization&) = default;
     };
 
     export struct SegmentVisualization {
@@ -914,14 +953,13 @@ namespace spectra::scene {
         InstanceId anchor{};
         math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
         bool visible{true};
-        std::variant<PointVisualization, SegmentVisualization, VectorVisualization, ImageVisualization, SurfaceVisualization> data{SegmentVisualization{}};
+        std::variant<SegmentVisualization, VectorVisualization, ImageVisualization, SurfaceVisualization> data{SegmentVisualization{}};
         friend auto operator<=>(const DynamicVisualizationView&, const DynamicVisualizationView&) = default;
     };
 
     export [[nodiscard]] constexpr VisualizationViewKind visualization_view_kind(const DynamicVisualizationView& view) noexcept {
         return std::visit([]<typename Type>(const Type&) {
-            if constexpr (std::same_as<Type, PointVisualization>) return VisualizationViewKind::Points;
-            else if constexpr (std::same_as<Type, SegmentVisualization>) return VisualizationViewKind::Segments;
+            if constexpr (std::same_as<Type, SegmentVisualization>) return VisualizationViewKind::Segments;
             else if constexpr (std::same_as<Type, VectorVisualization>) return VisualizationViewKind::Vectors;
             else if constexpr (std::same_as<Type, ImageVisualization>) return VisualizationViewKind::Image;
             else return VisualizationViewKind::Surface;
@@ -958,6 +996,7 @@ namespace spectra::scene {
     export struct SceneResources {
         std::vector<Geometry> geometries{};
         std::vector<SphereSet> sphere_sets{};
+        std::vector<ParticleSet> particle_sets{};
         std::vector<Volume> volumes{};
         std::vector<NeuralField> neural_fields{};
         std::vector<Texture> textures{};
@@ -972,22 +1011,23 @@ namespace spectra::scene {
     };
 
     export enum class SceneChange : std::uint16_t {
-        None      = 0,
-        Geometry  = 1 << 0,
-        Transform = 1 << 1,
-        Texture   = 1 << 2,
-        Material  = 1 << 3,
-        Light     = 1 << 4,
-        Medium    = 1 << 5,
-        Volume    = 1 << 6,
-        Camera    = 1 << 7,
-        Film      = 1 << 8,
-        Sampler   = 1 << 9,
-        Metadata  = 1 << 10,
-        Transport = 1 << 11,
-        Structure = 1 << 12,
+        None        = 0,
+        Geometry    = 1 << 0,
+        Transform   = 1 << 1,
+        Texture     = 1 << 2,
+        Material    = 1 << 3,
+        Light       = 1 << 4,
+        Medium      = 1 << 5,
+        Volume      = 1 << 6,
+        Camera      = 1 << 7,
+        Film        = 1 << 8,
+        Sampler     = 1 << 9,
+        Metadata    = 1 << 10,
+        Transport   = 1 << 11,
+        Structure   = 1 << 12,
         NeuralField = 1 << 13,
-        All         = 0x3fff,
+        Particle     = 1 << 14,
+        All          = 0x7fff,
     };
 
     export [[nodiscard]] constexpr SceneChange operator|(const SceneChange left, const SceneChange right) noexcept {

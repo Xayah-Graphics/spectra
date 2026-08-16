@@ -252,7 +252,7 @@ namespace spectra {
 
     void GpuScene::destroy() noexcept {
         this->context.runtime.frames.defer_destruction([attribute_clear_shader = std::move(this->resources.attribute_clear_shader), attribute_accumulation_shader = std::move(this->resources.attribute_accumulation_shader), attribute_normalization_shader = std::move(this->resources.attribute_normalization_shader), bounds_clear_shader = std::move(this->resources.bounds_clear_shader), bounds_accumulation_shader = std::move(this->resources.bounds_accumulation_shader), sphere_unpack_shader = std::move(this->resources.sphere_unpack_shader), instance_apply_shader = std::move(this->resources.instance_apply_shader), texture_images = std::move(this->resources.texture_images), acceleration_instances = std::move(this->resources.acceleration_structure_instances), primitive_transforms = std::move(this->resources.primitive_transforms), instance_bindings = std::move(this->resources.dynamic_instance_bindings), instance_bounds = std::move(this->resources.instance_bounds),
-                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), volumes = std::move(this->resources.volumes), neural_fields = std::move(this->resources.neural_fields), volume_region = std::move(this->resources.volume_region_geometry), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
+                                                           bounds_readbacks = std::move(this->resources.instance_bounds_readbacks), frame_scratch = std::move(this->resources.frame_scratch), geometries = std::move(this->resources.geometries), sphere_sets = std::move(this->resources.sphere_sets), particle_sets = std::move(this->resources.particle_sets), volumes = std::move(this->resources.volumes), neural_fields = std::move(this->resources.neural_fields), volume_region = std::move(this->resources.volume_region_geometry), top_level = std::move(this->resources.top_level_acceleration_structure)]() mutable {});
         this->resources.texture_image_indices.clear();
         this->resources.acceleration_structure_instances_descriptor = {};
         this->resources.primitive_transforms_descriptor             = {};
@@ -286,6 +286,7 @@ namespace spectra {
         return {
             this->resources.geometries,
             this->resources.sphere_sets,
+            this->resources.particle_sets,
             this->resources.volumes,
             this->resources.neural_fields,
             this->resources.primitives,
@@ -351,6 +352,11 @@ namespace spectra {
             if (const auto* spheres = std::get_if<dynamics::GpuSphereSetUpdate>(&update.data)) {
                 this->synchronize_external_sphere_set(spheres->sphere_set_id, spheres->spheres.descriptor, static_cast<std::uint32_t>(spheres->count), command_buffer);
                 this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Geometry;
+                continue;
+            }
+            if (const auto* particles = std::get_if<dynamics::GpuParticleSetUpdate>(&update.data)) {
+                this->synchronize_external_particle_set(*particles);
+                this->resources.dynamic_changes = this->resources.dynamic_changes | GpuSceneChange::Particle;
                 continue;
             }
             const auto* field = std::get_if<dynamics::GpuFieldUpdate>(&update.data);
@@ -425,6 +431,13 @@ namespace spectra {
             for (const scene::SphereSet& spheres : scene.resources.sphere_sets) {
                 const auto binding = std::ranges::find(sphere_set_bindings, spheres.id, &dynamics::SphereSetOutputBinding::sphere_set_id);
                 this->resources.sphere_sets.emplace_back(this->create_sphere_set(spheres, target, binding == sphere_set_bindings.end() ? 0 : binding->capacity));
+            }
+            this->resources.particle_sets.reserve(scene.resources.particle_sets.size());
+            for (const scene::ParticleSet& particles : scene.resources.particle_sets) {
+                GpuParticleSet& gpu_particles = this->resources.particle_sets.emplace_back();
+                gpu_particles.particle_set_id = particles.id;
+                gpu_particles.fields.reserve(particles.fields.size());
+                for (const scene::ParticleField& field : particles.fields) gpu_particles.fields.emplace_back(field.id, field.name, field.unit, field.kind, field.vector_space);
             }
             this->resources.volumes.reserve(scene.resources.volumes.size());
             for (const scene::Volume& volume : scene.resources.volumes) this->resources.volumes.emplace_back(this->create_volume(volume, target));
@@ -595,10 +608,12 @@ namespace spectra {
                     result.resolution = data.resolution;
                     for (const scene::VolumeField& source : data.fields) {
                         GpuVolumeField& field = result.fields.emplace_back(source.id, source.name, source.unit, source.kind, source.sampling, source.vector_space);
-                        if (source.kind == scene::VolumeFieldKind::Float) {
+                        if (source.kind == scene::FieldKind::Float) {
                             field.buffers.emplace_back(upload_buffer(this->context.runtime, command_buffer, std::span<const float>{source.scalar_values}, vk::BufferUsageFlagBits::eStorageBuffer, static_cast<std::size_t>(data.resolution.x) * data.resolution.y * data.resolution.z));
-                        } else if (source.kind == scene::VolumeFieldKind::Float3) {
+                        } else if (source.kind == scene::FieldKind::Float3) {
                             field.buffers.emplace_back(upload_buffer(this->context.runtime, command_buffer, std::span<const math::Float3>{source.vector_values}, vk::BufferUsageFlagBits::eStorageBuffer, static_cast<std::size_t>(data.resolution.x) * data.resolution.y * data.resolution.z));
+                        } else if (source.kind == scene::FieldKind::UInt32) {
+                            field.buffers.emplace_back(upload_buffer(this->context.runtime, command_buffer, std::span<const std::uint32_t>{source.integer_values}, vk::BufferUsageFlagBits::eStorageBuffer, static_cast<std::size_t>(data.resolution.x) * data.resolution.y * data.resolution.z));
                         } else {
                             const std::array<std::size_t, 3> capacities{
                                 static_cast<std::size_t>(data.resolution.x + 1u) * data.resolution.y * data.resolution.z,
@@ -1082,9 +1097,9 @@ namespace spectra {
         this->resources.instance_bounds_dirty = true;
     }
 
-    void GpuScene::synchronize_external_volume(const scene::VolumeId volume_id, const std::span<const dynamics::GpuVolumeFieldView> fields, const vk::raii::CommandBuffer& command_buffer) {
+    void GpuScene::synchronize_external_volume(const scene::VolumeId volume_id, const std::span<const dynamics::GpuFieldView> fields, const vk::raii::CommandBuffer& command_buffer) {
         GpuVolume& volume = *std::ranges::find(this->resources.volumes, volume_id, &GpuVolume::volume_id);
-        for (const dynamics::GpuVolumeFieldView& source : fields) {
+        for (const dynamics::GpuFieldView& source : fields) {
             GpuVolumeField& destination = *std::ranges::find(volume.fields, source.field.id, &GpuVolumeField::id);
             for (std::size_t component = 0; component != source.values.size(); ++component) command_buffer.copyBuffer(*source.values[component].buffer->buffer, *destination.buffers[component].buffer, vk::BufferCopy{0, 0, destination.buffers[component].size});
         }
@@ -1094,6 +1109,13 @@ namespace spectra {
         volume.dirty_region = scene::VolumeRegion{{}, volume.resolution};
         ++volume.revision.content;
         volume.cpu_data_stale = true;
+    }
+
+    void GpuScene::synchronize_external_particle_set(const dynamics::GpuParticleSetUpdate& update) {
+        GpuParticleSet& particles = *std::ranges::find(this->resources.particle_sets, update.particle_set_id, &GpuParticleSet::particle_set_id);
+        particles.positions       = update.positions.descriptor;
+        particles.count           = update.count;
+        for (const dynamics::GpuFieldView& source : update.fields) std::ranges::find(particles.fields, source.field.id, &GpuParticleField::id)->descriptor = source.values.front().descriptor;
     }
 
     void GpuScene::synchronize_external_neural_field(const dynamics::GpuHashGridRadianceFieldUpdate& update, const vk::raii::CommandBuffer& command_buffer) {

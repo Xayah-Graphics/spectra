@@ -40,8 +40,6 @@ namespace spectra {
             scene::SpectrumColorSpace color_space{scene::SpectrumColorSpace::Srgb};
             math::Transform transform{};
             scene::VisualizationViewKind kind{scene::VisualizationViewKind::Segments};
-            scene::PointGlyph point_glyph{scene::PointGlyph::ScreenDisc};
-            scene::PointShading point_shading{scene::PointShading::Unlit};
             scene::VisualizationColorSource color_source{scene::VisualizationColorSource::Element};
             scene::VisualizationColorMap color_map{scene::VisualizationColorMap::Viridis};
             math::Float4 screen_rect{0.02f, 0.02f, 0.32f, 0.32f};
@@ -49,7 +47,6 @@ namespace spectra {
             float scale{1.0f};
             float scalar_minimum{};
             float scalar_maximum{1.0f};
-            bool point{};
             bool image{};
         };
 
@@ -70,17 +67,10 @@ namespace spectra {
                                 result.color_source   = data.color_source;
                                 result.color_map      = data.color_map;
                             }
-                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::PointVisualization>) {
-                                result.point_glyph   = data.glyph;
-                                result.point_shading = data.shading;
-                            } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ImageVisualization>) result.screen_rect = data.screen_rect;
+                            if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::ImageVisualization>) result.screen_rect = data.screen_rect;
                         },
                         value.style.view.data);
-                    if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuPointVisualization>) {
-                        result.primary      = value.points.descriptor;
-                        result.active_count = value.count;
-                        result.point        = true;
-                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuSegmentVisualization>) {
+                    if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuSegmentVisualization>) {
                         result.primary      = value.segments.descriptor;
                         result.active_count = value.count;
                     } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, dynamics::GpuVectorVisualization>) {
@@ -126,6 +116,7 @@ namespace spectra {
 
     bool VisualizationRenderer::has_visible(const scene::SceneView scene, const std::span<const dynamics::GpuVisualization> views, const scene::VisualizationCompositionDomain domain) const noexcept {
         if (std::ranges::any_of(views, [domain](const dynamics::GpuVisualization& source) { return std::visit([domain](const auto& value) { return value.style.view.visible && value.style.view.composition_domain == domain; }, source.data); })) return true;
+        if (domain == scene::VisualizationCompositionDomain::SceneLinear && std::ranges::any_of(scene.resources.particle_sets, [](const scene::ParticleSet& particles) { return particles.visible; })) return true;
         return domain == scene::VisualizationCompositionDomain::DisplayReferred && std::ranges::any_of(scene.resources.volumes, [](const scene::Volume& volume) { return volume.visible && std::holds_alternative<scene::GridVolume>(volume.data) && volume.diagnostics.mode != scene::VolumeDiagnosticMode::Off; });
     }
 
@@ -169,13 +160,8 @@ namespace spectra {
             if (!view.visible || view.composition_domain != domain || dataset.active_count == 0) continue;
             const std::array<float, 16>& transform = dataset.transform.matrix;
             std::array<std::uint32_t, 4> detail{0, 0, static_cast<std::uint32_t>(dataset.color_source), static_cast<std::uint32_t>(dataset.color_map)};
-            if (dataset.point) {
-                detail[0] = static_cast<std::uint32_t>(dataset.point_glyph);
-                detail[1] = static_cast<std::uint32_t>(dataset.point_shading);
-            }
             if (dataset.image) detail[0] = static_cast<std::uint32_t>(target.color_space);
             std::array<float, 4> screen_rect{dataset.screen_rect.x, dataset.screen_rect.y, dataset.screen_rect.z, dataset.screen_rect.w};
-            if (dataset.point) screen_rect = {camera_depth[0], camera_depth[1], camera_depth[2], 0.0f};
             VisualizationPushData push{
                 dataset.primary,
                 dataset.secondary,
@@ -198,9 +184,7 @@ namespace spectra {
                 {view_projection[12], view_projection[13], view_projection[14], view_projection[15]},
             };
             this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
-            if (dataset.kind == scene::VisualizationViewKind::Points)
-                command_buffer.draw(dataset.point_glyph == scene::PointGlyph::Cross ? 12u : 6u, dataset.active_count, 0, 0);
-            else if (dataset.kind == scene::VisualizationViewKind::Segments)
+            if (dataset.kind == scene::VisualizationViewKind::Segments)
                 command_buffer.draw(6, dataset.active_count, 0, 0);
             else if (dataset.kind == scene::VisualizationViewKind::Vectors)
                 command_buffer.draw(18, dataset.active_count, 0, 0);
@@ -211,6 +195,45 @@ namespace spectra {
         }
         const GpuSceneView gpu_scene = this->context.gpu_scene.view();
         const scene::CameraMatrices camera_matrices = camera.matrices();
+        if (domain == scene::VisualizationCompositionDomain::SceneLinear) {
+            for (const scene::ParticleSet& particles : scene.resources.particle_sets) {
+                if (!particles.visible) continue;
+                const GpuParticleSet& gpu_particles = *std::ranges::find(gpu_scene.particle_sets, particles.id, &GpuParticleSet::particle_set_id);
+                if (gpu_particles.count == 0u) continue;
+                const scene::ParticleVisualization& visualization = particles.visualization;
+                DescriptorHandle attribute = gpu_particles.positions;
+                std::uint32_t field_kind = std::numeric_limits<std::uint32_t>::max();
+                if (!visualization.field_id.empty()) {
+                    const GpuParticleField& field = *std::ranges::find(gpu_particles.fields, visualization.field_id, &GpuParticleField::id);
+                    attribute  = field.descriptor;
+                    field_kind = std::to_underlying(field.kind);
+                }
+                const std::array<float, 16>& transform = particles.transform.matrix;
+                const VisualizationPushData push{
+                    gpu_particles.positions,
+                    attribute,
+                    depth.descriptor,
+                    0u,
+                    0u,
+                    {5u, field_kind, gpu_particles.count, std::to_underlying(visualization.depth_mode)},
+                    {target.image.extent.width, target.image.extent.height, 0u, 0u},
+                    {std::to_underlying(visualization.display), std::to_underlying(visualization.mapping), std::to_underlying(visualization.color_map), 0u},
+                    {visualization.display == scene::ParticleDisplayMode::Points ? visualization.point_size : particles.radius * visualization.radius_scale, 0.0f, visualization.minimum, visualization.maximum},
+                    {visualization.color.x, visualization.color.y, visualization.color.z, visualization.color.w},
+                    {camera_depth[0], camera_depth[1], camera_depth[2], 0.0f},
+                    {transform[0], transform[1], transform[2], transform[3]},
+                    {transform[4], transform[5], transform[6], transform[7]},
+                    {transform[8], transform[9], transform[10], transform[11]},
+                    {transform[12], transform[13], transform[14], transform[15]},
+                    {view_projection[0], view_projection[1], view_projection[2], view_projection[3]},
+                    {view_projection[4], view_projection[5], view_projection[6], view_projection[7]},
+                    {view_projection[8], view_projection[9], view_projection[10], view_projection[11]},
+                    {view_projection[12], view_projection[13], view_projection[14], view_projection[15]},
+                };
+                this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+                command_buffer.draw(6u, gpu_particles.count, 0u, 0u);
+            }
+        }
         for (const scene::Volume& volume : scene.resources.volumes) {
             if (domain != scene::VisualizationCompositionDomain::DisplayReferred || !volume.visible || volume.diagnostics.mode == scene::VolumeDiagnosticMode::Off) continue;
             const auto* grid = std::get_if<scene::GridVolume>(&volume.data);
@@ -229,7 +252,7 @@ namespace spectra {
             DescriptorHandle primary   = field.descriptors.front();
             DescriptorHandle secondary = primary;
             DescriptorHandle tertiary  = primary;
-            if (field.kind == scene::VolumeFieldKind::MacFloat3) secondary = field.descriptors[1], tertiary = field.descriptors[2];
+            if (field.kind == scene::FieldKind::MacFloat3) secondary = field.descriptors[1], tertiary = field.descriptors[2];
             math::Transform vector_to_grid{};
             if (field.vector_space == scene::VolumeVectorSpace::Grid)
                 vector_to_grid = math::Transform{{
@@ -250,9 +273,9 @@ namespace spectra {
                 primary,
                 secondary,
                 depth.descriptor,
-                tertiary.slot_index,
-                tertiary.reserved,
-                {7u + std::to_underlying(diagnostics.mode), static_cast<std::uint32_t>(std::to_underlying(field.kind)) | (static_cast<std::uint32_t>(std::to_underlying(field.sampling)) << 8u), std::to_underlying(diagnostics.mapping), std::to_underlying(diagnostics.depth_mode)},
+                field.kind == scene::FieldKind::UInt32 ? diagnostics.category_mask : tertiary.slot_index,
+                field.kind == scene::FieldKind::UInt32 ? 0u : tertiary.reserved,
+                {diagnostics.mode == scene::VolumeDiagnosticMode::Slice ? 8u : diagnostics.mode == scene::VolumeDiagnosticMode::Cells ? 17u : 6u + std::to_underlying(diagnostics.mode), static_cast<std::uint32_t>(std::to_underlying(field.kind)) | (static_cast<std::uint32_t>(std::to_underlying(field.sampling)) << 8u), std::to_underlying(diagnostics.mapping), std::to_underlying(diagnostics.depth_mode)},
                 {target.image.extent.width, target.image.extent.height, grid->resolution.x, grid->resolution.y},
                 {grid->resolution.z, diagnostics.axis, diagnostics.sampling, diagnostics.steps},
                 {diagnostics.width, diagnostics.scale, diagnostics.minimum, diagnostics.maximum},
@@ -271,6 +294,8 @@ namespace spectra {
             const std::uint32_t seed_count = diagnostics.sampling * diagnostics.sampling * diagnostics.sampling;
             if (ray_mode)
                 command_buffer.draw(3, 1, 0, 0);
+            else if (diagnostics.mode == scene::VolumeDiagnosticMode::Cells)
+                command_buffer.draw(72u, grid->resolution.x * grid->resolution.y * grid->resolution.z, 0u, 0u);
             else if (diagnostics.mode == scene::VolumeDiagnosticMode::Slice || diagnostics.mode == scene::VolumeDiagnosticMode::Lic)
                 command_buffer.draw(6, 1, 0, 0);
             else if (diagnostics.mode == scene::VolumeDiagnosticMode::Glyphs)

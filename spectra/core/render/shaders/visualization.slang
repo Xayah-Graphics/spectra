@@ -116,6 +116,12 @@ float3 visualization_color_map(float value, uint color_map) {
     return value < 0.5 ? lerp(c0, c1, value * 2.0) : lerp(c1, c2, value * 2.0 - 1.0);
 }
 
+float3 categorical_color(uint category) {
+    const float hue = frac(float(category) * 0.61803398875);
+    const float3 value = abs(frac(hue + float3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0) - 1.0;
+    return lerp(1.0.xxx, saturate(value), 0.78);
+}
+
 uint volume_index(uint3 coordinate, uint3 resolution) {
     return (coordinate.z * resolution.y + coordinate.y) * resolution.x + coordinate.x;
 }
@@ -179,7 +185,14 @@ float3 vector_to_grid(float3 vector) {
 }
 
 float volume_mapping(float3 position) {
-    if ((push_data.metadata.y & 255) == 0) return sample_volume_scalar(position);
+    const uint field_kind = push_data.metadata.y & 255;
+    if (field_kind == 0) return sample_volume_scalar(position);
+    if (field_kind == 2) {
+        ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+        const uint3 resolution = uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
+        const uint3 coordinate = min(uint3(position * float3(resolution)), resolution - 1);
+        return float(primary.Load<uint>(volume_index(coordinate, resolution) * 4));
+    }
     const float3 value = sample_volume_vector(position);
     if (push_data.metadata.z == 0 || push_data.metadata.z == 1) return length(value);
     if (push_data.metadata.z == 2) return value.x;
@@ -198,6 +211,7 @@ float volume_mapping(float3 position) {
 }
 
 float4 volume_color(float value) {
+    if ((push_data.metadata.y & 255) == 2) return float4(categorical_color((uint)value) * push_data.color.rgb, push_data.color.w);
     const float normalized = (value - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z);
     return float4(visualization_color_map(normalized, (uint)push_data.screen_rect.w) * push_data.color.rgb, push_data.color.w);
 }
@@ -268,28 +282,36 @@ float3 integrate_volume_vector(float3 position, float direction) {
 [shader("vertex")]
 VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID) {
     const uint kind = push_data.metadata.x;
-    if (kind == 0) {
-        StructuredBuffer<SdkPoint> points = DescriptorHandle<StructuredBuffer<SdkPoint>>(push_data.primary);
-        const SdkPoint point = points[instance_id];
-        const float3 center = sdk_float3(point.position);
-        float radius = point.radius * push_data.parameters.x;
-        const float transform_scale = max(length(push_data.transform_row_0.xyz), max(length(push_data.transform_row_1.xyz), length(push_data.transform_row_2.xyz)));
-        if (push_data.detail.x == 1 || push_data.detail.x == 2) radius *= transform_scale;
-        const float4 element_color = sdk_float4(point.color);
-        const float scalar = point.scalar;
-        const float4 color = element_visualization_color(element_color, scalar);
+    if (kind == 5) {
+        ByteAddressBuffer positions = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+        ByteAddressBuffer field = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);
+        const float3 center = positions.Load<float3>(instance_id * 12);
+        float4 color = push_data.color;
+        if (push_data.metadata.y == 0) {
+            const float value = field.Load<float>(instance_id * 4);
+            color.rgb = visualization_color_map((value - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z), push_data.detail.z);
+        } else if (push_data.metadata.y == 1) {
+            const float3 value = field.Load<float3>(instance_id * 12);
+            const float scalar = push_data.detail.y <= 1 ? length(value) : push_data.detail.y == 2 ? value.x : push_data.detail.y == 3 ? value.y : value.z;
+            color.rgb = visualization_color_map((scalar - push_data.parameters.z) / (push_data.parameters.w - push_data.parameters.z), push_data.detail.z);
+        } else if (push_data.metadata.y == 2)
+            color.rgb = categorical_color(field.Load<uint>(instance_id * 4));
         const float2 corners[6] = {float2(-1, -1), float2(1, -1), float2(1, 1), float2(-1, -1), float2(1, 1), float2(-1, 1)};
-        float2 corner = corners[vertex_id % 6];
-        if (push_data.detail.x == 3) corner *= vertex_id < 6 ? float2(1.0, 0.14) : float2(0.14, 1.0);
+        const float2 corner = corners[vertex_id];
+        float radius = push_data.parameters.x;
         float4 position = project_position(transform_position(center));
-        if (push_data.detail.x == 0 || push_data.detail.x == 3)
+        if (push_data.detail.x == 0)
             position.xy += corner * radius * 2.0 / float2(push_data.dimensions.xy) * position.w;
         else {
+            const float transform_scale = max(length(push_data.transform_row_0.xyz), max(length(push_data.transform_row_1.xyz), length(push_data.transform_row_2.xyz)));
+            radius *= transform_scale;
             const float horizontal_scale = length(float3(push_data.view_projection_row_0.x, push_data.view_projection_row_0.y, push_data.view_projection_row_0.z));
             const float vertical_scale = length(float3(push_data.view_projection_row_1.x, push_data.view_projection_row_1.y, push_data.view_projection_row_1.z));
             position.xy += corner * radius * float2(horizontal_scale, vertical_scale);
         }
-        VisualizationVertexOutput output = {position, color, corner * 0.5 + 0.5, push_data.detail.x | (push_data.detail.y << 8), 2, float4(project_position(transform_position(center)).zw, radius, 0.0)};
+        const uint glyph = push_data.detail.x == 2 ? 2u : push_data.detail.x == 1 ? 1u : 0u;
+        const uint shading = push_data.detail.x == 2 ? 1u : 0u;
+        VisualizationVertexOutput output = {position, color, corner * 0.5 + 0.5, glyph | (shading << 8), 2, float4(project_position(transform_position(center)).zw, radius, 0.0)};
         return output;
     }
     if (kind == 1) {
@@ -379,6 +401,23 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         for (uint step = 0; step != offset; ++step) first = integrate_volume_vector(first, direction);
         const float3 second = integrate_volume_vector(first, direction);
         return make_volume_line(first, second, push_data.parameters.x, volume_color(volume_mapping(first)), vertex_id);
+    }
+    if (kind == 17) {
+        const uint3 resolution = uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x);
+        const uint z = instance_id / (resolution.x * resolution.y);
+        const uint y = (instance_id / resolution.x) % resolution.y;
+        const uint x = instance_id % resolution.x;
+        ByteAddressBuffer values = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
+        const uint category = values.Load<uint>(instance_id * 4);
+        const uint edges[24] = {0, 1, 1, 3, 3, 2, 2, 0, 4, 5, 5, 7, 7, 6, 6, 4, 0, 4, 1, 5, 2, 6, 3, 7};
+        const float3 corners[8] = {float3(0, 0, 0), float3(1, 0, 0), float3(0, 1, 0), float3(1, 1, 0), float3(0, 0, 1), float3(1, 0, 1), float3(0, 1, 1), float3(1, 1, 1)};
+        const uint edge = vertex_id / 6;
+        const float3 origin = float3(x, y, z);
+        const float3 first = (origin + corners[edges[edge * 2]]) / float3(resolution);
+        const float3 second = (origin + corners[edges[edge * 2 + 1]]) / float3(resolution);
+        const bool visible = category < 32 && (push_data.color_space & (1u << category)) != 0;
+        const float4 color = float4(categorical_color(category) * push_data.color.rgb, visible ? push_data.color.a : 0.0);
+        return make_volume_line(first, second, push_data.parameters.x, color, vertex_id % 6);
     }
     ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary);
     ByteAddressBuffer indices = DescriptorHandle<ByteAddressBuffer>(push_data.secondary);

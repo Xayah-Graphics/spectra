@@ -43,6 +43,11 @@ namespace spectra::sdk::cuda {
         UInt3 resolution{};
     };
 
+    struct RawParticlesView {
+        void* state{};
+        RawView positions{};
+    };
+
     struct RawMacFieldView {
         RawView x{};
         RawView y{};
@@ -67,20 +72,22 @@ namespace spectra::sdk::cuda {
         std::int64_t integer{};
     };
 
+    void register_output_internal(void* state, std::string_view id, OutputKind kind, MeshAttribute attributes, std::span<const std::string_view> field_ids, std::span<const FieldKind> field_kinds);
+    void configure_metrics_internal(void* state, std::span<const std::string_view> ids);
     [[nodiscard]] RawMeshSetupView setup_mesh_internal(void* state, std::string_view id, std::uint32_t vertex_capacity, std::uint32_t triangle_capacity);
     [[nodiscard]] RawCamerasSetupView setup_cameras_internal(void* state, std::string_view id, std::span<const Camera> cameras, std::uint32_t width, std::uint32_t height);
     void setup_collection_internal(void* state, std::string_view id, OutputKind kind, std::uint32_t capacity);
+    void setup_particles_internal(void* state, std::string_view id, std::uint32_t capacity, float radius);
     void setup_volume_internal(void* state, std::string_view id, UInt3 resolution);
     void setup_image_internal(void* state, std::string_view id, UInt3 extent);
     void setup_hash_grid_radiance_field_internal(void* state, std::string_view id);
-    void register_output_internal(void* state, std::string_view id, OutputKind kind, MeshAttribute attributes, std::span<const std::string_view> field_ids, std::span<const VolumeFieldKind> field_kinds);
-    void configure_metrics_internal(void* state, std::span<const std::string_view> ids);
     [[nodiscard]] RawMeshView frame_mesh_internal(void* state, std::string_view id);
     [[nodiscard]] RawView frame_collection_internal(void* state, std::string_view id, std::uint32_t active_count);
+    [[nodiscard]] RawParticlesView frame_particles_internal(void* state, std::string_view id, std::uint32_t active_count);
     [[nodiscard]] RawVolumeView frame_volume_internal(void* state, std::string_view id);
     [[nodiscard]] RawImageView frame_image_internal(void* state, std::string_view id);
     [[nodiscard]] RawHashGridRadianceFieldView frame_hash_grid_radiance_field_internal(void* state, std::string_view id);
-    [[nodiscard]] RawView volume_field_internal(void* state, std::string_view id);
+    [[nodiscard]] RawView field_internal(void* state, std::string_view id);
     [[nodiscard]] RawMacFieldView volume_mac_field_internal(void* state, std::string_view id);
     void upload_metric_internal(void* state, std::string_view id, const MetricValue& value);
 
@@ -127,12 +134,23 @@ namespace spectra::sdk::cuda {
 
         template <FixedString Id, typename Type>
         [[nodiscard]] std::span<Type> field() const {
-            const RawView view = volume_field_internal(state, Id.view());
+            const RawView view = field_internal(state, Id.view());
             return {static_cast<Type*>(view.data), view.count};
         }
 
         template <FixedString Id>
         [[nodiscard]] MacField field() const;
+    };
+
+    export struct Particles {
+        void* state{};
+        std::span<Float3> positions{};
+
+        template <FixedString Id, typename Type>
+        [[nodiscard]] std::span<Type> field() const {
+            const RawView view = field_internal(state, Id.view());
+            return {static_cast<Type*>(view.data), view.count};
+        }
     };
 
     export struct MacField {
@@ -211,8 +229,8 @@ namespace spectra::sdk::cuda {
         }
 
         template <FixedString Id>
-        void points(const std::uint32_t capacity) {
-            setup_collection_internal(state, Id.view(), OutputKind::Points, capacity);
+        void particles(const std::uint32_t capacity, const float radius) {
+            setup_particles_internal(state, Id.view(), capacity, radius);
         }
 
         template <FixedString Id>
@@ -250,7 +268,7 @@ namespace spectra::sdk::cuda {
                     ([this, &metric_ids](const auto& value) {
                         if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Output) {
                             std::vector<std::string_view> field_ids{};
-                            std::vector<VolumeFieldKind> field_kinds{};
+                            std::vector<FieldKind> field_kinds{};
                             std::apply(
                                 [&field_ids, &field_kinds](const auto&... field) {
                                     (field_ids.emplace_back(std::remove_cvref_t<decltype(field)>::id.view()), ...);
@@ -299,9 +317,9 @@ namespace spectra::sdk::cuda {
         }
 
         template <FixedString Id>
-        [[nodiscard]] std::span<Point> points(const std::uint32_t count) const {
-            const RawView view = frame_collection_internal(state, Id.view(), count);
-            return {static_cast<Point*>(view.data), count};
+        [[nodiscard]] Particles particles(const std::uint32_t count) const {
+            const RawParticlesView view = frame_particles_internal(state, Id.view(), count);
+            return {view.state, {static_cast<Float3*>(view.positions.data), count}};
         }
 
         template <FixedString Id>

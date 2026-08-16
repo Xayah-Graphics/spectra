@@ -1,4 +1,4 @@
-# Spectra SDK 1.2
+# Spectra SDK 1.3
 
 Spectra SDK lets a CUDA simulation publish typed GPU resources without implementing Spectra's binary ABI, Vulkan external-memory import, or semaphore protocol.
 
@@ -57,7 +57,7 @@ export namespace project {
 
 ## GPU outputs
 
-Declare only the resources a project publishes. SDK 1.2 provides `mesh`, `spheres`, `volume`, `instances`, `points`, `lines`, `vectors`, `image`, `hash_grid_radiance_field`, and `cameras`. A Volume declares its fields explicitly:
+Declare only the resources a project publishes. SDK 1.3 provides `mesh`, `spheres`, `volume`, `instances`, `particles`, `lines`, `vectors`, `image`, `hash_grid_radiance_field`, and `cameras`. A Volume declares its fields explicitly:
 
 ```cpp
 spectra::sdk::volume<"smoke">(
@@ -70,7 +70,28 @@ spectra::sdk::volume<"smoke">(
 )
 ```
 
-`float` and `Float3` fields contain `nx * ny * nz` values. Cell sampling places them at cell centers; vertex sampling spans the Volume bounds without changing the published element count. `MacFloat3` exposes staggered `x`, `y`, and `z` spans with resolutions `(nx + 1, ny, nz)`, `(nx, ny + 1, nz)`, and `(nx, ny, nz + 1)`. Spectra owns field selection, derived maps, slicing, ray marching, isosurfaces, glyphs, streamlines, and LIC; a Provider publishes only simulation data and field metadata.
+`float`, `Float3`, and `std::uint32_t` fields contain `nx * ny * nz` values. Cell sampling places them at cell centers; vertex sampling spans the Volume bounds without changing the published element count. `MacFloat3` exposes staggered `x`, `y`, and `z` spans with resolutions `(nx + 1, ny, nz)`, `(nx, ny + 1, nz)`, and `(nx, ny, nz + 1)`. Spectra owns field selection, derived maps, slicing, ray marching, isosurfaces, glyphs, streamlines, LIC, and categorical-cell inspection; a Provider publishes only simulation data and field metadata.
+
+A particle simulation publishes positions plus explicitly named SoA fields. The uniform physical radius belongs to the ParticleSet setup rather than each particle:
+
+```cpp
+spectra::sdk::particles<"fluid">(
+    spectra::sdk::field<"velocity", spectra::sdk::Float3>("Velocity", "m/s"),
+    spectra::sdk::field<"density", float>("Density", "kg/m³"),
+    spectra::sdk::field<"phase", std::uint32_t>("Phase")
+)
+
+setup.particles<"fluid">(particle_capacity, particle_radius);
+
+auto fluid = frame.particles<"fluid">(particle_count);
+launch_publish(stream,
+    fluid.positions.data(),
+    fluid.field<"velocity", spectra::sdk::Float3>().data(),
+    fluid.field<"density", float>().data(),
+    fluid.field<"phase", std::uint32_t>().data());
+```
+
+`particles` is a first-class scene resource. Spectra owns its point/disc/sphere display, field maps, selection, bounds, and vector diagnostics. Use `spheres` only when every element is actual sphere geometry with its own radius.
 
 `cameras` publishes a fixed set of dataset Cameras and their reference images during `setup`:
 
@@ -143,7 +164,7 @@ CUDA translation units include `<spectra/sdk/cuda_types.h>` and write the exact 
 ## CMake
 
 ```cmake
-find_package(SpectraSDK 1.2 CONFIG REQUIRED)
+find_package(SpectraSDK 1.3 CONFIG REQUIRED)
 
 spectra_add_provider(
         cloth-provider

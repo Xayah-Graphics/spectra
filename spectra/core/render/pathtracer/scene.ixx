@@ -157,7 +157,7 @@ export namespace spectra {
         struct Volume {
             struct Field {
                 std::string id{};
-                scene::VolumeFieldKind kind{scene::VolumeFieldKind::Float};
+                scene::FieldKind kind{scene::FieldKind::Float};
                 std::vector<DescriptorHandle> descriptors{};
             };
 

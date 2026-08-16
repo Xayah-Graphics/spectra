@@ -86,7 +86,7 @@ export namespace spectra::sdk::internal {
             std::array<SpectraSdkOutputDescriptor, outputs_size> outputs{};
             std::array<SpectraSdkMetricDescriptor, metrics_size> metrics{};
             std::vector<std::vector<SpectraSdkString>> enumerators{};
-            std::vector<std::vector<SpectraSdkVolumeFieldDescriptor>> fields{};
+            std::vector<std::vector<SpectraSdkFieldDescriptor>> fields{};
             SpectraSdkProviderDescriptor provider{};
 
             Storage() {
@@ -117,14 +117,14 @@ export namespace spectra::sdk::internal {
                                     names.size(),
                                 };
                             } else if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Output) {
-                                std::vector<SpectraSdkVolumeFieldDescriptor>& values = fields[output_index];
+                                std::vector<SpectraSdkFieldDescriptor>& values = fields[output_index];
                                 std::apply(
                                     [&values](const auto&... field) {
                                         (values.emplace_back(
                                             abi_string(std::remove_cvref_t<decltype(field)>::id.view()),
                                             abi_string(field.name),
                                             abi_string(field.unit),
-                                            static_cast<SpectraSdkVolumeFieldKind>(std::remove_cvref_t<decltype(field)>::kind),
+                                            static_cast<SpectraSdkFieldKind>(std::remove_cvref_t<decltype(field)>::kind),
                                             static_cast<SpectraSdkVolumeFieldSampling>(field.options.sampling),
                                             static_cast<SpectraSdkVolumeVectorSpace>(field.options.vector_space)
                                         ), ...);

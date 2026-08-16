@@ -3,8 +3,8 @@
 
 #include <cstdint>
 
-inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = 3;
-inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = "spectra_sdk_api_3";
+inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = 4;
+inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = "spectra_sdk_api_4";
 inline constexpr std::uint32_t SPECTRA_SDK_HASH_GRID_ENTRY_COUNT   = 2920448;
 inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_INPUT_COUNT     = 64 * 32;
 inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_OUTPUT_COUNT    = 16 * 64;
@@ -68,7 +68,7 @@ enum class SpectraSdkOutputKind : std::uint32_t {
     Spheres,
     Volume,
     Instances,
-    Points,
+    Particles,
     Lines,
     Vectors,
     Image,
@@ -86,9 +86,10 @@ struct SpectraSdkCamera {
     float principal[2];
 };
 
-enum class SpectraSdkVolumeFieldKind : std::uint32_t {
+enum class SpectraSdkFieldKind : std::uint32_t {
     Float,
     Float3,
+    UInt32,
     MacFloat3,
 };
 
@@ -111,11 +112,11 @@ enum class SpectraSdkMeshAttribute : std::uint32_t {
     Scalar            = 1u << 4u,
 };
 
-struct SpectraSdkVolumeFieldDescriptor {
+struct SpectraSdkFieldDescriptor {
     SpectraSdkString id;
     SpectraSdkString name;
     SpectraSdkString unit;
-    SpectraSdkVolumeFieldKind kind;
+    SpectraSdkFieldKind kind;
     SpectraSdkVolumeFieldSampling sampling;
     SpectraSdkVolumeVectorSpace vector_space;
 };
@@ -124,8 +125,8 @@ struct SpectraSdkOutputDescriptor {
     SpectraSdkString id;
     SpectraSdkOutputKind kind;
     std::uint32_t mesh_attributes;
-    const SpectraSdkVolumeFieldDescriptor* volume_fields;
-    std::uint64_t volume_field_count;
+    const SpectraSdkFieldDescriptor* fields;
+    std::uint64_t field_count;
 };
 
 struct SpectraSdkMetricDescriptor {
@@ -174,6 +175,7 @@ struct SpectraSdkOutputLayout {
     std::uint32_t secondary_capacity;
     std::uint32_t resolution[3];
     std::uint32_t mesh_attributes;
+    float particle_radius;
     const SpectraSdkCamera* cameras;
     std::uint64_t camera_count;
 };

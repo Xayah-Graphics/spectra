@@ -65,7 +65,7 @@ export namespace spectra::sdk {
         Spheres,
         Volume,
         Instances,
-        Points,
+        Particles,
         Lines,
         Vectors,
         Image,
@@ -93,9 +93,10 @@ export namespace spectra::sdk {
         MeshAttribute attributes{};
     };
 
-    enum class VolumeFieldKind : std::uint32_t {
+    enum class FieldKind : std::uint32_t {
         Float,
         Float3,
+        UInt32,
         MacFloat3,
     };
 
@@ -118,9 +119,9 @@ export namespace spectra::sdk {
     };
 
     template <FixedString Id, typename Type>
-    struct VolumeFieldDefinition {
+    struct FieldDefinition {
         static constexpr FixedString id         = Id;
-        static constexpr VolumeFieldKind kind   = std::same_as<Type, float> ? VolumeFieldKind::Float : std::same_as<Type, Float3> ? VolumeFieldKind::Float3 : VolumeFieldKind::MacFloat3;
+        static constexpr FieldKind kind         = std::same_as<Type, float> ? FieldKind::Float : std::same_as<Type, Float3> ? FieldKind::Float3 : std::same_as<Type, std::uint32_t> ? FieldKind::UInt32 : FieldKind::MacFloat3;
 
         std::string_view name{};
         std::string_view unit{};
@@ -129,8 +130,8 @@ export namespace spectra::sdk {
 
     template <FixedString Id, typename Type>
     [[nodiscard]] consteval auto field(const std::string_view name, const std::string_view unit = {}, const VolumeFieldOptions options = {}) {
-        static_assert(std::same_as<Type, float> || std::same_as<Type, Float3> || std::same_as<Type, MacFloat3>);
-        return VolumeFieldDefinition<Id, Type>{name, unit, options};
+        static_assert(std::same_as<Type, float> || std::same_as<Type, Float3> || std::same_as<Type, std::uint32_t> || std::same_as<Type, MacFloat3>);
+        return FieldDefinition<Id, Type>{name, unit, options};
     }
 
     template <FixedString Id, OutputKind Kind, typename... Fields>
@@ -164,9 +165,10 @@ export namespace spectra::sdk {
         return OutputDefinition<Id, OutputKind::Instances>{};
     }
 
-    template <FixedString Id>
-    [[nodiscard]] consteval auto points() {
-        return OutputDefinition<Id, OutputKind::Points>{};
+    template <FixedString Id, typename... Fields>
+    [[nodiscard]] consteval auto particles(const Fields... fields) {
+        static_assert(((std::remove_cvref_t<Fields>::kind != FieldKind::MacFloat3) && ...));
+        return OutputDefinition<Id, OutputKind::Particles, Fields...>{{}, {fields...}};
     }
 
     template <FixedString Id>

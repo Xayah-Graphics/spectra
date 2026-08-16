@@ -90,13 +90,21 @@ namespace spectra {
         this->renderer.initialized = true;
     }
 
-    void SceneDiagnosticRenderer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, const scene::SceneView source_scene, const scene::Camera& camera, const std::optional<scene::CameraId> scene_camera_view, const SceneGuideSettings& scene_guides, const SelectionDiagnosticSettings& selection_diagnostics, const SelectionState& selection) {
+    void SceneDiagnosticRenderer::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, DisplayPass& display, DepthBufferView depth, const scene::SceneView source_scene, const scene::Camera& camera, const std::optional<scene::CameraId> scene_camera_view, const SceneGuideSettings& requested_scene_guides, const SelectionDiagnosticSettings& requested_selection_diagnostics, const SelectionState& selection, const bool visible) {
         SceneDiagnosticFrameResources& frame_resources = this->renderer.frame_resources[frame_slot_index];
         std::vector<DiagnosticLine> lines{};
         std::vector<DiagnosticBox> boxes{};
+        const SceneGuideSettings hidden_scene_guides{};
+        SelectionDiagnosticSettings hidden_selection_diagnostics{};
+        hidden_selection_diagnostics.bounds         = false;
+        hidden_selection_diagnostics.camera_frustum = false;
+        hidden_selection_diagnostics.camera_gt_overlay = false;
+        hidden_selection_diagnostics.light_guide    = false;
+        const SceneGuideSettings& scene_guides = visible ? requested_scene_guides : hidden_scene_guides;
+        const SelectionDiagnosticSettings& selection_diagnostics = visible ? requested_selection_diagnostics : hidden_selection_diagnostics;
         const scene::NeuralField* occupancy_field{};
         const GpuNeuralField* occupancy_gpu_field{};
-        const auto field = std::ranges::find_if(source_scene.resources.neural_fields, [](const scene::NeuralField& candidate) { return candidate.visible && candidate.diagnostics.occupancy_grid; });
+        const auto field = visible ? std::ranges::find_if(source_scene.resources.neural_fields, [](const scene::NeuralField& candidate) { return candidate.visible && candidate.diagnostics.occupancy_grid; }) : source_scene.resources.neural_fields.end();
         if (field != source_scene.resources.neural_fields.end()) {
             const GpuSceneView gpu_scene = this->context.gpu_scene.view();
             const auto gpu_field         = std::ranges::find(gpu_scene.neural_fields, field->id, &GpuNeuralField::neural_field_id);
@@ -153,6 +161,20 @@ namespace spectra {
                     {volume.domain.minimum.x, volume.domain.minimum.y, volume.domain.minimum.z, selected ? selection_diagnostics.line_width : 1.5f},
                     {volume.domain.maximum.x, volume.domain.maximum.y, volume.domain.maximum.z, 0.0f},
                     diagnostic_color(entity, selection, {0.64f, 0.32f, 0.92f, 0.72f}),
+                    {0, 0, pick_index(entity), std::to_underlying(selected ? selection_diagnostics.depth_mode : scene::VisualizationDepthMode::Tested)},
+                });
+        }
+
+        for (const scene::ParticleSet& particles : source_scene.resources.particle_sets) {
+            if (!particles.visible) continue;
+            const SceneEntityReference entity{SceneEntityKind::ParticleSet, particles.id.value};
+            const bool selected = std::ranges::contains(selection.selected, entity);
+            if (scene_guides.all_bounds || (selection_diagnostics.bounds && selected))
+                boxes.push_back({
+                    particles.transform.matrix,
+                    {particles.domain.minimum.x, particles.domain.minimum.y, particles.domain.minimum.z, selected ? selection_diagnostics.line_width : 1.5f},
+                    {particles.domain.maximum.x, particles.domain.maximum.y, particles.domain.maximum.z, 0.0f},
+                    diagnostic_color(entity, selection, {0.12f, 0.66f, 1.0f, 0.76f}),
                     {0, 0, pick_index(entity), std::to_underlying(selected ? selection_diagnostics.depth_mode : scene::VisualizationDepthMode::Tested)},
                 });
         }
@@ -376,6 +398,40 @@ namespace spectra {
         }
         if (!lines.empty()) push_and_draw(0, frame_resources.line_descriptor, frame_resources.line_descriptor, static_cast<std::uint32_t>(lines.size()), 0, selection_diagnostics.depth_mode, {}, {}, 6);
         if (!boxes.empty()) push_and_draw(1, frame_resources.box_descriptor, this->context.gpu_scene.view().instance_bounds, static_cast<std::uint32_t>(boxes.size()), 0, selection_diagnostics.depth_mode, {}, {}, 72);
+
+        for (const scene::ParticleSet& particles : source_scene.resources.particle_sets) {
+            if (!particles.visible) continue;
+            const GpuParticleSet& gpu_particles = *std::ranges::find(this->context.gpu_scene.view().particle_sets, particles.id, &GpuParticleSet::particle_set_id);
+            if (gpu_particles.count == 0u) continue;
+            const SceneEntityReference entity{SceneEntityKind::ParticleSet, particles.id.value};
+            push_and_draw(10u, gpu_particles.positions, gpu_particles.positions, gpu_particles.count, pick_index(entity), scene::VisualizationDepthMode::Tested, {0.0f, 0.0f, 0.0f, 0.0f}, particles.transform, gpu_particles.count * 6u);
+            if (!visible || !selection.active || *selection.active != entity || particles.diagnostics.vector_field.empty()) continue;
+            const GpuParticleField& field = *std::ranges::find(gpu_particles.fields, particles.diagnostics.vector_field, &GpuParticleField::id);
+            const std::uint32_t sampling = particles.diagnostics.sampling;
+            const std::uint32_t arrow_count = (gpu_particles.count + sampling - 1u) / sampling;
+            const std::array<float, 16>& matrix = particles.transform.matrix;
+            const scene::ParticleDiagnostics& diagnostics = particles.diagnostics;
+            const DiagnosticPushData push{
+                gpu_particles.positions,
+                field.descriptor,
+                this->context.gpu_scene.view().instance_bounds,
+                depth.descriptor,
+                {11u, std::to_underlying(field.vector_space), pick_index(entity), std::to_underlying(selection_diagnostics.depth_mode)},
+                {display.image.extent.width, display.image.extent.height, sampling, std::numeric_limits<std::uint32_t>::max()},
+                {diagnostics.width, 0.0f, diagnostics.scale, diagnostics.minimum},
+                {0.0f, 0.0f, static_cast<float>(std::to_underlying(diagnostics.color_map)), diagnostics.maximum},
+                {matrix[0], matrix[1], matrix[2], matrix[3]},
+                {matrix[4], matrix[5], matrix[6], matrix[7]},
+                {matrix[8], matrix[9], matrix[10], matrix[11]},
+                {matrix[12], matrix[13], matrix[14], matrix[15]},
+                {view_projection[0], view_projection[1], view_projection[2], view_projection[3]},
+                {view_projection[4], view_projection[5], view_projection[6], view_projection[7]},
+                {view_projection[8], view_projection[9], view_projection[10], view_projection[11]},
+                {view_projection[12], view_projection[13], view_projection[14], view_projection[15]},
+            };
+            this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
+            command_buffer.draw(arrow_count * 18u, 1u, 0u, 0u);
+        }
 
         const bool inspect_instance = selection.active && selection.active->kind == SceneEntityKind::Instance;
         const bool inspect_area     = selection.active && selection.active->kind == SceneEntityKind::AreaEmitter;

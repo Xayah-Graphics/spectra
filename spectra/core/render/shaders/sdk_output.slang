@@ -14,13 +14,6 @@ public struct SdkInstance {
     public SdkTransform transform;
 }
 
-public struct SdkPoint {
-    public float position[3];
-    public float radius;
-    public float color[4];
-    public float scalar;
-}
-
 public struct SdkLine {
     public float first_position[3];
     public float width;
