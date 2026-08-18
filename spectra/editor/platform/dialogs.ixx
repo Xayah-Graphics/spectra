@@ -3,21 +3,21 @@ export module spectra.editor.platform.dialogs;
 import spectra.editor.platform.window;
 import std;
 
-namespace spectra {
+namespace spectra::editor {
     export enum class SceneReplacementDecision : std::uint8_t {
         Save,
         Discard,
         Cancel,
     };
 
-    export struct EditorDialogs {
-        explicit EditorDialogs(WindowPlatform& platform);
-        ~EditorDialogs();
+    export struct Dialogs {
+        explicit Dialogs(WindowPlatform& platform);
+        ~Dialogs();
 
-        EditorDialogs(const EditorDialogs&)            = delete;
-        EditorDialogs(EditorDialogs&&)                 = delete;
-        EditorDialogs& operator=(const EditorDialogs&) = delete;
-        EditorDialogs& operator=(EditorDialogs&&)      = delete;
+        Dialogs(const Dialogs&)            = delete;
+        Dialogs(Dialogs&&)                 = delete;
+        Dialogs& operator=(const Dialogs&) = delete;
+        Dialogs& operator=(Dialogs&&)      = delete;
 
         [[nodiscard]] std::optional<std::filesystem::path> choose_scene_file();
         [[nodiscard]] std::optional<std::filesystem::path> choose_scene_save_path(const std::filesystem::path& current_path);
@@ -25,4 +25,4 @@ namespace spectra {
 
         WindowPlatform& platform;
     };
-} // namespace spectra
+} // namespace spectra::editor

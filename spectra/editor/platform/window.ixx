@@ -9,7 +9,7 @@ export module spectra.editor.platform.window;
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::editor {
     export struct WindowPlatform {
         explicit WindowPlatform(std::string_view application_name, vk::Extent2D initial_extent);
         ~WindowPlatform();
@@ -49,4 +49,4 @@ namespace spectra {
             bool close_requested{};
         } state;
     };
-} // namespace spectra
+} // namespace spectra::editor

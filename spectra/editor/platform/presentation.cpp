@@ -9,16 +9,16 @@ module spectra.editor.platform.presentation;
 import std;
 import vulkan;
 
-namespace spectra {
-    VulkanSurface::VulkanSurface(WindowPlatform& platform, VulkanInstance& instance) : surface(instance.instance, vk::Win32SurfaceCreateInfoKHR{{}, GetModuleHandleW(nullptr), platform.native_window}) {}
+namespace spectra::editor {
+    VulkanSurface::VulkanSurface(WindowPlatform& platform, runtime::VulkanInstance& instance) : surface(instance.instance, vk::Win32SurfaceCreateInfoKHR{{}, GetModuleHandleW(nullptr), platform.native_window}) {}
 
-    VulkanPresentation::VulkanPresentation(WindowPlatform& platform, VulkanSurface& surface, VulkanGraphics& graphics, VulkanFrames& frames) : context{platform, surface, graphics, frames} {
-        for (std::uint32_t index = 0; index < VulkanFrames::frames_in_flight; ++index) this->presentation.image_available.emplace_back(graphics.device, vk::SemaphoreCreateInfo{});
+    VulkanPresentation::VulkanPresentation(WindowPlatform& platform, VulkanSurface& surface, runtime::VulkanDevice& device, runtime::VulkanFrames& frames) : context{platform, surface, device, frames} {
+        for (std::uint32_t index = 0; index < runtime::VulkanFrames::frames_in_flight; ++index) this->presentation.image_available.emplace_back(device.logical, vk::SemaphoreCreateInfo{});
         this->recreate_swapchain();
     }
 
     VulkanPresentation::~VulkanPresentation() {
-        this->context.graphics.device.waitIdle();
+        this->context.device.logical.waitIdle();
         this->wait_presentations();
     }
 
@@ -39,10 +39,10 @@ namespace spectra {
             return std::nullopt;
         }
         if (this->presentation.present_pending[acquired.value]) {
-            if (this->context.graphics.device.waitForFences(*this->presentation.present_fences[acquired.value], vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra presentation fence wait failed");
+            if (this->context.device.logical.waitForFences(*this->presentation.present_fences[acquired.value], vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra presentation fence wait failed");
             this->presentation.present_pending[acquired.value] = false;
         }
-        const FrameContext frame                = this->context.frames.begin_frame();
+        const runtime::FrameContext frame       = this->context.frames.begin_frame();
         this->presentation.acquired_image_index = acquired.value;
         this->presentation.acquired_suboptimal  = acquired.result == vk::Result::eSuboptimalKHR;
         this->context.frames.enqueue_wait(vk::SemaphoreSubmitInfo{*this->presentation.image_available[frame.slot_index], 0, vk::PipelineStageFlagBits2::eColorAttachmentOutput, 0});
@@ -57,11 +57,11 @@ namespace spectra {
         const vk::Semaphore render_finished = *this->presentation.render_finished[this->presentation.acquired_image_index];
         const vk::SwapchainKHR swapchain    = *this->presentation.swapchain;
         const vk::Fence present_fence       = *this->presentation.present_fences[this->presentation.acquired_image_index];
-        this->context.graphics.device.resetFences(present_fence);
+        this->context.device.logical.resetFences(present_fence);
         const vk::SwapchainPresentFenceInfoKHR present_fence_info{1, &present_fence};
         const vk::PresentInfoKHR present_info{1, &render_finished, 1, &swapchain, &this->presentation.acquired_image_index, nullptr, &present_fence_info};
-        const vk::Result present_result = static_cast<vk::Result>(this->context.graphics.queue.getDispatcher()->vkQueuePresentKHR(static_cast<VkQueue>(*this->context.graphics.queue), reinterpret_cast<const VkPresentInfoKHR*>(&present_info)));
-        const bool presentation_enqueued = present_result == vk::Result::eSuccess || present_result == vk::Result::eSuboptimalKHR || present_result == vk::Result::eErrorOutOfDateKHR || present_result == vk::Result::eErrorSurfaceLostKHR || present_result == vk::Result::eErrorFullScreenExclusiveModeLostEXT || present_result == vk::Result::eErrorPresentTimingQueueFullEXT;
+        const vk::Result present_result                                             = static_cast<vk::Result>(this->context.device.queue.getDispatcher()->vkQueuePresentKHR(static_cast<VkQueue>(*this->context.device.queue), reinterpret_cast<const VkPresentInfoKHR*>(&present_info)));
+        const bool presentation_enqueued                                            = present_result == vk::Result::eSuccess || present_result == vk::Result::eSuboptimalKHR || present_result == vk::Result::eErrorOutOfDateKHR || present_result == vk::Result::eErrorSurfaceLostKHR || present_result == vk::Result::eErrorFullScreenExclusiveModeLostEXT || present_result == vk::Result::eErrorPresentTimingQueueFullEXT;
         this->presentation.present_pending[this->presentation.acquired_image_index] = presentation_enqueued;
         if (present_result == vk::Result::eErrorOutOfDateKHR) {
             this->recreate_swapchain();
@@ -71,7 +71,7 @@ namespace spectra {
         if (this->presentation.acquired_suboptimal || present_result == vk::Result::eSuboptimalKHR) this->recreate_swapchain();
     }
     void VulkanPresentation::recreate_swapchain() {
-        this->context.graphics.device.waitIdle();
+        this->context.device.logical.waitIdle();
         this->wait_presentations();
         int width{};
         int height{};
@@ -81,9 +81,9 @@ namespace spectra {
             return;
         }
         const vk::SurfaceKHR surface                        = *this->context.surface.surface;
-        const vk::SurfaceCapabilitiesKHR capabilities       = this->context.graphics.physical_device.getSurfaceCapabilitiesKHR(surface);
-        const std::vector<vk::SurfaceFormatKHR> formats     = this->context.graphics.physical_device.getSurfaceFormatsKHR(surface);
-        const std::vector<vk::PresentModeKHR> present_modes = this->context.graphics.physical_device.getSurfacePresentModesKHR(surface);
+        const vk::SurfaceCapabilitiesKHR capabilities       = this->context.device.physical_device.getSurfaceCapabilitiesKHR(surface);
+        const std::vector<vk::SurfaceFormatKHR> formats     = this->context.device.physical_device.getSurfaceFormatsKHR(surface);
+        const std::vector<vk::PresentModeKHR> present_modes = this->context.device.physical_device.getSurfacePresentModesKHR(surface);
         constexpr vk::SurfaceFormatKHR required_format{vk::Format::eB8G8R8A8Srgb, vk::ColorSpaceKHR::eSrgbNonlinear};
         if (!std::ranges::contains(formats, required_format)) throw std::runtime_error("Spectra requires a B8G8R8A8 sRGB swapchain");
         if (!std::ranges::contains(present_modes, vk::PresentModeKHR::eMailbox)) throw std::runtime_error("Spectra requires mailbox presentation");
@@ -94,7 +94,7 @@ namespace spectra {
         this->presentation.extent            = vk::Extent2D{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
         const vk::SwapchainKHR old_swapchain = *this->presentation.swapchain;
         const vk::SwapchainCreateInfoKHR create_info{{}, surface, 3, required_format.format, required_format.colorSpace, this->presentation.extent, 1, vk::ImageUsageFlagBits::eColorAttachment, vk::SharingMode::eExclusive, 0, nullptr, vk::SurfaceTransformFlagBitsKHR::eIdentity, vk::CompositeAlphaFlagBitsKHR::eOpaque, vk::PresentModeKHR::eMailbox, vk::True, old_swapchain};
-        vk::raii::SwapchainKHR replacement{this->context.graphics.device, create_info};
+        vk::raii::SwapchainKHR replacement{this->context.device.logical, create_info};
         this->presentation.views.clear();
         this->presentation.swapchain = std::move(replacement);
         this->presentation.images    = this->presentation.swapchain.getImages();
@@ -105,18 +105,18 @@ namespace spectra {
         this->presentation.render_finished.reserve(this->presentation.images.size());
         this->presentation.present_fences.reserve(this->presentation.images.size());
         for (const vk::Image image : this->presentation.images) {
-            this->presentation.views.emplace_back(this->context.graphics.device, vk::ImageViewCreateInfo{{}, image, vk::ImageViewType::e2D, required_format.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}});
-            this->presentation.render_finished.emplace_back(this->context.graphics.device, vk::SemaphoreCreateInfo{});
-            this->presentation.present_fences.emplace_back(this->context.graphics.device, vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
+            this->presentation.views.emplace_back(this->context.device.logical, vk::ImageViewCreateInfo{{}, image, vk::ImageViewType::e2D, required_format.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}});
+            this->presentation.render_finished.emplace_back(this->context.device.logical, vk::SemaphoreCreateInfo{});
+            this->presentation.present_fences.emplace_back(this->context.device.logical, vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
         }
     }
 
     void VulkanPresentation::wait_presentations() {
         for (std::uint32_t index = 0; index < this->presentation.present_pending.size(); ++index) {
             if (!this->presentation.present_pending[index]) continue;
-            if (this->context.graphics.device.waitForFences(*this->presentation.present_fences[index], vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra presentation fence wait failed");
+            if (this->context.device.logical.waitForFences(*this->presentation.present_fences[index], vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra presentation fence wait failed");
             this->presentation.present_pending[index] = false;
         }
     }
 
-} // namespace spectra
+} // namespace spectra::editor

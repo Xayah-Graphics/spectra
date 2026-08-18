@@ -4,7 +4,7 @@ import spectra.render.pathtracer.shader_entries;
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::render {
     static_assert(std::to_underlying(PathTracerComputeShader::Count) == path_compute_shader_entries.size());
 
     namespace {
@@ -96,25 +96,21 @@ namespace spectra {
         }
 
         [[nodiscard]] std::uint32_t query_stack_size(const vk::raii::Pipeline& pipeline) {
-            const vk::DeviceSize ray_generation = std::max(
-                pipeline.getRayTracingShaderGroupStackSizeKHR(0, vk::ShaderGroupShaderKHR::eGeneral),
-                pipeline.getRayTracingShaderGroupStackSizeKHR(1, vk::ShaderGroupShaderKHR::eGeneral));
-            const vk::DeviceSize miss = std::max(
-                pipeline.getRayTracingShaderGroupStackSizeKHR(2, vk::ShaderGroupShaderKHR::eGeneral),
-                pipeline.getRayTracingShaderGroupStackSizeKHR(3, vk::ShaderGroupShaderKHR::eGeneral));
-            const vk::DeviceSize closest_hit = std::ranges::max(std::array{
+            const vk::DeviceSize ray_generation = std::max(pipeline.getRayTracingShaderGroupStackSizeKHR(0, vk::ShaderGroupShaderKHR::eGeneral), pipeline.getRayTracingShaderGroupStackSizeKHR(1, vk::ShaderGroupShaderKHR::eGeneral));
+            const vk::DeviceSize miss           = std::max(pipeline.getRayTracingShaderGroupStackSizeKHR(2, vk::ShaderGroupShaderKHR::eGeneral), pipeline.getRayTracingShaderGroupStackSizeKHR(3, vk::ShaderGroupShaderKHR::eGeneral));
+            const vk::DeviceSize closest_hit    = std::ranges::max(std::array{
                 pipeline.getRayTracingShaderGroupStackSizeKHR(4, vk::ShaderGroupShaderKHR::eClosestHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(5, vk::ShaderGroupShaderKHR::eClosestHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(6, vk::ShaderGroupShaderKHR::eClosestHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(7, vk::ShaderGroupShaderKHR::eClosestHit),
             });
-            const vk::DeviceSize any_hit = std::ranges::max(std::array{
+            const vk::DeviceSize any_hit        = std::ranges::max(std::array{
                 pipeline.getRayTracingShaderGroupStackSizeKHR(4, vk::ShaderGroupShaderKHR::eAnyHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(5, vk::ShaderGroupShaderKHR::eAnyHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(6, vk::ShaderGroupShaderKHR::eAnyHit),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(7, vk::ShaderGroupShaderKHR::eAnyHit),
             });
-            const vk::DeviceSize intersection = std::ranges::max(std::array{
+            const vk::DeviceSize intersection   = std::ranges::max(std::array{
                 pipeline.getRayTracingShaderGroupStackSizeKHR(5, vk::ShaderGroupShaderKHR::eIntersection),
                 pipeline.getRayTracingShaderGroupStackSizeKHR(7, vk::ShaderGroupShaderKHR::eIntersection),
             });
@@ -138,15 +134,15 @@ namespace spectra {
             shader_modules.reserve(path_ray_shader_entries.size());
             std::array<vk::ShaderModule, path_ray_shader_entries.size()> raw_modules{};
             for (std::size_t index = 0; index != path_ray_shader_entries.size(); ++index) {
-                shader_modules.emplace_back(runtime.runtime.graphics.device, vk::ShaderModuleCreateInfo{{}, shader_code[index].size() * sizeof(std::uint32_t), shader_code[index].data()});
+                shader_modules.emplace_back(runtime.runtime.device.logical, vk::ShaderModuleCreateInfo{{}, shader_code[index].size() * sizeof(std::uint32_t), shader_code[index].data()});
                 raw_modules[index] = *shader_modules.back();
                 runtime.preparation.report(PathTracerPreparationStage::CreatingRayTracingModules, static_cast<std::uint32_t>(index + 1u), static_cast<std::uint32_t>(path_ray_shader_entries.size()));
             }
 
             const RayTracingPipelineDescription description{raw_modules};
-            const vk::raii::DeferredOperationKHR deferred_operation{runtime.runtime.graphics.device};
+            const vk::raii::DeferredOperationKHR deferred_operation{runtime.runtime.device.logical};
             runtime.preparation.report(PathTracerPreparationStage::CompilingRayTracingPipeline);
-            const auto [creation_result, pipeline] = (*runtime.runtime.graphics.device).createRayTracingPipelineKHR(*deferred_operation, {}, description.create_info, nullptr, *runtime.runtime.graphics.device.getDispatcher());
+            const auto [creation_result, pipeline] = (*runtime.runtime.device.logical).createRayTracingPipelineKHR(*deferred_operation, {}, description.create_info, nullptr, *runtime.runtime.device.logical.getDispatcher());
             if (creation_result == vk::Result::eOperationDeferredKHR) {
                 const std::uint32_t concurrency = std::min(deferred_operation.getMaxConcurrency(), std::max(1u, std::thread::hardware_concurrency()));
                 std::vector<std::jthread> workers{};
@@ -155,12 +151,11 @@ namespace spectra {
                 join_deferred_operation(deferred_operation);
                 workers.clear();
                 if (deferred_operation.getResult() != vk::Result::eSuccess) throw std::runtime_error("Path Tracer ray tracing pipeline preparation did not complete");
-            } else if (creation_result != vk::Result::eSuccess && creation_result != vk::Result::eOperationNotDeferredKHR)
-                throw std::runtime_error(std::format("Path Tracer ray tracing pipeline creation failed: {}", vk::to_string(creation_result)));
+            } else if (creation_result != vk::Result::eSuccess && creation_result != vk::Result::eOperationNotDeferredKHR) throw std::runtime_error(std::format("Path Tracer ray tracing pipeline creation failed: {}", vk::to_string(creation_result)));
 
-            runtime.pipeline                = vk::raii::Pipeline{runtime.runtime.graphics.device, pipeline};
+            runtime.pipeline                = vk::raii::Pipeline{runtime.runtime.device.logical, pipeline};
             const std::uint32_t group_count = static_cast<std::uint32_t>(description.groups.size());
-            runtime.shader_group_handles    = runtime.pipeline.getRayTracingShaderGroupHandlesKHR<std::byte>(0, group_count, static_cast<std::size_t>(runtime.runtime.graphics.ray_tracing_properties.shaderGroupHandleSize) * group_count);
+            runtime.shader_group_handles    = runtime.pipeline.getRayTracingShaderGroupHandlesKHR<std::byte>(0, group_count, static_cast<std::size_t>(runtime.runtime.device.ray_tracing_properties.shaderGroupHandleSize) * group_count);
             runtime.stack_size              = query_stack_size(runtime.pipeline);
         }
 
@@ -171,11 +166,11 @@ namespace spectra {
             std::uint32_t loaded_shader_count{};
             runtime.preparation.report(PathTracerPreparationStage::LoadingShaders, 0, shader_count);
             for (std::size_t index = 0; index != path_compute_shader_entries.size(); ++index) {
-                compute_shader_code[index] = load_spirv(shader_directory / path_compute_shader_entries[index].file);
+                compute_shader_code[index] = runtime::load_spirv(shader_directory / path_compute_shader_entries[index].file);
                 runtime.preparation.report(PathTracerPreparationStage::LoadingShaders, ++loaded_shader_count, shader_count);
             }
             for (std::size_t index = 0; index != path_ray_shader_entries.size(); ++index) {
-                ray_shader_code[index] = load_spirv(shader_directory / path_ray_shader_entries[index].file);
+                ray_shader_code[index] = runtime::load_spirv(shader_directory / path_ray_shader_entries[index].file);
                 runtime.preparation.report(PathTracerPreparationStage::LoadingShaders, ++loaded_shader_count, shader_count);
             }
 
@@ -183,7 +178,7 @@ namespace spectra {
             std::future<void> compute_preparation = std::async(std::launch::async, [&runtime, shader_code = std::move(compute_shader_code), &completed_compute_shaders] {
                 runtime.compute_shaders.reserve(path_compute_shader_entries.size());
                 for (std::size_t index = 0; index != path_compute_shader_entries.size(); ++index) {
-                    runtime.compute_shaders.push_back(create_compute_shader(runtime.runtime.graphics.device, shader_code[index], path_compute_shader_entries[index].entry.data()));
+                    runtime.compute_shaders.push_back(create_compute_shader(runtime.runtime.device.logical, shader_code[index], path_compute_shader_entries[index].entry.data()));
                     completed_compute_shaders.fetch_add(1u, std::memory_order_relaxed);
                 }
             });
@@ -194,10 +189,10 @@ namespace spectra {
         }
 
         void initialize_shader_binding_table(PathTracerResources& runtime) {
-            const vk::PhysicalDeviceRayTracingPipelinePropertiesKHR& properties = runtime.runtime.graphics.ray_tracing_properties;
-            const vk::DeviceSize record_stride                                  = align_device_size(properties.shaderGroupHandleSize, properties.shaderGroupHandleAlignment);
-            const vk::DeviceSize miss_offset                                    = align_device_size(record_stride * 2u, properties.shaderGroupBaseAlignment);
-            const vk::DeviceSize hit_offset                                     = align_device_size(miss_offset + record_stride * 2u, properties.shaderGroupBaseAlignment);
+            const vk::PhysicalDeviceRayTracingPipelinePropertiesKHR& properties = runtime.runtime.device.ray_tracing_properties;
+            const vk::DeviceSize record_stride                                  = runtime::align_device_size(properties.shaderGroupHandleSize, properties.shaderGroupHandleAlignment);
+            const vk::DeviceSize miss_offset                                    = runtime::align_device_size(record_stride * 2u, properties.shaderGroupBaseAlignment);
+            const vk::DeviceSize hit_offset                                     = runtime::align_device_size(miss_offset + record_stride * 2u, properties.shaderGroupBaseAlignment);
             const vk::DeviceSize table_size                                     = hit_offset + record_stride * 4u;
             runtime.shader_binding_table                                        = runtime.runtime.resources.create_buffer(table_size, vk::BufferUsageFlagBits::eShaderBindingTableKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
             std::byte* destination                                              = static_cast<std::byte*>(runtime.shader_binding_table.mapped);
@@ -225,7 +220,7 @@ namespace spectra {
         return this->progress;
     }
 
-    PathTracerResources::PathTracerResources(VulkanRuntime& runtime, const std::filesystem::path& resource_directory) : runtime(runtime) {
+    PathTracerResources::PathTracerResources(runtime::VulkanRuntime& runtime, const std::filesystem::path& resource_directory) : runtime(runtime) {
         const std::filesystem::path spectral_directory = resource_directory / "spectral";
         this->rgb_to_spectrum_table_data               = load_rgb_tables(spectral_directory);
         const std::vector<std::byte> cie_table         = load_binary_asset(spectral_directory / "cie1931.spectrum", cie_table_size);
@@ -235,11 +230,11 @@ namespace spectra {
         this->cie_samples.resize(5u * 471u);
         std::memcpy(this->cie_samples.data(), cie_table.data() + 16, this->cie_samples.size() * sizeof(float));
         const vk::DeviceSize rgb_offset      = 0;
-        const vk::DeviceSize cie_offset      = align_device_size(this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t), 16);
-        const vk::DeviceSize zero_offset     = align_device_size(cie_offset + cie_table.size(), 16);
-        const vk::DeviceSize sampling_offset = align_device_size(zero_offset + sizeof(std::uint32_t) * 4u, 16);
+        const vk::DeviceSize cie_offset      = runtime::align_device_size(this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t), 16);
+        const vk::DeviceSize zero_offset     = runtime::align_device_size(cie_offset + cie_table.size(), 16);
+        const vk::DeviceSize sampling_offset = runtime::align_device_size(zero_offset + sizeof(std::uint32_t) * 4u, 16);
         const vk::DeviceSize total_size      = sampling_offset + sampling_table_size;
-        GpuBuffer staging                    = runtime.resources.create_buffer(total_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+        runtime::GpuBuffer staging           = runtime.resources.create_buffer(total_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         std::memcpy(static_cast<std::byte*>(staging.mapped) + rgb_offset, this->rgb_to_spectrum_table_data.data(), this->rgb_to_spectrum_table_data.size() * sizeof(std::uint32_t));
         std::memcpy(static_cast<std::byte*>(staging.mapped) + cie_offset, cie_table.data(), cie_table.size());
         std::memset(static_cast<std::byte*>(staging.mapped) + zero_offset, 0, sizeof(std::uint32_t) * 4u);
@@ -272,18 +267,18 @@ namespace spectra {
     }
 
     bool PathTracerResources::complete_preparation() {
-        if (this->prepared) return true;
+        if (this->ready) return true;
         if (this->shader_preparation.wait_for(std::chrono::seconds{0}) != std::future_status::ready) return false;
         this->shader_preparation.get();
         this->preparation.report(PathTracerPreparationStage::CreatingShaderBindingTable);
         initialize_shader_binding_table(*this);
         this->preparation.report(PathTracerPreparationStage::Ready);
-        this->prepared = true;
+        this->ready = true;
         return true;
     }
 
     void PathTracerResources::wait_for_preparation() {
-        if (this->prepared) return;
+        if (this->ready) return;
         this->shader_preparation.wait();
         static_cast<void>(this->complete_preparation());
     }
@@ -291,4 +286,4 @@ namespace spectra {
     PathTracerPreparationProgress PathTracerResources::preparation_progress() const {
         return this->preparation.snapshot();
     }
-} // namespace spectra
+} // namespace spectra::render

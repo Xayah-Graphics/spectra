@@ -13,7 +13,7 @@ module spectra.editor.platform.window;
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::editor {
     WindowPlatform::WindowPlatform(const std::string_view application_name, const vk::Extent2D initial_extent) {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
@@ -59,10 +59,8 @@ namespace spectra {
         int width{};
         int height{};
         glfwGetFramebufferSize(this->window, &width, &height);
-        if (width == 0 || height == 0)
-            glfwWaitEvents();
-        else
-            glfwPollEvents();
+        if (width == 0 || height == 0) glfwWaitEvents();
+        else glfwPollEvents();
     }
 
     void WindowPlatform::request_close() noexcept {
@@ -137,4 +135,4 @@ namespace spectra {
         return CallWindowProcW(platform->state.original_window_proc, window, message, wparam, lparam);
     }
 
-} // namespace spectra
+} // namespace spectra::editor

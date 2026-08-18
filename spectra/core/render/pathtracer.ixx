@@ -1,20 +1,18 @@
 export module spectra.render.pathtracer;
 
-import spectra.render.contract;
+import spectra.render.types;
 import spectra.render.gpu_scene;
 import spectra.render.pathtracer.resources;
-import spectra.render.pathtracer.scene;
+import spectra.render.pathtracer.compiler;
 import spectra.runtime;
 import spectra.scene;
 
 import std;
 import vulkan;
 
-namespace spectra {
-    export struct PathTracer {
-        static constexpr RendererDescriptor descriptor = pathtracer_descriptor;
-
-        PathTracer(VulkanRuntime& runtime, GpuScene& gpu_scene, PathTracerResources& pathtracer, scene::SceneView scene);
+export namespace spectra::render {
+    struct PathTracer {
+        PathTracer(runtime::VulkanRuntime& runtime, GpuScene& gpu_scene, PathTracerResources& pathtracer, scene::ResolvedSceneView scene);
         ~PathTracer();
 
         PathTracer(const PathTracer&)            = delete;
@@ -22,11 +20,11 @@ namespace spectra {
         PathTracer& operator=(const PathTracer&) = delete;
         PathTracer& operator=(PathTracer&&)      = delete;
 
-        [[nodiscard]] bool complete_preparation(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        [[nodiscard]] bool complete_preparation(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void wait_for_preparation();
         [[nodiscard]] PathTracerPreparationProgress preparation_progress() const;
         void invalidate(scene::SceneChange changes, GpuSceneUpdate gpu_update) noexcept;
-        void prepare(scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer);
+        void prepare(scene::ResolvedSceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer);
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         [[nodiscard]] RenderProgress progress() const noexcept;
         void set_paused(bool paused) noexcept;
@@ -37,7 +35,7 @@ namespace spectra {
 
     private:
         struct {
-            VulkanRuntime& runtime;
+            runtime::VulkanRuntime& runtime;
             GpuScene& gpu_scene;
             PathTracerResources& pathtracer;
         } context;
@@ -53,15 +51,15 @@ namespace spectra {
             PathBufferSlice portals{};
             PathBufferSlice light_bvh_nodes{};
             PathBufferSlice light_bvh_bit_trails{};
-            GpuBuffer light_bvh_counters{};
-            DescriptorLease light_bvh_counters_descriptor{};
+            runtime::GpuBuffer light_bvh_counters{};
+            runtime::DescriptorLease light_bvh_counters_descriptor{};
             PathBufferSlice face_materials{};
             PathBufferSlice media{};
             PathBufferSlice volumes{};
             std::vector<PathVolumeResources> volume_resources{};
             PathBufferSlice spectra{};
             PathBufferSlice piecewise_spectra{};
-            GpuBuffer arena{};
+            runtime::GpuBuffer arena{};
             GpuBufferBinding bindings{};
             PathFilterResources filter{};
             PathSamplerResources sampler{};
@@ -83,13 +81,13 @@ namespace spectra {
         struct {
             vk::Extent2D render_extent{};
             std::uint64_t pixel_capacity{};
-            GpuImage output_image{};
-            DescriptorLease output_descriptor{};
-            DescriptorLease sampled_output_descriptor{};
+            runtime::GpuImage output_image{};
+            runtime::DescriptorLease output_descriptor{};
+            runtime::DescriptorLease sampled_output_descriptor{};
             vk::ImageLayout output_layout{vk::ImageLayout::eUndefined};
-            GpuImage depth_image{};
-            DescriptorLease storage_depth_descriptor{};
-            DescriptorLease sampled_depth_descriptor{};
+            runtime::GpuImage depth_image{};
+            runtime::DescriptorLease storage_depth_descriptor{};
+            runtime::DescriptorLease sampled_depth_descriptor{};
             vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
             PathBufferSlice queue_counts{};
             PathBufferSlice ray_queue_0{};
@@ -144,8 +142,8 @@ namespace spectra {
             PathBufferSlice gbuffer_uv_weight_sums{};
             PathBufferSlice gbuffer_identity_0{};
             PathBufferSlice gbuffer_identity_1{};
-            GpuBuffer arena{};
-            GpuBuffer indirect_commands{};
+            runtime::GpuBuffer arena{};
+            runtime::GpuBuffer indirect_commands{};
             GpuBufferBinding bindings{};
             std::vector<GpuBufferBinding> parameters{};
             std::uint32_t texture_stack_size{};
@@ -163,21 +161,21 @@ namespace spectra {
             std::uint64_t camera_revision{};
         } control;
 
-        std::shared_ptr<PathTracerScenePreparation> scene_preparation{};
-        std::shared_future<void> scene_preparation_task{};
+        std::shared_ptr<PathSceneCompilation> compilation{};
+        std::shared_future<void> compilation_task{};
 
-        void begin_scene_preparation(scene::SceneView scene);
-        void release_scene_preparation() noexcept;
+        void begin_compilation(scene::ResolvedSceneView scene);
+        void release_compilation() noexcept;
         void destroy_scene() noexcept;
-        void commit_filter(std::unique_ptr<PreparedPathFilter> prepared, const vk::raii::CommandBuffer& command_buffer);
+        void commit_filter(std::unique_ptr<CompiledPathFilter> compiled, const vk::raii::CommandBuffer& command_buffer);
         void compile_filter(const scene::Film& film, const vk::raii::CommandBuffer& command_buffer);
-        void commit_sampler(std::unique_ptr<PreparedPathSampler> prepared, const vk::raii::CommandBuffer& command_buffer);
+        void commit_sampler(std::unique_ptr<CompiledPathSampler> compiled, const vk::raii::CommandBuffer& command_buffer);
         void compile_sampler(const scene::Sampler& sampler, const vk::raii::CommandBuffer& command_buffer);
-        void commit_scene(std::unique_ptr<PreparedPathScene> prepared, const vk::raii::CommandBuffer& command_buffer);
-        void compile_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void commit_scene(std::unique_ptr<CompiledPathScene> compiled, const vk::raii::CommandBuffer& command_buffer);
+        void compile_scene(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void update_volumes(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void update_dynamic_lights(const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_scene(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void initialize_session();
         void destroy_session() noexcept;
         void resize_session(vk::Extent2D extent, std::uint32_t texture_evaluation_stack_size, std::uint32_t material_texture_value_count, const vk::raii::CommandBuffer& command_buffer);
@@ -185,4 +183,4 @@ namespace spectra {
         void record_integrator(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
     };
 
-} // namespace spectra
+} // namespace spectra::render

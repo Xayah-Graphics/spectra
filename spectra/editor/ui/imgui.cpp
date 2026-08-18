@@ -5,35 +5,21 @@ module;
 
 module spectra.editor.ui.imgui;
 
-import spectra.render.editor_abi;
-import spectra.render.contract;
+import spectra.editor.shader_abi;
+import spectra.render.types;
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::editor {
     namespace {
         struct ImGuiTexture {
-            GpuImage image{};
-            DescriptorLease descriptor{};
+            runtime::GpuImage image{};
+            runtime::DescriptorLease descriptor{};
         };
 
     } // namespace
 
-    ImGuiBackend::ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, RenderCompositor& compositor, std::filesystem::path shader_directory) noexcept : context{platform, runtime, compositor, std::move(shader_directory)} {}
-
-    ImGuiBackend::~ImGuiBackend() {
-        if (!this->initialized) return;
-        for (ImTextureData* texture : ImGui::GetPlatformIO().Textures)
-            if (texture->BackendUserData != nullptr) this->destroy_texture(*texture);
-        this->context.runtime.frames.defer_destruction([frames = std::move(this->renderer.frames), shaders = std::move(this->renderer.shaders)]() mutable {});
-        ImGuiIO& io                = ImGui::GetIO();
-        io.BackendRendererUserData = nullptr;
-        io.BackendRendererName     = nullptr;
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-    }
-
-    void ImGuiBackend::initialize() {
+    ImGuiBackend::ImGuiBackend(WindowPlatform& platform, runtime::VulkanRuntime& runtime, std::filesystem::path shader_directory) : context{platform, runtime, std::move(shader_directory)} {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         bool platform_initialized{};
@@ -55,12 +41,22 @@ namespace spectra {
             platform_initialized            = ImGui_ImplGlfw_InitForVulkan(this->context.platform.window, true);
             if (!platform_initialized) throw std::runtime_error("Failed to initialize ImGui GLFW platform backend");
             this->initialize_renderer();
-            this->initialized = true;
         } catch (...) {
             if (platform_initialized) ImGui_ImplGlfw_Shutdown();
             ImGui::DestroyContext();
             throw;
         }
+    }
+
+    ImGuiBackend::~ImGuiBackend() {
+        for (ImTextureData* texture : ImGui::GetPlatformIO().Textures)
+            if (texture->BackendUserData != nullptr) this->destroy_texture(*texture);
+        this->context.runtime.frames.defer_destruction([frames = std::move(this->renderer.frames), shaders = std::move(this->renderer.shaders)]() mutable {});
+        ImGuiIO& io                = ImGui::GetIO();
+        io.BackendRendererUserData = nullptr;
+        io.BackendRendererName     = nullptr;
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
     }
 
     void ImGuiBackend::begin_frame() {
@@ -72,17 +68,12 @@ namespace spectra {
         ImGui::Render();
     }
 
-    void ImGuiBackend::resize_viewport(const vk::Extent2D extent) {
-        this->viewport_extent = extent;
-        if (!this->context.compositor.resize(extent)) return;
-        DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
-        this->context.runtime.resources.write_sampled_image_descriptor(descriptor, this->context.compositor.target().image, vk::ImageLayout::eShaderReadOnlyOptimal);
-        this->renderer.viewport_descriptor = std::move(descriptor);
-        this->viewport_texture_id          = static_cast<std::uint64_t>(static_cast<DescriptorHandle>(this->renderer.viewport_descriptor).slot_index) + 1u;
+    void ImGuiBackend::bind_viewport(const render::RenderOutput output) noexcept {
+        this->viewport_extent     = output.image.extent;
+        this->viewport_texture_id = static_cast<std::uint64_t>(output.sampled_descriptor.slot_index) + 1u;
     }
 
     void ImGuiBackend::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const vk::Image target_image, const vk::ImageView target_view, const vk::Extent2D extent, const vk::ImageLayout target_layout, const vk::ImageLayout final_layout) {
-        this->context.compositor.prepare_sampling(command_buffer);
         ImDrawData& draw_data = *ImGui::GetDrawData();
         FrameResources& frame = this->renderer.frames[frame_slot_index];
         if (draw_data.Textures != nullptr)
@@ -171,10 +162,8 @@ namespace spectra {
             for (const ImDrawList* draw_list : draw_data.CmdLists) {
                 for (const ImDrawCmd& draw_command : draw_list->CmdBuffer) {
                     if (draw_command.UserCallback != nullptr) {
-                        if (draw_command.UserCallback == ImDrawCallback_ResetRenderState)
-                            this->setup_render_state(command_buffer, extent);
-                        else
-                            draw_command.UserCallback(draw_list, &draw_command);
+                        if (draw_command.UserCallback == ImDrawCallback_ResetRenderState) this->setup_render_state(command_buffer, extent);
+                        else draw_command.UserCallback(draw_list, &draw_command);
                         continue;
                     }
 
@@ -205,7 +194,7 @@ namespace spectra {
                     const ImGuiPushData push_data{
                         frame.vertex_descriptor,
                         frame.index_descriptor,
-                        DescriptorHandle{static_cast<std::uint32_t>(draw_command.GetTexID() - 1u)},
+                        runtime::DescriptorHandle{static_cast<std::uint32_t>(draw_command.GetTexID() - 1u)},
                         this->renderer.sampler_descriptor,
                         global_index_offset + draw_command.IdxOffset,
                         global_vertex_offset + draw_command.VtxOffset,
@@ -236,13 +225,11 @@ namespace spectra {
         command_buffer.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &to_final});
     }
     void ImGuiBackend::initialize_renderer() {
-        this->renderer.sampler_descriptor  = this->context.runtime.frames.allocate_sampler_descriptor();
-        this->renderer.viewport_descriptor = this->context.runtime.frames.allocate_resource_descriptor();
-        this->viewport_texture_id          = static_cast<std::uint64_t>(static_cast<DescriptorHandle>(this->renderer.viewport_descriptor).slot_index) + 1u;
-        this->renderer.frames.reserve(VulkanFrames::frames_in_flight);
-        for (std::uint32_t index = 0; index < VulkanFrames::frames_in_flight; ++index) this->renderer.frames.emplace_back(GpuBuffer{}, GpuBuffer{}, this->context.runtime.frames.allocate_resource_descriptor(), this->context.runtime.frames.allocate_resource_descriptor());
-        const std::vector<std::uint32_t> vertex_code   = load_spirv(this->context.shader_directory / "imgui_vertex.spv");
-        const std::vector<std::uint32_t> fragment_code = load_spirv(this->context.shader_directory / "imgui_fragment.spv");
+        this->renderer.sampler_descriptor = this->context.runtime.frames.allocate_sampler_descriptor();
+        this->renderer.frames.reserve(runtime::VulkanFrames::frames_in_flight);
+        for (std::uint32_t index = 0; index < runtime::VulkanFrames::frames_in_flight; ++index) this->renderer.frames.emplace_back(runtime::GpuBuffer{}, runtime::GpuBuffer{}, this->context.runtime.frames.allocate_resource_descriptor(), this->context.runtime.frames.allocate_resource_descriptor());
+        const std::vector<std::uint32_t> vertex_code   = runtime::load_spirv(this->context.shader_directory / "imgui_vertex.spv");
+        const std::vector<std::uint32_t> fragment_code = runtime::load_spirv(this->context.shader_directory / "imgui_fragment.spv");
         const std::array create_infos{
             vk::ShaderCreateInfoEXT{
                 vk::ShaderCreateFlagBitsEXT::eLinkStage | vk::ShaderCreateFlagBitsEXT::eDescriptorHeap,
@@ -263,7 +250,7 @@ namespace spectra {
                 "imgui_fragment",
             },
         };
-        this->renderer.shaders = vk::raii::ShaderEXTs{this->context.runtime.graphics.device, create_infos};
+        this->renderer.shaders = vk::raii::ShaderEXTs{this->context.runtime.device.logical, create_infos};
         this->context.runtime.resources.write_sampler_descriptor(this->renderer.sampler_descriptor, vk::SamplerCreateInfo{
                                                                                                         {},
                                                                                                         vk::Filter::eLinear,
@@ -301,7 +288,7 @@ namespace spectra {
                 this->context.runtime.frames.allocate_resource_descriptor(),
             });
             this->context.runtime.resources.write_sampled_image_descriptor(backend_texture->descriptor, backend_texture->image, vk::ImageLayout::eShaderReadOnlyOptimal);
-            texture.SetTexID(static_cast<ImTextureID>(static_cast<DescriptorHandle>(backend_texture->descriptor).slot_index) + 1u);
+            texture.SetTexID(static_cast<ImTextureID>(static_cast<runtime::DescriptorHandle>(backend_texture->descriptor).slot_index) + 1u);
             texture.BackendUserData = backend_texture.release();
         }
 
@@ -311,7 +298,7 @@ namespace spectra {
         const int upload_width           = texture.Status == ImTextureStatus_WantCreate ? texture.Width : texture.UpdateRect.w;
         const int upload_height          = texture.Status == ImTextureStatus_WantCreate ? texture.Height : texture.UpdateRect.h;
         const vk::DeviceSize upload_size = static_cast<vk::DeviceSize>(upload_width) * static_cast<vk::DeviceSize>(upload_height) * 4u;
-        GpuBuffer upload                 = this->context.runtime.resources.create_buffer(upload_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+        runtime::GpuBuffer upload        = this->context.runtime.resources.create_buffer(upload_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         std::byte* destination           = static_cast<std::byte*>(upload.mapped);
         for (int row = 0; row < upload_height; ++row) {
             const unsigned char* source = static_cast<const unsigned char*>(texture.GetPixelsAt(upload_x, upload_y + row));
@@ -393,7 +380,7 @@ namespace spectra {
         command_buffer.setCullMode(vk::CullModeFlagBits::eNone);
         command_buffer.setFrontFace(vk::FrontFace::eCounterClockwise);
         command_buffer.setDepthTestEnable(vk::False);
-        set_basic_graphics_state(command_buffer);
+        runtime::record_default_graphics_state(command_buffer);
         command_buffer.setVertexInputEXT({}, {});
         command_buffer.setPrimitiveTopology(vk::PrimitiveTopology::eTriangleList);
         command_buffer.setPrimitiveRestartEnable(vk::False);
@@ -424,4 +411,4 @@ namespace spectra {
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
     }
 
-} // namespace spectra
+} // namespace spectra::editor

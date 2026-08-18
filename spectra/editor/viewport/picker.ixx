@@ -1,38 +1,38 @@
 export module spectra.editor.viewport.picker;
 
 import spectra.render.gpu_scene;
-import spectra.render.contract;
+import spectra.render.types;
 import spectra.runtime;
 import spectra.scene;
 import std;
 import vulkan;
 
-namespace spectra {
-    export struct ViewportPicker {
+namespace spectra::editor {
+    export struct Picker {
         struct PickResult {
             bool ready{};
-            std::optional<GpuAccelerationEntity> entity{};
+            std::optional<render::GpuAccelerationEntity> entity{};
             std::optional<scene::NeuralFieldId> neural_field{};
             std::optional<std::uint32_t> diagnostic_pick_index{};
             bool select{};
             bool additive{};
         };
 
-        ViewportPicker(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory) noexcept;
-        ~ViewportPicker();
+        Picker(runtime::VulkanRuntime& runtime, render::GpuScene& gpu_scene, std::filesystem::path shader_directory) noexcept;
+        ~Picker();
 
-        ViewportPicker(const ViewportPicker&)            = delete;
-        ViewportPicker(ViewportPicker&&)                 = delete;
-        ViewportPicker& operator=(const ViewportPicker&) = delete;
-        ViewportPicker& operator=(ViewportPicker&&)      = delete;
+        Picker(const Picker&)            = delete;
+        Picker(Picker&&)                 = delete;
+        Picker& operator=(const Picker&) = delete;
+        Picker& operator=(Picker&&)      = delete;
 
-        void initialize(scene::SceneView scene);
+        void initialize(scene::ResolvedSceneView scene);
         void destroy_scene() noexcept;
-        void synchronize(scene::SceneView scene, GpuSceneUpdate gpu_update, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize(scene::ResolvedSceneView scene, render::GpuSceneUpdate gpu_update, const vk::raii::CommandBuffer& command_buffer);
         void submit_pick(float normalized_x, float normalized_y, bool select, bool additive) noexcept;
         void cancel_selection_requests() noexcept;
         [[nodiscard]] PickResult take_pick_result(std::uint32_t frame_slot_index) noexcept;
-        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, scene::SceneView scene, const scene::Camera& camera, DepthBufferView depth, const GpuImage* diagnostic_pick_image);
+        void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index, scene::ResolvedSceneView scene, const scene::Camera& camera, render::DepthBufferView depth, const runtime::GpuImage* diagnostic_pick_image);
 
     private:
         struct PickRequest {
@@ -43,22 +43,22 @@ namespace spectra {
         };
 
         struct PickFrameSlot {
-            GpuBuffer result_buffer{};
-            DescriptorLease result_descriptor{};
+            runtime::GpuBuffer result_buffer{};
+            runtime::DescriptorLease result_descriptor{};
             std::optional<PickRequest> submitted_request{};
-            std::vector<GpuAccelerationEntity> acceleration_entities{};
+            std::vector<render::GpuAccelerationEntity> acceleration_entities{};
             std::optional<scene::NeuralFieldId> neural_field{};
         };
 
         struct {
-            VulkanRuntime& runtime;
-            GpuScene& gpu_scene;
+            runtime::VulkanRuntime& runtime;
+            render::GpuScene& gpu_scene;
             std::filesystem::path shader_directory{};
         } context;
 
         struct {
-            GpuBuffer primitives{};
-            DescriptorLease primitives_descriptor{};
+            runtime::GpuBuffer primitives{};
+            runtime::DescriptorLease primitives_descriptor{};
             bool initialized{};
         } scene;
 
@@ -68,6 +68,6 @@ namespace spectra {
             std::optional<PickRequest> pending_request{};
         } picking;
 
-        void upload(scene::SceneView scene, const vk::raii::CommandBuffer* command_buffer = nullptr);
+        void upload(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer* command_buffer = nullptr);
     };
-} // namespace spectra
+} // namespace spectra::editor

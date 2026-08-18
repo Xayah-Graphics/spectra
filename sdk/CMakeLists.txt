@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 4.4.0)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
-set(SPECTRA_SDK_VERSION 2.0.1)
-project(SpectraSDK VERSION ${SPECTRA_SDK_VERSION} LANGUAGES CXX)
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../VERSION" SPECTRA_VERSION LIMIT_COUNT 1)
+project(SpectraSDK VERSION "${SPECTRA_VERSION}" LANGUAGES CXX)
 
 if (NOT WIN32)
     message(FATAL_ERROR "Spectra SDK CUDA Providers are supported only on Windows")
@@ -58,7 +58,7 @@ configure_package_config_file(
 )
 write_basic_package_version_file(
         "${CMAKE_CURRENT_BINARY_DIR}/SpectraSDKConfigVersion.cmake"
-        VERSION "${SPECTRA_SDK_VERSION}"
+        VERSION "${PROJECT_VERSION}"
         COMPATIBILITY SameMajorVersion
 )
 

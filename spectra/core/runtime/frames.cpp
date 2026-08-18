@@ -3,7 +3,7 @@ module spectra.runtime.frames;
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::runtime {
     DescriptorLease::~DescriptorLease() {
         this->reset();
     }
@@ -24,10 +24,8 @@ namespace spectra {
             this->frames = nullptr;
             return;
         }
-        if (this->kind == DescriptorKind::Resource)
-            this->frames->retire_resource_descriptor(this->value);
-        else
-            this->frames->retire_sampler_descriptor(this->value);
+        if (this->kind == DescriptorKind::Resource) this->frames->retire_resource_descriptor(this->value);
+        else this->frames->retire_sampler_descriptor(this->value);
         this->frames = nullptr;
         this->value  = {};
     }
@@ -39,10 +37,10 @@ namespace spectra {
 
     } // namespace
 
-    VulkanFrames::VulkanFrames(VulkanGraphics& graphics, GpuResources& resources) : context{graphics, resources} {
-        this->frame.command_pool    = vk::raii::CommandPool{graphics.device, vk::CommandPoolCreateInfo{vk::CommandPoolCreateFlagBits::eResetCommandBuffer, graphics.queue_family_index}};
-        this->frame.command_buffers = vk::raii::CommandBuffers{graphics.device, vk::CommandBufferAllocateInfo{*this->frame.command_pool, vk::CommandBufferLevel::ePrimary, frames_in_flight}};
-        for (std::uint32_t index = 0; index < frames_in_flight; ++index) this->frame.fences.emplace_back(graphics.device, vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
+    VulkanFrames::VulkanFrames(VulkanDevice& device, GpuResources& resources) : context{device, resources} {
+        this->frame.command_pool    = vk::raii::CommandPool{device.logical, vk::CommandPoolCreateInfo{vk::CommandPoolCreateFlagBits::eResetCommandBuffer, device.queue_family_index}};
+        this->frame.command_buffers = vk::raii::CommandBuffers{device.logical, vk::CommandBufferAllocateInfo{*this->frame.command_pool, vk::CommandBufferLevel::ePrimary, frames_in_flight}};
+        for (std::uint32_t index = 0; index < frames_in_flight; ++index) this->frame.fences.emplace_back(device.logical, vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
     }
 
     VulkanFrames::~VulkanFrames() {
@@ -60,9 +58,9 @@ namespace spectra {
     std::uint32_t VulkanFrames::retire_frame() {
         if (this->frame.retired) return this->frame.current_slot_index;
         const vk::raii::Fence& fence = this->frame.fences[this->frame.current_slot_index];
-        if (this->context.graphics.device.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra frame fence wait failed");
-        this->frame.completed_serial = std::max(this->frame.completed_serial, this->frame.submitted_serials[this->frame.current_slot_index]);
-        this->uploads.offsets[this->frame.current_slot_index] = 0;
+        if (this->context.device.logical.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra frame fence wait failed");
+        this->frame.completed_serial                                  = std::max(this->frame.completed_serial, this->frame.submitted_serials[this->frame.current_slot_index]);
+        this->uploads.offsets[this->frame.current_slot_index]         = 0;
         this->uploads.current_buffers[this->frame.current_slot_index] = 0;
         std::erase_if(this->deferred.destructions, [this](auto& destruction) {
             if (destruction.serial > this->frame.completed_serial) return false;
@@ -98,36 +96,34 @@ namespace spectra {
         const std::uint32_t submitted_slot_index      = this->frame.current_slot_index;
         const vk::raii::CommandBuffer& command_buffer = this->frame.command_buffers[this->frame.current_slot_index];
         command_buffer.end();
-        this->context.graphics.device.resetFences(*this->frame.fences[this->frame.current_slot_index]);
+        this->context.device.logical.resetFences(*this->frame.fences[this->frame.current_slot_index]);
         std::vector<vk::SemaphoreSubmitInfo>& submit_waits = this->frame.submit_waits[this->frame.current_slot_index];
         const vk::CommandBufferSubmitInfo command_info{*command_buffer};
         std::vector<vk::SemaphoreSubmitInfo>& submit_signals = this->frame.submit_signals[this->frame.current_slot_index];
-        this->context.graphics.queue.submit2(vk::SubmitInfo2{{}, static_cast<std::uint32_t>(submit_waits.size()), submit_waits.data(), 1, &command_info, static_cast<std::uint32_t>(submit_signals.size()), submit_signals.data()}, *this->frame.fences[this->frame.current_slot_index]);
+        this->context.device.queue.submit2(vk::SubmitInfo2{{}, static_cast<std::uint32_t>(submit_waits.size()), submit_waits.data(), 1, &command_info, static_cast<std::uint32_t>(submit_signals.size()), submit_signals.data()}, *this->frame.fences[this->frame.current_slot_index]);
         this->frame.submitted_serials[this->frame.current_slot_index] = this->frame.next_submission_serial++;
-        this->frame.recording = false;
-        this->frame.current_slot_index = (this->frame.current_slot_index + 1u) % frames_in_flight;
-        this->frame.retired = false;
+        this->frame.recording                                         = false;
+        this->frame.current_slot_index                                = (this->frame.current_slot_index + 1u) % frames_in_flight;
+        this->frame.retired                                           = false;
         return submitted_slot_index;
     }
 
     void VulkanFrames::wait_frame(const std::uint32_t frame_slot_index) const {
-        if (this->context.graphics.device.waitForFences(*this->frame.fences[frame_slot_index], vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra frame fence wait failed");
+        if (this->context.device.logical.waitForFences(*this->frame.fences[frame_slot_index], vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Spectra frame fence wait failed");
     }
 
     GpuUploadSlice VulkanFrames::stage_upload(const std::span<const std::byte> data, const vk::DeviceSize alignment) {
-        const std::uint32_t slot = this->frame.current_slot_index;
-        vk::DeviceSize local_offset = align_device_size(this->uploads.offsets[slot], alignment);
+        const std::uint32_t slot        = this->frame.current_slot_index;
+        vk::DeviceSize local_offset     = align_device_size(this->uploads.offsets[slot], alignment);
         std::vector<GpuBuffer>& buffers = this->uploads.buffers[slot];
         if (buffers.empty()) buffers.emplace_back(this->context.resources.create_buffer(std::max<vk::DeviceSize>(upload_frame_size, align_device_size(data.size_bytes(), 64u * 1024u)), vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true));
         if (local_offset + data.size_bytes() > buffers[this->uploads.current_buffers[slot]].size) {
             ++this->uploads.current_buffers[slot];
-            this->uploads.offsets[slot] = 0;
-            local_offset = 0;
+            this->uploads.offsets[slot]        = 0;
+            local_offset                       = 0;
             const vk::DeviceSize required_size = std::max<vk::DeviceSize>(upload_frame_size, align_device_size(data.size_bytes(), 64u * 1024u));
-            if (this->uploads.current_buffers[slot] == buffers.size())
-                buffers.emplace_back(this->context.resources.create_buffer(required_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true));
-            else if (buffers[this->uploads.current_buffers[slot]].size < required_size)
-                buffers[this->uploads.current_buffers[slot]] = this->context.resources.create_buffer(required_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
+            if (this->uploads.current_buffers[slot] == buffers.size()) buffers.emplace_back(this->context.resources.create_buffer(required_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true));
+            else if (buffers[this->uploads.current_buffers[slot]].size < required_size) buffers[this->uploads.current_buffers[slot]] = this->context.resources.create_buffer(required_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, true);
         }
         GpuBuffer& buffer = buffers[this->uploads.current_buffers[slot]];
         std::memcpy(static_cast<std::byte*>(buffer.mapped) + local_offset, data.data(), data.size_bytes());
@@ -176,4 +172,4 @@ namespace spectra {
         this->frame.submit_signals[this->frame.current_slot_index].push_back(signal);
     }
 
-} // namespace spectra
+} // namespace spectra::runtime

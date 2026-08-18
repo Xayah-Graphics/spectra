@@ -1,10 +1,10 @@
 export module spectra.runtime.resources;
 
-import spectra.runtime.graphics;
+import spectra.runtime.device;
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::runtime {
     export struct GpuResources;
 
     export [[nodiscard]] constexpr vk::DeviceSize align_device_size(const vk::DeviceSize value, const vk::DeviceSize alignment) noexcept {
@@ -102,7 +102,7 @@ namespace spectra {
     };
 
     export struct GpuResources {
-        explicit GpuResources(VulkanGraphics& graphics);
+        explicit GpuResources(VulkanDevice& device);
         ~GpuResources();
 
         GpuResources(const GpuResources&)            = delete;
@@ -174,9 +174,7 @@ namespace spectra {
         [[nodiscard]] std::optional<vk::DeviceSize> allocate_range(AllocationBlock& block, vk::DeviceSize size, vk::DeviceSize alignment);
         [[nodiscard]] GpuAllocation make_allocation(std::uint32_t block_index, vk::DeviceSize offset, vk::DeviceSize size) noexcept;
 
-        struct {
-            VulkanGraphics& graphics;
-        } context;
+        VulkanDevice& device;
         struct {
             std::vector<std::unique_ptr<AllocationBlock>> blocks{};
         } allocation;
@@ -194,4 +192,4 @@ namespace spectra {
         vk::raii::CommandPool immediate_command_pool{nullptr};
         void create_descriptor_heaps();
     };
-} // namespace spectra
+} // namespace spectra::runtime

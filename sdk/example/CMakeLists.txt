@@ -11,7 +11,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>")
         add_link_options("$<$<LINK_LANGUAGE:CXX>:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib>")
     endif ()
-    find_package(SpectraSDK 2.0.1 CONFIG REQUIRED)
+    find_package(SpectraSDK 2.0.5 CONFIG REQUIRED)
 endif ()
 
 spectra_add_provider(

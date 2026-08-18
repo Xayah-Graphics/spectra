@@ -1,11 +1,11 @@
 export module spectra.runtime.frames;
 
-import spectra.runtime.graphics;
+import spectra.runtime.device;
 import spectra.runtime.resources;
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::runtime {
     enum class DescriptorKind : std::uint8_t {
         Resource,
         Sampler,
@@ -51,7 +51,7 @@ namespace spectra {
     export struct VulkanFrames {
         static constexpr std::uint32_t frames_in_flight = 2;
 
-        VulkanFrames(VulkanGraphics& graphics, GpuResources& resources);
+        VulkanFrames(VulkanDevice& device, GpuResources& resources);
         ~VulkanFrames();
 
         VulkanFrames(const VulkanFrames&)            = delete;
@@ -76,7 +76,7 @@ namespace spectra {
 
     private:
         struct {
-            VulkanGraphics& graphics;
+            VulkanDevice& device;
             GpuResources& resources;
         } context;
 
@@ -114,4 +114,4 @@ namespace spectra {
             std::vector<Descriptor> sampler_indices{};
         } deferred;
     };
-} // namespace spectra
+} // namespace spectra::runtime

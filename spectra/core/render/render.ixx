@@ -1,6 +1,6 @@
 export module spectra.render;
 
-export import spectra.render.contract;
+export import spectra.render.types;
 
 import spectra.render.pathtracer;
 import spectra.render.pathtracer.resources;
@@ -12,19 +12,19 @@ import spectra.scene;
 import std;
 import vulkan;
 
-namespace spectra {
-    export struct RenderEngine {
-        RenderEngine(VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory, const std::filesystem::path& pathtracer_directory, std::optional<std::string> initial_renderer = std::nullopt, RasterDisplayMode initial_raster_display_mode = RasterDisplayMode::Material);
-        ~RenderEngine();
+namespace spectra::render {
+    export struct Engine {
+        Engine(runtime::VulkanRuntime& runtime, GpuScene& gpu_scene, std::filesystem::path shader_directory, const std::filesystem::path& pathtracer_directory, std::optional<RendererKind> initial_renderer = std::nullopt, RasterDisplayMode initial_raster_display_mode = RasterDisplayMode::Material);
+        ~Engine();
 
-        RenderEngine(const RenderEngine&)            = delete;
-        RenderEngine(RenderEngine&&)                 = delete;
-        RenderEngine& operator=(const RenderEngine&) = delete;
-        RenderEngine& operator=(RenderEngine&&)      = delete;
+        Engine(const Engine&)            = delete;
+        Engine(Engine&&)                 = delete;
+        Engine& operator=(const Engine&) = delete;
+        Engine& operator=(Engine&&)      = delete;
 
-        void rebuild(scene::SceneView scene);
+        void rebuild(scene::ResolvedSceneView scene);
         void destroy() noexcept;
-        void activate(std::string_view id, scene::SceneView scene);
+        void activate(RendererKind renderer, scene::ResolvedSceneView scene);
         void set_raster_display_mode(RasterDisplayMode mode) noexcept;
         [[nodiscard]] RasterDisplayMode raster_display_mode() const noexcept;
         void wait_for_pathtracer();
@@ -32,7 +32,7 @@ namespace spectra {
         [[nodiscard]] std::optional<PathTracerPreparationProgress> pathtracer_preparation() const;
         [[nodiscard]] std::optional<DepthBufferView> depth_buffer() noexcept;
         void invalidate(scene::SceneChange changes, GpuSceneUpdate gpu_update = {}) noexcept;
-        [[nodiscard]] bool prepare(scene::SceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer);
+        [[nodiscard]] bool prepare(scene::ResolvedSceneView scene, const RenderView& view, const vk::raii::CommandBuffer& command_buffer);
         void record(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         [[nodiscard]] RenderOutput output() const;
         [[nodiscard]] std::optional<RenderProgress> progress() const noexcept;
@@ -42,7 +42,7 @@ namespace spectra {
 
     private:
         struct {
-            VulkanRuntime& runtime;
+            runtime::VulkanRuntime& runtime;
             GpuScene& gpu_scene;
             std::filesystem::path shader_directory{};
             std::filesystem::path pathtracer_directory{};
@@ -53,9 +53,9 @@ namespace spectra {
         struct {
             std::optional<Rasterizer> rasterizer{};
             std::optional<PathTracer> pathtracer{};
-            std::optional<std::variant<std::reference_wrapper<Rasterizer>, std::reference_wrapper<PathTracer>>> active{};
-            std::string selected_id{"rasterizer"};
+            RendererKind selected{RendererKind::Rasterizer};
             RasterDisplayMode raster_display_mode{RasterDisplayMode::Material};
+            bool ready{};
         } backends;
     };
-} // namespace spectra
+} // namespace spectra::render

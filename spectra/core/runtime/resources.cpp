@@ -9,7 +9,7 @@ module spectra.runtime.resources;
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::runtime {
     namespace {
         constexpr vk::DeviceSize resource_heap_size       = 16u * 1024u * 1024u;
         constexpr vk::DeviceSize sampler_heap_size        = 1u * 1024u * 1024u;
@@ -46,9 +46,9 @@ namespace spectra {
 
     GpuBuffer& GpuBuffer::operator=(GpuBuffer&& other) noexcept {
         if (this == &other) return *this;
-        this->buffer          = nullptr;
-        this->allocation      = std::move(other.allocation);
-        this->external_memory = std::move(other.external_memory);
+        this->buffer               = nullptr;
+        this->allocation           = std::move(other.allocation);
+        this->external_memory      = std::move(other.external_memory);
         this->buffer               = std::move(other.buffer);
         this->address              = std::exchange(other.address, 0);
         this->size                 = std::exchange(other.size, 0);
@@ -97,14 +97,14 @@ namespace spectra {
         return *this;
     }
 
-    GpuResources::GpuResources(VulkanGraphics& graphics) : context{graphics} {
-        this->descriptors.properties = graphics.descriptor_heap_properties;
+    GpuResources::GpuResources(VulkanDevice& device) : device{device} {
+        this->descriptors.properties = device.descriptor_heap_properties;
         this->create_descriptor_heaps();
         this->immediate_command_pool = vk::raii::CommandPool{
-            graphics.device,
+            device.logical,
             vk::CommandPoolCreateInfo{
                 vk::CommandPoolCreateFlagBits::eTransient,
-                graphics.queue_family_index,
+                device.queue_family_index,
             },
         };
     }
@@ -112,7 +112,7 @@ namespace spectra {
     GpuResources::~GpuResources() = default;
 
     GpuBuffer GpuResources::create_buffer(const vk::DeviceSize size, const vk::BufferUsageFlags usage, const vk::MemoryPropertyFlags memory_properties, const bool mapped) {
-        const vk::raii::Device& device = this->context.graphics.device;
+        const vk::raii::Device& device = this->device.logical;
         GpuBuffer result{};
         result.size   = size;
         result.buffer = vk::raii::Buffer{
@@ -140,7 +140,7 @@ namespace spectra {
     }
 
     GpuImage GpuResources::create_image_2d(const vk::Extent2D extent, const vk::Format format, const vk::ImageUsageFlags usage, const vk::ImageAspectFlags aspect, const std::uint32_t mip_levels) {
-        const vk::raii::Device& device = this->context.graphics.device;
+        const vk::raii::Device& device = this->device.logical;
         GpuImage result{};
         result.extent     = extent;
         result.format     = format;
@@ -240,7 +240,7 @@ namespace spectra {
             static_cast<std::byte*>(this->descriptors.resource_heap.mapped) + static_cast<std::size_t>(handle.slot_index) * this->descriptors.resource_stride,
             static_cast<std::size_t>(align_device_size(this->descriptors.properties.imageDescriptorSize, this->descriptors.properties.imageDescriptorAlignment)),
         };
-        this->context.graphics.device.writeResourceDescriptorsEXT(descriptor, destination);
+        this->device.logical.writeResourceDescriptorsEXT(descriptor, destination);
     }
 
     void GpuResources::write_sampled_image_descriptor(const DescriptorHandle handle, const GpuImage& image, const vk::ImageLayout layout) {
@@ -261,7 +261,7 @@ namespace spectra {
             static_cast<std::byte*>(this->descriptors.resource_heap.mapped) + static_cast<std::size_t>(handle.slot_index) * this->descriptors.resource_stride,
             static_cast<std::size_t>(align_device_size(this->descriptors.properties.imageDescriptorSize, this->descriptors.properties.imageDescriptorAlignment)),
         };
-        this->context.graphics.device.writeResourceDescriptorsEXT(descriptor, destination);
+        this->device.logical.writeResourceDescriptorsEXT(descriptor, destination);
     }
 
     void GpuResources::write_buffer_descriptor(const DescriptorHandle handle, const vk::DescriptorType type, const GpuBuffer& buffer) {
@@ -278,7 +278,7 @@ namespace spectra {
             static_cast<std::byte*>(this->descriptors.resource_heap.mapped) + static_cast<std::size_t>(handle.slot_index) * this->descriptors.resource_stride,
             static_cast<std::size_t>(align_device_size(this->descriptors.properties.bufferDescriptorSize, this->descriptors.properties.bufferDescriptorAlignment)),
         };
-        this->context.graphics.device.writeResourceDescriptorsEXT(descriptor, destination);
+        this->device.logical.writeResourceDescriptorsEXT(descriptor, destination);
     }
 
     void GpuResources::write_sampler_descriptor(const DescriptorHandle handle, const vk::SamplerCreateInfo& sampler) {
@@ -286,14 +286,14 @@ namespace spectra {
             static_cast<std::byte*>(this->descriptors.sampler_heap.mapped) + static_cast<std::size_t>(handle.slot_index) * this->descriptors.sampler_stride,
             static_cast<std::size_t>(this->descriptors.sampler_stride),
         };
-        this->context.graphics.device.writeSamplerDescriptorsEXT(sampler, destination);
+        this->device.logical.writeSamplerDescriptorsEXT(sampler, destination);
     }
 
     GpuBuffer GpuResources::create_external_buffer(const vk::DeviceSize size, const vk::BufferUsageFlags usage) {
 #if !defined(_WIN32)
         throw std::runtime_error("Spectra Provider GPU interop is supported only on Windows");
 #else
-        const vk::raii::Device& device = this->context.graphics.device;
+        const vk::raii::Device& device = this->device.logical;
         const vk::ExternalMemoryBufferCreateInfo external_buffer{vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32};
         GpuBuffer result{};
         result.size   = size;
@@ -310,7 +310,7 @@ namespace spectra {
             },
         };
         const vk::MemoryRequirements requirements           = device.getBufferMemoryRequirements2<vk::MemoryRequirements2, vk::MemoryDedicatedRequirements>(vk::BufferMemoryRequirementsInfo2{*result.buffer}).get<vk::MemoryRequirements2>().memoryRequirements;
-        const vk::PhysicalDeviceMemoryProperties properties = this->context.graphics.physical_device.getMemoryProperties();
+        const vk::PhysicalDeviceMemoryProperties properties = this->device.physical_device.getMemoryProperties();
         std::uint32_t memory_type                           = properties.memoryTypeCount;
         for (std::uint32_t index = 0; index < properties.memoryTypeCount; ++index)
             if ((requirements.memoryTypeBits & (1u << index)) != 0 && static_cast<bool>(properties.memoryTypes[index].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal)) {
@@ -342,7 +342,7 @@ namespace spectra {
         throw std::runtime_error("Spectra Provider GPU interop is supported only on Windows");
 #else
         if (!*buffer.external_memory) throw std::runtime_error("Spectra cannot export a non-external GPU buffer");
-        const HANDLE handle = this->context.graphics.device.getMemoryWin32HandleKHR(vk::MemoryGetWin32HandleInfoKHR{*buffer.external_memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32});
+        const HANDLE handle = this->device.logical.getMemoryWin32HandleKHR(vk::MemoryGetWin32HandleInfoKHR{*buffer.external_memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32});
         return ExternalHandle{reinterpret_cast<std::uintptr_t>(handle)};
 #endif
     }
@@ -354,7 +354,7 @@ namespace spectra {
         const vk::SemaphoreTypeCreateInfo timeline_type{vk::SemaphoreType::eTimeline, 0};
         const vk::ExportSemaphoreCreateInfo export_info{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32, &timeline_type};
         GpuExternalTimelineSemaphore result{};
-        result.semaphore = vk::raii::Semaphore{this->context.graphics.device, vk::SemaphoreCreateInfo{{}, &export_info}};
+        result.semaphore = vk::raii::Semaphore{this->device.logical, vk::SemaphoreCreateInfo{{}, &export_info}};
         return result;
 #endif
     }
@@ -363,24 +363,24 @@ namespace spectra {
 #if !defined(_WIN32)
         throw std::runtime_error("Spectra Provider GPU interop is supported only on Windows");
 #else
-        const HANDLE handle = this->context.graphics.device.getSemaphoreWin32HandleKHR(vk::SemaphoreGetWin32HandleInfoKHR{*timeline.semaphore, vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32});
+        const HANDLE handle = this->device.logical.getSemaphoreWin32HandleKHR(vk::SemaphoreGetWin32HandleInfoKHR{*timeline.semaphore, vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32});
         return ExternalHandle{reinterpret_cast<std::uintptr_t>(handle)};
 #endif
     }
 
     void GpuResources::wait_external_timeline(const GpuExternalTimelineSemaphore& timeline, const std::uint64_t value) const {
         const vk::Semaphore semaphore = *timeline.semaphore;
-        const vk::Result result       = this->context.graphics.device.waitSemaphores(vk::SemaphoreWaitInfo{{}, 1, &semaphore, &value}, std::numeric_limits<std::uint64_t>::max());
+        const vk::Result result       = this->device.logical.waitSemaphores(vk::SemaphoreWaitInfo{{}, 1, &semaphore, &value}, std::numeric_limits<std::uint64_t>::max());
         if (result != vk::Result::eSuccess) throw std::runtime_error("Vulkan failed to wait for a consumed external output slot");
     }
 
     void GpuResources::signal_external_timeline(const GpuExternalTimelineSemaphore& timeline, const std::uint64_t value) const {
-        this->context.graphics.device.signalSemaphore(vk::SemaphoreSignalInfo{*timeline.semaphore, value});
+        this->device.logical.signalSemaphore(vk::SemaphoreSignalInfo{*timeline.semaphore, value});
     }
 
     void GpuResources::submit_immediate(std::move_only_function<void(const vk::raii::CommandBuffer&)> record) {
         vk::raii::CommandBuffers command_buffers{
-            this->context.graphics.device,
+            this->device.logical,
             vk::CommandBufferAllocateInfo{
                 *this->immediate_command_pool,
                 vk::CommandBufferLevel::ePrimary,
@@ -392,8 +392,8 @@ namespace spectra {
         record(command_buffer);
         command_buffer.end();
         const vk::CommandBuffer raw_command_buffer = *command_buffer;
-        const vk::raii::Fence fence{this->context.graphics.device, vk::FenceCreateInfo{}};
-        this->context.graphics.queue.submit(
+        const vk::raii::Fence fence{this->device.logical, vk::FenceCreateInfo{}};
+        this->device.queue.submit(
             vk::SubmitInfo{
                 0,
                 nullptr,
@@ -402,7 +402,7 @@ namespace spectra {
                 &raw_command_buffer,
             },
             *fence);
-        if (this->context.graphics.device.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Immediate Vulkan submission failed");
+        if (this->device.logical.waitForFences(*fence, vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Immediate Vulkan submission failed");
     }
 
     void GpuResources::bind_descriptor_heaps(const vk::raii::CommandBuffer& command_buffer) const noexcept {
@@ -467,7 +467,7 @@ namespace spectra {
 
         std::unique_ptr<AllocationBlock> block = std::make_unique<AllocationBlock>();
         block->memory                          = vk::raii::DeviceMemory{
-            this->context.graphics.device,
+            this->device.logical,
             vk::MemoryAllocateInfo{
                 allocation_size,
                 memory_type,
@@ -484,10 +484,8 @@ namespace spectra {
 
         const auto empty_slot           = std::ranges::find(this->allocation.blocks, nullptr);
         const std::uint32_t block_index = empty_slot == this->allocation.blocks.end() ? static_cast<std::uint32_t>(this->allocation.blocks.size()) : static_cast<std::uint32_t>(empty_slot - this->allocation.blocks.begin());
-        if (empty_slot == this->allocation.blocks.end())
-            this->allocation.blocks.emplace_back(std::move(block));
-        else
-            *empty_slot = std::move(block);
+        if (empty_slot == this->allocation.blocks.end()) this->allocation.blocks.emplace_back(std::move(block));
+        else *empty_slot = std::move(block);
         if (dedicated) return this->make_allocation(block_index, 0, request.requirements.size);
 
         const std::optional<vk::DeviceSize> offset = this->allocate_range(*this->allocation.blocks[block_index], request.requirements.size, request.requirements.alignment);
@@ -507,17 +505,15 @@ namespace spectra {
         std::vector<AllocationRange> merged{};
         merged.reserve(block.free_ranges.size());
         for (const AllocationRange range : block.free_ranges) {
-            if (!merged.empty() && merged.back().offset + merged.back().size == range.offset)
-                merged.back().size += range.size;
-            else
-                merged.emplace_back(range);
+            if (!merged.empty() && merged.back().offset + merged.back().size == range.offset) merged.back().size += range.size;
+            else merged.emplace_back(range);
         }
         block.free_ranges = std::move(merged);
         if (block.free_ranges.size() == 1 && block.free_ranges.front().offset == 0 && block.free_ranges.front().size == block.size) this->allocation.blocks[block_index].reset();
     }
 
     std::uint32_t GpuResources::find_memory_type(const std::uint32_t type_bits, const vk::MemoryPropertyFlags properties) const {
-        const vk::PhysicalDeviceMemoryProperties memory_properties = this->context.graphics.physical_device.getMemoryProperties();
+        const vk::PhysicalDeviceMemoryProperties memory_properties = this->device.physical_device.getMemoryProperties();
         for (std::uint32_t index = 0; index < memory_properties.memoryTypeCount; ++index) {
             if ((type_bits & (1u << index)) != 0 && (memory_properties.memoryTypes[index].propertyFlags & properties) == properties) return index;
         }
@@ -532,14 +528,14 @@ namespace spectra {
             block.free_ranges.erase(block.free_ranges.begin() + index);
             if (offset + size < range.offset + range.size)
                 block.free_ranges.insert(block.free_ranges.begin() + index, AllocationRange{
-                                                                                              offset + size,
-                                                                                              range.offset + range.size - offset - size,
-                                                                                          });
+                                                                                offset + size,
+                                                                                range.offset + range.size - offset - size,
+                                                                            });
             if (range.offset < offset)
                 block.free_ranges.insert(block.free_ranges.begin() + index, AllocationRange{
-                                                                                              range.offset,
-                                                                                              offset - range.offset,
-                                                                                          });
+                                                                                range.offset,
+                                                                                offset - range.offset,
+                                                                            });
             return offset;
         }
         return std::nullopt;
@@ -555,7 +551,7 @@ namespace spectra {
     }
 
     void GpuResources::create_descriptor_heaps() {
-        const vk::PhysicalDeviceDescriptorHeapPropertiesEXT& properties = this->context.graphics.descriptor_heap_properties;
+        const vk::PhysicalDeviceDescriptorHeapPropertiesEXT& properties = this->device.descriptor_heap_properties;
         this->descriptors.resource_stride                               = align_device_size(std::max(properties.imageDescriptorSize, properties.bufferDescriptorSize), std::max(properties.imageDescriptorAlignment, properties.bufferDescriptorAlignment));
         this->descriptors.sampler_stride                                = align_device_size(properties.samplerDescriptorSize, properties.samplerDescriptorAlignment);
 
@@ -567,4 +563,4 @@ namespace spectra {
         this->descriptors.sampler_heap           = this->create_buffer(sampler_size, usage, memory, true);
     }
 
-} // namespace spectra
+} // namespace spectra::runtime

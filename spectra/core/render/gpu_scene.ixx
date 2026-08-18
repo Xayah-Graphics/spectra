@@ -4,14 +4,14 @@ module;
 
 export module spectra.render.gpu_scene;
 
-import spectra.dynamics.gpu;
+import spectra.simulation.frame;
 import spectra.runtime;
 import spectra.scene;
 
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::render {
     export inline constexpr std::uint32_t gpu_geometry_attribute_normal             = shader_semantics::gpu_attribute_normal;
     export inline constexpr std::uint32_t gpu_geometry_attribute_tangent            = shader_semantics::gpu_attribute_tangent;
     export inline constexpr std::uint32_t gpu_geometry_attribute_texture_coordinate = shader_semantics::gpu_attribute_texture_coordinate;
@@ -67,7 +67,7 @@ namespace spectra {
     };
 
     export struct GpuAccelerationStructure {
-        GpuBuffer storage{};
+        runtime::GpuBuffer storage{};
         vk::raii::AccelerationStructureKHR acceleration_structure{nullptr};
         vk::DeviceAddress address{};
 
@@ -81,17 +81,17 @@ namespace spectra {
     export struct GpuGeometry {
         scene::GeometryId geometry_id{};
         GpuMeshUpdateMode update_mode{GpuMeshUpdateMode::Immutable};
-        GpuBuffer positions{};
-        GpuBuffer normals{};
-        GpuBuffer tangents{};
-        GpuBuffer texture_coordinates{};
-        GpuBuffer indices{};
-        GpuBuffer axis_aligned_boxes{};
-        DescriptorLease positions_descriptor{};
-        DescriptorLease normals_descriptor{};
-        DescriptorLease tangents_descriptor{};
-        DescriptorLease texture_coordinates_descriptor{};
-        DescriptorLease indices_descriptor{};
+        runtime::GpuBuffer positions{};
+        runtime::GpuBuffer normals{};
+        runtime::GpuBuffer tangents{};
+        runtime::GpuBuffer texture_coordinates{};
+        runtime::GpuBuffer indices{};
+        runtime::GpuBuffer axis_aligned_boxes{};
+        runtime::DescriptorLease positions_descriptor{};
+        runtime::DescriptorLease normals_descriptor{};
+        runtime::DescriptorLease tangents_descriptor{};
+        runtime::DescriptorLease texture_coordinates_descriptor{};
+        runtime::DescriptorLease indices_descriptor{};
         GpuAccelerationStructure bottom_level_acceleration_structure{};
         AccelerationGeometryKind acceleration_kind{AccelerationGeometryKind::Triangle};
         std::uint32_t acceleration_primitive_count{};
@@ -111,12 +111,12 @@ namespace spectra {
 
     export struct GpuSphereSet {
         scene::SphereSetId sphere_set_id{};
-        GpuBuffer positions{};
-        GpuBuffer radii{};
-        GpuBuffer axis_aligned_boxes{};
-        DescriptorLease positions_descriptor{};
-        DescriptorLease radii_descriptor{};
-        DescriptorLease axis_aligned_boxes_descriptor{};
+        runtime::GpuBuffer positions{};
+        runtime::GpuBuffer radii{};
+        runtime::GpuBuffer axis_aligned_boxes{};
+        runtime::DescriptorLease positions_descriptor{};
+        runtime::DescriptorLease radii_descriptor{};
+        runtime::DescriptorLease axis_aligned_boxes_descriptor{};
         GpuAccelerationStructure bottom_level_acceleration_structure{};
         std::uint32_t sphere_count{};
         std::uint32_t sphere_capacity{};
@@ -136,8 +136,8 @@ namespace spectra {
         scene::FieldKind kind{scene::FieldKind::Float};
         scene::VolumeFieldSampling sampling{scene::VolumeFieldSampling::Cell};
         scene::VolumeVectorSpace vector_space{scene::VolumeVectorSpace::Local};
-        std::vector<GpuBuffer> buffers{};
-        std::vector<DescriptorLease> descriptors{};
+        std::vector<runtime::GpuBuffer> buffers{};
+        std::vector<runtime::DescriptorLease> descriptors{};
     };
 
     export struct GpuParticleField {
@@ -146,12 +146,12 @@ namespace spectra {
         std::string unit{};
         scene::FieldKind kind{scene::FieldKind::Float};
         scene::VolumeVectorSpace vector_space{scene::VolumeVectorSpace::Local};
-        DescriptorHandle descriptor{};
+        runtime::DescriptorHandle descriptor{};
     };
 
     export struct GpuParticleSet {
         scene::ParticleSetId particle_set_id{};
-        DescriptorHandle positions{};
+        runtime::DescriptorHandle positions{};
         std::vector<GpuParticleField> fields{};
         std::uint32_t count{};
     };
@@ -166,8 +166,8 @@ namespace spectra {
     };
 
     export struct GpuNeuralBuffer {
-        GpuBuffer buffer{};
-        DescriptorLease descriptor{};
+        runtime::GpuBuffer buffer{};
+        runtime::DescriptorLease descriptor{};
     };
 
     export struct GpuNeuralField {
@@ -183,9 +183,9 @@ namespace spectra {
     };
 
     export struct GpuTextureImage {
-        GpuImage image{};
-        DescriptorLease image_descriptor{};
-        DescriptorLease sampler_descriptor{};
+        runtime::GpuImage image{};
+        runtime::DescriptorLease image_descriptor{};
+        runtime::DescriptorLease sampler_descriptor{};
         std::string cache_revision{};
     };
 
@@ -208,9 +208,9 @@ namespace spectra {
         std::span<const GpuAccelerationEntity> acceleration_entities{};
         const GpuGeometry* volume_region_geometry{};
         vk::DeviceAddress acceleration_structure{};
-        DescriptorHandle primitive_transforms{};
-        const GpuBuffer* primitive_transform_buffer{};
-        DescriptorHandle instance_bounds{};
+        runtime::DescriptorHandle primitive_transforms{};
+        const runtime::GpuBuffer* primitive_transform_buffer{};
+        runtime::DescriptorHandle instance_bounds{};
         std::span<const math::Bounds3> resolved_instance_bounds{};
         math::Bounds3 resolved_scene_bounds{math::Bounds3::empty()};
         std::uint64_t revision{};
@@ -218,7 +218,7 @@ namespace spectra {
     };
 
     export struct GpuScene {
-        GpuScene(VulkanRuntime& runtime, std::filesystem::path shader_directory) noexcept;
+        GpuScene(runtime::VulkanRuntime& runtime, std::filesystem::path shader_directory) noexcept;
         ~GpuScene();
 
         GpuScene(const GpuScene&)            = delete;
@@ -226,17 +226,17 @@ namespace spectra {
         GpuScene& operator=(const GpuScene&) = delete;
         GpuScene& operator=(GpuScene&&)      = delete;
 
-        void initialize(const scene::Scene& source_scene, std::span<const dynamics::MeshOutputBinding> mesh_bindings = {}, std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings = {});
+        void initialize(const scene::Scene& evaluated_scene, std::span<const simulation::MeshOutputBinding> mesh_bindings = {}, std::span<const simulation::SphereSetOutputBinding> sphere_set_bindings = {});
         void destroy() noexcept;
         [[nodiscard]] const GpuTextureImage& texture_image(const scene::Texture& texture, vk::Format format) const;
         [[nodiscard]] GpuSceneView view() const noexcept;
         void retire_frame(std::uint32_t frame_slot_index);
-        [[nodiscard]] GpuSceneUpdate apply(const dynamics::DynamicSnapshot& snapshot, scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
-        [[nodiscard]] GpuSceneUpdate synchronize(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
+        [[nodiscard]] GpuSceneUpdate apply(const simulation::SimulationFrame& frame, scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
+        [[nodiscard]] GpuSceneUpdate synchronize(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
 
     private:
         struct {
-            VulkanRuntime& runtime;
+            runtime::VulkanRuntime& runtime;
             std::filesystem::path shader_directory{};
         } context;
 
@@ -250,32 +250,32 @@ namespace spectra {
             vk::raii::ShaderEXT instance_apply_shader{nullptr};
             std::map<std::pair<scene::TextureId, vk::Format>, std::size_t> texture_image_indices{};
             std::vector<GpuTextureImage> texture_images{};
-            GpuBuffer acceleration_structure_instances{};
-            DescriptorLease acceleration_structure_instances_descriptor{};
-            GpuBuffer primitive_transforms{};
-            DescriptorLease primitive_transforms_descriptor{};
-            GpuBuffer dynamic_instance_bindings{};
-            DescriptorLease dynamic_instance_bindings_descriptor{};
-            GpuBuffer instance_bounds{};
-            DescriptorLease instance_bounds_descriptor{};
-            std::array<GpuBuffer, VulkanFrames::frames_in_flight> instance_bounds_readbacks{};
-            std::array<std::uint32_t, VulkanFrames::frames_in_flight> instance_bounds_readback_counts{};
-            std::array<bool, VulkanFrames::frames_in_flight> instance_bounds_readback_pending{};
+            runtime::GpuBuffer acceleration_structure_instances{};
+            runtime::DescriptorLease acceleration_structure_instances_descriptor{};
+            runtime::GpuBuffer primitive_transforms{};
+            runtime::DescriptorLease primitive_transforms_descriptor{};
+            runtime::GpuBuffer output_instance_bindings{};
+            runtime::DescriptorLease output_instance_bindings_descriptor{};
+            runtime::GpuBuffer instance_bounds{};
+            runtime::DescriptorLease instance_bounds_descriptor{};
+            std::array<runtime::GpuBuffer, runtime::VulkanFrames::frames_in_flight> instance_bounds_readbacks{};
+            std::array<std::uint32_t, runtime::VulkanFrames::frames_in_flight> instance_bounds_readback_counts{};
+            std::array<bool, runtime::VulkanFrames::frames_in_flight> instance_bounds_readback_pending{};
             std::vector<math::Bounds3> resolved_instance_bounds{};
             math::Bounds3 resolved_scene_bounds{math::Bounds3::empty()};
-            std::array<GpuBuffer, VulkanFrames::frames_in_flight> frame_scratch{};
-            std::array<vk::DeviceSize, VulkanFrames::frames_in_flight> scratch_offsets{};
+            std::array<runtime::GpuBuffer, runtime::VulkanFrames::frames_in_flight> frame_scratch{};
+            std::array<vk::DeviceSize, runtime::VulkanFrames::frames_in_flight> scratch_offsets{};
             std::uint32_t recording_frame_slot{};
             scene::SceneRevision synchronized_revision{};
             std::vector<scene::GeometryId> external_geometries{};
             std::vector<scene::SphereSetId> external_sphere_sets{};
             std::vector<scene::VolumeId> external_volumes{};
-            std::vector<dynamics::MeshOutputBinding> mesh_bindings{};
+            std::vector<simulation::MeshOutputBinding> mesh_bindings{};
             bool external_bottom_level_rebuilt{};
             scene::SceneChange resource_binding_changes{scene::SceneChange::None};
-            GpuSceneChange dynamic_changes{GpuSceneChange::None};
-            std::uint64_t dynamic_revision{};
-            std::uint64_t dynamic_structure_revision{};
+            GpuSceneChange output_changes{GpuSceneChange::None};
+            std::uint64_t output_revision{};
+            std::uint64_t output_structure_revision{};
             std::vector<GpuGeometry> geometries{};
             std::vector<GpuSphereSet> sphere_sets{};
             std::vector<GpuParticleSet> particle_sets{};
@@ -289,32 +289,32 @@ namespace spectra {
             bool instance_bounds_dirty{};
         } resources;
 
-        void initialize_resources(scene::SceneView scene, std::span<const dynamics::MeshOutputBinding> mesh_bindings, std::span<const dynamics::SphereSetOutputBinding> sphere_set_bindings, const vk::raii::CommandBuffer* command_buffer);
-        void cache_texture_images(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void initialize_resources(scene::ResolvedSceneView scene, std::span<const simulation::MeshOutputBinding> mesh_bindings, std::span<const simulation::SphereSetOutputBinding> sphere_set_bindings, const vk::raii::CommandBuffer* command_buffer);
+        void cache_texture_images(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer);
         [[nodiscard]] GpuGeometry create_geometry(const scene::Geometry& geometry, const vk::raii::CommandBuffer& command_buffer);
         [[nodiscard]] GpuSphereSet create_sphere_set(const scene::SphereSet& spheres, const vk::raii::CommandBuffer& command_buffer, std::uint32_t capacity = 0);
         [[nodiscard]] GpuVolume create_volume(const scene::Volume& volume, const vk::raii::CommandBuffer& command_buffer);
-        [[nodiscard]] std::vector<vk::AccelerationStructureInstanceKHR> acceleration_structure_instance_data(scene::SceneView scene);
+        [[nodiscard]] std::vector<vk::AccelerationStructureInstanceKHR> acceleration_structure_instance_data(scene::ResolvedSceneView scene);
         [[nodiscard]] vk::DeviceAddress acquire_acceleration_scratch(vk::DeviceSize size);
         void update_bottom_level(GpuGeometry& geometry, const scene::Geometry& source_geometry, const vk::raii::CommandBuffer& command_buffer);
         void generate_missing_attributes(GpuGeometry& geometry, bool generate_normals, bool generate_tangents, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_external_geometry(scene::GeometryId geometry_id, const GpuBuffer* positions, const GpuBuffer* normals, const GpuBuffer* tangents, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_geometry(scene::GeometryId geometry_id, const runtime::GpuBuffer* positions, const runtime::GpuBuffer* normals, const runtime::GpuBuffer* tangents, const vk::raii::CommandBuffer& command_buffer);
         void update_sphere_set(GpuSphereSet& spheres, const scene::SphereSet& source_spheres, const vk::raii::CommandBuffer& command_buffer);
         void update_sphere_set_acceleration(GpuSphereSet& spheres, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_external_sphere_set(scene::SphereSetId sphere_set_id, DescriptorHandle spheres_descriptor, std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_external_instance_transforms(const dynamics::GpuInstanceTransformUpdate& update, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_external_volume(scene::VolumeId volume_id, std::span<const dynamics::GpuFieldView> fields, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_external_particle_set(const dynamics::GpuParticleSetUpdate& update);
-        void synchronize_external_neural_field(const dynamics::GpuHashGridRadianceFieldUpdate& update, const vk::raii::CommandBuffer& command_buffer);
-        void update_volumes(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        void update_instance_state(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
-        void update_instance_bounds(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
+        void synchronize_external_sphere_set(scene::SphereSetId sphere_set_id, runtime::DescriptorHandle spheres_descriptor, std::uint32_t sphere_count, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_instance_transforms(const simulation::GpuInstanceTransformUpdate& update, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_volume(scene::VolumeId volume_id, std::span<const simulation::GpuFieldView> fields, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_external_particle_set(const simulation::GpuParticleSetUpdate& update);
+        void synchronize_external_neural_field(const simulation::GpuHashGridRadianceFieldUpdate& update, const vk::raii::CommandBuffer& command_buffer);
+        void update_volumes(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void update_instance_state(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void update_instance_bounds(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_slot_index);
         void update_top_level_from_gpu(std::uint32_t instance_count, const vk::raii::CommandBuffer& command_buffer);
         void update_top_level(std::span<const vk::AccelerationStructureInstanceKHR> instances, const vk::raii::CommandBuffer& command_buffer);
-        void synchronize_scene(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void synchronize_scene(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer);
         void begin_external_updates(std::span<const scene::GeometryId> geometry_ids, std::span<const scene::SphereSetId> sphere_set_ids, std::span<const scene::VolumeId> volume_ids);
-        void end_external_updates(scene::SceneView scene, const vk::raii::CommandBuffer& command_buffer);
+        void end_external_updates(scene::ResolvedSceneView scene, const vk::raii::CommandBuffer& command_buffer);
         [[nodiscard]] GpuAccelerationStructure build_bottom_level(const vk::AccelerationStructureGeometryKHR& geometry, std::uint32_t primitive_count, GpuMeshUpdateMode update_mode, const vk::raii::CommandBuffer& command_buffer, std::uint32_t maximum_primitive_count = 0);
         [[nodiscard]] GpuAccelerationStructure build_top_level(std::span<const vk::AccelerationStructureInstanceKHR> instances, std::uint32_t maximum_primitive_count, const vk::raii::CommandBuffer& command_buffer);
     };
-} // namespace spectra
+} // namespace spectra::render

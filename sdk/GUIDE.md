@@ -162,7 +162,7 @@ CUDA translation units include `<spectra/sdk/cuda_types.h>` and write the exact 
 ## CMake
 
 ```cmake
-find_package(SpectraSDK 2.0.1 CONFIG REQUIRED)
+find_package(SpectraSDK 2.0.5 CONFIG REQUIRED)
 
 spectra_add_provider(
         cloth-provider

@@ -64,6 +64,31 @@ namespace spectra::scene {
 
     } // namespace
 
+    EntityKind entity_kind(const EntityReference& entity) noexcept {
+        return std::visit(
+            []<typename Type>(const Type&) {
+                if constexpr (std::same_as<Type, std::monostate>) return EntityKind::None;
+                else if constexpr (std::same_as<Type, InstanceId>) return EntityKind::Instance;
+                else if constexpr (std::same_as<Type, CameraId>) return EntityKind::Camera;
+                else if constexpr (std::same_as<Type, LightId>) return EntityKind::Light;
+                else if constexpr (std::same_as<Type, EntityReference::AreaEmitter>) return EntityKind::AreaEmitter;
+                else if constexpr (std::same_as<Type, ParticleSetId>) return EntityKind::ParticleSet;
+                else if constexpr (std::same_as<Type, VolumeId>) return EntityKind::Volume;
+                else return EntityKind::NeuralField;
+            },
+            entity.data);
+    }
+
+    std::uint64_t entity_id(const EntityReference& entity) noexcept {
+        return std::visit(
+            []<typename Type>(const Type& value) -> std::uint64_t {
+                if constexpr (std::same_as<Type, std::monostate>) return 0;
+                else if constexpr (std::same_as<Type, EntityReference::AreaEmitter>) return value.light.value;
+                else return value.value;
+            },
+            entity.data);
+    }
+
     math::Bounds3 geometry_bounds(const Geometry& geometry) noexcept {
         return std::visit(
             [](const auto& data) -> math::Bounds3 {
@@ -71,16 +96,11 @@ namespace spectra::scene {
                     math::Bounds3 result = math::Bounds3::empty();
                     for (const math::Float3 position : data.positions) result.include(position);
                     return result;
-                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, SphereGeometry>)
-                    return {{-data.radius, -data.radius, data.z_min}, {data.radius, data.radius, data.z_max}};
-                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, BoxGeometry>)
-                    return data.bounds;
-                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RectangleGeometry>)
-                    return {{data.minimum.x, data.minimum.y, 0.0f}, {data.maximum.x, data.maximum.y, 0.0f}};
-                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DiskGeometry>)
-                    return {{-data.radius, -data.radius, data.height}, {data.radius, data.radius, data.height}};
-                else
-                    return {{-data.radius, -data.radius, data.z_min}, {data.radius, data.radius, data.z_max}};
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, SphereGeometry>) return {{-data.radius, -data.radius, data.z_min}, {data.radius, data.radius, data.z_max}};
+                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, BoxGeometry>) return data.bounds;
+                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RectangleGeometry>) return {{data.minimum.x, data.minimum.y, 0.0f}, {data.maximum.x, data.maximum.y, 0.0f}};
+                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DiskGeometry>) return {{-data.radius, -data.radius, data.height}, {data.radius, data.radius, data.height}};
+                else return {{-data.radius, -data.radius, data.z_min}, {data.radius, data.radius, data.z_max}};
             },
             geometry.data);
     }
@@ -92,17 +112,13 @@ namespace spectra::scene {
                     float area{};
                     for (std::size_t index = 0; index < data.indices.size(); index += 3) area += triangle_area(data.positions[data.indices[index]], data.positions[data.indices[index + 1]], data.positions[data.indices[index + 2]]);
                     return area;
-                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, SphereGeometry>)
-                    return radians(data.phi_max) * data.radius * (data.z_max - data.z_min);
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, SphereGeometry>) return radians(data.phi_max) * data.radius * (data.z_max - data.z_min);
                 else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, BoxGeometry>) {
                     const math::Float3 extent = data.bounds.diagonal();
                     return 2.0f * (extent.x * extent.y + extent.x * extent.z + extent.y * extent.z);
-                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RectangleGeometry>)
-                    return (data.maximum.x - data.minimum.x) * (data.maximum.y - data.minimum.y);
-                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DiskGeometry>)
-                    return 0.5f * radians(data.phi_max) * (data.radius * data.radius - data.inner_radius * data.inner_radius);
-                else
-                    return radians(data.phi_max) * data.radius * (data.z_max - data.z_min);
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RectangleGeometry>) return (data.maximum.x - data.minimum.x) * (data.maximum.y - data.minimum.y);
+                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DiskGeometry>) return 0.5f * radians(data.phi_max) * (data.radius * data.radius - data.inner_radius * data.inner_radius);
+                else return radians(data.phi_max) * data.radius * (data.z_max - data.z_min);
             },
             geometry.data);
     }
@@ -139,10 +155,8 @@ namespace spectra::scene {
                 } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, BoxGeometry>) {
                     const math::Float3 extent = data.bounds.diagonal();
                     return 2.0f * (extent.x * extent.y * normal_z.length() + extent.x * extent.z * normal_y.length() + extent.y * extent.z * normal_x.length());
-                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RectangleGeometry>)
-                    return (data.maximum.x - data.minimum.x) * (data.maximum.y - data.minimum.y) * normal_z.length();
-                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DiskGeometry>)
-                    return 0.5f * radians(data.phi_max) * (data.radius * data.radius - data.inner_radius * data.inner_radius) * normal_z.length();
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, RectangleGeometry>) return (data.maximum.x - data.minimum.x) * (data.maximum.y - data.minimum.y) * normal_z.length();
+                else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, DiskGeometry>) return 0.5f * radians(data.phi_max) * (data.radius * data.radius - data.inner_radius * data.inner_radius) * normal_z.length();
                 else {
                     const double area = data.radius * (data.z_max - data.z_min) * integrate_gauss_legendre_32([&](const double phi) { return area_scale({static_cast<float>(std::cos(phi)), static_cast<float>(std::sin(phi)), 0.0f}); }, 0.0, radians(data.phi_max));
                     return static_cast<float>(area);
@@ -163,41 +177,51 @@ namespace spectra::scene {
     }
 
     FieldKind field_kind(const VolumeField& field) noexcept {
-        return std::visit([]<typename Type>(const Type&) {
-            if constexpr (std::same_as<Type, ScalarVolumeField>) return FieldKind::Float;
-            else if constexpr (std::same_as<Type, VectorVolumeField>) return FieldKind::Float3;
-            else if constexpr (std::same_as<Type, CategoryVolumeField>) return FieldKind::UInt32;
-            else return FieldKind::MacFloat3;
-        }, field.data);
+        return std::visit(
+            []<typename Type>(const Type&) {
+                if constexpr (std::same_as<Type, ScalarVolumeField>) return FieldKind::Float;
+                else if constexpr (std::same_as<Type, VectorVolumeField>) return FieldKind::Float3;
+                else if constexpr (std::same_as<Type, CategoryVolumeField>) return FieldKind::UInt32;
+                else return FieldKind::MacFloat3;
+            },
+            field.data);
     }
 
     VolumeFieldSampling field_sampling(const VolumeField& field) noexcept {
-        return std::visit([]<typename Type>(const Type& data) {
-            if constexpr (std::same_as<Type, MacVolumeField>) return VolumeFieldSampling::Cell;
-            else return data.sampling;
-        }, field.data);
+        return std::visit(
+            []<typename Type>(const Type& data) {
+                if constexpr (std::same_as<Type, MacVolumeField>) return VolumeFieldSampling::Cell;
+                else return data.sampling;
+            },
+            field.data);
     }
 
     VolumeVectorSpace field_vector_space(const VolumeField& field) noexcept {
-        return std::visit([]<typename Type>(const Type& data) {
-            if constexpr (std::same_as<Type, VectorVolumeField> || std::same_as<Type, MacVolumeField>) return data.vector_space;
-            else return VolumeVectorSpace::Local;
-        }, field.data);
+        return std::visit(
+            []<typename Type>(const Type& data) {
+                if constexpr (std::same_as<Type, VectorVolumeField> || std::same_as<Type, MacVolumeField>) return data.vector_space;
+                else return VolumeVectorSpace::Local;
+            },
+            field.data);
     }
 
     FieldKind field_kind(const ParticleField& field) noexcept {
-        return std::visit([]<typename Type>(const Type&) {
-            if constexpr (std::same_as<Type, ScalarParticleField>) return FieldKind::Float;
-            else if constexpr (std::same_as<Type, VectorParticleField>) return FieldKind::Float3;
-            else return FieldKind::UInt32;
-        }, field.data);
+        return std::visit(
+            []<typename Type>(const Type&) {
+                if constexpr (std::same_as<Type, ScalarParticleField>) return FieldKind::Float;
+                else if constexpr (std::same_as<Type, VectorParticleField>) return FieldKind::Float3;
+                else return FieldKind::UInt32;
+            },
+            field.data);
     }
 
     VolumeVectorSpace field_vector_space(const ParticleField& field) noexcept {
-        return std::visit([]<typename Type>(const Type& data) {
-            if constexpr (std::same_as<Type, VectorParticleField>) return data.vector_space;
-            else return VolumeVectorSpace::Local;
-        }, field.data);
+        return std::visit(
+            []<typename Type>(const Type& data) {
+                if constexpr (std::same_as<Type, VectorParticleField>) return data.vector_space;
+                else return VolumeVectorSpace::Local;
+            },
+            field.data);
     }
 
     math::Bounds3 particle_set_bounds(const ParticleSet& particles) noexcept {
@@ -341,20 +365,17 @@ namespace spectra::scene {
     }
 
     namespace {
-        bool include_primitive_bounds(math::Bounds3& bounds, const SceneView& scene, const Primitive& primitive, const math::Transform& parent) noexcept {
+        bool include_primitive_bounds(math::Bounds3& bounds, const ResolvedSceneView& scene, const Primitive& primitive, const math::Transform& parent) noexcept {
             math::Bounds3 local{};
-            if (primitive.geometry.value != 0)
-                local = geometry_bounds(*std::ranges::find(scene.resources.geometries, primitive.geometry, &Geometry::id));
-            else if (primitive.spheres.value != 0)
-                local = sphere_set_bounds(*std::ranges::find(scene.resources.sphere_sets, primitive.spheres, &SphereSet::id));
-            else
-                return false;
+            if (primitive.geometry.value != 0) local = geometry_bounds(*std::ranges::find(scene.resources.geometries, primitive.geometry, &Geometry::id));
+            else if (primitive.spheres.value != 0) local = sphere_set_bounds(*std::ranges::find(scene.resources.sphere_sets, primitive.spheres, &SphereSet::id));
+            else return false;
             bounds.include(local.transformed(parent * primitive.transform));
             return true;
         }
     } // namespace
 
-    math::Bounds3 SceneView::bounds() const noexcept {
+    math::Bounds3 ResolvedSceneView::bounds() const noexcept {
         math::Bounds3 result = math::Bounds3::empty();
         for (const Instance& instance : this->resources.instances) {
             if (!instance.visible) continue;
@@ -370,7 +391,7 @@ namespace spectra::scene {
         return result;
     }
 
-    std::optional<math::Bounds3> SceneView::local_bounds(const InstanceId instance_id) const noexcept {
+    std::optional<math::Bounds3> ResolvedSceneView::local_bounds(const InstanceId instance_id) const noexcept {
         const std::vector<Instance>::const_iterator instance = std::ranges::find(this->resources.instances, instance_id, &Instance::id);
         if (instance == this->resources.instances.end()) return std::nullopt;
         const Prototype& prototype = *std::ranges::find(this->resources.prototypes, instance->prototype, &Prototype::id);
@@ -381,7 +402,7 @@ namespace spectra::scene {
         return result;
     }
 
-    std::optional<math::Bounds3> SceneView::bounds(const std::span<const InstanceId> instances) const noexcept {
+    std::optional<math::Bounds3> ResolvedSceneView::bounds(const std::span<const InstanceId> instances) const noexcept {
         if (instances.empty()) return std::nullopt;
         math::Bounds3 result = math::Bounds3::empty();
         bool found_any{};
@@ -395,7 +416,7 @@ namespace spectra::scene {
         return result;
     }
 
-    SceneView Scene::view() const noexcept {
+    ResolvedSceneView Scene::view() const noexcept {
         return {
             this->resources,
             this->camera(),

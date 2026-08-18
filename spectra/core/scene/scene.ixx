@@ -89,6 +89,39 @@ namespace spectra::scene {
         friend auto operator<=>(const InstanceId&, const InstanceId&) = default;
     };
 
+    export enum class EntityKind : std::uint32_t {
+        None,
+        Instance,
+        Camera,
+        Light,
+        AreaEmitter,
+        ParticleSet,
+        Volume,
+        NeuralField,
+    };
+
+    export struct EntityReference {
+        struct AreaEmitter {
+            LightId light{};
+            InstanceId instance{};
+            std::uint32_t primitive_index{};
+
+            friend auto operator<=>(const AreaEmitter&, const AreaEmitter&) = default;
+        };
+
+        std::variant<std::monostate, InstanceId, CameraId, LightId, AreaEmitter, ParticleSetId, VolumeId, NeuralFieldId> data{};
+
+        EntityReference() = default;
+
+        template <typename Type>
+        explicit EntityReference(Type value) noexcept : data{value} {}
+
+        friend auto operator<=>(const EntityReference&, const EntityReference&) = default;
+    };
+
+    export [[nodiscard]] EntityKind entity_kind(const EntityReference& entity) noexcept;
+    export [[nodiscard]] std::uint64_t entity_id(const EntityReference& entity) noexcept;
+
     export struct ResourceRevision {
         std::uint64_t content{1};
         std::uint64_t topology{1};
@@ -889,9 +922,9 @@ namespace spectra::scene {
     };
 
 
-    export struct DynamicSystemId {
+    export struct SimulationSystemId {
         std::string value{};
-        friend auto operator<=>(const DynamicSystemId&, const DynamicSystemId&) = default;
+        friend auto operator<=>(const SimulationSystemId&, const SimulationSystemId&) = default;
     };
 
     export enum class VisualizationColorSource : std::uint8_t {
@@ -900,7 +933,7 @@ namespace spectra::scene {
         Scalar,
     };
 
-    export enum class DynamicParameterKind : std::uint8_t {
+    export enum class SimulationParameterKind : std::uint8_t {
         Boolean,
         Integer,
         Float,
@@ -908,23 +941,23 @@ namespace spectra::scene {
         Enumeration,
     };
 
-    export struct DynamicParameterValue {
-        DynamicParameterKind kind{DynamicParameterKind::Float};
+    export struct SimulationParameterValue {
+        SimulationParameterKind kind{SimulationParameterKind::Float};
         std::int64_t integer{};
         std::array<double, 3> floating{};
-        friend auto operator<=>(const DynamicParameterValue&, const DynamicParameterValue&) = default;
+        friend auto operator<=>(const SimulationParameterValue&, const SimulationParameterValue&) = default;
     };
 
-    export struct DynamicParameterSetting {
+    export struct SimulationParameterSetting {
         std::string parameter_id{};
-        DynamicParameterValue value{};
-        friend auto operator<=>(const DynamicParameterSetting&, const DynamicParameterSetting&) = default;
+        SimulationParameterValue value{};
+        friend auto operator<=>(const SimulationParameterSetting&, const SimulationParameterSetting&) = default;
     };
 
-    export struct DynamicSceneBinding {
-        std::string dataset_id{};
+    export struct SimulationOutputBinding {
+        std::string output_id{};
         std::uint64_t resource_id{};
-        friend auto operator<=>(const DynamicSceneBinding&, const DynamicSceneBinding&) = default;
+        friend auto operator<=>(const SimulationOutputBinding&, const SimulationOutputBinding&) = default;
     };
 
     export struct SegmentVisualization {
@@ -959,8 +992,8 @@ namespace spectra::scene {
         friend auto operator<=>(const SurfaceVisualization&, const SurfaceVisualization&) = default;
     };
 
-    export struct DynamicVisualizationView {
-        std::string dataset_id{};
+    export struct SimulationVisualization {
+        std::string output_id{};
         std::string name{};
         VisualizationDepthMode depth_mode{VisualizationDepthMode::Tested};
         VisualizationCompositionDomain composition_domain{VisualizationCompositionDomain::DisplayReferred};
@@ -968,34 +1001,34 @@ namespace spectra::scene {
         math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
         bool visible{true};
         std::variant<SegmentVisualization, VectorVisualization, ImageVisualization, SurfaceVisualization> data{SegmentVisualization{}};
-        friend auto operator<=>(const DynamicVisualizationView&, const DynamicVisualizationView&) = default;
+        friend auto operator<=>(const SimulationVisualization&, const SimulationVisualization&) = default;
     };
 
-    export struct DynamicSystem {
-        DynamicSystemId id{};
+    export struct SimulationSystem {
+        SimulationSystemId id{};
         std::string name{};
         std::string provider_id{};
         bool enabled{true};
         bool visible{true};
-        std::vector<DynamicParameterSetting> parameters{};
-        std::vector<DynamicSceneBinding> scene_bindings{};
-        std::vector<DynamicVisualizationView> visualizations{};
-        friend auto operator<=>(const DynamicSystem&, const DynamicSystem&) = default;
+        std::vector<SimulationParameterSetting> parameters{};
+        std::vector<SimulationOutputBinding> scene_bindings{};
+        std::vector<SimulationVisualization> visualizations{};
+        friend auto operator<=>(const SimulationSystem&, const SimulationSystem&) = default;
     };
 
-    export struct DynamicClock {
+    export struct SimulationClock {
         double step_seconds{1.0 / 120.0};
         std::uint64_t start_step{};
         std::optional<std::uint64_t> end_step{};
         bool loop{};
-        friend auto operator<=>(const DynamicClock&, const DynamicClock&) = default;
+        friend auto operator<=>(const SimulationClock&, const SimulationClock&) = default;
     };
 
-    export struct DynamicSetup {
-        DynamicClock clock{};
+    export struct SimulationSetup {
+        SimulationClock clock{};
         std::uint64_t seed{};
-        std::vector<DynamicSystem> systems{};
-        friend auto operator<=>(const DynamicSetup&, const DynamicSetup&) = default;
+        std::vector<SimulationSystem> systems{};
+        friend auto operator<=>(const SimulationSetup&, const SimulationSetup&) = default;
     };
 
     export struct SceneResources {
@@ -1031,8 +1064,8 @@ namespace spectra::scene {
         Transport   = 1 << 11,
         Structure   = 1 << 12,
         NeuralField = 1 << 13,
-        Particle     = 1 << 14,
-        All          = 0x7fff,
+        Particle    = 1 << 14,
+        All         = 0x7fff,
     };
 
     export [[nodiscard]] constexpr SceneChange operator|(const SceneChange left, const SceneChange right) noexcept {
@@ -1050,7 +1083,7 @@ namespace spectra::scene {
         friend auto operator<=>(const SceneRevision&, const SceneRevision&) = default;
     };
 
-    export struct SceneView {
+    export struct ResolvedSceneView {
         const SceneResources& resources;
         const Camera& camera;
         const Film& film;
@@ -1072,9 +1105,9 @@ namespace spectra::scene {
         FilmId active_film{};
         SamplerId active_sampler{};
         TransportSettings transport{};
-        std::optional<DynamicSetup> dynamic_setup{};
+        std::optional<SimulationSetup> simulation{};
 
-        [[nodiscard]] SceneView view() const noexcept;
+        [[nodiscard]] ResolvedSceneView view() const noexcept;
         [[nodiscard]] const Camera& camera() const noexcept;
         [[nodiscard]] const Film& film() const noexcept;
         [[nodiscard]] const Sampler& sampler() const noexcept;

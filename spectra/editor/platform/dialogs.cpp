@@ -10,17 +10,17 @@ module;
 module spectra.editor.platform.dialogs;
 import std;
 
-namespace spectra {
-    EditorDialogs::EditorDialogs(WindowPlatform& platform) : platform{platform} {
+namespace spectra::editor {
+    Dialogs::Dialogs(WindowPlatform& platform) : platform{platform} {
         const HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         if (result != S_OK && result != S_FALSE) throw std::runtime_error(std::format("COM initialization failed with HRESULT 0x{:08X}", static_cast<std::uint32_t>(result)));
     }
 
-    EditorDialogs::~EditorDialogs() {
+    Dialogs::~Dialogs() {
         CoUninitialize();
     }
 
-    std::optional<std::filesystem::path> EditorDialogs::choose_scene_file() {
+    std::optional<std::filesystem::path> Dialogs::choose_scene_file() {
         Microsoft::WRL::ComPtr<IFileOpenDialog> dialog{};
         if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) throw std::runtime_error("Failed to create the Windows open dialog");
         constexpr std::array filters{COMDLG_FILTERSPEC{L"Spectra Scene", L"*.spectra"}};
@@ -38,7 +38,7 @@ namespace spectra {
         return result;
     }
 
-    std::optional<std::filesystem::path> EditorDialogs::choose_scene_save_path(const std::filesystem::path& current_path) {
+    std::optional<std::filesystem::path> Dialogs::choose_scene_save_path(const std::filesystem::path& current_path) {
         Microsoft::WRL::ComPtr<IFileSaveDialog> dialog{};
         if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) throw std::runtime_error("Failed to create the Windows save dialog");
         constexpr std::array filters{COMDLG_FILTERSPEC{L"Spectra Scene", L"*.spectra"}};
@@ -58,10 +58,10 @@ namespace spectra {
         return result;
     }
 
-    SceneReplacementDecision EditorDialogs::confirm_scene_replacement() const noexcept {
+    SceneReplacementDecision Dialogs::confirm_scene_replacement() const noexcept {
         const int result = MessageBoxW(this->platform.native_window, L"The current Spectra scene has unsaved changes.\n\nSave before continuing?", L"Spectra", MB_ICONWARNING | MB_YESNOCANCEL);
         if (result == IDYES) return SceneReplacementDecision::Save;
         if (result == IDNO) return SceneReplacementDecision::Discard;
         return SceneReplacementDecision::Cancel;
     }
-} // namespace spectra
+} // namespace spectra::editor

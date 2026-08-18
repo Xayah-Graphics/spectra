@@ -5,14 +5,14 @@ import spectra.runtime;
 import std;
 import vulkan;
 
-namespace spectra {
+namespace spectra::editor {
     export inline constexpr std::array<const char*, 2> presentation_instance_extensions{
         vk::KHRSurfaceExtensionName,
         vk::KHRWin32SurfaceExtensionName,
     };
 
     export struct VulkanSurface {
-        VulkanSurface(WindowPlatform& platform, VulkanInstance& instance);
+        VulkanSurface(WindowPlatform& platform, runtime::VulkanInstance& instance);
 
         VulkanSurface(const VulkanSurface&)            = delete;
         VulkanSurface(VulkanSurface&&)                 = delete;
@@ -30,12 +30,12 @@ namespace spectra {
     };
 
     export struct PresentedFrameContext {
-        FrameContext frame;
+        runtime::FrameContext frame;
         PresentationTarget presentation_target{};
     };
 
     export struct VulkanPresentation {
-        VulkanPresentation(WindowPlatform& platform, VulkanSurface& surface, VulkanGraphics& graphics, VulkanFrames& frames);
+        VulkanPresentation(WindowPlatform& platform, VulkanSurface& surface, runtime::VulkanDevice& device, runtime::VulkanFrames& frames);
         ~VulkanPresentation();
 
         VulkanPresentation(const VulkanPresentation&)            = delete;
@@ -50,8 +50,8 @@ namespace spectra {
         struct {
             WindowPlatform& platform;
             VulkanSurface& surface;
-            VulkanGraphics& graphics;
-            VulkanFrames& frames;
+            runtime::VulkanDevice& device;
+            runtime::VulkanFrames& frames;
         } context;
 
         struct {
@@ -71,4 +71,4 @@ namespace spectra {
         void recreate_swapchain();
         void wait_presentations();
     };
-} // namespace spectra
+} // namespace spectra::editor

@@ -3,6 +3,5 @@
 cmake-build-*
 build*
 /install/
-/sdk/install/
 AGENTS.md
 TODO.md

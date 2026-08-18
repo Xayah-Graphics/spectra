@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 4.4.0)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
-project(spectra VERSION 2.0.0 LANGUAGES C CXX)
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" SPECTRA_VERSION LIMIT_COUNT 1)
+project(spectra VERSION "${SPECTRA_VERSION}" LANGUAGES C CXX)
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Spectra installation directory" FORCE)
@@ -57,38 +58,40 @@ target_sources(
         FILE_SET cxx_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
         FILES
-        spectra/core/runtime/graphics.ixx
+        spectra/core/runtime/device.ixx
         spectra/core/runtime/resources.ixx
         spectra/core/runtime/frames.ixx
         spectra/core/runtime/runtime.ixx
-        spectra/core/util/math.ixx
+        spectra/core/math/math.ixx
         spectra/core/headless.ixx
         spectra/core/scene/scene.ixx
-        spectra/core/scene/format.ixx
-        spectra/core/scene/document.ixx
-        spectra/core/dynamics/contract.ixx
-        spectra/core/dynamics/gpu.ixx
-        spectra/core/dynamics/runtime.ixx
-        spectra/core/render/contract.ixx
+        spectra/core/scene/io.ixx
+        spectra/core/simulation/simulation.ixx
+        spectra/core/simulation/frame.ixx
+        spectra/core/simulation/provider.ixx
+        spectra/core/simulation/runtime.ixx
+        spectra/core/render/types.ixx
         spectra/core/render/gpu_scene.ixx
-        spectra/core/render/capture.ixx
-        spectra/core/render/rasterizer.ixx
+        spectra/core/headless/output.ixx
+        spectra/core/render/rasterizer/compiler.ixx
+        spectra/core/render/rasterizer/rasterizer.ixx
         spectra/core/render/pathtracer/resources.ixx
-        spectra/core/render/pathtracer/scene.ixx
+        spectra/core/render/pathtracer/compiler.ixx
         spectra/core/render/pathtracer.ixx
         spectra/core/render/render.ixx
-        spectra/core/render/composition/neural_field.ixx
-        spectra/core/render/composition/diagnostics.ixx
-        spectra/core/render/composition/visualization.ixx
-        spectra/core/render/composition/overlay.ixx
-        spectra/core/render/composition/composition.ixx
+        spectra/core/render/display/types.ixx
+        spectra/core/render/display/neural_field.ixx
+        spectra/core/render/display/diagnostics.ixx
+        spectra/core/render/display/visualization.ixx
+        spectra/core/render/display/overlay.ixx
+        spectra/core/render/display/display.ixx
         PUBLIC
         FILE_SET generated_render_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
         FILES
         "${SPECTRA_RASTER_ABI_MODULE}"
         "${SPECTRA_PATH_TRACER_ABI_MODULE}"
-        "${SPECTRA_RUNTIME_ABI_MODULE}"
+        "${SPECTRA_RENDER_ABI_MODULE}"
         PRIVATE
         FILE_SET generated_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
@@ -98,33 +101,32 @@ target_sources(
         FILE_SET internal_modules TYPE CXX_MODULES
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
         FILES
-        spectra/core/scene/asset_import.ixx
+        spectra/core/scene/assets.ixx
         PRIVATE
         spectra/core/runtime/runtime.cpp
-        spectra/core/runtime/graphics.cpp
+        spectra/core/runtime/device.cpp
         spectra/core/runtime/resources.cpp
         spectra/core/runtime/frames.cpp
-        spectra/core/util/math.cpp
+        spectra/core/math/math.cpp
         spectra/core/headless.cpp
         spectra/core/scene/scene.cpp
-        spectra/core/scene/asset_import.cpp
-        spectra/core/scene/format.cpp
-        spectra/core/scene/format_read.cpp
-        spectra/core/scene/document.cpp
-        spectra/core/dynamics/runtime.cpp
-        spectra/core/render/contract.cpp
+        spectra/core/scene/assets.cpp
+        spectra/core/scene/io.cpp
+        spectra/core/simulation/provider.cpp
+        spectra/core/simulation/runtime.cpp
         spectra/core/render/gpu_scene.cpp
-        spectra/core/render/capture.cpp
-        spectra/core/render/rasterizer.cpp
+        spectra/core/headless/output.cpp
+        spectra/core/render/rasterizer/compiler.cpp
+        spectra/core/render/rasterizer/rasterizer.cpp
         spectra/core/render/pathtracer/resources.cpp
-        spectra/core/render/pathtracer/scene.cpp
+        spectra/core/render/pathtracer/compiler.cpp
         spectra/core/render/pathtracer.cpp
         spectra/core/render/render.cpp
-        spectra/core/render/composition/neural_field.cpp
-        spectra/core/render/composition/visualization.cpp
-        spectra/core/render/composition/diagnostics.cpp
-        spectra/core/render/composition/overlay.cpp
-        spectra/core/render/composition/composition.cpp
+        spectra/core/render/display/neural_field.cpp
+        spectra/core/render/display/visualization.cpp
+        spectra/core/render/display/diagnostics.cpp
+        spectra/core/render/display/overlay.cpp
+        spectra/core/render/display/display.cpp
 )
 target_link_libraries(
         spectra_core
@@ -156,11 +158,14 @@ if (SPECTRA_BUILD_UI)
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES
             spectra/editor/platform/window.ixx
+            spectra/editor/document/document.ixx
             spectra/editor/platform/presentation.ixx
             spectra/editor/platform/dialogs.ixx
-            spectra/editor/viewport/interaction.ixx
+            spectra/editor/viewport/viewport.ixx
             spectra/editor/viewport/picker.ixx
             spectra/editor/ui/imgui.ixx
+            spectra/editor/ui/inspector.ixx
+            spectra/editor/ui/simulation.ixx
             spectra/editor/ui/ui.ixx
             PRIVATE
             FILE_SET generated_editor_modules TYPE CXX_MODULES
@@ -169,14 +174,16 @@ if (SPECTRA_BUILD_UI)
             "${SPECTRA_EDITOR_ABI_MODULE}"
             PRIVATE
             spectra/editor/editor.cpp
+            spectra/editor/document/document.cpp
             spectra/editor/platform/window.cpp
             spectra/editor/platform/presentation.cpp
             spectra/editor/platform/dialogs.cpp
-            spectra/editor/viewport/interaction.cpp
+            spectra/editor/viewport/viewport.cpp
             spectra/editor/viewport/picker.cpp
             spectra/editor/ui/imgui.cpp
+            spectra/editor/ui/inspector.cpp
+            spectra/editor/ui/simulation.cpp
             spectra/editor/ui/ui.cpp
-            spectra/editor/ui/ui_diagnostics.cpp
     )
     target_compile_definitions(
             spectra_editor
@@ -212,6 +219,7 @@ endif ()
 target_compile_definitions(
         spectra
         PRIVATE
+        SPECTRA_VERSION="${PROJECT_VERSION}"
         SPECTRA_RESOURCE_DIRECTORY="${SPECTRA_RESOURCE_RELATIVE_DIR}"
 )
 target_link_libraries(spectra PRIVATE spectra_core xayah::util::xcli)
@@ -239,7 +247,7 @@ add_custom_command(
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/shaders"
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
-        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SPECTRA_RUNTIME_SHADER_OUTPUT_DIR}" "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SPECTRA_RENDER_SHADER_OUTPUT_DIR}" "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SPECTRA_PATH_TRACER_SHADER_OUTPUT_DIR}" "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/shaders"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${SPECTRA_SPECTRAL_ASSETS} "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer/spectral"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SPECTRA_SAMPLING_ASSET}" "${SPECTRA_BUILD_RESOURCE_DIR}/pathtracer"
@@ -276,7 +284,7 @@ install(
         COMPONENT Spectra
 )
 install(
-        DIRECTORY "${SPECTRA_RUNTIME_SHADER_OUTPUT_DIR}/"
+        DIRECTORY "${SPECTRA_RENDER_SHADER_OUTPUT_DIR}/"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/spectra/shaders"
         COMPONENT Spectra
 )

@@ -3,11 +3,11 @@ module spectra.runtime;
 import std;
 import vulkan;
 
-namespace spectra {
-    VulkanRuntime::VulkanRuntime(VulkanInstance& instance, const vk::SurfaceKHR surface) : graphics(instance, surface), resources(this->graphics), frames(this->graphics, this->resources) {}
+namespace spectra::runtime {
+    VulkanRuntime::VulkanRuntime(VulkanInstance& instance, const vk::SurfaceKHR surface) : device(instance, surface), resources(this->device), frames(this->device, this->resources) {}
 
     VulkanRuntime::~VulkanRuntime() {
-        static_cast<void>(this->graphics.device.getDispatcher()->vkDeviceWaitIdle(*this->graphics.device));
+        static_cast<void>(this->device.logical.getDispatcher()->vkDeviceWaitIdle(*this->device.logical));
     }
 
     std::vector<std::uint32_t> load_spirv(const std::filesystem::path& path) {
@@ -21,4 +21,15 @@ namespace spectra {
         if (!input) throw std::runtime_error(std::format("Cannot read Spectra shader: {}", path.string()));
         return words;
     }
-} // namespace spectra
+
+    void record_default_graphics_state(const vk::raii::CommandBuffer& command_buffer) {
+        command_buffer.setRasterizerDiscardEnable(vk::False);
+        command_buffer.setPolygonModeEXT(vk::PolygonMode::eFill);
+        command_buffer.setRasterizationSamplesEXT(vk::SampleCountFlagBits::e1);
+        command_buffer.setAlphaToCoverageEnableEXT(vk::False);
+        command_buffer.setDepthBiasEnable(vk::False);
+        command_buffer.setStencilTestEnable(vk::False);
+        constexpr vk::SampleMask sample_mask = 1;
+        command_buffer.setSampleMaskEXT(vk::SampleCountFlagBits::e1, sample_mask);
+    }
+} // namespace spectra::runtime
