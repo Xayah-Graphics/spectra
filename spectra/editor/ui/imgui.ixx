@@ -5,14 +5,14 @@ module;
 export module spectra.editor.ui.imgui;
 
 import spectra.editor.platform.window;
-import spectra.render.display;
+import spectra.render.composition;
 import spectra.runtime;
 import std;
 import vulkan;
 
 namespace spectra {
     export struct ImGuiBackend {
-        ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, DisplayPass& display, std::filesystem::path shader_directory) noexcept;
+        ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, RenderCompositor& compositor, std::filesystem::path shader_directory) noexcept;
         ~ImGuiBackend();
 
         ImGuiBackend(const ImGuiBackend&)            = delete;
@@ -41,7 +41,7 @@ namespace spectra {
         struct {
             WindowPlatform& platform;
             VulkanRuntime& runtime;
-            DisplayPass& display;
+            RenderCompositor& compositor;
             std::filesystem::path shader_directory{};
         } context;
 

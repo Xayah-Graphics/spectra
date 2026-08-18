@@ -8,7 +8,6 @@ import spectra.render.composition.visualization;
 import spectra.render;
 import spectra.render.composition;
 import spectra.render.capture;
-import spectra.render.display;
 import spectra.render.gpu_scene;
 import spectra.runtime;
 import spectra.scene;
@@ -87,10 +86,10 @@ namespace spectra {
         RenderEngine render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, request.renderer, raster_display_mode};
         render_engine.rebuild(document.content.evaluated.view());
         if (request.renderer == pathtracer_descriptor.id) render_engine.wait_for_pathtracer();
-        std::unique_ptr<DisplayPass> display{};
+        std::unique_ptr<RenderCompositor> compositor{};
         if (output_layer != RenderOutputLayer::RendererLinear) {
-            display = std::make_unique<DisplayPass>(runtime, shader_directory);
-            display->initialize();
+            compositor = std::make_unique<RenderCompositor>(runtime, shader_directory);
+            compositor->initialize();
         }
         std::unique_ptr<VisualizationRenderer> visualization{};
         if (output_layer == RenderOutputLayer::ComposedDisplay && compose_visualizations) visualization = std::make_unique<VisualizationRenderer>(runtime, gpu_scene, shader_directory);
@@ -108,7 +107,7 @@ namespace spectra {
         }
 
         const vk::Extent2D extent{film.resolution[0], film.resolution[1]};
-        if (display) static_cast<void>(display->resize(extent));
+        if (compositor) static_cast<void>(compositor->resize(extent));
         const RenderView view{camera, extent, 1};
         GpuBuffer linear_readback{};
         GpuBuffer display_readback{};
@@ -131,37 +130,36 @@ namespace spectra {
                 const RenderOutput renderer_output         = render_engine.output();
                 const std::optional<DepthBufferView> depth = render_engine.depth_buffer();
                 if (output_layer != RenderOutputLayer::RendererLinear) {
-                    if (output_layer == RenderOutputLayer::RendererDisplay && !neural_field->has_visible(document.content.evaluated.view()))
-                        display->record(frame.command_buffer, renderer_output, 0.0f);
-                    else {
-                        const SceneGuideSettings scene_guides{.all_bounds = true};
-                        const EntityDiagnostics entity_diagnostics{};
-                        const SelectionState selection{};
-                        record_render_composition(frame.command_buffer, *display,
-                            RenderCompositionRequest{
-                                .renderer_output        = renderer_output,
-                                .depth                  = depth,
-                                .scene                  = document.content.evaluated.view(),
-                                .camera                 = camera,
-                                .scene_camera_view      = camera.id,
-                                .visualizations         = dynamics.visualizations(),
-                                .visualization          = visualization.get(),
-                                .neural_field           = neural_field.get(),
-                                .diagnostics            = diagnostics ? std::optional{SceneDiagnosticsComposition{*diagnostics, scene_guides, entity_diagnostics, selection}} : std::nullopt,
-                                .frame_slot_index       = frame.slot_index,
-                                .compose_visualizations = compose_visualizations,
-                            });
+                    const SceneGuideSettings scene_guides{.all_bounds = true};
+                    const EntityDiagnostics entity_diagnostics{};
+                    const SelectionState selection{};
+                    std::array<scene::InstanceId, 1> outlined{};
+                    std::span<const scene::InstanceId> selected{};
+                    if (request.outlined_instance) {
+                        outlined[0] = scene::InstanceId{*request.outlined_instance};
+                        selected    = outlined;
                     }
-                    if (overlay) {
-                        std::array<scene::InstanceId, 1> outlined{};
-                        std::span<const scene::InstanceId> selected{};
-                        if (request.outlined_instance) {
-                            outlined[0] = scene::InstanceId{*request.outlined_instance};
-                            selected    = outlined;
-                        }
-                        overlay->record(frame.command_buffer, display->target(), camera, ViewportOverlayState{.selected_instances = selected, .axes_plane = request.axes_plane, .axes_visible = request.axes});
-                    }
-                    const ColorCompositionTarget display_target = display->target();
+                    const ViewportOverlayState overlay_state{
+                        .selected_instances = selected,
+                        .axes_plane         = request.axes_plane,
+                        .axes_visible       = request.axes,
+                    };
+                    compositor->record(frame.command_buffer,
+                        RenderCompositionRequest{
+                            .renderer_output        = renderer_output,
+                            .depth                  = depth,
+                            .scene                  = document.content.evaluated.view(),
+                            .camera                 = camera,
+                            .scene_camera_view      = camera.id,
+                            .visualizations         = dynamics.visualizations(),
+                            .visualization          = visualization.get(),
+                            .neural_field           = neural_field.get(),
+                            .diagnostics            = diagnostics ? std::optional{SceneDiagnosticsComposition{*diagnostics, scene_guides, entity_diagnostics, selection}} : std::nullopt,
+                            .overlay                = overlay ? std::optional{ViewportOverlayComposition{*overlay, overlay_state}} : std::nullopt,
+                            .frame_slot_index       = frame.slot_index,
+                            .compose_visualizations = compose_visualizations,
+                        });
+                    const ColorCompositionTarget display_target = compositor->target();
                     record_display_readback(runtime, frame.command_buffer, display_target.image, display_target.layout, display_readback);
                 }
                 record_linear_readback(runtime, frame.command_buffer, renderer_output, linear_readback);

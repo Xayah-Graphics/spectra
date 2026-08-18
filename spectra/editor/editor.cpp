@@ -14,7 +14,6 @@ import spectra.render.composition.diagnostics;
 import spectra.render.composition.neural_field;
 import spectra.render.composition.overlay;
 import spectra.render.composition.visualization;
-import spectra.render.display;
 import spectra.render.gpu_scene;
 import spectra.runtime;
 import spectra.scene;
@@ -47,7 +46,7 @@ namespace spectra {
         SceneDiagnosticRenderer diagnostics;
         RenderEngine render_engine;
         ViewportInteraction viewport;
-        DisplayPass display;
+        RenderCompositor compositor;
         NeuralFieldRenderer neural_field;
         VisualizationRenderer visualization;
         ViewportOverlay overlay;
@@ -70,12 +69,12 @@ namespace spectra {
         void destroy_rendering() noexcept;
         void rebuild_rendering();
         [[nodiscard]] bool prepare_rendering(const vk::raii::CommandBuffer& command_buffer, vk::Extent2D extent, std::uint32_t frame_slot_index);
-        void record_editor_overlays(const vk::raii::CommandBuffer& command_buffer, bool show_axes);
+        void record_scene_frame(const vk::raii::CommandBuffer& command_buffer, vk::Extent2D extent, std::uint32_t frame_slot_index, bool show_axes);
     };
 
     EditorApplication::EditorApplication(EditorRequest request, const std::filesystem::path& shader_directory, const std::filesystem::path& pathtracer_directory)
-        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, dynamics{runtime}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics, gpu_scene}, display{runtime, shader_directory}, neural_field{runtime, gpu_scene, shader_directory}, visualization{runtime, gpu_scene, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, imgui{platform, runtime, display, shader_directory}, ui{document, viewport_settings, dynamics, render_engine, viewport, picker, imgui} {
-        this->display.initialize();
+        : platform{"Spectra", {1920, 1080}}, dialogs{platform}, instance{"Spectra", presentation_instance_extensions}, surface{platform, instance}, runtime{instance, *surface.surface}, presentation{platform, surface, runtime.graphics, runtime.frames}, dynamics{runtime}, gpu_scene{runtime, shader_directory}, diagnostics{runtime, gpu_scene, shader_directory}, render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, std::move(request.renderer), parse_raster_display_mode(request.raster_display_mode)}, viewport{document, dynamics, gpu_scene}, compositor{runtime, shader_directory}, neural_field{runtime, gpu_scene, shader_directory}, visualization{runtime, gpu_scene, shader_directory}, overlay{runtime, gpu_scene, shader_directory}, picker{runtime, gpu_scene, shader_directory}, imgui{platform, runtime, compositor, shader_directory}, ui{document, viewport_settings, dynamics, render_engine, viewport, picker, imgui} {
+        this->compositor.initialize();
         this->diagnostics.initialize();
         this->imgui.initialize();
         if (request.scene_path) this->open_scene(*request.scene_path);
@@ -118,53 +117,8 @@ namespace spectra {
                         this->ui.notify(error.what(), true);
                     }
                 this->imgui.resize_viewport(frame->presentation_target.extent);
-                const vk::Extent2D viewport_extent = this->display.target().image.extent;
-                if (this->prepare_rendering(frame->frame.command_buffer, viewport_extent, frame->frame.slot_index)) {
-                    this->render_engine.record(frame->frame.command_buffer, frame->frame.slot_index);
-                    const RenderOutput output                  = this->render_engine.output();
-                    const std::optional<DepthBufferView> depth = this->render_engine.depth_buffer();
-                    EntityDiagnostics default_diagnostics{};
-                    const EntityDiagnostics& entity_diagnostics = this->viewport.view.selection.active ? this->viewport_settings.entity_diagnostics.try_emplace(*this->viewport.view.selection.active).first->second : default_diagnostics;
-                    std::optional<CameraReferenceVisualization> camera_reference{};
-                    if (this->viewport.view.selection.active && std::holds_alternative<scene::CameraId>(this->viewport.view.selection.active->data)) {
-                        const scene::CameraId camera_id = std::get<scene::CameraId>(this->viewport.view.selection.active->data);
-                        if (const dynamics::CameraReferenceImage* reference = this->dynamics.camera_reference(camera_id)) {
-                            const scene::Camera& camera = *std::ranges::find(this->document.content.evaluated.resources.cameras, camera_id, &scene::Camera::id);
-                            const bool viewing_reference = this->viewport.view.source == CameraSource::Scene && this->viewport.view.scene_camera == camera_id;
-                            const math::Float4 gate = viewing_reference ? this->viewport.view.camera_gate.value_or(math::Float4{0.0f, 0.0f, 1.0f, 1.0f}) : math::Float4{0.0f, 0.0f, 1.0f, 1.0f};
-                            const float image_aspect = static_cast<float>(reference->extent[0]) / static_cast<float>(reference->extent[1]);
-                            const float maximum_width = gate.z * 0.28f;
-                            const float maximum_height = gate.w * 0.28f;
-                            const float overlay_width = std::min(maximum_width, maximum_height * static_cast<float>(viewport_extent.height) * image_aspect / static_cast<float>(viewport_extent.width));
-                            const float overlay_height = overlay_width * static_cast<float>(viewport_extent.width) / (image_aspect * static_cast<float>(viewport_extent.height));
-                            const math::Float4 overlay_rect{
-                                gate.x + 16.0f / static_cast<float>(viewport_extent.width),
-                                gate.y + gate.w - overlay_height - 16.0f / static_cast<float>(viewport_extent.height),
-                                overlay_width,
-                                overlay_height,
-                            };
-                            camera_reference = CameraReferenceVisualization{reference, &camera, overlay_rect, entity_diagnostics.camera_gt_overlay, entity_diagnostics.camera_gt_plane};
-                        }
-                    }
-                    record_render_composition(frame->frame.command_buffer, this->display,
-                        RenderCompositionRequest{
-                            .renderer_output        = output,
-                            .depth                  = depth,
-                            .scene                  = this->document.content.evaluated.view(),
-                            .camera                 = this->viewport.view.render_camera,
-                            .scene_camera_view      = this->viewport.view.source == CameraSource::Scene ? std::optional{this->viewport.view.scene_camera} : std::nullopt,
-                            .visualizations         = this->dynamics.visualizations(),
-                            .visualization          = &this->visualization,
-                            .neural_field           = &this->neural_field,
-                            .diagnostics            = SceneDiagnosticsComposition{this->diagnostics, this->viewport_settings.scene_guides, entity_diagnostics, this->viewport.view.selection, this->viewport_settings.guides_visible},
-                            .camera_reference       = camera_reference,
-                            .frame_slot_index       = frame->frame.slot_index,
-                            .exposure               = this->viewport_settings.exposure,
-                            .compose_visualizations = true,
-                        });
-                    this->picker.record(frame->frame.command_buffer, frame->frame.slot_index, this->document.content.evaluated.view(), this->viewport.view.render_camera, *depth, &this->diagnostics.pick_image());
-                    this->record_editor_overlays(frame->frame.command_buffer, actions.show_axes);
-                }
+                const vk::Extent2D viewport_extent = this->compositor.target().image.extent;
+                if (this->prepare_rendering(frame->frame.command_buffer, viewport_extent, frame->frame.slot_index)) this->record_scene_frame(frame->frame.command_buffer, viewport_extent, frame->frame.slot_index, actions.show_axes);
             }
 
             this->imgui.record(frame->frame.command_buffer, frame->frame.slot_index, frame->presentation_target.image, frame->presentation_target.view, frame->presentation_target.extent, frame->presentation_target.image_layout, vk::ImageLayout::ePresentSrcKHR);
@@ -366,27 +320,71 @@ namespace spectra {
         return renderer_ready;
     }
 
-    void EditorApplication::record_editor_overlays(const vk::raii::CommandBuffer& command_buffer, const bool show_axes) {
+    void EditorApplication::record_scene_frame(const vk::raii::CommandBuffer& command_buffer, const vk::Extent2D extent, const std::uint32_t frame_slot_index, const bool show_axes) {
+        this->render_engine.record(command_buffer, frame_slot_index);
+        const RenderOutput output                  = this->render_engine.output();
+        const std::optional<DepthBufferView> depth = this->render_engine.depth_buffer();
+        EntityDiagnostics default_diagnostics{};
+        const EntityDiagnostics& entity_diagnostics = this->viewport.view.selection.active ? this->viewport_settings.entity_diagnostics.try_emplace(*this->viewport.view.selection.active).first->second : default_diagnostics;
+        std::optional<CameraReferenceVisualization> camera_reference{};
+        if (this->viewport.view.selection.active && std::holds_alternative<scene::CameraId>(this->viewport.view.selection.active->data)) {
+            const scene::CameraId camera_id = std::get<scene::CameraId>(this->viewport.view.selection.active->data);
+            if (const dynamics::CameraReferenceImage* reference = this->dynamics.camera_reference(camera_id)) {
+                const scene::Camera& camera          = *std::ranges::find(this->document.content.evaluated.resources.cameras, camera_id, &scene::Camera::id);
+                const bool viewing_reference        = this->viewport.view.source == CameraSource::Scene && this->viewport.view.scene_camera == camera_id;
+                const math::Float4 gate              = viewing_reference ? this->viewport.view.camera_gate.value_or(math::Float4{0.0f, 0.0f, 1.0f, 1.0f}) : math::Float4{0.0f, 0.0f, 1.0f, 1.0f};
+                const float image_aspect             = static_cast<float>(reference->extent[0]) / static_cast<float>(reference->extent[1]);
+                const float maximum_width            = gate.z * 0.28f;
+                const float maximum_height           = gate.w * 0.28f;
+                const float overlay_width            = std::min(maximum_width, maximum_height * static_cast<float>(extent.height) * image_aspect / static_cast<float>(extent.width));
+                const float overlay_height           = overlay_width * static_cast<float>(extent.width) / (image_aspect * static_cast<float>(extent.height));
+                const math::Float4 overlay_rect{
+                    gate.x + 16.0f / static_cast<float>(extent.width),
+                    gate.y + gate.w - overlay_height - 16.0f / static_cast<float>(extent.height),
+                    overlay_width,
+                    overlay_height,
+                };
+                camera_reference = CameraReferenceVisualization{reference, &camera, overlay_rect, entity_diagnostics.camera_gt_overlay, entity_diagnostics.camera_gt_plane};
+            }
+        }
+
         std::vector<scene::InstanceId> selected_instances{};
         for (const SceneEntityReference entity : this->viewport.view.selection.selected) {
             if (const scene::InstanceId* instance = std::get_if<scene::InstanceId>(&entity.data)) selected_instances.emplace_back(*instance);
             else if (const SceneEntityReference::AreaEmitter* emitter = std::get_if<SceneEntityReference::AreaEmitter>(&entity.data)) selected_instances.emplace_back(emitter->instance);
         }
-        const auto instance_id = [](const std::optional<SceneEntityReference> entity) -> std::optional<scene::InstanceId> {
+        const auto instance_id = [](const std::optional<SceneEntityReference>& entity) -> std::optional<scene::InstanceId> {
             if (!entity) return std::nullopt;
             if (const scene::InstanceId* instance = std::get_if<scene::InstanceId>(&entity->data)) return *instance;
             if (const SceneEntityReference::AreaEmitter* emitter = std::get_if<SceneEntityReference::AreaEmitter>(&entity->data)) return emitter->instance;
             return std::nullopt;
         };
-        this->overlay.record(command_buffer, this->display.target(), this->viewport.view.render_camera,
-            ViewportOverlayState{
-                .selected_instances = selected_instances,
-                .active_instance    = instance_id(this->viewport.view.selection.active),
-                .hovered_instance   = instance_id(this->viewport.view.selection.hovered),
-                .axes_plane         = std::to_underlying(this->viewport.view.source == CameraSource::Scene ? AxesPlane::Xz : this->viewport.view.axes_plane),
-                .axes_visible       = show_axes,
-                .outline_visible    = this->viewport_settings.guides_visible && this->viewport_settings.selection_outline,
+        const ViewportOverlayState overlay_state{
+            .selected_instances = selected_instances,
+            .active_instance    = instance_id(this->viewport.view.selection.active),
+            .hovered_instance   = instance_id(this->viewport.view.selection.hovered),
+            .axes_plane         = std::to_underlying(this->viewport.view.source == CameraSource::Scene ? AxesPlane::Xz : this->viewport.view.axes_plane),
+            .axes_visible       = show_axes,
+            .outline_visible    = this->viewport_settings.guides_visible && this->viewport_settings.selection_outline,
+        };
+        this->compositor.record(command_buffer,
+            RenderCompositionRequest{
+                .renderer_output        = output,
+                .depth                  = depth,
+                .scene                  = this->document.content.evaluated.view(),
+                .camera                 = this->viewport.view.render_camera,
+                .scene_camera_view      = this->viewport.view.source == CameraSource::Scene ? std::optional{this->viewport.view.scene_camera} : std::nullopt,
+                .visualizations         = this->dynamics.visualizations(),
+                .visualization          = &this->visualization,
+                .neural_field           = &this->neural_field,
+                .diagnostics            = SceneDiagnosticsComposition{this->diagnostics, this->viewport_settings.scene_guides, entity_diagnostics, this->viewport.view.selection, this->viewport_settings.guides_visible},
+                .camera_reference       = camera_reference,
+                .overlay                = ViewportOverlayComposition{this->overlay, overlay_state},
+                .frame_slot_index       = frame_slot_index,
+                .exposure               = this->viewport_settings.exposure,
+                .compose_visualizations = true,
             });
+        this->picker.record(command_buffer, frame_slot_index, this->document.content.evaluated.view(), this->viewport.view.render_camera, *depth, &this->diagnostics.pick_image());
     }
 
     void run_editor(EditorRequest request, const std::filesystem::path& shader_directory, const std::filesystem::path& pathtracer_directory) {

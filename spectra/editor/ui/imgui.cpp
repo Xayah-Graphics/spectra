@@ -19,7 +19,7 @@ namespace spectra {
 
     } // namespace
 
-    ImGuiBackend::ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, DisplayPass& display, std::filesystem::path shader_directory) noexcept : context{platform, runtime, display, std::move(shader_directory)} {}
+    ImGuiBackend::ImGuiBackend(WindowPlatform& platform, VulkanRuntime& runtime, RenderCompositor& compositor, std::filesystem::path shader_directory) noexcept : context{platform, runtime, compositor, std::move(shader_directory)} {}
 
     ImGuiBackend::~ImGuiBackend() {
         if (!this->initialized) return;
@@ -74,15 +74,15 @@ namespace spectra {
 
     void ImGuiBackend::resize_viewport(const vk::Extent2D extent) {
         this->viewport_extent = extent;
-        if (!this->context.display.resize(extent)) return;
+        if (!this->context.compositor.resize(extent)) return;
         DescriptorLease descriptor = this->context.runtime.frames.allocate_resource_descriptor();
-        this->context.runtime.resources.write_sampled_image_descriptor(descriptor, this->context.display.target().image, vk::ImageLayout::eShaderReadOnlyOptimal);
+        this->context.runtime.resources.write_sampled_image_descriptor(descriptor, this->context.compositor.target().image, vk::ImageLayout::eShaderReadOnlyOptimal);
         this->renderer.viewport_descriptor = std::move(descriptor);
         this->viewport_texture_id          = static_cast<std::uint64_t>(static_cast<DescriptorHandle>(this->renderer.viewport_descriptor).slot_index) + 1u;
     }
 
     void ImGuiBackend::record(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index, const vk::Image target_image, const vk::ImageView target_view, const vk::Extent2D extent, const vk::ImageLayout target_layout, const vk::ImageLayout final_layout) {
-        this->context.display.prepare_sampling(command_buffer);
+        this->context.compositor.prepare_sampling(command_buffer);
         ImDrawData& draw_data = *ImGui::GetDrawData();
         FrameResources& frame = this->renderer.frames[frame_slot_index];
         if (draw_data.Textures != nullptr)
