@@ -26,7 +26,7 @@ find_package(CUDAToolkit 13 REQUIRED)
 
 add_library(spectra_sdk STATIC)
 add_library(SpectraSDK::sdk ALIAS spectra_sdk)
-set_target_properties(spectra_sdk PROPERTIES EXPORT_NAME sdk POSITION_INDEPENDENT_CODE ON)
+set_target_properties(spectra_sdk PROPERTIES EXPORT_NAME sdk POSITION_INDEPENDENT_CODE ON DEBUG_POSTFIX d)
 target_sources(
         spectra_sdk
         PUBLIC
