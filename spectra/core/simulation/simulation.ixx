@@ -132,6 +132,7 @@ namespace spectra::simulation {
 
     export struct ProviderDescriptor {
         std::string id{};
+        std::chrono::sys_seconds build_time{};
         std::vector<OutputDescriptor> outputs{};
         std::vector<ParameterDescriptor> parameters{};
         std::vector<TelemetryDescriptor> telemetry{};

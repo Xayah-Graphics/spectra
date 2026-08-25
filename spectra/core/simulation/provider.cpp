@@ -20,6 +20,9 @@ namespace spectra::simulation {
         const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
         const HMODULE loaded                  = LoadLibraryW(canonical.c_str());
         if (!loaded) throw std::runtime_error(std::format("Windows failed to load simulation provider: {}", canonical.string()));
+        const auto* dos_header = reinterpret_cast<const IMAGE_DOS_HEADER*>(loaded);
+        const auto* nt_headers = reinterpret_cast<const IMAGE_NT_HEADERS*>(reinterpret_cast<const std::byte*>(loaded) + dos_header->e_lfanew);
+        this->build_time        = std::chrono::sys_seconds{std::chrono::seconds{nt_headers->FileHeader.TimeDateStamp}};
         try {
             const auto entry = reinterpret_cast<const SpectraSdkApi* (*) () noexcept>(GetProcAddress(loaded, SPECTRA_SDK_ENTRY_NAME));
             if (!entry) throw std::runtime_error(std::format("Simulation provider does not export Spectra SDK ABI {}", SPECTRA_SDK_ABI_VERSION));

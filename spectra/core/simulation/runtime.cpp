@@ -158,7 +158,7 @@ namespace spectra::simulation {
             for (const std::filesystem::path& path : provider_paths) {
                 ProviderLibrary& library                   = this->providers.libraries.emplace_back(path);
                 const SpectraSdkProviderDescriptor& source = library.descriptor;
-                ProviderDescriptor provider{.id = sdk_string(source.id)};
+                ProviderDescriptor provider{.id = sdk_string(source.id), .build_time = library.build_time};
                 if (!std::ranges::contains(required_providers, provider.id)) {
                     this->providers.libraries.pop_back();
                     continue;

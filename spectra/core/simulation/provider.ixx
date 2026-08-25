@@ -21,5 +21,6 @@ namespace spectra::simulation {
         const SpectraSdkApi* api{};
         SpectraSdkProviderDescriptor descriptor{};
         ProviderDescriptor provider{};
+        std::chrono::sys_seconds build_time{};
     };
 } // namespace spectra::simulation

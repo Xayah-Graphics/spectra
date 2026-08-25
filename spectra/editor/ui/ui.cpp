@@ -601,6 +601,8 @@ namespace spectra::editor {
         };
         const scene::EntityReference* entity                                   = active_entity(*this);
         const bool simulation_active                                           = this->context.simulation.initialized();
+        const scene::SimulationSystem* selected_simulation_system              = simulation_active ? &this->context.document.authored.simulation->systems[this->simulation_panel.selected_system] : nullptr;
+        const simulation::ProviderDescriptor* selected_simulation_provider     = simulation_active ? &this->context.simulation.provider_descriptor(selected_simulation_system->provider_id) : nullptr;
         const std::optional<render::RenderProgress> render_progress            = this->context.render_engine.progress();
         const std::optional<render::PathTracerPreparationProgress> preparation = this->context.render_engine.pathtracer_preparation();
         const float frames_per_second                                          = ImGui::GetIO().Framerate;
@@ -662,6 +664,8 @@ namespace spectra::editor {
             const char* state = this->context.simulation.faulted() ? "STOPPED" : this->context.simulation.running() ? "PLAYING" : "PAUSED";
             add_line(std::format("Simulation {:.1f} FPS", this->controls.simulation_frames_per_second), primary);
             add_line(std::format("Step {}  ·  {:.3f} s  ·  {}", timeline.step, timeline.seconds, state), this->context.simulation.faulted() ? ImGui::GetColorU32({0.96f, 0.38f, 0.33f, 1.0f}) : this->context.simulation.running() ? ImGui::GetColorU32({0.35f, 0.84f, 0.55f, 1.0f}) : secondary);
+            add_line(std::format("System {}  ·  Provider {}", selected_simulation_system->name, selected_simulation_provider->id), secondary);
+            add_line(std::format("DLL built {:%F %T %Ez}", std::chrono::zoned_time{std::chrono::current_zone(), selected_simulation_provider->build_time}), secondary);
         } else this->controls.simulation_sample_initialized = false;
         if (render_progress) {
             add_section("PATH TRACER");
@@ -758,17 +762,14 @@ namespace spectra::editor {
         draw_list.PopClipRect();
 
         if (this->context.viewport.settings.telemetry_visible && simulation_active) {
-            const std::optional<scene::SimulationSetup>& setup = this->context.document.authored.simulation;
-            const scene::SimulationSystem& system              = setup->systems[this->simulation_panel.selected_system];
-            const simulation::ProviderDescriptor& provider     = this->context.simulation.provider_descriptor(system.provider_id);
-            if (!provider.telemetry.empty() && bottom - status_bottom >= line_height * 3.0f) {
+            if (!selected_simulation_provider->telemetry.empty() && bottom - status_bottom >= line_height * 3.0f) {
                 const simulation::TelemetrySnapshot& telemetry = this->context.simulation.telemetry(this->simulation_panel.selected_system);
                 std::size_t row_count                          = 2;
                 std::string section{};
-                for (std::size_t index = 0; index < provider.telemetry.size(); ++index) {
+                for (std::size_t index = 0; index < selected_simulation_provider->telemetry.size(); ++index) {
                     if (!telemetry.values[index]) continue;
-                    if (provider.telemetry[index].section_id != section) {
-                        section = provider.telemetry[index].section_id;
+                    if (selected_simulation_provider->telemetry[index].section_id != section) {
+                        section = selected_simulation_provider->telemetry[index].section_id;
                         ++row_count;
                     }
                     ++row_count;
@@ -802,11 +803,11 @@ namespace spectra::editor {
                 };
 
                 add_telemetry_line("TELEMETRY", heading);
-                add_telemetry_line(system.name, primary);
+                add_telemetry_line(selected_simulation_system->name, primary);
                 section.clear();
-                for (std::size_t index = 0; index < provider.telemetry.size(); ++index) {
+                for (std::size_t index = 0; index < selected_simulation_provider->telemetry.size(); ++index) {
                     if (!telemetry.values[index]) continue;
-                    const simulation::TelemetryDescriptor& metric = provider.telemetry[index];
+                    const simulation::TelemetryDescriptor& metric = selected_simulation_provider->telemetry[index];
                     if (metric.section_id != section) {
                         section = metric.section_id;
                         if (row + 2 > rows_per_column) next_column();
