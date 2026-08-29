@@ -44,12 +44,20 @@ if (MSVC)
 endif ()
 
 include(cmake/Dependencies.cmake)
+
+spectra_require_dependency(slang)
 include(cmake/Shaders.cmake)
 
 
 # ============================================================================
 # Spectra Core
 # ============================================================================
+spectra_require_dependency(vulkan)
+spectra_require_dependency(ckdl)
+spectra_require_dependency(lodepng)
+spectra_require_dependency(tinyexr)
+spectra_require_dependency(nanovdb)
+
 add_library(spectra_core STATIC)
 target_include_directories(spectra_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/internal")
 target_sources(
@@ -133,8 +141,8 @@ target_link_libraries(
         PUBLIC
         spectra::vulkan
         PRIVATE
-        spectra_ckdlpp
-        spectra_lodepng
+        spectra::ckdlpp
+        spectra::lodepng
         spectra::tinyexr
         spectra::nanovdb
 )
@@ -145,6 +153,10 @@ add_dependencies(spectra_core spectra_shaders)
 # Spectra Editor
 # ============================================================================
 if (SPECTRA_BUILD_UI)
+    spectra_require_dependency(glfw)
+    spectra_require_dependency(imgui)
+    spectra_require_dependency(imguizmo)
+
     add_library(spectra_editor STATIC)
     target_sources(
             spectra_editor
@@ -207,6 +219,8 @@ endif ()
 # ============================================================================
 # Spectra Executable
 # ============================================================================
+spectra_require_dependency(xcli)
+
 add_executable(spectra)
 set_target_properties(
         spectra

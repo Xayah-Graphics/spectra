@@ -1,3 +1,7 @@
+include_guard(GLOBAL)
+
+spectra_require_dependency(vulkan)
+
 if (WIN32)
     find_path(
             SPECTRA_SLANG_INCLUDE_DIR
@@ -24,7 +28,7 @@ if (WIN32)
             REQUIRED
             NO_DEFAULT_PATH
     )
-    add_library(spectra::slang SHARED IMPORTED)
+    add_library(spectra::slang SHARED IMPORTED GLOBAL)
     set_target_properties(
             spectra::slang
             PROPERTIES
@@ -41,6 +45,7 @@ else ()
             slang
             CONFIG
             REQUIRED
+            GLOBAL
             PATHS "${SPECTRA_SLANG_INSTALL_DIR}/lib/cmake/slang"
             NO_DEFAULT_PATH
     )

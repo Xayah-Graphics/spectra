@@ -22,7 +22,8 @@ if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif ()
 
 include(GNUInstallDirs)
-find_package(CUDAToolkit 13 REQUIRED)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/Dependencies.cmake")
+spectra_require_dependency(cuda)
 
 add_library(spectra_sdk STATIC)
 add_library(SpectraSDK::sdk ALIAS spectra_sdk)
