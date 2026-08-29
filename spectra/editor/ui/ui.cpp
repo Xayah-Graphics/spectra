@@ -16,8 +16,9 @@ namespace spectra::editor {
         constexpr float panel_minimum_width = 280.0f;
         constexpr float panel_maximum_width = 320.0f;
         constexpr ImVec2 playback_button_size{76.0f, 34.0f};
-        constexpr float playback_spacing       = 7.0f;
-        constexpr float playback_bottom_margin = 18.0f;
+        constexpr float playback_spacing             = 7.0f;
+        constexpr float playback_bottom_margin       = 18.0f;
+        constexpr float presentation_sequence_height = 18.0f;
 
         enum class Icon : std::uint8_t {
             Translate,
@@ -273,13 +274,14 @@ namespace spectra::editor {
         return actions;
     }
     Ui::ViewportLayout Ui::make_layout(const ImVec2 position, const ImVec2 size) const noexcept {
-        const bool selection_visible  = active_entity(*this) != nullptr;
-        const bool simulation_visible = this->context.simulation.initialized();
-        const bool playback_visible   = simulation_visible || this->context.render_engine.progress().has_value();
-        const float playback_count    = simulation_visible ? 3.0f : 2.0f;
-        const float playback_width    = playback_button_size.x * playback_count + playback_spacing * (playback_count - 1.0f);
-        const float width             = std::clamp(size.x * 0.18f, panel_minimum_width, panel_maximum_width);
-        const float maximum_height    = size.y - panel_top - panel_margin;
+        const bool selection_visible    = active_entity(*this) != nullptr;
+        const bool simulation_visible   = this->context.simulation.initialized();
+        const bool presentation_visible = simulation_visible && this->context.simulation.presentation_sequence();
+        const bool playback_visible     = simulation_visible || this->context.render_engine.progress().has_value();
+        const float playback_count      = simulation_visible ? 3.0f : 2.0f;
+        const float playback_width      = playback_button_size.x * playback_count + playback_spacing * (playback_count - 1.0f);
+        const float width               = std::clamp(size.x * 0.18f, panel_minimum_width, panel_maximum_width);
+        const float maximum_height      = size.y - panel_top - panel_margin - (presentation_visible ? presentation_sequence_height : 0.0f);
         return {
             .position = position,
             .size     = size,
@@ -300,6 +302,11 @@ namespace spectra::editor {
                 .size     = {playback_width, playback_button_size.y},
                 .visible  = playback_visible,
             },
+            .presentation_sequence{
+                .position = {position.x, position.y + size.y - presentation_sequence_height},
+                .size     = {size.x, presentation_sequence_height},
+                .visible  = presentation_visible,
+            },
         };
     }
 
@@ -308,7 +315,7 @@ namespace spectra::editor {
         if (mouse.y <= layout.position.y + top_strip_height + 5.0f) return true;
         if (show_axes && mouse.x >= layout.position.x + layout.size.x - 116.0f && mouse.y <= layout.position.y + 126.0f) return true;
         const auto contains = [mouse](const auto& region) { return region.visible && mouse.x >= region.position.x && mouse.x <= region.position.x + region.size.x && mouse.y >= region.position.y && mouse.y <= region.position.y + region.size.y; };
-        if (contains(layout.global_panel) || contains(layout.selection_panel) || contains(layout.playback_controls)) return true;
+        if (contains(layout.global_panel) || contains(layout.selection_panel) || contains(layout.playback_controls) || contains(layout.presentation_sequence)) return true;
         return false;
     }
 
@@ -549,6 +556,7 @@ namespace spectra::editor {
         this->draw_orientation(position, size, show_axes);
         this->draw_viewport_hud(layout, *draw_list);
         this->draw_playback_controls(layout.playback_controls);
+        this->draw_presentation_sequence(layout.presentation_sequence);
         this->handle_viewport_input(position, size, blocked);
         ImGui::PopClipRect();
         ImGui::SetCursorScreenPos(ImVec2{position.x, position.y + size.y});
@@ -578,7 +586,7 @@ namespace spectra::editor {
         const float status_left    = layout.global_panel.visible ? layout.global_panel.position.x + layout.global_panel.size.x + panel_margin : viewport_left;
         const float status_right   = layout.selection_panel.visible ? layout.selection_panel.position.x - panel_margin : viewport_right;
         const float top            = layout.position.y + panel_top;
-        const float bottom         = layout.position.y + layout.size.y - panel_margin;
+        const float bottom         = layout.presentation_sequence.visible ? layout.presentation_sequence.position.y - panel_margin : layout.position.y + layout.size.y - panel_margin;
         draw_list.PushClipRect({viewport_left, top}, {viewport_right, bottom}, true);
         draw_list.PushClipRect({status_left, top}, {status_right, bottom}, true);
         const float line_height = ImGui::GetTextLineHeight() + 3.0f;
@@ -858,6 +866,46 @@ namespace spectra::editor {
             }
         }
         draw_list.PopClipRect();
+    }
+
+    void Ui::draw_presentation_sequence(const ControlRect& controls) {
+        if (!controls.visible) return;
+        const simulation::PresentationSequence& sequence = *this->context.simulation.presentation_sequence();
+        const std::string maximum_frame_label             = std::format("FRAME {} / {}", sequence.frame_count - 1u, sequence.frame_count - 1u);
+        const std::string start_time_label                = std::format("{:.6g} s", sequence.start_seconds);
+        const std::string end_time_label                  = std::format("{:.6g} s", sequence.start_seconds + (sequence.frame_count - 1u) * sequence.frame_seconds);
+        const float frame_width                           = ImGui::CalcTextSize(maximum_frame_label.c_str()).x;
+        const float time_width                            = std::max(ImGui::CalcTextSize(start_time_label.c_str()).x, ImGui::CalcTextSize(end_time_label.c_str()).x);
+        const float rail_minimum                          = controls.position.x + frame_width + 24.0f;
+        const float rail_maximum                          = std::max(rail_minimum + 1.0f, controls.position.x + controls.size.x - time_width - 24.0f);
+        const float rail_y                                = controls.position.y + controls.size.y * 0.5f;
+
+        ImGui::SetCursorScreenPos({rail_minimum, controls.position.y});
+        ImGui::InvisibleButton("##PresentationSequence", {rail_maximum - rail_minimum, controls.size.y});
+        if (ImGui::IsItemActive() && !this->context.simulation.faulted()) {
+            const float normalized    = std::clamp((ImGui::GetIO().MousePos.x - rail_minimum) / (rail_maximum - rail_minimum), 0.0f, 1.0f);
+            const std::uint64_t index = sequence.frame_count == 1u ? 0u : static_cast<std::uint64_t>(std::llround(normalized * static_cast<double>(sequence.frame_count - 1u)));
+            this->context.simulation.select_presentation_frame(index);
+        }
+
+        const simulation::PresentationFrame frame = this->context.simulation.presentation_frame();
+        const std::string frame_label              = std::format("FRAME {} / {}", frame.index, sequence.frame_count - 1u);
+        const std::string time_label               = std::format("{:.6g} s", frame.seconds);
+        const ImVec2 time_size                     = ImGui::CalcTextSize(time_label.c_str());
+        const float text_y                         = controls.position.y + (controls.size.y - ImGui::GetTextLineHeight()) * 0.5f;
+        const float time_x                         = controls.position.x + controls.size.x - time_size.x - 8.0f;
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        const ImVec2 maximum{controls.position.x + controls.size.x, controls.position.y + controls.size.y};
+        const ImU32 primary   = ImGui::GetColorU32({0.78f, 0.84f, 0.89f, 0.92f});
+        const ImU32 accent    = ImGui::GetColorU32(this->context.simulation.faulted() ? ImVec4{0.48f, 0.53f, 0.57f, 0.72f} : ImVec4{0.28f, 0.79f, 0.90f, 0.96f});
+        draw_list->AddRectFilled(controls.position, maximum, ImGui::GetColorU32({0.015f, 0.022f, 0.030f, 0.82f}));
+        draw_list->AddLine(controls.position, {maximum.x, controls.position.y}, ImGui::GetColorU32({0.55f, 0.65f, 0.72f, 0.20f}));
+        draw_list->AddText({controls.position.x + 8.0f, text_y}, primary, frame_label.c_str());
+        draw_list->AddText({time_x, text_y}, primary, time_label.c_str());
+        draw_list->AddLine({rail_minimum, rail_y}, {rail_maximum, rail_y}, ImGui::GetColorU32({0.50f, 0.58f, 0.64f, ImGui::IsItemHovered() ? 0.58f : 0.36f}), 2.0f);
+        const float normalized_frame = sequence.frame_count == 1u ? 0.0f : static_cast<float>(frame.index) / static_cast<float>(sequence.frame_count - 1u);
+        const float cursor_x         = std::lerp(rail_minimum, rail_maximum, normalized_frame);
+        draw_list->AddCircleFilled({cursor_x, rail_y}, ImGui::IsItemActive() ? 4.5f : 3.75f, accent, 16);
     }
 
     void Ui::draw_playback_controls(const ControlRect& controls) {

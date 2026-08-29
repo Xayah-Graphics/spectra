@@ -238,6 +238,7 @@ namespace spectra::simulation {
                 }
                 this->create_system(system, declared);
             }
+            this->presentation.sequence = this->aggregate_presentation_sequence(nullptr);
             this->declare_outputs();
             this->reset_simulation();
         } catch (...) {
@@ -263,6 +264,7 @@ namespace spectra::simulation {
         this->publication   = {};
         this->outputs       = {};
         this->clock         = {};
+        this->presentation  = {};
         this->configuration = {};
     }
 
@@ -338,6 +340,34 @@ namespace spectra::simulation {
     SimulationTimeline Runtime::timeline() const noexcept {
         return {this->clock.simulation_step, this->clock.simulation_step * this->configuration.setup.clock.step_seconds};
     }
+    const PresentationSequence* Runtime::presentation_sequence() const noexcept {
+        return this->presentation.sequence ? &*this->presentation.sequence : nullptr;
+    }
+    PresentationFrame Runtime::presentation_frame() const noexcept {
+        if (!this->presentation.sequence) return {};
+        return {this->presentation.frame_index, this->presentation.sequence->start_seconds + this->presentation.frame_index * this->presentation.sequence->frame_seconds};
+    }
+    void Runtime::select_presentation_frame(const std::uint64_t index) {
+        if (!this->presentation.sequence) throw std::runtime_error("Scene does not declare a Presentation Sequence");
+        if (index >= this->presentation.sequence->frame_count) throw std::out_of_range("Presentation frame is outside the sequence");
+        if (index == this->presentation.frame_index) return;
+        this->presentation.frame_index = index;
+        this->presentation.dirty       = true;
+    }
+    void Runtime::select_presentation_time(const double seconds) {
+        if (!this->presentation.sequence) throw std::runtime_error("Scene does not declare a Presentation Sequence");
+        const double end_seconds = this->presentation.sequence->start_seconds + (this->presentation.sequence->frame_count - 1u) * this->presentation.sequence->frame_seconds;
+        if (seconds < this->presentation.sequence->start_seconds || seconds > end_seconds) throw std::out_of_range("Presentation time is outside the sequence");
+        std::uint64_t first{};
+        std::uint64_t last = this->presentation.sequence->frame_count;
+        while (first != last) {
+            const std::uint64_t middle = std::midpoint(first, last);
+            const double frame_seconds = this->presentation.sequence->start_seconds + middle * this->presentation.sequence->frame_seconds;
+            if (frame_seconds <= seconds) first = middle + 1u;
+            else last = middle;
+        }
+        this->select_presentation_frame(first - 1u);
+    }
     void Runtime::start() {
         this->clock.playing = true;
     }
@@ -349,10 +379,14 @@ namespace spectra::simulation {
         this->advance_one_step();
     }
 
-    void Runtime::advance() {
-        if (this->configuration.faulted || this->systems.values.empty() || !this->clock.playing || this->publication.frame_pending) return;
+    void Runtime::update() {
+        if (this->configuration.faulted || this->systems.values.empty()) return;
+        if (!this->presentation.dirty && (!this->clock.playing || this->publication.frame_pending)) return;
         try {
-            this->advance_one_step();
+            if (this->clock.playing) {
+                if (this->presentation.dirty) this->discard_pending_frame();
+                this->advance_one_step();
+            } else this->publish_frame(PublicationKind::Presentation);
         } catch (...) {
             this->configuration.faulted = true;
             this->clock.playing         = false;
@@ -396,7 +430,11 @@ namespace spectra::simulation {
                 this->create_system(replacement, declared);
                 check_sdk_result(replacement.api->reset(replacement.provider_instance, this->configuration.setup.seed), "reset");
                 check_sdk_result(replacement.api->step(replacement.provider_instance, this->configuration.setup.clock.step_seconds, this->clock.simulation_step), "step");
+                const std::optional<PresentationSequence> sequence = this->aggregate_presentation_sequence(&replacement);
                 check_sdk_result(system.api->destroy_provider(system.provider_instance), "destruction");
+                this->presentation.sequence = sequence;
+                if (sequence && this->presentation.frame_index >= sequence->frame_count) this->presentation.frame_index = sequence->frame_count - 1u;
+                if (!sequence) this->presentation.frame_index = 0u;
             } catch (...) {
                 if (replacement.provider_instance) static_cast<void>(replacement.api->destroy_provider(replacement.provider_instance));
                 throw;
@@ -404,7 +442,7 @@ namespace spectra::simulation {
             system = std::move(replacement);
             this->configuration.setup.systems[system_index].parameters.assign(parameters.begin(), parameters.end());
             this->declare_outputs();
-            this->publish_frame();
+            this->publish_frame(PublicationKind::Simulation);
             return true;
         }
         this->apply_parameters(system, values);
@@ -429,19 +467,20 @@ namespace spectra::simulation {
                 this->vulkan.frames.enqueue_external_signal(system.timeline, system.signal_value + 1u, vk::PipelineStageFlagBits2::eAllCommands);
                 system.output_pending = false;
             }
-        this->publication.frame_pending  = false;
-        this->publication.frame_acquired = false;
+        this->publication.telemetry_sample = std::nullopt;
+        this->publication.frame_pending    = false;
+        this->publication.frame_acquired   = false;
     }
 
     void Runtime::record_telemetry(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t frame_slot_index) {
-        if (!this->publication.frame_pending) return;
+        if (!this->publication.frame_pending || !this->publication.telemetry_sample) return;
         for (SystemRuntime& system : this->systems.values) {
             if (system.provider_descriptor->telemetry.empty()) continue;
             TelemetryReadbackSlot& readback = system.telemetry_readback[frame_slot_index];
             const OutputBuffer& metrics     = system.metrics.storage.slots[system.current_slot][0];
             command_buffer.copyBuffer(*metrics.gpu_buffer.buffer, *readback.buffer.buffer, vk::BufferCopy{0u, 0u, metrics.gpu_buffer.size});
-            readback.simulation_step    = this->clock.simulation_step;
-            readback.simulation_seconds = this->timeline().seconds;
+            readback.simulation_step    = this->publication.telemetry_sample->step;
+            readback.simulation_seconds = this->publication.telemetry_sample->seconds;
             readback.pending            = true;
         }
     }
@@ -469,6 +508,23 @@ namespace spectra::simulation {
 
     ProviderLibrary& Runtime::provider_library(const std::string_view id) const {
         return *this->providers.by_id.find(std::string{id})->second;
+    }
+
+    std::optional<PresentationSequence> Runtime::aggregate_presentation_sequence(const SystemRuntime* replacement) const {
+        std::optional<PresentationSequence> sequence{};
+        for (const SystemRuntime& system : this->systems.values) {
+            const std::optional<PresentationSequence>& declared = replacement && system.scene_system_index == replacement->scene_system_index ? replacement->presentation_sequence : system.presentation_sequence;
+            if (!declared) continue;
+            if (sequence && *sequence != *declared) throw std::runtime_error("Simulation systems declare conflicting Presentation Sequences");
+            sequence = declared;
+        }
+        return sequence;
+    }
+
+    SpectraSdkResult Runtime::declare_presentation_sequence(void* source, const SpectraSdkPresentationSequence* sequence) noexcept {
+        Runtime& runtime = *static_cast<Runtime*>(source);
+        runtime.publication.configuring_system->presentation_sequence = PresentationSequence{sequence->frame_count, sequence->start_seconds, sequence->frame_seconds};
+        return {};
     }
 
     SpectraSdkResult Runtime::configure_output(void* source, const SpectraSdkOutputLayout* layout, SpectraSdkOutputRequest* request) noexcept {
@@ -735,6 +791,7 @@ namespace spectra::simulation {
         runtime::ExternalHandle timeline_handle = this->vulkan.resources.export_timeline_semaphore_handle(system.timeline);
         SpectraSdkSetupSink sink{this, sdk_handle(timeline_handle)};
         sink.slot_count                      = runtime::VulkanFrames::frames_in_flight;
+        sink.declare_presentation_sequence   = &Runtime::declare_presentation_sequence;
         sink.configure_output                = &Runtime::configure_output;
         sink.release_output                  = &Runtime::release_output;
         this->publication.configuring_system = &system;
@@ -823,24 +880,29 @@ namespace spectra::simulation {
                 this->vulkan.resources.signal_external_timeline(system.timeline, system.signal_value + 1u);
                 system.output_pending = false;
             }
-        this->publication.frame_pending  = false;
-        this->publication.frame_acquired = false;
+        this->publication.telemetry_sample = std::nullopt;
+        this->publication.frame_pending    = false;
+        this->publication.frame_acquired   = false;
     }
 
-    void Runtime::publish_frame() {
+    void Runtime::publish_frame(const PublicationKind kind) {
         this->discard_pending_frame();
         SimulationFrame frame{};
+        const PresentationFrame presentation = this->presentation_frame();
+        const SpectraSdkPresentationFrame encoded_presentation{presentation.index, presentation.seconds};
         for (SystemRuntime& system : this->systems.values) {
             SpectraSdkFrameCommit commit{};
-            check_sdk_result(system.api->publish(system.provider_instance, &commit), "publication");
+            check_sdk_result(system.api->publish(system.provider_instance, &encoded_presentation, &commit), "publication");
             system.current_slot   = commit.slot_index;
             system.signal_value   = commit.signal_value;
             system.output_pending = true;
             for (std::size_t index = 0; index != system.outputs.size(); ++index)
                 if (!std::holds_alternative<CameraOutput>(system.outputs[index].descriptor.details)) this->append_output(system, system.outputs[index], commit.outputs[index], frame);
         }
-        this->publication.frame         = std::move(frame);
-        this->publication.frame_pending = true;
+        this->publication.frame            = std::move(frame);
+        this->publication.telemetry_sample = kind == PublicationKind::Simulation ? std::optional{this->timeline()} : std::nullopt;
+        this->publication.frame_pending    = true;
+        this->presentation.dirty            = false;
     }
 
     void Runtime::step_to(const std::uint64_t target) {
@@ -857,19 +919,23 @@ namespace spectra::simulation {
     }
 
     void Runtime::evaluate_frame(const std::uint64_t target) {
+        const bool changed = target != this->clock.simulation_step;
         if (target < this->clock.simulation_step) this->reset_systems();
         this->step_to(target);
-        this->publish_frame();
+        this->publish_frame(changed ? PublicationKind::Simulation : PublicationKind::Presentation);
     }
 
     void Runtime::reset_simulation() {
         this->reset_systems();
-        this->publish_frame();
+        this->publish_frame(PublicationKind::Simulation);
     }
 
     void Runtime::advance_one_step() {
         if (this->configuration.setup.clock.end_step && this->clock.simulation_step >= *this->configuration.setup.clock.end_step) {
-            if (!this->configuration.setup.clock.loop) return;
+            if (!this->configuration.setup.clock.loop) {
+                if (this->presentation.dirty) this->publish_frame(PublicationKind::Presentation);
+                return;
+            }
             this->reset_simulation();
             return;
         }

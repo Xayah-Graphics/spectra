@@ -97,7 +97,7 @@ namespace spectra::editor {
 
             if (this->document.loaded) {
                 if (this->simulation.initialized()) try {
-                        this->simulation.advance();
+                        this->simulation.update();
                     } catch (const std::exception& error) {
                         this->ui.notify(error.what(), true);
                     }

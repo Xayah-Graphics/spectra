@@ -48,12 +48,33 @@ export namespace project {
         void setup(spectra::sdk::cuda::Setup& setup);
         void reset(std::uint64_t seed);
         void step(double seconds);
-        void publish(spectra::sdk::cuda::Output& output);
+        void publish(spectra::sdk::cuda::Output& output, spectra::sdk::PresentationFrame presentation);
     };
 }
 ```
 
 `Settings` member initializers are the defaults. `Live` parameters update `settings` immediately, `Reset` parameters take effect when the simulation resets, and `Recreate` parameters rebuild the Provider because they change its resource layout.
+
+The SDK uses ABI 7. Providers built against an older ABI are rejected; there is no compatibility entry point or fallback.
+
+## Presentation Sequence
+
+A Provider instance can optionally expose a display sequence whose frame axis is independent of simulation or optimization progress:
+
+```cpp
+void Provider::setup(spectra::sdk::cuda::Setup& setup) {
+    setup.presentation_sequence({frame_count, start_seconds, frame_seconds});
+    // Allocate the fixed output layout shared by every presentation frame.
+}
+
+void Provider::publish(spectra::sdk::cuda::Output& output, const spectra::sdk::PresentationFrame presentation) {
+    auto frame = output.begin(simulation.stream());
+    publish_slice(presentation.index, frame);
+    frame.commit();
+}
+```
+
+`PresentationSequence` describes uniformly spaced, 0-based frames. `frame_count` is at least one, `start_seconds` is finite, and `frame_seconds` is finite and strictly positive. The resulting frame timestamps must remain finite. The sequence is declared from the dataset loaded by the Provider instance during `setup`, not from the compile-time Provider description or scene file. `PresentationFrame` contains the selected `index` and its corresponding `seconds`. Spectra does not ask the Provider to step, rewind, or retain history when this selection changes; `publish` writes the selected slice of the Provider's current result into the normal frames-in-flight slot. Mesh topology, Volume resolution, Image extent, Neural Field layout, and all capacities therefore remain fixed for the Provider instance. Multiple systems may declare a sequence only when all three descriptor values are identical, because the scene has one global presentation coordinate.
 
 ## GPU outputs
 
@@ -143,7 +164,7 @@ The SDK completes the setup stream before Spectra starts rendering. Capacities r
 Publish one atomic frame on the simulation's CUDA stream:
 
 ```cpp
-void Provider::publish(spectra::sdk::cuda::Output& output) {
+void Provider::publish(spectra::sdk::cuda::Output& output, spectra::sdk::PresentationFrame) {
     auto frame = output.begin(simulation.stream());
     auto surface = frame.mesh<"surface">();
     auto springs = frame.lines<"springs">(active_springs);
@@ -162,7 +183,7 @@ CUDA translation units include `<spectra/sdk/cuda_types.h>` and write the exact 
 ## CMake
 
 ```cmake
-find_package(SpectraSDK 2.0.5 CONFIG REQUIRED)
+find_package(SpectraSDK 2.0.6 CONFIG REQUIRED)
 
 spectra_add_provider(
         cloth-provider

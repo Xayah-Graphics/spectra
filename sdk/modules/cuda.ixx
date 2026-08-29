@@ -75,6 +75,7 @@ namespace spectra::sdk::cuda {
         std::int64_t integer{};
     };
 
+    void declare_presentation_sequence_internal(void* state, PresentationSequence sequence);
     void register_output_internal(void* state, std::string_view id, OutputKind kind, MeshAttribute attributes, std::span<const std::string_view> field_ids, std::span<const FieldKind> field_kinds);
     void configure_metrics_internal(void* state, std::span<const std::string_view> ids);
     [[nodiscard]] RawMeshSetupView setup_mesh_internal(void* state, std::string_view id, std::uint32_t vertex_capacity, std::uint32_t triangle_capacity);
@@ -214,6 +215,10 @@ namespace spectra::sdk::cuda {
     };
 
     export struct Setup {
+        void presentation_sequence(const PresentationSequence sequence) {
+            declare_presentation_sequence_internal(state, sequence);
+        }
+
         template <FixedString Id>
         [[nodiscard]] MeshSetup mesh(const std::uint32_t vertex_capacity, const std::uint32_t triangle_capacity) {
             const RawMeshSetupView view = setup_mesh_internal(state, Id.view(), vertex_capacity, triangle_capacity);

@@ -22,6 +22,17 @@ export namespace spectra::sdk {
         friend constexpr bool operator==(const FixedString&, const FixedString&) = default;
     };
 
+    struct PresentationSequence {
+        std::uint64_t frame_count{};
+        double start_seconds{};
+        double frame_seconds{};
+    };
+
+    struct PresentationFrame {
+        std::uint64_t index{};
+        double seconds{};
+    };
+
     enum class ParameterApplication : std::uint32_t {
         Live,
         Reset,

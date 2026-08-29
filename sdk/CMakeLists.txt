@@ -106,7 +106,7 @@ install(
 set(SpectraSDK_INTERNAL_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/internal")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpectraSDKProvider.cmake")
 
-option(SPECTRA_SDK_BUILD_EXAMPLE "Build the Spectra SDK minimal Provider" OFF)
+option(SPECTRA_SDK_BUILD_EXAMPLE "Build the Spectra SDK Provider example" ON)
 if (SPECTRA_SDK_BUILD_EXAMPLE)
     add_subdirectory(example)
 endif ()

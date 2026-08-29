@@ -46,6 +46,7 @@ export namespace spectra::sdk::example {
         Provider(Settings source, const std::filesystem::path&) : settings(source) {}
 
         void setup(spectra::sdk::cuda::Setup& setup) {
+            setup.presentation_sequence({3u, 0.0, 1.0 / 24.0});
             auto mesh = setup.mesh<"mesh">(3u, 1u);
             constexpr std::array triangles{0u, 1u, 2u};
             constexpr std::array texture_coordinates{spectra::sdk::Float2{}, spectra::sdk::Float2{1.0F, 0.0F}, spectra::sdk::Float2{0.0F, 1.0F}};
@@ -80,7 +81,7 @@ export namespace spectra::sdk::example {
         void reset(std::uint64_t) {}
         void step(double seconds) { time += static_cast<float>(seconds); }
 
-        void publish(spectra::sdk::cuda::Output& output) {
+        void publish(spectra::sdk::cuda::Output& output, const spectra::sdk::PresentationFrame presentation) {
             auto frame = output.begin(nullptr);
             auto mesh = frame.mesh<"mesh">();
             auto spheres = frame.spheres<"spheres">(1u);
@@ -91,8 +92,9 @@ export namespace spectra::sdk::example {
             auto vectors = frame.vectors<"vectors">(1u);
             auto image = frame.image<"image">();
             auto field = frame.hash_grid_radiance_field<"field">();
+            const spectra::sdk::Sphere sphere{{static_cast<float>(presentation.index) - 1.0F, 0.0F, 0.0F}, 0.25F * settings.scale};
+            if (cudaMemcpy(spheres.data(), &sphere, sizeof(sphere), cudaMemcpyHostToDevice) != cudaSuccess) throw std::runtime_error("CUDA Presentation Sequence upload failed");
             static_cast<void>(mesh.positions.data());
-            static_cast<void>(spheres.data());
             static_cast<void>(volume.field<"density", float>().data());
             static_cast<void>(volume.field<"velocity", spectra::sdk::Float3>().data());
             static_cast<void>(volume.field<"cell", std::uint32_t>().data());

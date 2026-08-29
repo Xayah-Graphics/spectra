@@ -42,10 +42,14 @@ namespace spectra::simulation {
         [[nodiscard]] bool running() const noexcept;
         [[nodiscard]] bool faulted() const noexcept;
         [[nodiscard]] SimulationTimeline timeline() const noexcept;
+        [[nodiscard]] const PresentationSequence* presentation_sequence() const noexcept;
+        [[nodiscard]] PresentationFrame presentation_frame() const noexcept;
+        void select_presentation_frame(std::uint64_t index);
+        void select_presentation_time(double seconds);
         void start();
         void pause();
         void step();
-        void advance();
+        void update();
         void evaluate(std::uint64_t simulation_step);
         void evaluate_time(double simulation_seconds);
         void reset();
@@ -95,12 +99,18 @@ namespace spectra::simulation {
             std::vector<scene::SimulationParameterValue> parameter_values{};
             std::vector<OutputRuntime> outputs{};
             MetricRuntime metrics{};
+            std::optional<PresentationSequence> presentation_sequence{};
             runtime::GpuExternalTimelineSemaphore timeline{};
             std::uint64_t signal_value{};
             std::uint32_t current_slot{};
             bool output_pending{};
             std::array<TelemetryReadbackSlot, runtime::VulkanFrames::frames_in_flight> telemetry_readback{};
             TelemetrySnapshot telemetry{};
+        };
+
+        enum class PublicationKind : std::uint8_t {
+            Simulation,
+            Presentation,
         };
 
         runtime::VulkanRuntime& vulkan;
@@ -130,8 +140,15 @@ namespace spectra::simulation {
         } clock;
 
         struct {
+            std::optional<PresentationSequence> sequence{};
+            std::uint64_t frame_index{};
+            bool dirty{};
+        } presentation;
+
+        struct {
             SimulationFrame frame{};
             SystemRuntime* configuring_system{};
+            std::optional<SimulationTimeline> telemetry_sample{};
             bool frame_pending{};
             bool frame_acquired{};
             std::string callback_error{};
@@ -144,6 +161,8 @@ namespace spectra::simulation {
         } outputs;
 
         [[nodiscard]] ProviderLibrary& provider_library(std::string_view provider_id) const;
+        [[nodiscard]] std::optional<PresentationSequence> aggregate_presentation_sequence(const SystemRuntime* replacement) const;
+        static SpectraSdkResult declare_presentation_sequence(void* context, const SpectraSdkPresentationSequence* sequence) noexcept;
         static SpectraSdkResult configure_output(void* context, const SpectraSdkOutputLayout* layout, SpectraSdkOutputRequest* request) noexcept;
         static void release_output(void* lifetime) noexcept;
         void bind_output(OutputRuntime& output, const scene::SimulationSystem& system) const;
@@ -153,7 +172,7 @@ namespace spectra::simulation {
         void apply_parameters(SystemRuntime& system, std::span<const scene::SimulationParameterValue> values);
         void append_output(const SystemRuntime& system, const OutputRuntime& output, const SpectraSdkOutputCommit& commit, SimulationFrame& frame) const;
         void discard_pending_frame();
-        void publish_frame();
+        void publish_frame(PublicationKind kind);
         void step_to(std::uint64_t target_step);
         void reset_systems();
         void evaluate_frame(std::uint64_t target_step);

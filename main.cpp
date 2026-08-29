@@ -74,6 +74,8 @@ int main(int argument_count, char** raw_arguments) {
         std::optional<std::string> outlined_instance_text{};
         std::optional<std::string> simulation_step_text{};
         std::optional<std::string> simulation_seconds_text{};
+        std::optional<std::string> presentation_frame_text{};
+        std::optional<std::string> presentation_seconds_text{};
         std::filesystem::path output_base{};
         std::optional<std::filesystem::path> gbuffer_output_path{};
         std::optional<std::filesystem::path> telemetry_output_path{};
@@ -83,7 +85,7 @@ int main(int argument_count, char** raw_arguments) {
 
         xayah::util::Command command{"Spectra scene visualization and physically based rendering."};
         command | xayah::util::positional({.name = "scene", .description = "Scene file to open or render.", .required = false}, scene_path) | xayah::util::option({.long_name = "version", .description = "Print the Spectra version."}, version_requested) | xayah::util::option({.long_name = "renderer", .value_name = "RENDERER", .description = "Select rasterizer or pathtracer.", .show_default = false}, renderer) | xayah::util::option({.long_name = "raster-mode", .value_name = "MODE", .description = "Select material or wireframe Raster display.", .show_default = false}, raster_display_mode) | xayah::util::option({.long_name = "render-output", .value_name = "OUTPUT", .description = "Select renderer-linear, renderer-display, or composed-display."}, output) | xayah::util::option({.long_name = "display-layers", .value_name = "LAYERS", .description = "Select all, diagnostics, visualizations, overlays, or none for composed output."}, display_layers)
-            | xayah::util::option({.long_name = "axes", .description = "Include the world axes overlay in composed output."}, axes) | xayah::util::option({.long_name = "axes-plane", .value_name = "PLANE", .description = "Select the xz, xy, or yz axes grid plane."}, axes_plane_text) | xayah::util::option({.long_name = "outline-instance", .value_name = "ID", .description = "Outline one Scene Instance ID in composed output.", .show_default = false}, outlined_instance_text) | xayah::util::option({.long_name = "simulation-step", .value_name = "STEP", .description = "Evaluate a simulation scene at an exact step.", .show_default = false}, simulation_step_text) | xayah::util::option({.long_name = "simulation-time", .value_name = "SECONDS", .description = "Evaluate the fixed simulation step at or immediately before this time.", .show_default = false}, simulation_seconds_text)
+            | xayah::util::option({.long_name = "axes", .description = "Include the world axes overlay in composed output."}, axes) | xayah::util::option({.long_name = "axes-plane", .value_name = "PLANE", .description = "Select the xz, xy, or yz axes grid plane."}, axes_plane_text) | xayah::util::option({.long_name = "outline-instance", .value_name = "ID", .description = "Outline one Scene Instance ID in composed output.", .show_default = false}, outlined_instance_text) | xayah::util::option({.long_name = "simulation-step", .value_name = "STEP", .description = "Evaluate a simulation scene at an exact step.", .show_default = false}, simulation_step_text) | xayah::util::option({.long_name = "simulation-time", .value_name = "SECONDS", .description = "Evaluate the fixed simulation step at or immediately before this time.", .show_default = false}, simulation_seconds_text) | xayah::util::option({.long_name = "presentation-frame", .value_name = "FRAME", .description = "Select a Presentation Sequence frame.", .show_default = false}, presentation_frame_text) | xayah::util::option({.long_name = "presentation-time", .value_name = "SECONDS", .description = "Select the Presentation Sequence frame at or immediately before this time.", .show_default = false}, presentation_seconds_text)
             | xayah::util::option({.long_name = "output", .value_name = "BASE", .description = "Override the default renders/<scene>/<renderer> basename.", .show_default = false}, output_base) | xayah::util::option({.long_name = "gbuffer-output", .value_name = "IMAGE", .description = "Optional GBuffer EXR output.", .show_default = false}, gbuffer_output_path) | xayah::util::option({.long_name = "telemetry-output", .value_name = "CSV", .description = "Optional current Telemetry CSV output.", .show_default = false}, telemetry_output_path);
 #if defined(SPECTRA_HAS_EDITOR)
         command | xayah::util::option({.long_name = "gui", .description = "Open the visualization UI."}, gui);
@@ -102,6 +104,8 @@ int main(int argument_count, char** raw_arguments) {
 
         const std::optional<std::uint64_t> simulation_step                    = numeric_option<std::uint64_t>(simulation_step_text, "simulation step");
         const std::optional<double> simulation_seconds                        = numeric_option<double>(simulation_seconds_text, "simulation time");
+        const std::optional<std::uint64_t> presentation_frame                 = numeric_option<std::uint64_t>(presentation_frame_text, "presentation frame");
+        const std::optional<double> presentation_seconds                      = numeric_option<double>(presentation_seconds_text, "presentation time");
         const std::optional<std::uint64_t> outlined_instance                  = numeric_option<std::uint64_t>(outlined_instance_text, "outlined instance");
         const std::optional<spectra::render::RendererKind> requested_renderer = renderer ? std::optional{parse_renderer(*renderer)} : std::nullopt;
         const spectra::render::RasterDisplayMode selected_raster_display_mode = parse_raster_display_mode(raster_display_mode.value_or("material"));
@@ -114,7 +118,7 @@ int main(int argument_count, char** raw_arguments) {
 
 #if defined(SPECTRA_HAS_EDITOR)
         if (gui) {
-            if (output || display_layers || axes || axes_plane_text || outlined_instance || simulation_step || simulation_seconds || !output_base.empty() || gbuffer_output_path || telemetry_output_path) throw std::runtime_error("Headless-only options cannot be used with --gui");
+            if (output || display_layers || axes || axes_plane_text || outlined_instance || simulation_step || simulation_seconds || presentation_frame || presentation_seconds || !output_base.empty() || gbuffer_output_path || telemetry_output_path) throw std::runtime_error("Headless-only options cannot be used with --gui");
             if (requested_renderer == spectra::render::RendererKind::PathTracer && raster_display_mode) throw std::runtime_error("--raster-mode only applies to the Rasterizer");
             const std::optional<std::filesystem::path> initial_scene = scene_path.empty() ? std::nullopt : std::optional{scene_path};
             spectra::editor::run({.scene_path = initial_scene, .renderer = requested_renderer, .raster_display_mode = selected_raster_display_mode}, shader_directory, pathtracer_directory);
@@ -138,6 +142,7 @@ int main(int argument_count, char** raw_arguments) {
         if (gbuffer_output_path && selected_renderer != spectra::render::RendererKind::PathTracer) throw std::runtime_error("--gbuffer-output requires the Path Tracer");
         if ((axes || outlined_instance) && (selected_output != spectra::headless::Output::ComposedDisplay || !selected_display_layers.overlays)) throw std::runtime_error("Axes and Instance outlines require overlays in composed-display output");
         if (simulation_step && simulation_seconds) throw std::runtime_error("Select either --simulation-step or --simulation-time");
+        if (presentation_frame && presentation_seconds) throw std::runtime_error("Select either --presentation-frame or --presentation-time");
         if (simulation_seconds && *simulation_seconds < 0.0) throw std::runtime_error("--simulation-time must be nonnegative");
 
         const spectra::render::RendererDescriptor selected_renderer_descriptor = spectra::render::renderer_descriptor(selected_renderer);
@@ -163,6 +168,8 @@ int main(int argument_count, char** raw_arguments) {
                 .outlined_instance     = outlined_instance,
                 .simulation_step       = simulation_step,
                 .simulation_seconds    = simulation_seconds,
+                .presentation_frame    = presentation_frame,
+                .presentation_seconds  = presentation_seconds,
                 .axes_plane            = selected_axes_plane,
                 .axes                  = axes,
             },

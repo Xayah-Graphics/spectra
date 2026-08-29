@@ -179,6 +179,13 @@ namespace spectra::sdk::cuda {
         return *this;
     }
 
+    void declare_presentation_sequence_internal(void* source, const PresentationSequence sequence) {
+        State& state = setup_state(source);
+        const SpectraSdkPresentationSequence value{sequence.frame_count, sequence.start_seconds, sequence.frame_seconds};
+        const SpectraSdkResult result = state.sink.declare_presentation_sequence(state.sink.context, &value);
+        if (result.error.size != 0u) throw std::runtime_error(std::string{result.error.data, result.error.size});
+    }
+
     void register_output_internal(void* source, const std::string_view id, const OutputKind kind, const MeshAttribute attributes, const std::span<const std::string_view> field_ids, const std::span<const FieldKind> field_kinds) {
         State& state              = setup_state(source);
         OutputState& output       = state.outputs.emplace_back();

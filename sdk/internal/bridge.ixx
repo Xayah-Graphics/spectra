@@ -350,11 +350,11 @@ export namespace spectra::sdk::internal {
             }
         }
 
-        [[nodiscard]] static SpectraSdkResult publish(void* source, SpectraSdkFrameCommit* commit) noexcept {
+        [[nodiscard]] static SpectraSdkResult publish(void* source, const SpectraSdkPresentationFrame* presentation, SpectraSdkFrameCommit* commit) noexcept {
             try {
                 Instance& instance = *static_cast<Instance*>(source);
                 instance.output.prepare(commit);
-                instance.provider.publish(instance.output);
+                instance.provider.publish(instance.output, PresentationFrame{presentation->index, presentation->seconds});
                 return success();
             } catch (const std::exception& exception) {
                 return failure(exception);

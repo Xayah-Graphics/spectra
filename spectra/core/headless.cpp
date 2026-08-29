@@ -35,6 +35,8 @@ namespace spectra::headless {
         simulation::Runtime simulation{runtime};
         if (authored.simulation) simulation.initialize(request.scene_path, authored, evaluated);
 
+        if (!simulation.initialized() && (request.simulation_step || request.simulation_seconds || request.presentation_frame || request.presentation_seconds)) throw std::runtime_error("Simulation and Presentation targets require an enabled simulation setup");
+
         render::GpuScene gpu_scene{runtime, shader_directory};
         gpu_scene.initialize(evaluated, simulation.mesh_bindings(), simulation.sphere_set_bindings());
 
@@ -51,20 +53,37 @@ namespace spectra::headless {
         };
         if (simulation.initialized()) {
             consume_simulation_frame();
+            bool final_publication{};
+            if (request.presentation_frame || request.presentation_seconds) {
+                const simulation::PresentationSequence* sequence = simulation.presentation_sequence();
+                if (!sequence) throw std::runtime_error("Presentation targets require a scene with a Presentation Sequence");
+                const std::uint64_t previous_frame = simulation.presentation_frame().index;
+                if (request.presentation_frame) {
+                    if (*request.presentation_frame >= sequence->frame_count) throw std::runtime_error("The requested presentation frame is outside the sequence");
+                    simulation.select_presentation_frame(*request.presentation_frame);
+                } else {
+                    const double end_seconds = sequence->start_seconds + (sequence->frame_count - 1u) * sequence->frame_seconds;
+                    if (*request.presentation_seconds < sequence->start_seconds || *request.presentation_seconds > end_seconds) throw std::runtime_error("The requested presentation time is outside the sequence");
+                    simulation.select_presentation_time(*request.presentation_seconds);
+                }
+                final_publication = simulation.presentation_frame().index != previous_frame;
+            }
             if (request.simulation_step) {
                 if (*request.simulation_step < simulation.timeline().step) throw std::runtime_error("The requested simulation step precedes the scene start step");
                 if (*request.simulation_step > simulation.timeline().step) {
                     simulation.evaluate(*request.simulation_step);
-                    consume_simulation_frame();
+                    final_publication = true;
                 }
             } else if (request.simulation_seconds) {
                 if (*request.simulation_seconds < simulation.timeline().seconds) throw std::runtime_error("The requested simulation time precedes the scene start time");
                 if (*request.simulation_seconds > simulation.timeline().seconds) {
                     simulation.evaluate_time(*request.simulation_seconds);
-                    consume_simulation_frame();
+                    final_publication = true;
                 }
             }
-        } else if (request.simulation_step || request.simulation_seconds) throw std::runtime_error("Simulation time targets require an enabled simulation setup");
+            simulation.update();
+            if (final_publication) consume_simulation_frame();
+        }
 
         render::Engine render_engine{runtime, gpu_scene, shader_directory, pathtracer_directory, request.renderer, request.raster_display_mode};
         render_engine.rebuild(evaluated.view());

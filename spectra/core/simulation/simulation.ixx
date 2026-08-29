@@ -143,4 +143,17 @@ namespace spectra::simulation {
         double seconds{};
     };
 
+    export struct PresentationSequence {
+        std::uint64_t frame_count{};
+        double start_seconds{};
+        double frame_seconds{};
+
+        friend bool operator==(const PresentationSequence&, const PresentationSequence&) = default;
+    };
+
+    export struct PresentationFrame {
+        std::uint64_t index{};
+        double seconds{};
+    };
+
 } // namespace spectra::simulation

@@ -4,8 +4,15 @@
 #include <cstdint>
 #include <spectra/sdk/neural_field_layout.h>
 
-inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = 6;
-inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = "spectra_sdk_api_6";
+#define SPECTRA_SDK_ABI_VERSION_VALUE 7
+#define SPECTRA_SDK_CONCATENATE_IMPL(left, right) left##right
+#define SPECTRA_SDK_CONCATENATE(left, right) SPECTRA_SDK_CONCATENATE_IMPL(left, right)
+#define SPECTRA_SDK_STRINGIFY_IMPL(value) #value
+#define SPECTRA_SDK_STRINGIFY(value) SPECTRA_SDK_STRINGIFY_IMPL(value)
+#define SPECTRA_SDK_ENTRY_SYMBOL SPECTRA_SDK_CONCATENATE(spectra_sdk_api_, SPECTRA_SDK_ABI_VERSION_VALUE)
+
+inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = SPECTRA_SDK_ABI_VERSION_VALUE;
+inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = SPECTRA_SDK_STRINGIFY(SPECTRA_SDK_ENTRY_SYMBOL);
 inline constexpr std::uint32_t SPECTRA_SDK_HASH_GRID_ENTRY_COUNT = spectra::sdk::neural_field_layout::hash_grid_entry_count;
 inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_INPUT_COUNT = SPECTRA_NEURAL_FIELD_DENSITY_INPUT_ROWS * SPECTRA_NEURAL_FIELD_DENSITY_INPUT_COLUMNS;
 inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_OUTPUT_COUNT = SPECTRA_NEURAL_FIELD_DENSITY_OUTPUT_ROWS * SPECTRA_NEURAL_FIELD_DENSITY_OUTPUT_COLUMNS;
@@ -23,6 +30,17 @@ struct SpectraSdkString {
 
 struct SpectraSdkResult {
     SpectraSdkString error;
+};
+
+struct SpectraSdkPresentationSequence {
+    std::uint64_t frame_count;
+    double start_seconds;
+    double frame_seconds;
+};
+
+struct SpectraSdkPresentationFrame {
+    std::uint64_t index;
+    double seconds;
 };
 
 enum class SpectraSdkValueKind : std::uint32_t {
@@ -188,6 +206,7 @@ struct SpectraSdkSetupSink {
     void* context;
     SpectraSdkExternalHandle timeline_semaphore;
     std::uint32_t slot_count;
+    SpectraSdkResult (*declare_presentation_sequence)(void* context, const SpectraSdkPresentationSequence* sequence) noexcept;
     SpectraSdkResult (*configure_output)(void* context, const SpectraSdkOutputLayout* layout, SpectraSdkOutputRequest* request) noexcept;
     void (*release_output)(void* lifetime) noexcept;
 };
@@ -238,9 +257,11 @@ struct SpectraSdkApi {
     SpectraSdkResult (*apply_parameters)(void* provider, const SpectraSdkValue* values) noexcept;
     SpectraSdkResult (*reset)(void* provider, std::uint64_t seed) noexcept;
     SpectraSdkResult (*step)(void* provider, double step_seconds, std::uint64_t step_count) noexcept;
-    SpectraSdkResult (*publish)(void* provider, SpectraSdkFrameCommit* commit) noexcept;
+    SpectraSdkResult (*publish)(void* provider, const SpectraSdkPresentationFrame* presentation, SpectraSdkFrameCommit* commit) noexcept;
 };
 
+static_assert(sizeof(SpectraSdkPresentationSequence) == 24);
+static_assert(sizeof(SpectraSdkPresentationFrame) == 16);
 static_assert(sizeof(SpectraSdkValue) == 40);
 static_assert(sizeof(SpectraSdkCamera) == 64);
 static_assert(sizeof(SpectraSdkGpuBuffer) == 24);
