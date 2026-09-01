@@ -49,8 +49,6 @@ cmake_path(
 # ============================================================================
 if (MSVC)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>")
-    # MSVC interprets a bare @cmake_cxx_std.lib as a response file.
-    add_link_options("$<$<LINK_LANGUAGE:CXX>:${PROJECT_BINARY_DIR}/@cmake_cxx_std.lib>")
 endif ()
 
 # ============================================================================
@@ -67,6 +65,10 @@ if (SPECTRA_BUILD_UI)
     spectra_require_dependency(glfw)
     spectra_require_dependency(imgui)
     spectra_require_dependency(imguizmo)
+endif ()
+if (MSVC)
+    # MSVC interprets a bare @cmake_cxx_std.lib as a response file.
+    add_link_options("$<$<LINK_LANGUAGE:CXX>:${PROJECT_BINARY_DIR}/@cmake_cxx_std.lib>")
 endif ()
 include(cmake/Shaders.cmake)
 
