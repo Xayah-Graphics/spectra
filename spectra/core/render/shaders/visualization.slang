@@ -3,6 +3,7 @@ module visualization;
 #include "shader_semantics.h"
 
 import color;
+import openvdb_volume;
 import shader_descriptor;
 
 struct VisualizationPushData {
@@ -144,6 +145,10 @@ float3 sample_float3_field(ByteAddressBuffer field, float3 position, bool vertex
 }
 
 float sample_volume_scalar(float3 position) {
+    if ((push_data.metadata.y & SPECTRA_FIELD_STORAGE_OPENVDB) != 0u)
+        return sample_openvdb_float(
+            DescriptorHandle<StructuredBuffer<uint>>(push_data.primary.value),
+            transform_position(position).xyz);
     ByteAddressBuffer primary = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
     return sample_float_field(primary, position, uint3(push_data.dimensions.z, push_data.dimensions.w, push_data.detail.x), 0.5, (push_data.metadata.y >> 8) != 0);
 }
@@ -241,6 +246,26 @@ VisualizationVertexOutput make_line(float3 first, float3 second, float width, fl
     return output;
 }
 
+VisualizationVertexOutput make_point(float3 center, float size, float4 color, uint vertex_id) {
+    const float2 corners[6] = {float2(-1, -1), float2(1, -1), float2(1, 1), float2(-1, -1), float2(1, 1), float2(-1, 1)};
+    const float2 corner = corners[vertex_id];
+    float4 position = project_position(transform_position(center));
+    position.xy += corner * size * 2.0 / float2(push_data.dimensions.xy) * position.w;
+    VisualizationVertexOutput output = {position, color, corner * 0.5 + 0.5, 0, 2, 0.0};
+    return output;
+}
+
+VisualizationVertexOutput make_vector(float3 origin, float3 vector, float width, float4 color, uint vertex_id) {
+    const float length_value = length(vector);
+    const float3 direction = length_value == 0.0 ? float3(1.0, 0.0, 0.0) : vector / length_value;
+    const float3 reference = abs(direction.z) < 0.9 ? float3(0.0, 0.0, 1.0) : float3(0.0, 1.0, 0.0);
+    const float3 side = normalize(cross(direction, reference)) * length_value * 0.18;
+    const uint part = vertex_id / 6;
+    const float3 first = part == 0 ? origin : origin + vector;
+    const float3 second = part == 0 ? origin + vector : origin + vector - direction * length_value * 0.28 + (part == 1 ? side : -side);
+    return make_line(first, second, width, color, vertex_id % 6);
+}
+
 VisualizationVertexOutput make_volume_line(float3 first, float3 second, float width, float4 color, uint triangle_vertex) {
     VisualizationVertexOutput output;
     output.position = wide_line_position(project_position(float4(first, 1.0)), project_position(float4(second, 1.0)), triangle_vertex, width);
@@ -306,14 +331,50 @@ VisualizationVertexOutput visualization_vertex(uint vertex_id : SV_VertexID, uin
         const float3 vector = vectors.Load<float3>(offset + 16u) * push_data.parameters.y;
         const float width = vectors.Load<float>(offset + 12u) * push_data.parameters.x;
         const float4 color = element_visualization_color(vectors.Load<float4>(offset + 28u), vectors.Load<float>(offset + 44u));
-        const float length_value = length(vector);
-        const float3 direction = length_value == 0.0 ? float3(1.0, 0.0, 0.0) : vector / length_value;
-        const float3 reference = abs(direction.z) < 0.9 ? float3(0.0, 0.0, 1.0) : float3(0.0, 1.0, 0.0);
-        const float3 side = normalize(cross(direction, reference)) * length_value * 0.18;
-        const uint part = vertex_id / 6;
-        const float3 first = part == 0 ? origin : origin + vector;
-        const float3 second = part == 0 ? origin + vector : origin + vector - direction * length_value * 0.28 + (part == 1 ? side : -side);
-        return make_line(first, second, width, color, vertex_id % 6);
+        return make_vector(origin, vector, width, color, vertex_id);
+    }
+    if (kind == SPECTRA_VISUALIZATION_INDEXED_POINTS || kind == SPECTRA_VISUALIZATION_MESH_VERTICES) {
+        ByteAddressBuffer positions = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
+        uint position_index = instance_id;
+        if (kind == SPECTRA_VISUALIZATION_INDEXED_POINTS) {
+            ByteAddressBuffer indices = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
+            position_index = indices.Load<uint>(instance_id * 4);
+        }
+        return make_point(positions.Load<float3>(position_index * 12), push_data.parameters.x, push_data.color, vertex_id);
+    }
+    if (kind == SPECTRA_VISUALIZATION_INDEXED_SEGMENTS || kind == SPECTRA_VISUALIZATION_MESH_WIREFRAME) {
+        ByteAddressBuffer positions = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
+        ByteAddressBuffer indices = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
+        uint first_index;
+        uint second_index;
+        if (kind == SPECTRA_VISUALIZATION_INDEXED_SEGMENTS) {
+            first_index = indices.Load<uint>(instance_id * 8);
+            second_index = indices.Load<uint>(instance_id * 8 + 4);
+        } else {
+            const uint edge = vertex_id / 6;
+            first_index = indices.Load<uint>((instance_id * 3 + edge) * 4);
+            second_index = indices.Load<uint>((instance_id * 3 + (edge + 1) % 3) * 4);
+        }
+        return make_line(positions.Load<float3>(first_index * 12), positions.Load<float3>(second_index * 12), push_data.parameters.x, push_data.color, vertex_id % 6);
+    }
+    if (kind == SPECTRA_VISUALIZATION_MESH_VECTORS || kind == SPECTRA_VISUALIZATION_VERTEX_NORMALS) {
+        ByteAddressBuffer positions = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
+        ByteAddressBuffer vectors = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
+        const float3 vector = vectors.Load<float3>(instance_id * 12) * push_data.parameters.y;
+        return make_vector(positions.Load<float3>(instance_id * 12), vector, push_data.parameters.x, element_visualization_color(float4(1.0), length(vector)), vertex_id);
+    }
+    if (kind == SPECTRA_VISUALIZATION_FACE_NORMALS) {
+        ByteAddressBuffer positions = DescriptorHandle<ByteAddressBuffer>(push_data.primary.value);
+        ByteAddressBuffer indices = DescriptorHandle<ByteAddressBuffer>(push_data.secondary.value);
+        const uint a = indices.Load<uint>((instance_id * 3) * 4);
+        const uint b = indices.Load<uint>((instance_id * 3 + 1) * 4);
+        const uint c = indices.Load<uint>((instance_id * 3 + 2) * 4);
+        const float3 first = positions.Load<float3>(a * 12);
+        const float3 second = positions.Load<float3>(b * 12);
+        const float3 third = positions.Load<float3>(c * 12);
+        const float3 origin = (first + second + third) / 3.0;
+        const float3 normal = normalize(cross(second - first, third - first)) * push_data.parameters.y;
+        return make_vector(origin, normal, push_data.parameters.x, push_data.color, vertex_id);
     }
     if (kind == SPECTRA_VISUALIZATION_IMAGE) {
         const float2 corners[6] = {float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 0), float2(1, 1), float2(0, 1)};

@@ -4,7 +4,7 @@ find_package(Vulkan 1.4 REQUIRED GLOBAL)
 list(GET Vulkan_INCLUDE_DIRS 0 SPECTRA_VULKAN_INCLUDE_DIR)
 cmake_path(GET SPECTRA_VULKAN_INCLUDE_DIR PARENT_PATH SPECTRA_VULKAN_SDK_DIR)
 
-add_library(spectra_vulkan)
+add_library(spectra_vulkan STATIC)
 add_library(spectra::vulkan ALIAS spectra_vulkan)
 target_sources(
         spectra_vulkan

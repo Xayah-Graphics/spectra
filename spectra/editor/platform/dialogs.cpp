@@ -23,7 +23,7 @@ namespace spectra::editor {
     std::optional<std::filesystem::path> Dialogs::choose_scene_file() {
         Microsoft::WRL::ComPtr<IFileOpenDialog> dialog{};
         if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) throw std::runtime_error("Failed to create the Windows open dialog");
-        constexpr std::array filters{COMDLG_FILTERSPEC{L"Spectra Scene", L"*.spectra"}};
+        constexpr std::array filters{COMDLG_FILTERSPEC{L"USD Scene", L"*.usd;*.usda;*.usdc"}};
         dialog->SetFileTypes(static_cast<UINT>(filters.size()), filters.data());
         dialog->SetTitle(L"Open Spectra Scene");
         const HRESULT shown = dialog->Show(this->platform.native_window);
@@ -41,10 +41,10 @@ namespace spectra::editor {
     std::optional<std::filesystem::path> Dialogs::choose_scene_save_path(const std::filesystem::path& current_path) {
         Microsoft::WRL::ComPtr<IFileSaveDialog> dialog{};
         if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) throw std::runtime_error("Failed to create the Windows save dialog");
-        constexpr std::array filters{COMDLG_FILTERSPEC{L"Spectra Scene", L"*.spectra"}};
+        constexpr std::array filters{COMDLG_FILTERSPEC{L"USD ASCII Scene", L"*.usda"}};
         dialog->SetFileTypes(static_cast<UINT>(filters.size()), filters.data());
-        dialog->SetDefaultExtension(L"spectra");
-        dialog->SetTitle(L"Save Spectra Scene");
+        dialog->SetDefaultExtension(L"usda");
+        dialog->SetTitle(L"Save USD Scene");
         dialog->SetFileName(current_path.filename().c_str());
         const HRESULT shown = dialog->Show(this->platform.native_window);
         if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;

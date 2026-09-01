@@ -58,7 +58,7 @@ file(
 )
 list(APPEND SPECTRA_SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders/shader_semantics.h")
 list(APPEND SPECTRA_SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include/spectra/sdk/neural_field_layout.h")
-set(SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include")
+set(SPECTRA_SHADER_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/shaders" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include" "${openvdb_SOURCE_DIR}/nanovdb")
 if (SPECTRA_BUILD_UI)
     file(
             GLOB

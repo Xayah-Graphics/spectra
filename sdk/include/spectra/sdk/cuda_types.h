@@ -48,6 +48,11 @@ namespace spectra::sdk {
         std::uint32_t z{};
     };
 
+    struct UInt2 {
+        std::uint32_t x{};
+        std::uint32_t y{};
+    };
+
     struct Camera {
         Float3 right{};
         Float3 down{};
@@ -94,6 +99,7 @@ namespace spectra::sdk {
     static_assert(std::is_standard_layout_v<Float3> && std::is_trivially_copyable_v<Float3> && sizeof(Float3) == 12u);
     static_assert(std::is_standard_layout_v<Float4> && std::is_trivially_copyable_v<Float4> && sizeof(Float4) == 16u);
     static_assert(std::is_standard_layout_v<UInt3> && std::is_trivially_copyable_v<UInt3> && sizeof(UInt3) == 12u);
+    static_assert(std::is_standard_layout_v<UInt2> && std::is_trivially_copyable_v<UInt2> && sizeof(UInt2) == 8u);
     static_assert(std::is_standard_layout_v<Camera> && std::is_trivially_copyable_v<Camera> && sizeof(Camera) == 64u);
     static_assert(std::is_standard_layout_v<Transform> && std::is_trivially_copyable_v<Transform> && sizeof(Transform) == 64u);
     static_assert(std::is_standard_layout_v<Sphere> && std::is_trivially_copyable_v<Sphere> && sizeof(Sphere) == 16u);
@@ -102,6 +108,6 @@ namespace spectra::sdk {
     static_assert(std::is_standard_layout_v<Vector> && std::is_trivially_copyable_v<Vector> && sizeof(Vector) == 48u);
     static_assert(offsetof(Line, width) == 12u && offsetof(Line, second_position) == 16u && offsetof(Line, color) == 28u && offsetof(Line, scalar) == 44u);
     static_assert(offsetof(Vector, width) == 12u && offsetof(Vector, vector) == 16u && offsetof(Vector, color) == 28u && offsetof(Vector, scalar) == 44u);
-}
+} // namespace spectra::sdk
 
 #endif

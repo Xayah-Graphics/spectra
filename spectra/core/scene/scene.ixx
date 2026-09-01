@@ -197,7 +197,9 @@ namespace spectra::scene {
 
     export enum class FieldKind : std::uint8_t {
         Float,
+        Float2,
         Float3,
+        Float4,
         UInt32,
         MacFloat3,
     };
@@ -371,10 +373,26 @@ namespace spectra::scene {
 
     export [[nodiscard]] math::Bounds3 particle_set_bounds(const ParticleSet& particles) noexcept;
 
-    export struct GridVolume {
+    export struct DenseGridVolume {
         math::UInt3 resolution{};
-        std::string source{};
         std::vector<VolumeField> fields{};
+    };
+
+    export struct OpenVdbField {
+        std::string id{};
+        std::string name{};
+        std::string unit{};
+        std::string source{};
+        std::string resolved_source{};
+        std::string grid_name{};
+        FieldKind kind{FieldKind::Float};
+        VolumeVectorSpace vector_space{VolumeVectorSpace::Local};
+        std::vector<std::uint32_t> nanovdb{};
+        math::Float3 maximum{};
+    };
+
+    export struct OpenVdbVolume {
+        std::vector<OpenVdbField> fields{};
     };
 
     export struct ProceduralCloudVolume {
@@ -688,7 +706,7 @@ namespace spectra::scene {
         ResourceRevision revision{};
         math::Bounds3 domain{};
         math::Transform transform{};
-        std::variant<GridVolume, ProceduralCloudVolume> data{};
+        std::variant<DenseGridVolume, OpenVdbVolume, ProceduralCloudVolume> data{};
         VolumeRendering rendering{};
         VolumeDiagnostics diagnostics{};
         MediumId exterior_medium{};
@@ -697,6 +715,8 @@ namespace spectra::scene {
 
     export struct NeuralFieldDiagnostics {
         bool occupancy_grid{};
+        VisualizationDepthMode occupancy_depth_mode{VisualizationDepthMode::XRay};
+        math::Float4 occupancy_color{0.08f, 0.82f, 0.96f, 1.0f};
     };
 
     export struct NeuralField {
@@ -933,6 +953,19 @@ namespace spectra::scene {
         Scalar,
     };
 
+    export enum class MeshElementDomain : std::uint8_t {
+        Vertex,
+        Face,
+        Edge,
+    };
+
+    export enum class DerivedMeshVisualizationMode : std::uint8_t {
+        Wireframe,
+        Vertices,
+        VertexNormals,
+        FaceNormals,
+    };
+
     export enum class SimulationParameterKind : std::uint8_t {
         Boolean,
         Integer,
@@ -954,10 +987,36 @@ namespace spectra::scene {
         friend auto operator<=>(const SimulationParameterSetting&, const SimulationParameterSetting&) = default;
     };
 
+    export struct SimulationIndexSelection {
+        std::string id{};
+        std::string prim_path{};
+        std::vector<std::uint32_t> indices{};
+        friend auto operator<=>(const SimulationIndexSelection&, const SimulationIndexSelection&) = default;
+    };
+
+    export struct SimulationMeshInput {
+        std::string id{};
+        std::string prim_path{};
+        GeometryId geometry{};
+        math::Transform transform{};
+        std::vector<SimulationIndexSelection> selections{};
+        friend auto operator<=>(const SimulationMeshInput&, const SimulationMeshInput&) = default;
+    };
+
     export struct SimulationOutputBinding {
         std::string output_id{};
+        std::string target_path{};
         std::uint64_t resource_id{};
         friend auto operator<=>(const SimulationOutputBinding&, const SimulationOutputBinding&) = default;
+    };
+
+    export struct PointVisualization {
+        float size{4.0f};
+        float scalar_minimum{};
+        float scalar_maximum{1.0f};
+        VisualizationColorSource color_source{VisualizationColorSource::Uniform};
+        VisualizationColorMap color_map{VisualizationColorMap::Viridis};
+        friend auto operator<=>(const PointVisualization&, const PointVisualization&) = default;
     };
 
     export struct SegmentVisualization {
@@ -992,15 +1051,28 @@ namespace spectra::scene {
         friend auto operator<=>(const SurfaceVisualization&, const SurfaceVisualization&) = default;
     };
 
+    export struct DerivedMeshVisualization {
+        DerivedMeshVisualizationMode mode{DerivedMeshVisualizationMode::Wireframe};
+        float width{1.0f};
+        float scale{0.1f};
+        friend auto operator<=>(const DerivedMeshVisualization&, const DerivedMeshVisualization&) = default;
+    };
+
+    export struct NeuralFieldVisualization {
+        friend auto operator<=>(const NeuralFieldVisualization&, const NeuralFieldVisualization&) = default;
+    };
+
     export struct SimulationVisualization {
+        std::string id{};
         std::string output_id{};
         std::string name{};
         VisualizationDepthMode depth_mode{VisualizationDepthMode::Tested};
         VisualizationCompositionDomain composition_domain{VisualizationCompositionDomain::DisplayReferred};
         InstanceId anchor{};
+        std::string anchor_path{};
         math::Float4 color{1.0f, 1.0f, 1.0f, 1.0f};
         bool visible{true};
-        std::variant<SegmentVisualization, VectorVisualization, ImageVisualization, SurfaceVisualization> data{SegmentVisualization{}};
+        std::variant<PointVisualization, SegmentVisualization, VectorVisualization, ImageVisualization, SurfaceVisualization, DerivedMeshVisualization, NeuralFieldVisualization> data{SegmentVisualization{}};
         friend auto operator<=>(const SimulationVisualization&, const SimulationVisualization&) = default;
     };
 
@@ -1011,6 +1083,7 @@ namespace spectra::scene {
         bool enabled{true};
         bool visible{true};
         std::vector<SimulationParameterSetting> parameters{};
+        std::vector<SimulationMeshInput> mesh_inputs{};
         std::vector<SimulationOutputBinding> scene_bindings{};
         std::vector<SimulationVisualization> visualizations{};
         friend auto operator<=>(const SimulationSystem&, const SimulationSystem&) = default;

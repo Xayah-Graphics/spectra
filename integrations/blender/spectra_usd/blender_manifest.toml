@@ -1,0 +1,9 @@
+schema_version = "1.0.0"
+id = "spectra_usd"
+version = "0.3.0"
+name = "Spectra USD"
+tagline = "Edit and exchange Spectra USD scenes"
+maintainer = "Spectra"
+type = "add-on"
+blender_version_min = "5.1.0"
+license = ["SPDX:MIT"]

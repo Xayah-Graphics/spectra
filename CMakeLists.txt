@@ -1,25 +1,20 @@
-cmake_minimum_required(VERSION 4.4.0)
+# ============================================================================
+# Project
+# ============================================================================
+cmake_minimum_required(VERSION 4.4)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
 file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" SPECTRA_VERSION LIMIT_COUNT 1)
 project(spectra VERSION "${SPECTRA_VERSION}" LANGUAGES C CXX)
 
-if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Spectra installation directory" FORCE)
-endif ()
-include(GNUInstallDirs)
-
-set(SPECTRA_BUILD_BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_INSTALL_BINDIR}")
-set(SPECTRA_BUILD_RESOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_INSTALL_DATADIR}/spectra")
-cmake_path(
-        RELATIVE_PATH SPECTRA_BUILD_RESOURCE_DIR
-        BASE_DIRECTORY "${SPECTRA_BUILD_BIN_DIR}"
-        OUTPUT_VARIABLE SPECTRA_RESOURCE_RELATIVE_DIR
-)
-
-
 # ============================================================================
 # Project Configuration
 # ============================================================================
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_MODULE_STD ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 if (WIN32)
     set(SPECTRA_BUILD_UI_DEFAULT ON)
 else ()
@@ -28,44 +23,87 @@ endif ()
 option(SPECTRA_BUILD_UI "Build the Windows visualization UI into the spectra executable" ${SPECTRA_BUILD_UI_DEFAULT})
 option(SPECTRA_BUILD_SDK "Build and install the Spectra SDK" OFF)
 if (SPECTRA_BUILD_UI AND NOT WIN32)
-    message(FATAL_ERROR "SPECTRA_BUILD_UI is currently supported only on Windows.")
+    message(FATAL_ERROR "SPECTRA_BUILD_UI is currently supported only on Windows")
 endif ()
 
-set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_MODULE_STD ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CACHE{CMAKE_INSTALL_PREFIX}
+            TYPE PATH
+            HELP "Spectra installation directory"
+            FORCE
+            VALUE "${CMAKE_SOURCE_DIR}/install"
+    )
+endif ()
+include(GNUInstallDirs)
 
+set(SPECTRA_BUILD_BIN_DIR "${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_BINDIR}")
+set(SPECTRA_BUILD_RESOURCE_DIR "${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_DATADIR}/spectra")
+cmake_path(
+        RELATIVE_PATH SPECTRA_BUILD_RESOURCE_DIR
+        BASE_DIRECTORY "${SPECTRA_BUILD_BIN_DIR}"
+        OUTPUT_VARIABLE SPECTRA_RESOURCE_RELATIVE_DIR
+)
+
+# ============================================================================
+# Compiler Configuration
+# ============================================================================
 if (MSVC)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>")
-    # MSVC interprets CMake's relative @cmake_cxx_std.lib entry as a response file.
-    add_link_options("$<$<LINK_LANGUAGE:CXX>:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib>")
+    # MSVC interprets a bare @cmake_cxx_std.lib as a response file.
+    add_link_options("$<$<LINK_LANGUAGE:CXX>:${PROJECT_BINARY_DIR}/@cmake_cxx_std.lib>")
 endif ()
 
+# ============================================================================
+# Dependencies
+# ============================================================================
 include(cmake/Dependencies.cmake)
-
 spectra_require_dependency(slang)
-include(cmake/Shaders.cmake)
-
-
-# ============================================================================
-# Spectra Core
-# ============================================================================
 spectra_require_dependency(vulkan)
-spectra_require_dependency(ckdl)
 spectra_require_dependency(lodepng)
 spectra_require_dependency(tinyexr)
-spectra_require_dependency(nanovdb)
+spectra_require_dependency(openvdb)
+spectra_require_dependency(openusd)
+if (SPECTRA_BUILD_UI)
+    spectra_require_dependency(glfw)
+    spectra_require_dependency(imgui)
+    spectra_require_dependency(imguizmo)
+endif ()
+include(cmake/Shaders.cmake)
 
+# ============================================================================
+# Core
+# ============================================================================
 add_library(spectra_core STATIC)
-target_include_directories(spectra_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/internal")
 target_sources(
         spectra_core
+        PRIVATE
+        spectra/core/runtime/runtime.cpp
+        spectra/core/runtime/device.cpp
+        spectra/core/runtime/resources.cpp
+        spectra/core/runtime/frames.cpp
+        spectra/core/math/math.cpp
+        spectra/core/headless.cpp
+        spectra/core/scene/scene.cpp
+        spectra/core/scene/assets.cpp
+        spectra/core/scene/usd.cpp
+        spectra/core/scene/io.cpp
+        spectra/core/simulation/provider.cpp
+        spectra/core/simulation/runtime.cpp
+        spectra/core/render/gpu_scene.cpp
+        spectra/core/headless/output.cpp
+        spectra/core/render/rasterizer/compiler.cpp
+        spectra/core/render/rasterizer/rasterizer.cpp
+        spectra/core/render/pathtracer/resources.cpp
+        spectra/core/render/pathtracer/compiler.cpp
+        spectra/core/render/pathtracer.cpp
+        spectra/core/render/render.cpp
+        spectra/core/render/display/neural_field.cpp
+        spectra/core/render/display/visualization.cpp
+        spectra/core/render/display/diagnostics.cpp
+        spectra/core/render/display/overlay.cpp
+        spectra/core/render/display/display.cpp
         PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES
-        BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-        FILES
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
         spectra/core/runtime/device.ixx
         spectra/core/runtime/resources.ixx
         spectra/core/runtime/frames.ixx
@@ -95,95 +133,45 @@ target_sources(
         spectra/core/render/display/display.ixx
         PUBLIC
         FILE_SET generated_render_modules TYPE CXX_MODULES
-        BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
+        BASE_DIRS "${PROJECT_BINARY_DIR}"
         FILES
         "${SPECTRA_RASTER_ABI_MODULE}"
         "${SPECTRA_PATH_TRACER_ABI_MODULE}"
         "${SPECTRA_RENDER_ABI_MODULE}"
         PRIVATE
-        FILE_SET generated_modules TYPE CXX_MODULES
-        BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
-        FILES
-        "${SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE}"
-        PRIVATE
-        FILE_SET internal_modules TYPE CXX_MODULES
-        BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-        FILES
+        FILE_SET internal_modules TYPE CXX_MODULES FILES
         spectra/core/scene/assets.ixx
+        spectra/core/scene/usd.ixx
         PRIVATE
-        spectra/core/runtime/runtime.cpp
-        spectra/core/runtime/device.cpp
-        spectra/core/runtime/resources.cpp
-        spectra/core/runtime/frames.cpp
-        spectra/core/math/math.cpp
-        spectra/core/headless.cpp
-        spectra/core/scene/scene.cpp
-        spectra/core/scene/assets.cpp
-        spectra/core/scene/io.cpp
-        spectra/core/simulation/provider.cpp
-        spectra/core/simulation/runtime.cpp
-        spectra/core/render/gpu_scene.cpp
-        spectra/core/headless/output.cpp
-        spectra/core/render/rasterizer/compiler.cpp
-        spectra/core/render/rasterizer/rasterizer.cpp
-        spectra/core/render/pathtracer/resources.cpp
-        spectra/core/render/pathtracer/compiler.cpp
-        spectra/core/render/pathtracer.cpp
-        spectra/core/render/render.cpp
-        spectra/core/render/display/neural_field.cpp
-        spectra/core/render/display/visualization.cpp
-        spectra/core/render/display/diagnostics.cpp
-        spectra/core/render/display/overlay.cpp
-        spectra/core/render/display/display.cpp
+        FILE_SET generated_modules TYPE CXX_MODULES
+        BASE_DIRS "${PROJECT_BINARY_DIR}"
+        FILES "${SPECTRA_PATH_TRACER_SHADER_ENTRIES_MODULE}"
+)
+target_include_directories(
+        spectra_core
+        PRIVATE
+        "${PROJECT_SOURCE_DIR}/sdk/include"
+        "${PROJECT_SOURCE_DIR}/sdk/internal"
 )
 target_link_libraries(
         spectra_core
         PUBLIC
         spectra::vulkan
         PRIVATE
-        spectra::ckdlpp
         spectra::lodepng
         spectra::tinyexr
-        spectra::nanovdb
+        spectra::openvdb
+        spectra::openusd
 )
-add_dependencies(spectra_core spectra_shaders)
-
+add_dependencies(spectra_core spectra_shaders spectra_openvdb_runtime spectra_openusd_runtime)
 
 # ============================================================================
-# Spectra Editor
+# Editor
 # ============================================================================
 if (SPECTRA_BUILD_UI)
-    spectra_require_dependency(glfw)
-    spectra_require_dependency(imgui)
-    spectra_require_dependency(imguizmo)
-
     add_library(spectra_editor STATIC)
     target_sources(
             spectra_editor
-            PUBLIC
-            FILE_SET cxx_modules TYPE CXX_MODULES
-            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-            FILES
-            spectra/editor/editor.ixx
-            PRIVATE
-            FILE_SET editor_modules TYPE CXX_MODULES
-            BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-            FILES
-            spectra/editor/platform/window.ixx
-            spectra/editor/document/document.ixx
-            spectra/editor/platform/presentation.ixx
-            spectra/editor/platform/dialogs.ixx
-            spectra/editor/viewport/viewport.ixx
-            spectra/editor/viewport/picker.ixx
-            spectra/editor/ui/imgui.ixx
-            spectra/editor/ui/inspector.ixx
-            spectra/editor/ui/simulation.ixx
-            spectra/editor/ui/ui.ixx
-            PRIVATE
-            FILE_SET generated_editor_modules TYPE CXX_MODULES
-            BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
-            FILES
-            "${SPECTRA_EDITOR_ABI_MODULE}"
             PRIVATE
             spectra/editor/editor.cpp
             spectra/editor/document/document.cpp
@@ -196,6 +184,25 @@ if (SPECTRA_BUILD_UI)
             spectra/editor/ui/inspector.cpp
             spectra/editor/ui/simulation.cpp
             spectra/editor/ui/ui.cpp
+            PUBLIC
+            FILE_SET cxx_modules TYPE CXX_MODULES FILES
+            spectra/editor/editor.ixx
+            PRIVATE
+            FILE_SET editor_modules TYPE CXX_MODULES FILES
+            spectra/editor/platform/window.ixx
+            spectra/editor/document/document.ixx
+            spectra/editor/platform/presentation.ixx
+            spectra/editor/platform/dialogs.ixx
+            spectra/editor/viewport/viewport.ixx
+            spectra/editor/viewport/picker.ixx
+            spectra/editor/ui/imgui.ixx
+            spectra/editor/ui/inspector.ixx
+            spectra/editor/ui/simulation.ixx
+            spectra/editor/ui/ui.ixx
+            PRIVATE
+            FILE_SET generated_editor_modules TYPE CXX_MODULES
+            BASE_DIRS "${PROJECT_BINARY_DIR}"
+            FILES "${SPECTRA_EDITOR_ABI_MODULE}"
     )
     target_compile_definitions(
             spectra_editor
@@ -215,18 +222,27 @@ if (SPECTRA_BUILD_UI)
     )
 endif ()
 
-
 # ============================================================================
-# Spectra Executable
+# Executable
 # ============================================================================
-spectra_require_dependency(xcli)
-
-add_executable(spectra)
+add_executable(
+        spectra
+        main.cpp
+        spectra/command_line.cpp
+)
+target_sources(
+        spectra
+        PRIVATE
+        FILE_SET command_line_module TYPE CXX_MODULES FILES
+        spectra/command_line.ixx
+)
 set_target_properties(
         spectra
         PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${SPECTRA_BUILD_BIN_DIR}>"
 )
-target_sources(spectra PRIVATE main.cpp)
+if (LINUX)
+    set_target_properties(spectra PROPERTIES INSTALL_RPATH "$ORIGIN")
+endif ()
 if (WIN32)
     target_sources(spectra PRIVATE spectra.rc)
 endif ()
@@ -236,25 +252,24 @@ target_compile_definitions(
         SPECTRA_VERSION="${PROJECT_VERSION}"
         SPECTRA_RESOURCE_DIRECTORY="${SPECTRA_RESOURCE_RELATIVE_DIR}"
 )
-target_link_libraries(spectra PRIVATE spectra_core xayah::util::xcli)
+target_link_libraries(spectra PRIVATE spectra_core)
 if (SPECTRA_BUILD_UI)
     target_compile_definitions(spectra PRIVATE SPECTRA_HAS_EDITOR)
     target_link_libraries(spectra PRIVATE spectra_editor)
 endif ()
-
 
 # ============================================================================
 # Runtime Resources
 # ============================================================================
 set(
         SPECTRA_SPECTRAL_ASSETS
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/srgb.rgb2spec"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/rec2020.rgb2spec"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/aces2065_1.rgb2spec"
-        "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/cie1931.spectrum"
+        "${PROJECT_SOURCE_DIR}/spectra/core/render/assets/srgb.rgb2spec"
+        "${PROJECT_SOURCE_DIR}/spectra/core/render/assets/rec2020.rgb2spec"
+        "${PROJECT_SOURCE_DIR}/spectra/core/render/assets/aces2065_1.rgb2spec"
+        "${PROJECT_SOURCE_DIR}/spectra/core/render/assets/cie1931.spectrum"
 )
-set(SPECTRA_SAMPLING_ASSET "${CMAKE_CURRENT_SOURCE_DIR}/spectra/core/render/assets/sampling.tables")
-set(SPECTRA_RUNTIME_RESOURCE_STAMP "${CMAKE_CURRENT_BINARY_DIR}/spectra_runtime_resources.stamp")
+set(SPECTRA_SAMPLING_ASSET "${PROJECT_SOURCE_DIR}/spectra/core/render/assets/sampling.tables")
+set(SPECTRA_RUNTIME_RESOURCE_STAMP "${PROJECT_BINARY_DIR}/spectra_runtime_resources.stamp")
 add_custom_command(
         OUTPUT "${SPECTRA_RUNTIME_RESOURCE_STAMP}"
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SPECTRA_BUILD_RESOURCE_DIR}/shaders"
@@ -277,14 +292,12 @@ add_custom_command(
 add_custom_target(spectra_runtime_resources ALL DEPENDS "${SPECTRA_RUNTIME_RESOURCE_STAMP}")
 add_dependencies(spectra spectra_runtime_resources)
 
-
 # ============================================================================
-# Spectra SDK
+# SDK
 # ============================================================================
 if (SPECTRA_BUILD_SDK)
     add_subdirectory(sdk)
 endif ()
-
 
 # ============================================================================
 # Installation

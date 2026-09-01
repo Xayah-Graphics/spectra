@@ -27,6 +27,23 @@ namespace spectra::simulation {
         std::uint32_t attributes{};
     };
 
+    export struct MeshFieldOutput {
+        std::uint32_t capacity{};
+        std::string anchor_id{};
+        scene::MeshElementDomain domain{scene::MeshElementDomain::Vertex};
+        FieldDescriptor field{};
+    };
+
+    export struct IndexedPointOutput {
+        std::uint32_t capacity{};
+        std::string anchor_id{};
+    };
+
+    export struct IndexedSegmentOutput {
+        std::uint32_t capacity{};
+        std::string anchor_id{};
+    };
+
     export struct SphereSetOutput {
         std::uint32_t capacity{};
     };
@@ -77,10 +94,11 @@ namespace spectra::simulation {
 
     export struct OutputDescriptor {
         std::string id{};
-        std::variant<TriangleMeshOutput, SphereSetOutput, InstanceTransformOutput, ParticleSetOutput, SegmentOutput, VectorOutput, FieldOutput, ImageOutput, CameraOutput, HashGridRadianceFieldOutput> details;
+        std::optional<scene::SimulationVisualization> default_visualization{};
+        std::variant<TriangleMeshOutput, MeshFieldOutput, IndexedPointOutput, IndexedSegmentOutput, SphereSetOutput, InstanceTransformOutput, ParticleSetOutput, SegmentOutput, VectorOutput, FieldOutput, ImageOutput, CameraOutput, HashGridRadianceFieldOutput> details;
 
         template <typename Details>
-        OutputDescriptor(std::string id, Details details) : id(std::move(id)), details(std::move(details)) {}
+        OutputDescriptor(std::string id, std::optional<scene::SimulationVisualization> visualization, Details details) : id(std::move(id)), default_visualization(std::move(visualization)), details(std::move(details)) {}
     };
 
     export struct ParameterDescriptor {

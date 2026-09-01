@@ -189,6 +189,7 @@ namespace spectra::render {
             DensityGrid     = shader_semantics::volume_density_grid,
             RgbGrid         = shader_semantics::volume_rgb_grid,
             ProceduralCloud = shader_semantics::volume_procedural_cloud,
+            OpenVdb         = shader_semantics::volume_openvdb,
         };
 
         enum class PathMaterialTextureRole : std::uint32_t {
@@ -463,6 +464,7 @@ namespace spectra::render {
             destination.fields.reserve(volume.fields.size());
             for (const GpuVolumeField& field : volume.fields) {
                 PathCompilationInput::Volume::Field& copied = destination.fields.emplace_back(field.id, field.kind);
+                copied.maximum                              = field.maximum;
                 for (const runtime::DescriptorLease& descriptor : field.descriptors) copied.descriptors.emplace_back(descriptor);
             }
         }
@@ -1110,6 +1112,12 @@ namespace spectra::render {
             result.sigma_a                 = resources.zero_volume_field_descriptor;
             result.sigma_s                 = resources.zero_volume_field_descriptor;
             result.emission                = resources.zero_volume_field_descriptor;
+            result.density_openvdb         = resources.zero_volume_field_descriptor;
+            result.temperature_openvdb     = resources.zero_volume_field_descriptor;
+            result.emission_scale_openvdb  = resources.zero_volume_field_descriptor;
+            result.sigma_a_openvdb         = resources.zero_volume_field_descriptor;
+            result.sigma_s_openvdb         = resources.zero_volume_field_descriptor;
+            result.emission_openvdb        = resources.zero_volume_field_descriptor;
             result.majorant                = resources.zero_volume_field_descriptor;
             result.bounds_minimum          = {volume.domain.minimum.x, volume.domain.minimum.y, volume.domain.minimum.z, 0.0f};
             result.bounds_maximum          = {volume.domain.maximum.x, volume.domain.maximum.y, volume.domain.maximum.z, 0.0f};
@@ -1125,7 +1133,7 @@ namespace spectra::render {
                 compiled_volume.majorant.assign(values.begin(), values.end());
                 return resources.zero_volume_field_descriptor;
             };
-            if (const auto* data = std::get_if<scene::GridVolume>(&volume.data)) {
+            if (const auto* data = std::get_if<scene::DenseGridVolume>(&volume.data)) {
                 const auto vertex_sampled = [data](const std::string_view id) {
                     const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
                     return found != data->fields.end() && scene::field_sampling(*found) == scene::VolumeFieldSampling::Vertex ? 1u : 0u;
@@ -1162,6 +1170,29 @@ namespace spectra::render {
                     const std::vector<float> majorant = build_density_majorant(data->resolution, scalar_values(rendering.density_field));
                     result.majorant                   = retain_majorant(std::span<const float>{majorant});
                 }
+            } else if (std::holds_alternative<scene::OpenVdbVolume>(volume.data)) {
+                const auto maximum = [&shared](const std::string_view id) {
+                    const std::vector<PathCompilationInput::Volume::Field>::const_iterator found = std::ranges::find(shared.fields, id, &PathCompilationInput::Volume::Field::id);
+                    return found == shared.fields.end() ? math::Float3{} : found->maximum;
+                };
+                const bool rgb                = rendering.density_field.empty() && (!rendering.sigma_a_field.empty() || !rendering.sigma_s_field.empty() || !rendering.emission_field.empty());
+                const std::uint32_t flags     = (rgb ? 1u << 24u : 0u) | (rendering.temperature_field.empty() ? 0u : 1u) | (rendering.emission_scale_field.empty() ? 0u : 2u) | (rendering.sigma_a_field.empty() ? 0u : 1u) | (rendering.sigma_s_field.empty() ? 0u : 2u) | (rendering.emission_field.empty() ? 0u : 4u) | (std::to_underlying(rendering.field_color_space) << 8u);
+                result.metadata               = {std::to_underlying(PathVolumeKind::OpenVdb), 0u, 0u, 0u};
+                result.majorant_metadata      = {1u, 1u, 1u, flags};
+                result.density_openvdb        = field(rendering.density_field);
+                result.temperature_openvdb    = field(rendering.temperature_field);
+                result.emission_scale_openvdb = field(rendering.emission_scale_field);
+                result.sigma_a_openvdb        = field(rendering.sigma_a_field);
+                result.sigma_s_openvdb        = field(rendering.sigma_s_field);
+                result.emission_openvdb       = field(rendering.emission_field);
+                float majorant{};
+                if (rgb) {
+                    if (!rendering.sigma_a_field.empty()) majorant += rgb_spectrum_maximum(maximum(rendering.sigma_a_field), rendering.field_color_space, spectrum_tables);
+                    if (!rendering.sigma_s_field.empty()) majorant += rgb_spectrum_maximum(maximum(rendering.sigma_s_field), rendering.field_color_space, spectrum_tables);
+                } else majorant = maximum(rendering.density_field).x;
+                const std::array values{majorant};
+                result.majorant            = retain_majorant(std::span<const float>{values});
+                compiled_volume.resolution = {1u, 1u, 1u};
             } else {
                 const scene::ProceduralCloudVolume& cloud = std::get<scene::ProceduralCloudVolume>(volume.data);
                 result.metadata[0]                        = std::to_underlying(PathVolumeKind::ProceduralCloud);

@@ -72,9 +72,8 @@ namespace spectra::editor {
         if (provider.parameters.empty()) {
             ImGui::Spacing();
             ImGui::TextDisabled("This system has no configurable parameters");
-            return;
         }
-        if (this->parameter_drafts.empty()) {
+        if (!provider.parameters.empty() && this->parameter_drafts.empty()) {
             this->parameter_drafts.reserve(provider.parameters.size());
             for (const simulation::ParameterDescriptor& descriptor : provider.parameters) {
                 const auto configured = std::ranges::find(scene_system.parameters, descriptor.id, &scene::SimulationParameterSetting::parameter_id);
@@ -152,6 +151,66 @@ namespace spectra::editor {
                 std::vector<scene::SimulationParameterSetting> parameters = parameter_values(true);
                 this->apply_parameters(std::move(parameters), true);
             }
+
+        if (scene_system.visualizations.empty()) return;
+        ImGui::Spacing();
+        ImGui::TextDisabled("VISUALIZATIONS");
+        constexpr std::array<const char*, 3> depth_names{"Depth Tested", "X-Ray", "Overlay"};
+        constexpr std::array<const char*, 2> domain_names{"Scene Linear", "Display Referred"};
+        constexpr std::array<const char*, 3> color_source_names{"Element", "Uniform", "Scalar"};
+        constexpr std::array<const char*, 4> color_map_names{"Viridis", "Turbo", "Cool-Warm", "Grayscale"};
+        for (std::size_t visualization_index = 0u; visualization_index != scene_system.visualizations.size(); ++visualization_index) {
+            scene::SimulationVisualization visualization = scene_system.visualizations[visualization_index];
+            ImGui::PushID(static_cast<int>(visualization_index));
+            ImGui::Separator();
+            bool changed = ImGui::Checkbox(visualization.name.c_str(), &visualization.visible);
+            ImGui::TextDisabled("%s", visualization.output_id.c_str());
+            int depth = std::to_underlying(visualization.depth_mode);
+            if (ImGui::Combo("Depth", &depth, depth_names.data(), static_cast<int>(depth_names.size()))) {
+                visualization.depth_mode = static_cast<scene::VisualizationDepthMode>(depth);
+                changed                  = true;
+            }
+            if (!std::holds_alternative<scene::NeuralFieldVisualization>(visualization.data)) {
+                int domain = std::to_underlying(visualization.composition_domain);
+                if (ImGui::Combo("Domain", &domain, domain_names.data(), static_cast<int>(domain_names.size()))) {
+                    visualization.composition_domain = static_cast<scene::VisualizationCompositionDomain>(domain);
+                    changed                          = true;
+                }
+            }
+            changed                        = ImGui::ColorEdit4("Color", &visualization.color.x, ImGuiColorEditFlags_Float) || changed;
+            const auto draw_field_controls = [&](auto& style) {
+                changed    = ImGui::DragFloatRange2("Scalar Range", &style.scalar_minimum, &style.scalar_maximum, 0.01f, 0.0f, 0.0f, "%.4g", "%.4g") || changed;
+                int source = std::to_underlying(style.color_source);
+                if (ImGui::Combo("Color Source", &source, color_source_names.data(), static_cast<int>(color_source_names.size()))) style.color_source = static_cast<scene::VisualizationColorSource>(source), changed = true;
+                int map = std::to_underlying(style.color_map);
+                if (ImGui::Combo("Color Map", &map, color_map_names.data(), static_cast<int>(color_map_names.size()))) style.color_map = static_cast<scene::VisualizationColorMap>(map), changed = true;
+            };
+            std::visit(
+                [&](auto& style) {
+                    if constexpr (std::same_as<std::remove_cvref_t<decltype(style)>, scene::PointVisualization>) {
+                        changed = ImGui::DragFloat("Size", &style.size, 0.1f, 0.1f, 64.0f, "%.2f") || changed;
+                        draw_field_controls(style);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(style)>, scene::SegmentVisualization>) {
+                        changed = ImGui::DragFloat("Width", &style.width, 0.1f, 0.1f, 32.0f, "%.2f") || changed;
+                        draw_field_controls(style);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(style)>, scene::VectorVisualization>) {
+                        changed = ImGui::DragFloat("Width", &style.width, 0.1f, 0.1f, 32.0f, "%.2f") || changed;
+                        changed = ImGui::DragFloat("Scale", &style.scale, 0.01f, 0.0f, 100.0f, "%.4g") || changed;
+                        draw_field_controls(style);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(style)>, scene::ImageVisualization>) changed = ImGui::DragFloat4("Screen Rect", &style.screen_rect.x, 0.005f, 0.0f, 1.0f, "%.3f") || changed;
+                    else if constexpr (std::same_as<std::remove_cvref_t<decltype(style)>, scene::SurfaceVisualization>) draw_field_controls(style);
+                    else if constexpr (std::same_as<std::remove_cvref_t<decltype(style)>, scene::DerivedMeshVisualization>) {
+                        changed = ImGui::DragFloat("Width", &style.width, 0.1f, 0.1f, 32.0f, "%.2f") || changed;
+                        if (style.mode == scene::DerivedMeshVisualizationMode::VertexNormals || style.mode == scene::DerivedMeshVisualizationMode::FaceNormals) changed = ImGui::DragFloat("Scale", &style.scale, 0.005f, 0.0f, 100.0f, "%.4g") || changed;
+                    }
+                },
+                visualization.data);
+            ImGui::PopID();
+            if (changed) {
+                this->apply_visualization(visualization_index, std::move(visualization));
+                return;
+            }
+        }
     }
 
     void SimulationPanel::apply_parameters(std::vector<scene::SimulationParameterSetting> parameters, const bool reset_simulation) {
@@ -167,6 +226,19 @@ namespace spectra::editor {
                 this->reset_pending    = false;
                 this->recreate_pending = false;
             }
+        } catch (const std::exception& error) {
+            this->notification       = error.what();
+            this->notification_error = true;
+        }
+    }
+
+    void SimulationPanel::apply_visualization(const std::size_t visualization_index, scene::SimulationVisualization visualization) {
+        try {
+            this->simulation.update_visualization(this->selected_system, visualization_index, visualization);
+            this->document.update_simulation_visualization(this->selected_system, visualization_index, std::move(visualization));
+            this->notification       = "Visualization updated";
+            this->notification_error = false;
+            this->observed_revision  = this->document.authored.revision().number;
         } catch (const std::exception& error) {
             this->notification       = error.what();
             this->notification_error = true;

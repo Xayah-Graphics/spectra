@@ -182,34 +182,46 @@ namespace spectra::editor {
     void InspectorPanel::draw_volume(const scene::Volume& volume) {
         ImGui::PushID(&volume);
         ImGui::TextDisabled("VOLUME VISUALIZATION / %s", volume.name.c_str());
-        const auto* grid = std::get_if<scene::GridVolume>(&volume.data);
-        if (!grid || grid->fields.empty()) {
+        struct DiagnosticField {
+            const std::string* id;
+            const std::string* name;
+            scene::FieldKind kind;
+        };
+        std::vector<DiagnosticField> fields{};
+        if (const auto* grid = std::get_if<scene::DenseGridVolume>(&volume.data)) {
+            fields.reserve(grid->fields.size());
+            for (const scene::VolumeField& field : grid->fields) fields.emplace_back(&field.id, &field.name, scene::field_kind(field));
+        } else if (const auto* grid = std::get_if<scene::OpenVdbVolume>(&volume.data)) {
+            fields.reserve(grid->fields.size());
+            for (const scene::OpenVdbField& field : grid->fields)
+                if (field.kind == scene::FieldKind::Float) fields.emplace_back(&field.id, &field.name, field.kind);
+        }
+        if (fields.empty()) {
             ImGui::TextDisabled("No diagnostic fields");
             ImGui::PopID();
             return;
         }
         scene::VolumeDiagnostics diagnostics = volume.diagnostics;
         bool changed{};
-        std::vector<scene::VolumeField>::const_iterator selected_field = std::ranges::find(grid->fields, diagnostics.field_id, &scene::VolumeField::id);
-        if (selected_field == grid->fields.end()) selected_field = grid->fields.begin();
-        if (ImGui::BeginCombo("Field", selected_field->name.c_str())) {
-            for (std::size_t index = 0; index != grid->fields.size(); ++index) {
-                const scene::VolumeField& field = grid->fields[index];
+        std::vector<DiagnosticField>::const_iterator selected_field = std::ranges::find(fields, diagnostics.field_id, [](const DiagnosticField& field) { return *field.id; });
+        if (selected_field == fields.end()) selected_field = fields.begin();
+        if (ImGui::BeginCombo("Field", selected_field->name->c_str())) {
+            for (std::size_t index = 0; index != fields.size(); ++index) {
+                const DiagnosticField& field = fields[index];
                 ImGui::PushID(static_cast<int>(index));
-                if (ImGui::Selectable(field.name.c_str(), field.id == selected_field->id) && field.id != diagnostics.field_id) {
-                    diagnostics.field_id              = field.id;
-                    diagnostics.mode                  = scene::VolumeDiagnosticMode::Off;
-                    const scene::FieldKind field_type = scene::field_kind(field);
-                    diagnostics.mapping               = field_type == scene::FieldKind::Float3 || field_type == scene::FieldKind::MacFloat3 ? scene::FieldMapping::Magnitude : scene::FieldMapping::Value;
-                    selected_field                    = grid->fields.begin() + static_cast<std::ptrdiff_t>(index);
-                    changed                           = true;
+                if (ImGui::Selectable(field.name->c_str(), *field.id == *selected_field->id) && *field.id != diagnostics.field_id) {
+                    diagnostics.field_id = *field.id;
+                    diagnostics.mode     = scene::VolumeDiagnosticMode::Off;
+                    diagnostics.mapping  = field.kind == scene::FieldKind::Float3 || field.kind == scene::FieldKind::MacFloat3 ? scene::FieldMapping::Magnitude : scene::FieldMapping::Value;
+                    selected_field       = fields.begin() + static_cast<std::ptrdiff_t>(index);
+                    changed              = true;
                 }
                 ImGui::PopID();
             }
             ImGui::EndCombo();
         }
 
-        const scene::FieldKind selected_field_kind = scene::field_kind(*selected_field);
+        const scene::FieldKind selected_field_kind = selected_field->kind;
         const bool vector_field                    = selected_field_kind == scene::FieldKind::Float3 || selected_field_kind == scene::FieldKind::MacFloat3;
         const bool categorical_field               = selected_field_kind == scene::FieldKind::UInt32;
         constexpr std::array scalar_modes{
@@ -259,7 +271,7 @@ namespace spectra::editor {
                 ImGui::EndCombo();
             }
         }
-        if (diagnostics.field_id.empty()) diagnostics.field_id = selected_field->id, changed = true;
+        if (diagnostics.field_id.empty()) diagnostics.field_id = *selected_field->id, changed = true;
         if (diagnostics.mode != scene::VolumeDiagnosticMode::Off) {
             constexpr const char* mappings[]         = {"Value", "Magnitude", "X", "Y", "Z", "Divergence", "Curl Magnitude", "Q Criterion"};
             constexpr const char* color_maps[]       = {"Viridis", "Turbo", "Cool-Warm", "Grayscale"};

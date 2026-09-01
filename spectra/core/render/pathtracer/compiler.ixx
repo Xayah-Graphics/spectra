@@ -159,6 +159,7 @@ export namespace spectra::render {
                 std::string id{};
                 scene::FieldKind kind{scene::FieldKind::Float};
                 std::vector<runtime::DescriptorHandle> descriptors{};
+                math::Float3 maximum{};
             };
 
             scene::VolumeId id{};

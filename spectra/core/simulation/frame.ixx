@@ -84,6 +84,27 @@ namespace spectra::simulation {
         std::uint32_t count{};
     };
 
+    export struct GpuIndexedPointVisualization {
+        VisualizationStyle style{};
+        GpuBufferView positions{};
+        GpuBufferView indices{};
+        std::uint32_t count{};
+    };
+
+    export struct GpuIndexedSegmentVisualization {
+        VisualizationStyle style{};
+        GpuBufferView positions{};
+        GpuBufferView indices{};
+        std::uint32_t count{};
+    };
+
+    export struct GpuMeshVectorVisualization {
+        VisualizationStyle style{};
+        GpuBufferView positions{};
+        GpuBufferView vectors{};
+        std::uint32_t count{};
+    };
+
     export struct GpuVectorVisualization {
         VisualizationStyle style{};
         GpuBufferView vectors{};
@@ -106,8 +127,20 @@ namespace spectra::simulation {
         std::uint32_t index_count{};
     };
 
+    export struct GpuMeshFieldSurfaceVisualization {
+        VisualizationStyle style{};
+        scene::GeometryId geometry_id{};
+        std::optional<GpuBufferView> colors{};
+        std::optional<GpuBufferView> scalars{};
+    };
+
+    export struct GpuDerivedMeshVisualization {
+        VisualizationStyle style{};
+        scene::GeometryId geometry_id{};
+    };
+
     export struct GpuVisualization {
-        std::variant<GpuSegmentVisualization, GpuVectorVisualization, GpuImageVisualization, GpuSurfaceVisualization> data{};
+        std::variant<GpuSegmentVisualization, GpuIndexedPointVisualization, GpuIndexedSegmentVisualization, GpuVectorVisualization, GpuMeshVectorVisualization, GpuImageVisualization, GpuSurfaceVisualization, GpuMeshFieldSurfaceVisualization, GpuDerivedMeshVisualization> data{};
     };
 
     export struct MeshOutputBinding {

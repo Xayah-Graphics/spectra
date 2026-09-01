@@ -1,0 +1,89 @@
+include_guard(GLOBAL)
+
+spectra_require_dependency(onetbb)
+
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CMAKE_CXX_MODULE_STD OFF)
+FetchContent_MakeAvailable(zlib)
+set(CMAKE_CXX_MODULE_STD ON)
+set_target_properties(zlib PROPERTIES EXCLUDE_FROM_ALL TRUE)
+set_target_properties(zlibstatic PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(ZLIB::ZLIB ALIAS zlibstatic)
+file(
+        WRITE "${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/zlib-extra.cmake"
+        "if (NOT TARGET ZLIB::ZLIB)\n    add_library(ZLIB::ZLIB ALIAS zlibstatic)\nendif ()\nset(ZLIB_FOUND TRUE)\nset(ZLIB_VERSION 1.3.1)\n"
+)
+
+set(BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
+set(BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(DEACTIVATE_ZLIB ON CACHE BOOL "" FORCE)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+set(CMAKE_CXX_MODULE_STD OFF)
+FetchContent_MakeAvailable(blosc)
+set(CMAKE_CXX_MODULE_STD ON)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
+set_target_properties(blosc_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(Blosc::blosc ALIAS blosc_static)
+file(
+        WRITE "${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/blosc-extra.cmake"
+        "if (NOT TARGET Blosc::blosc)\n    add_library(Blosc::blosc ALIAS blosc_static)\nendif ()\nset(Blosc_FOUND TRUE)\nset(Blosc_VERSION 1.21.6)\n"
+)
+
+set(OPENVDB_BUILD_CORE ON CACHE BOOL "" FORCE)
+set(OPENVDB_CORE_SHARED ON CACHE BOOL "" FORCE)
+set(OPENVDB_CORE_STATIC OFF CACHE BOOL "" FORCE)
+set(OPENVDB_BUILD_BINARIES OFF CACHE BOOL "" FORCE)
+set(OPENVDB_BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
+set(OPENVDB_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(OPENVDB_BUILD_HOUDINI_PLUGIN OFF CACHE BOOL "" FORCE)
+set(OPENVDB_BUILD_MAYA_PLUGIN OFF CACHE BOOL "" FORCE)
+set(OPENVDB_BUILD_AX OFF CACHE BOOL "" FORCE)
+set(OPENVDB_BUILD_NANOVDB ON CACHE BOOL "" FORCE)
+set(OPENVDB_ENABLE_UNINSTALL OFF CACHE BOOL "" FORCE)
+set(OPENVDB_INSTALL_CMAKE_MODULES OFF CACHE BOOL "" FORCE)
+set(OPENVDB_USE_DELAYED_LOADING OFF CACHE BOOL "" FORCE)
+set(USE_BLOSC ON CACHE BOOL "" FORCE)
+set(USE_ZLIB ON CACHE BOOL "" FORCE)
+set(USE_TBB ON CACHE BOOL "" FORCE)
+set(USE_NANOVDB ON CACHE BOOL "" FORCE)
+set(USE_EXR OFF CACHE BOOL "" FORCE)
+set(USE_IMATH_HALF OFF CACHE BOOL "" FORCE)
+set(NANOVDB_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(NANOVDB_BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
+set(NANOVDB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(NANOVDB_BUILD_PYTHON_MODULE OFF CACHE BOOL "" FORCE)
+set(NANOVDB_USE_OPENVDB ON CACHE BOOL "" FORCE)
+set(NANOVDB_USE_CUDA OFF CACHE BOOL "" FORCE)
+set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
+set(CMAKE_CXX_MODULE_STD OFF)
+FetchContent_MakeAvailable(openvdb)
+set(CMAKE_CXX_MODULE_STD ON)
+unset(CMAKE_FIND_PACKAGE_PREFER_CONFIG)
+set_target_properties(openvdb_shared PROPERTIES CXX_MODULE_STD OFF)
+target_compile_features(openvdb_shared PUBLIC cxx_std_23)
+if (LINUX)
+    set_target_properties(openvdb_shared PROPERTIES INSTALL_RPATH "$ORIGIN")
+endif ()
+
+add_library(spectra_openvdb INTERFACE)
+add_library(spectra::openvdb ALIAS spectra_openvdb)
+target_link_libraries(spectra_openvdb INTERFACE openvdb_shared nanovdb)
+target_compile_features(spectra_openvdb INTERFACE cxx_std_23)
+target_compile_options(spectra_openvdb INTERFACE "$<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus>")
+
+add_custom_target(
+        spectra_openvdb_runtime ALL
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_BUILD_BIN_DIR}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:openvdb_shared>" "${SPECTRA_BUILD_BIN_DIR}"
+        DEPENDS openvdb_shared
+        VERBATIM
+)
+
+install(
+        TARGETS openvdb_shared
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Spectra
+        LIBRARY DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Spectra
+)

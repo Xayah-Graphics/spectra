@@ -7,9 +7,13 @@
 [![Docker](https://github.com/Xayah-Graphics/spectra/actions/workflows/docker.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/docker.yml)
 [![License](https://img.shields.io/github/license/Xayah-Graphics/spectra)](LICENSE)
 
-Spectra is a C++23 Vulkan 1.4 graphics research workspace for native `.spectra` scenes and live simulation providers.
-One shared scene is consumed by an interactive rasterizer and a spectral wavefront path tracer. The Windows build
-includes the editor, while the same executable also supports headless rendering on Windows and Linux.
+Spectra is a C++23 Vulkan 1.4 graphics research workspace for OpenUSD scenes and optional live simulation Providers.
+One `.usd`, `.usda`, or `.usdc` scene is consumed by an interactive rasterizer and a spectral wavefront path tracer.
+The Windows build includes the editor, while the same executable also supports headless rendering on Windows and Linux.
+
+Standard DCC scenes are read directly through OpenUSD. The Spectra USD Profile preserves the renderer's extended feature
+set during round trips, and the Blender 5.1+ extension in [`integrations/blender/spectra_usd`](integrations/blender/spectra_usd)
+provides profile-aware import and export. Unsupported USD features fail explicitly instead of being approximated.
 
 ## Gallery
 
@@ -27,14 +31,18 @@ includes the editor, while the same executable also supports headless rendering 
 - C++23 compiler with standard-library module support
 - Vulkan SDK 1.4 + Slang
 
+CMake fetches the remaining dependencies, including OpenUSD, OpenVDB, and NanoVDB. Building the optional Spectra SDK and
+CUDA Providers additionally requires CUDA Toolkit 13 on Windows.
+
 ### Build
 
 ```bash
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
 The main executable target is `spectra`. `SPECTRA_BUILD_UI` defaults to `ON` on Windows and `OFF` elsewhere.
+The optional Provider SDK is documented in [`sdk/GUIDE.md`](sdk/GUIDE.md).
 
 Build the Linux headless image locally with Docker:
 
@@ -50,12 +58,15 @@ a compatible host Vulkan device.
 Render a scene headlessly with either renderer:
 
 ```bash
-spectra /path/to/scene.spectra --renderer rasterizer
-spectra /path/to/scene.spectra --renderer pathtracer
+spectra /path/to/scene.usda --renderer rasterizer
+spectra /path/to/scene.usda --renderer pathtracer
 ```
 
 Open a scene in the editor:
 
 ```bash
-spectra /path/to/scene.spectra --gui
+spectra /path/to/scene.usda --gui
 ```
+
+Dynamic projects keep the base USD scene DCC-portable. Spectra automatically composes an optional sibling
+`scene.physica.usda` layer and loads matching `*.spectra-provider.dll` Providers from the scene directory.

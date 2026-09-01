@@ -15,6 +15,7 @@ namespace spectra::editor {
         void save_as(const std::filesystem::path& scene_path);
 
         void update_simulation_parameters(std::size_t system_index, std::vector<scene::SimulationParameterSetting> parameters);
+        void update_simulation_visualization(std::size_t system_index, std::size_t visualization_index, scene::SimulationVisualization visualization);
         void update_transform(scene::InstanceId instance_id, math::Transform transform);
         void update_camera_transform(scene::CameraId camera_id, math::Transform transform);
         void update_light_transform(scene::LightId light_id, math::Transform transform);

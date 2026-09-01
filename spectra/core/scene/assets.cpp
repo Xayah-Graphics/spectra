@@ -1,7 +1,8 @@
 module;
 #include <exr.h>
 #include <lodepng.h>
-#include <nanovdb/io/IO.h>
+#include <nanovdb/tools/CreateNanoGrid.h>
+#include <openvdb/io/File.h>
 
 module spectra.scene.assets;
 
@@ -515,64 +516,56 @@ namespace spectra::scene {
         else throw std::runtime_error(std::format("Image Texture source must use the PNG or OpenEXR format: {}", path.string()));
     }
 
-    void load_volume_source(GridVolume& volume, const std::filesystem::path& path) {
-        if (path.extension() != ".nvdb") throw std::runtime_error(std::format("Grid Volume source must use the NanoVDB format: {}", path.string()));
-        const std::size_t sample_count = static_cast<std::size_t>(volume.resolution.x) * volume.resolution.y * volume.resolution.z;
-        for (VolumeField& field : volume.fields) {
-            if (ScalarVolumeField* data = std::get_if<ScalarVolumeField>(&field.data)) {
-                const nanovdb::GridHandle handle = nanovdb::io::readGrid(path.string(), field.id);
-                const auto accessor              = handle.grid<float>()->tree().getAccessor();
-                data->values.resize(sample_count);
-                for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
-                    for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
-                        for (std::uint32_t x = 0; x != volume.resolution.x; ++x) data->values[(static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x] = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
-            } else if (VectorVolumeField* data = std::get_if<VectorVolumeField>(&field.data)) {
-                const nanovdb::GridHandle handle = nanovdb::io::readGrid(path.string(), field.id);
-                const auto accessor              = handle.grid<nanovdb::Vec3f>()->tree().getAccessor();
-                data->values.resize(sample_count);
-                for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
-                    for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
-                        for (std::uint32_t x = 0; x != volume.resolution.x; ++x) {
-                            const std::size_t index    = (static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x;
-                            const nanovdb::Vec3f value = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
-                            data->values[index]        = {value[0], value[1], value[2]};
-                        }
-            } else if (CategoryVolumeField* data = std::get_if<CategoryVolumeField>(&field.data)) {
-                const nanovdb::GridHandle handle = nanovdb::io::readGrid(path.string(), field.id);
-                const auto accessor              = handle.grid<std::uint32_t>()->tree().getAccessor();
-                data->values.resize(sample_count);
-                for (std::uint32_t z = 0; z != volume.resolution.z; ++z)
-                    for (std::uint32_t y = 0; y != volume.resolution.y; ++y)
-                        for (std::uint32_t x = 0; x != volume.resolution.x; ++x) data->values[(static_cast<std::size_t>(z) * volume.resolution.y + y) * volume.resolution.x + x] = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
-            } else {
-                MacVolumeField& mac = std::get<MacVolumeField>(field.data);
-                const std::array resolutions{
-                    math::UInt3{volume.resolution.x + 1u, volume.resolution.y, volume.resolution.z},
-                    math::UInt3{volume.resolution.x, volume.resolution.y + 1u, volume.resolution.z},
-                    math::UInt3{volume.resolution.x, volume.resolution.y, volume.resolution.z + 1u},
-                };
-                constexpr std::array suffixes{".x", ".y", ".z"};
-                for (std::size_t component = 0; component != 3u; ++component) {
-                    const nanovdb::GridHandle handle = nanovdb::io::readGrid(path.string(), field.id + suffixes[component]);
-                    const auto accessor              = handle.grid<float>()->tree().getAccessor();
-                    const math::UInt3 resolution     = resolutions[component];
-                    mac.values[component].resize(static_cast<std::size_t>(resolution.x) * resolution.y * resolution.z);
-                    for (std::uint32_t z = 0; z != resolution.z; ++z)
-                        for (std::uint32_t y = 0; y != resolution.y; ++y)
-                            for (std::uint32_t x = 0; x != resolution.x; ++x) mac.values[component][(static_cast<std::size_t>(z) * resolution.y + y) * resolution.x + x] = accessor.getValue(nanovdb::Coord{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y), static_cast<std::int32_t>(z)});
-                }
+    math::Bounds3 load_openvdb_source(OpenVdbField& field, const std::filesystem::path& path) {
+        if (path.extension() != ".vdb") throw std::runtime_error(std::format("OpenVDB Field source must use the .vdb format: {}", path.string()));
+        openvdb::io::File file{path.string()};
+        file.open(false);
+        const openvdb::GridBase::Ptr grid = file.readGrid(field.grid_name);
+        file.close();
+        if (grid->getGridClass() != openvdb::GRID_FOG_VOLUME) throw std::runtime_error(std::format("Unsupported OpenVDB grid '{}': Spectra accepts fog volumes", field.grid_name));
+        if (field.kind != FieldKind::Float && field.kind != FieldKind::Float3) throw std::runtime_error(std::format("Unsupported OpenVDB grid '{}': Spectra accepts FloatGrid and Vec3fGrid fields", field.grid_name));
+        if (field.kind == FieldKind::Float) {
+            const openvdb::FloatGrid::Ptr typed = openvdb::GridBase::grid<openvdb::FloatGrid>(grid);
+            if (!typed) throw std::runtime_error(std::format("OpenVDB grid '{}' is not a FloatGrid", field.grid_name));
+            field.maximum.x = typed->background();
+            for (auto value = typed->tree().cbeginValueOn(); value; ++value) field.maximum.x = std::max(field.maximum.x, *value);
+            field.maximum = {field.maximum.x, field.maximum.x, field.maximum.x};
+        } else {
+            const openvdb::Vec3fGrid::Ptr typed = openvdb::GridBase::grid<openvdb::Vec3fGrid>(grid);
+            if (!typed) throw std::runtime_error(std::format("OpenVDB grid '{}' is not a Vec3fGrid", field.grid_name));
+            field.maximum = {typed->background()[0], typed->background()[1], typed->background()[2]};
+            for (auto value = typed->tree().cbeginValueOn(); value; ++value) {
+                field.maximum.x = std::max(field.maximum.x, (*value)[0]);
+                field.maximum.y = std::max(field.maximum.y, (*value)[1]);
+                field.maximum.z = std::max(field.maximum.z, (*value)[2]);
             }
         }
+        const nanovdb::GridHandle handle = nanovdb::tools::openToNanoVDB(grid, nanovdb::tools::StatsMode::All);
+        field.nanovdb.resize((handle.bufferSize() + sizeof(std::uint32_t) - 1u) / sizeof(std::uint32_t));
+        std::memcpy(field.nanovdb.data(), handle.data(), handle.bufferSize());
+
+        const openvdb::CoordBBox index_bounds = grid->evalActiveVoxelBoundingBox();
+        math::Bounds3 bounds                  = math::Bounds3::empty();
+        for (const double x : {static_cast<double>(index_bounds.min().x()) - 0.5, static_cast<double>(index_bounds.max().x()) + 0.5})
+            for (const double y : {static_cast<double>(index_bounds.min().y()) - 0.5, static_cast<double>(index_bounds.max().y()) + 0.5})
+                for (const double z : {static_cast<double>(index_bounds.min().z()) - 0.5, static_cast<double>(index_bounds.max().z()) + 0.5}) {
+                    const openvdb::Vec3d world = grid->indexToWorld(openvdb::Vec3d{x, y, z});
+                    bounds.include(math::Float3{static_cast<float>(world.x()), static_cast<float>(world.y()), static_cast<float>(world.z())});
+                }
+        return bounds;
     }
 
     void load_scene_sources(Scene& scene, const std::filesystem::path& root) {
         for (Geometry& geometry : scene.resources.geometries)
-            if (TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data)) load_triangle_mesh_source(*mesh, root / mesh->source);
+            if (TriangleMeshGeometry* mesh = std::get_if<TriangleMeshGeometry>(&geometry.data); mesh && !mesh->source.empty()) load_triangle_mesh_source(*mesh, root / mesh->source);
         for (SphereSet& spheres : scene.resources.sphere_sets)
             if (!spheres.source.empty()) load_sphere_set_source(spheres, root / spheres.source);
-        for (Volume& volume : scene.resources.volumes) {
-            if (GridVolume* grid = std::get_if<GridVolume>(&volume.data); grid && !grid->source.empty()) load_volume_source(*grid, root / grid->source);
-        }
+        openvdb::initialize();
+        for (Volume& volume : scene.resources.volumes)
+            if (OpenVdbVolume* openvdb = std::get_if<OpenVdbVolume>(&volume.data)) {
+                volume.domain = math::Bounds3::empty();
+                for (OpenVdbField& field : openvdb->fields) volume.domain.include(load_openvdb_source(field, field.resolved_source.empty() ? root / field.source : std::filesystem::path{field.resolved_source}));
+            }
         for (Texture& texture : scene.resources.textures)
             if (ImageTexture* image = std::get_if<ImageTexture>(&texture.data)) load_image_source(*image, texture.color_space, root / image->source);
     }

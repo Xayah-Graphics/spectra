@@ -41,6 +41,8 @@ namespace spectra::render {
         [[nodiscard]] constexpr std::uint32_t shader_field_kind(const scene::FieldKind kind) noexcept {
             switch (kind) {
             case scene::FieldKind::Float: return shader_semantics::field_float;
+            case scene::FieldKind::Float2:
+            case scene::FieldKind::Float4: break;
             case scene::FieldKind::Float3: return shader_semantics::field_float3;
             case scene::FieldKind::UInt32: return shader_semantics::field_uint32;
             case scene::FieldKind::MacFloat3: return shader_semantics::field_mac_float3;
@@ -112,7 +114,7 @@ namespace spectra::render {
     bool VisualizationPass::has_visible(const scene::ResolvedSceneView scene, const std::span<const simulation::GpuVisualization> views, const scene::VisualizationCompositionDomain domain) const noexcept {
         if (std::ranges::any_of(views, [domain](const simulation::GpuVisualization& source) { return std::visit([domain](const auto& value) { return value.style.view.visible && value.style.view.composition_domain == domain; }, source.data); })) return true;
         if (domain == scene::VisualizationCompositionDomain::SceneLinear && std::ranges::any_of(scene.resources.particle_sets, [](const scene::ParticleSet& particles) { return particles.visible; })) return true;
-        return domain == scene::VisualizationCompositionDomain::DisplayReferred && std::ranges::any_of(scene.resources.volumes, [](const scene::Volume& volume) { return volume.visible && std::holds_alternative<scene::GridVolume>(volume.data) && volume.diagnostics.mode != scene::VolumeDiagnosticMode::Off; });
+        return domain == scene::VisualizationCompositionDomain::DisplayReferred && std::ranges::any_of(scene.resources.volumes, [](const scene::Volume& volume) { return volume.visible && !std::holds_alternative<scene::ProceduralCloudVolume>(volume.data) && volume.diagnostics.mode != scene::VolumeDiagnosticMode::Off; });
     }
 
     void VisualizationPass::record(const vk::raii::CommandBuffer& command_buffer, const ColorTarget target, DepthBufferView depth, const scene::ResolvedSceneView scene, const scene::Camera& camera, const std::span<const simulation::GpuVisualization> views, const scene::VisualizationCompositionDomain domain, const CameraReferenceRequest* camera_reference) {
@@ -147,6 +149,7 @@ namespace spectra::render {
         this->context.runtime.resources.bind_descriptor_heaps(command_buffer);
 
         const std::array<float, 16>& view_projection = camera.matrices().view_projection;
+        const GpuSceneView gpu_scene                 = this->context.gpu_scene.view();
         std::array<float, 3> camera_depth{};
         std::visit([&camera_depth](const auto& data) { camera_depth = {data.near_plane, data.far_plane, std::same_as<std::remove_cvref_t<decltype(data)>, scene::PerspectiveCameraData> ? 1.0f : 0.0f}; }, camera.data);
         for (const simulation::GpuVisualization& source : views) {
@@ -179,11 +182,45 @@ namespace spectra::render {
                         scalar_maximum                           = style.scalar_maximum;
                         color_source                             = shader_color_source(style.color_source);
                         color_map                                = shader_color_map(style.color_map);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuIndexedPointVisualization>) {
+                        const scene::PointVisualization& style = std::get<scene::PointVisualization>(view.data);
+                        primary                                = output.positions.descriptor;
+                        secondary                              = output.indices.descriptor;
+                        active_count                           = output.count;
+                        kind                                   = shader_semantics::visualization_indexed_points;
+                        width                                  = style.size;
+                        scalar_minimum                         = style.scalar_minimum;
+                        scalar_maximum                         = style.scalar_maximum;
+                        color_source                           = shader_color_source(style.color_source);
+                        color_map                              = shader_color_map(style.color_map);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuIndexedSegmentVisualization>) {
+                        const scene::SegmentVisualization& style = std::get<scene::SegmentVisualization>(view.data);
+                        primary                                  = output.positions.descriptor;
+                        secondary                                = output.indices.descriptor;
+                        active_count                             = output.count;
+                        kind                                     = shader_semantics::visualization_indexed_segments;
+                        width                                    = style.width;
+                        scalar_minimum                           = style.scalar_minimum;
+                        scalar_maximum                           = style.scalar_maximum;
+                        color_source                             = shader_color_source(style.color_source);
+                        color_map                                = shader_color_map(style.color_map);
                     } else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuVectorVisualization>) {
                         const scene::VectorVisualization& style = std::get<scene::VectorVisualization>(view.data);
                         primary                                 = output.vectors.descriptor;
                         active_count                            = output.count;
                         kind                                    = shader_semantics::visualization_vectors;
+                        width                                   = style.width;
+                        scale                                   = style.scale;
+                        scalar_minimum                          = style.scalar_minimum;
+                        scalar_maximum                          = style.scalar_maximum;
+                        color_source                            = shader_color_source(style.color_source);
+                        color_map                               = shader_color_map(style.color_map);
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuMeshVectorVisualization>) {
+                        const scene::VectorVisualization& style = std::get<scene::VectorVisualization>(view.data);
+                        primary                                 = output.positions.descriptor;
+                        secondary                               = output.vectors.descriptor;
+                        active_count                            = output.count;
+                        kind                                    = shader_semantics::visualization_mesh_vectors;
                         width                                   = style.width;
                         scale                                   = style.scale;
                         scalar_minimum                          = style.scalar_minimum;
@@ -197,7 +234,7 @@ namespace spectra::render {
                         image_extent = output.image.extent;
                         color_space  = std::to_underlying(output.image.color_space);
                         screen_rect  = std::get<scene::ImageVisualization>(view.data).screen_rect;
-                    } else {
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuSurfaceVisualization>) {
                         const scene::SurfaceVisualization& style = std::get<scene::SurfaceVisualization>(view.data);
                         primary                                  = output.positions.descriptor;
                         secondary                                = output.indices ? output.indices->descriptor : primary;
@@ -211,6 +248,48 @@ namespace spectra::render {
                         if (style.color_source == scene::VisualizationColorSource::Element && output.colors) attribute = output.colors->descriptor;
                         else if (style.color_source == scene::VisualizationColorSource::Scalar && output.scalars) attribute = output.scalars->descriptor;
                         else color_source = shader_semantics::color_source_uniform;
+                    } else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuMeshFieldSurfaceVisualization>) {
+                        const scene::SurfaceVisualization& style = std::get<scene::SurfaceVisualization>(view.data);
+                        const GpuGeometry& geometry              = *std::ranges::find(gpu_scene.geometries, output.geometry_id, &GpuGeometry::geometry_id);
+                        primary                                  = geometry.positions_descriptor;
+                        secondary                                = geometry.indices_descriptor;
+                        active_count                             = geometry.vertex_count;
+                        secondary_count                          = geometry.index_count;
+                        kind                                     = shader_semantics::visualization_surface;
+                        scalar_minimum                           = style.scalar_minimum;
+                        scalar_maximum                           = style.scalar_maximum;
+                        color_source                             = shader_color_source(style.color_source);
+                        color_map                                = shader_color_map(style.color_map);
+                        if (style.color_source == scene::VisualizationColorSource::Element && output.colors) attribute = output.colors->descriptor;
+                        else if (style.color_source == scene::VisualizationColorSource::Scalar && output.scalars) attribute = output.scalars->descriptor;
+                        else color_source = shader_semantics::color_source_uniform;
+                    } else {
+                        const scene::DerivedMeshVisualization& style = std::get<scene::DerivedMeshVisualization>(view.data);
+                        const GpuGeometry& geometry                  = *std::ranges::find(gpu_scene.geometries, output.geometry_id, &GpuGeometry::geometry_id);
+                        primary                                      = geometry.positions_descriptor;
+                        secondary                                    = geometry.indices_descriptor;
+                        width                                        = style.width;
+                        scale                                        = style.scale;
+                        color_source                                 = shader_semantics::color_source_uniform;
+                        switch (style.mode) {
+                        case scene::DerivedMeshVisualizationMode::Wireframe:
+                            active_count = geometry.index_count / 3u;
+                            kind         = shader_semantics::visualization_mesh_wireframe;
+                            break;
+                        case scene::DerivedMeshVisualizationMode::Vertices:
+                            active_count = geometry.vertex_count;
+                            kind         = shader_semantics::visualization_mesh_vertices;
+                            break;
+                        case scene::DerivedMeshVisualizationMode::VertexNormals:
+                            secondary    = geometry.normals_descriptor;
+                            active_count = geometry.vertex_count;
+                            kind         = shader_semantics::visualization_vertex_normals;
+                            break;
+                        case scene::DerivedMeshVisualizationMode::FaceNormals:
+                            active_count = geometry.index_count / 3u;
+                            kind         = shader_semantics::visualization_face_normals;
+                            break;
+                        }
                     }
                     if (!view.visible || view.composition_domain != domain || active_count == 0u) return;
                     if (!secondary) secondary = primary;
@@ -237,13 +316,18 @@ namespace spectra::render {
                     };
                     this->context.runtime.resources.push_data(command_buffer, std::as_bytes(std::span{&push, 1}));
                     if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuSegmentVisualization>) command_buffer.draw(6u, active_count, 0u, 0u);
+                    else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuIndexedPointVisualization>) command_buffer.draw(6u, active_count, 0u, 0u);
+                    else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuIndexedSegmentVisualization>) command_buffer.draw(6u, active_count, 0u, 0u);
                     else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuVectorVisualization>) command_buffer.draw(18u, active_count, 0u, 0u);
+                    else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuMeshVectorVisualization>) command_buffer.draw(18u, active_count, 0u, 0u);
                     else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuImageVisualization>) command_buffer.draw(6u, 1u, 0u, 0u);
-                    else command_buffer.draw(secondary_count != 0u ? secondary_count : active_count, 1u, 0u, 0u);
+                    else if constexpr (std::same_as<std::remove_cvref_t<decltype(output)>, simulation::GpuDerivedMeshVisualization>) {
+                        const scene::DerivedMeshVisualizationMode mode = std::get<scene::DerivedMeshVisualization>(view.data).mode;
+                        command_buffer.draw(mode == scene::DerivedMeshVisualizationMode::Vertices ? 6u : 18u, active_count, 0u, 0u);
+                    } else command_buffer.draw(secondary_count != 0u ? secondary_count : active_count, 1u, 0u, 0u);
                 },
                 source.data);
         }
-        const GpuSceneView gpu_scene                = this->context.gpu_scene.view();
         const scene::CameraMatrices camera_matrices = camera.matrices();
         if (domain == scene::VisualizationCompositionDomain::SceneLinear) {
             for (const scene::ParticleSet& particles : scene.resources.particle_sets) {
@@ -286,8 +370,9 @@ namespace spectra::render {
         }
         for (const scene::Volume& volume : scene.resources.volumes) {
             if (domain != scene::VisualizationCompositionDomain::DisplayReferred || !volume.visible || volume.diagnostics.mode == scene::VolumeDiagnosticMode::Off) continue;
-            const auto* grid = std::get_if<scene::GridVolume>(&volume.data);
-            if (!grid) continue;
+            const auto* grid   = std::get_if<scene::DenseGridVolume>(&volume.data);
+            const bool openvdb = std::holds_alternative<scene::OpenVdbVolume>(volume.data);
+            if (!grid && !openvdb) continue;
             const scene::VolumeDiagnostics& diagnostics = volume.diagnostics;
             const GpuVolume& gpu_volume                 = *std::ranges::find(gpu_scene.volumes, volume.id, &GpuVolume::volume_id);
             const math::Float3 extent                   = volume.domain.diagonal();
@@ -311,12 +396,14 @@ namespace spectra::render {
             }};
             const math::Transform grid_to_world = volume.transform * grid_to_local;
             const GpuVolumeField& field         = *std::ranges::find(gpu_volume.fields, diagnostics.field_id, &GpuVolumeField::id);
+            if (openvdb && (field.kind != scene::FieldKind::Float || (diagnostics.mode != scene::VolumeDiagnosticMode::Slice && diagnostics.mode != scene::VolumeDiagnosticMode::RayMarch && diagnostics.mode != scene::VolumeDiagnosticMode::MaximumIntensityProjection && diagnostics.mode != scene::VolumeDiagnosticMode::Isosurface))) throw std::runtime_error("OpenVDB diagnostics currently support scalar Slice, RayMarch, MaximumIntensityProjection, and Isosurface modes");
             runtime::DescriptorHandle primary   = field.descriptors.front();
             runtime::DescriptorHandle secondary = primary;
             runtime::DescriptorHandle tertiary  = primary;
             if (field.kind == scene::FieldKind::MacFloat3) secondary = field.descriptors[1], tertiary = field.descriptors[2];
             math::Transform vector_to_grid{};
-            if (field.vector_space == scene::VolumeVectorSpace::Grid)
+            if (openvdb) vector_to_grid = grid_to_local;
+            else if (field.vector_space == scene::VolumeVectorSpace::Grid)
                 vector_to_grid = math::Transform{{
                     1.0f / static_cast<float>(grid->resolution.x),
                     0.0f,
@@ -347,9 +434,9 @@ namespace spectra::render {
                 depth.descriptor,
                 field.kind == scene::FieldKind::UInt32 ? diagnostics.category_mask : tertiary.slot_index,
                 field.kind == scene::FieldKind::UInt32 ? 0u : tertiary.reserved,
-                {shader_volume_mode(diagnostics.mode), shader_field_kind(field.kind) | (shader_field_sampling(field.sampling) << 8u), shader_field_mapping(diagnostics.mapping), shader_depth_mode(diagnostics.depth_mode)},
-                {target.image.extent.width, target.image.extent.height, grid->resolution.x, grid->resolution.y},
-                {grid->resolution.z, diagnostics.axis, diagnostics.sampling, diagnostics.steps},
+                {shader_volume_mode(diagnostics.mode), shader_field_kind(field.kind) | (shader_field_sampling(field.sampling) << 8u) | (openvdb ? shader_semantics::field_storage_openvdb : 0u), shader_field_mapping(diagnostics.mapping), shader_depth_mode(diagnostics.depth_mode)},
+                {target.image.extent.width, target.image.extent.height, grid ? grid->resolution.x : 1u, grid ? grid->resolution.y : 1u},
+                {grid ? grid->resolution.z : 1u, diagnostics.axis, diagnostics.sampling, diagnostics.steps},
                 {diagnostics.width, diagnostics.scale, diagnostics.minimum, diagnostics.maximum},
                 {diagnostics.color.x, diagnostics.color.y, diagnostics.color.z, diagnostics.color.w},
                 {diagnostics.slice_position, diagnostics.opacity, diagnostics.threshold, static_cast<float>(shader_color_map(diagnostics.color_map))},

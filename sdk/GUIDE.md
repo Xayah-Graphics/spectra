@@ -1,4 +1,4 @@
-# Spectra SDK 2.0
+# Spectra SDK 2.1.0
 
 Spectra SDK lets a CUDA simulation publish typed GPU resources without implementing Spectra's binary ABI, Vulkan external-memory import, or semaphore protocol.
 
@@ -10,16 +10,16 @@ cmake --build sdk/cmake-build-release --parallel 30
 cmake --install sdk/cmake-build-release
 ```
 
-## Provider
+## Provider module
 
-A Provider is one exported C++23 struct with public `settings`, a compile-time `description`, and four lifecycle functions:
+A Provider module exports one C++23 struct with public `settings`, a compile-time `description`, and four lifecycle functions. The implementation type can be named freely; `Module` keeps project code distinct from Spectra's host-side Provider abstraction:
 
 ```cpp
 module;
 
 #include <spectra/sdk/cuda_types.h>
 
-export module project.visualization;
+export module project.visualization.module;
 
 import spectra.sdk;
 import spectra.sdk.cuda;
@@ -30,7 +30,7 @@ export namespace project {
         float gravity{-9.81F};
     };
 
-    struct Provider {
+    struct Module {
         Settings settings{};
 
         static constexpr auto description = spectra::sdk::describe(
@@ -39,12 +39,18 @@ export namespace project {
                 "Gravity", "m/s²",
                 {.minimum = -20.0, .maximum = 0.0, .step = 0.1, .application = spectra::sdk::ParameterApplication::Reset}
             ),
-            spectra::sdk::mesh<"surface">({.attributes = spectra::sdk::MeshAttribute::Normal | spectra::sdk::MeshAttribute::TextureCoordinate}),
-            spectra::sdk::lines<"springs">(),
+            spectra::sdk::mesh<"surface">(),
+            spectra::sdk::mesh_field<"velocity", spectra::sdk::Float3>(
+                "Velocity", "m/s",
+                {.name = "Velocity", .anchor = "surface", .kind = spectra::sdk::VisualizationKind::Vectors}
+            ),
+            spectra::sdk::indexed_segments<"springs">(
+                {.name = "Springs", .anchor = "surface", .kind = spectra::sdk::VisualizationKind::Segments}
+            ),
             spectra::sdk::metric<"energy", float>("Energy", "J", {}, true)
         );
 
-        Provider(Settings settings, const std::filesystem::path& assets);
+        Module(Settings settings, const std::filesystem::path& assets, const spectra::sdk::SceneInputs& inputs);
         void setup(spectra::sdk::cuda::Setup& setup);
         void reset(std::uint64_t seed);
         void step(double seconds);
@@ -53,21 +59,21 @@ export namespace project {
 }
 ```
 
-`Settings` member initializers are the defaults. `Live` parameters update `settings` immediately, `Reset` parameters take effect when the simulation resets, and `Recreate` parameters rebuild the Provider because they change its resource layout.
+`Settings` member initializers are the defaults. `Live` parameters update `settings` immediately, `Reset` parameters take effect when the simulation resets, and `Recreate` parameters rebuild the Provider because they change its resource layout. `SceneInputs` contains the meshes selected by the sibling Physica sidecar, including positions, triangle indices, texture coordinates, transforms, and named point selections. It also carries the scene clock's `step_seconds`; the Provider module should construct its canonical simulation state directly from these inputs.
 
-The SDK uses ABI 7. Providers built against an older ABI are rejected; there is no compatibility entry point or fallback.
+The SDK uses ABI 9. Providers built against another ABI are rejected; there is no compatibility entry point or fallback.
 
 ## Presentation Sequence
 
 A Provider instance can optionally expose a display sequence whose frame axis is independent of simulation or optimization progress:
 
 ```cpp
-void Provider::setup(spectra::sdk::cuda::Setup& setup) {
+void Module::setup(spectra::sdk::cuda::Setup& setup) {
     setup.presentation_sequence({frame_count, start_seconds, frame_seconds});
     // Allocate the fixed output layout shared by every presentation frame.
 }
 
-void Provider::publish(spectra::sdk::cuda::Output& output, const spectra::sdk::PresentationFrame presentation) {
+void Module::publish(spectra::sdk::cuda::Output& output, const spectra::sdk::PresentationFrame presentation) {
     auto frame = output.begin(simulation.stream());
     publish_slice(presentation.index, frame);
     frame.commit();
@@ -78,7 +84,7 @@ void Provider::publish(spectra::sdk::cuda::Output& output, const spectra::sdk::P
 
 ## GPU outputs
 
-Declare only the resources a project publishes. SDK 2.0 provides `mesh`, `spheres`, `volume`, `instances`, `particles`, `lines`, `vectors`, `image`, `hash_grid_radiance_field`, and `cameras`. A Volume declares its fields explicitly:
+Declare only the resources a project publishes. SDK 2.1.0 provides `mesh`, `mesh_field`, `indexed_points`, `indexed_segments`, `spheres`, `volume`, `instances`, `particles`, `lines`, `vectors`, `image`, `hash_grid_radiance_field`, and `cameras`. A Volume declares its fields explicitly:
 
 ```cpp
 spectra::sdk::volume<"smoke">(
@@ -151,44 +157,48 @@ The seven spans may share internal allocations, but their layouts and lifetimes 
 Allocate fixed capacities once in `setup`:
 
 ```cpp
-void Provider::setup(spectra::sdk::cuda::Setup& setup) {
+void Module::setup(spectra::sdk::cuda::Setup& setup) {
     auto surface = setup.mesh<"surface">(vertex_count, triangle_count);
     upload_topology(surface.triangles.data());
-    upload_texture_coordinates(surface.texture_coordinates.data());
-    setup.lines<"springs">(spring_capacity);
+    setup.mesh_field<"velocity">(vertex_count);
+    auto springs = setup.indexed_segments<"springs">(spring_capacity);
+    upload_spring_indices(springs.indices.data());
 }
 ```
 
-The SDK completes the setup stream before Spectra starts rendering. Capacities remain fixed for the Provider instance.
+The SDK completes the setup stream before Spectra starts rendering. Capacities remain fixed for the Provider instance. A dynamic Mesh always publishes positions. Spectra computes normals automatically when the Mesh declaration does not request provider-authored normals; static triangle topology and texture coordinates can remain in the base USD scene.
 
 Publish one atomic frame on the simulation's CUDA stream:
 
 ```cpp
-void Provider::publish(spectra::sdk::cuda::Output& output, spectra::sdk::PresentationFrame) {
+void Module::publish(spectra::sdk::cuda::Output& output, spectra::sdk::PresentationFrame) {
     auto frame = output.begin(simulation.stream());
     auto surface = frame.mesh<"surface">();
-    auto springs = frame.lines<"springs">(active_springs);
 
-    launch_surface(simulation.stream(), surface.positions.data(), surface.normals.data());
-    launch_springs(simulation.stream(), springs.data());
+    launch_positions(simulation.stream(), surface.positions.data());
+    if (output.requested<"velocity">()) {
+        auto velocity = frame.mesh_field<"velocity", spectra::sdk::Float3>(vertex_count);
+        launch_velocity(simulation.stream(), velocity.data());
+    }
+    if (output.requested<"springs">()) frame.indexed_segments<"springs">(active_springs);
     frame.metric<"energy">().upload(simulation.energy());
     frame.commit();
 }
 ```
 
-`begin` queues the Vulkan-to-CUDA wait. `commit` queues the CUDA-to-Vulkan signal. Do not synchronize the stream around them.
+`begin` queues the Vulkan-to-CUDA wait. `commit` queues the CUDA-to-Vulkan signal. Do not synchronize the stream around them. `output.requested<Id>()` is true only when an optional output is needed by a visible visualization or another active consumer, so expensive diagnostics can remain entirely dormant.
 
 CUDA translation units include `<spectra/sdk/cuda_types.h>` and write the exact SDK element types directly. The header contains only standard-layout POD declarations and does not expose frame management or depend on the CUDA Runtime.
 
 ## CMake
 
 ```cmake
-find_package(SpectraSDK 2.0.6 CONFIG REQUIRED)
+find_package(SpectraSDK 2.1.0 CONFIG REQUIRED)
 
 spectra_add_provider(
         cloth-provider
-        MODULE project.visualization
-        TYPE project::Provider
+        MODULE project.visualization.module
+        TYPE project::Module
 )
 
 target_sources(
@@ -203,6 +213,6 @@ target_link_libraries(cloth-provider PRIVATE project-simulation)
 
 The target produces `cloth-provider.spectra-provider.dll` on Windows. `spectra_add_provider` generates the ABI entry and compiles the internal bridge; project code must not include SDK internal files.
 
-Place the Provider DLL beside the `.spectra` scene. Spectra scans that directory for `*.spectra-provider.dll` and matches the scene's Provider ID against the DLL's `description` ID, so the CMake target name does not need to duplicate the Provider ID.
+Place the Provider DLL beside the base `.usd`, `.usda`, or `.usdc` scene and its sibling `<scene>.physica.usda` sidecar. Spectra scans that directory for `*.spectra-provider.dll` and matches each sidecar system's `physica:module` value against the DLL's `description` ID, so the CMake target name does not need to duplicate the module ID.
 
-The complete ten-output compile example is in `sdk/example` and can be enabled while configuring the SDK with `-DSPECTRA_SDK_BUILD_EXAMPLE=ON`.
+The complete thirteen-output compile example is in `sdk/example` and can be enabled while configuring the SDK with `-DSPECTRA_SDK_BUILD_EXAMPLE=ON`.

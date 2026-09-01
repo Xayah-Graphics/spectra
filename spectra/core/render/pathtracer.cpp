@@ -544,7 +544,7 @@ namespace spectra::render {
             std::uint32_t majorant_mode{};
             std::uint32_t majorant_flags{};
             const math::UInt3 resolution = shared.resolution;
-            if (!std::holds_alternative<scene::GridVolume>(volume.data)) {
+            if (!std::holds_alternative<scene::DenseGridVolume>(volume.data)) {
                 this->compile_scene(scene, command_buffer);
                 return;
             }

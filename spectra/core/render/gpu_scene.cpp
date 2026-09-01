@@ -606,7 +606,7 @@ namespace spectra::render {
         result.revision  = volume.revision;
         std::visit(
             [this, &command_buffer, &result](const auto& data) {
-                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::GridVolume>) {
+                if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::DenseGridVolume>) {
                     result.resolution = data.resolution;
                     for (const scene::VolumeField& source : data.fields) {
                         GpuVolumeField& field = result.fields.emplace_back(source.id, source.name, source.unit, scene::field_kind(source), scene::field_sampling(source), scene::field_vector_space(source));
@@ -629,6 +629,14 @@ namespace spectra::render {
                             runtime::DescriptorLease& descriptor = field.descriptors.emplace_back(this->context.runtime.frames.allocate_resource_descriptor());
                             this->context.runtime.resources.write_buffer_descriptor(descriptor, vk::DescriptorType::eStorageBuffer, buffer);
                         }
+                    }
+                } else if constexpr (std::same_as<std::remove_cvref_t<decltype(data)>, scene::OpenVdbVolume>) {
+                    for (const scene::OpenVdbField& source : data.fields) {
+                        GpuVolumeField& field = result.fields.emplace_back(source.id, source.name, source.unit, source.kind, scene::VolumeFieldSampling::Cell, source.vector_space);
+                        field.maximum         = source.maximum;
+                        field.buffers.emplace_back(upload_buffer(this->context.runtime, command_buffer, std::span<const std::uint32_t>{source.nanovdb}, vk::BufferUsageFlagBits::eStorageBuffer));
+                        field.descriptors.emplace_back(this->context.runtime.frames.allocate_resource_descriptor());
+                        this->context.runtime.resources.write_buffer_descriptor(field.descriptors.front(), vk::DescriptorType::eStorageBuffer, field.buffers.front());
                     }
                 }
             },

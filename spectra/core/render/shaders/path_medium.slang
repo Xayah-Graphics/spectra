@@ -3,6 +3,7 @@ module path_medium;
 import path_random;
 import path_scene;
 import path_spectrum;
+import openvdb_volume;
 
 static const int noise_permutation[256] = {
     151, 160, 137, 91, 90, 15, 131, 13,
@@ -799,6 +800,84 @@ evaluate_medium(
                 : float4(0.0);
         return result;
     }
+    if (volume.metadata.x == volume_openvdb) {
+        const uint all_flags = volume.majorant_metadata.w;
+        if ((all_flags & (1u << 24u)) == 0u) {
+            const float density =
+                sample_openvdb_float(
+                    volume.density_openvdb,
+                    point);
+            result.sigma_a *= density;
+            result.sigma_s *= density;
+            float emission_scale = 1.0;
+            if ((all_flags & 2u) != 0u)
+                emission_scale =
+                    sample_openvdb_float(
+                        volume.emission_scale_openvdb,
+                        point);
+            result.emission *= emission_scale;
+            if (
+                medium.temperature.z != 0.0 &&
+                (all_flags & 1u) != 0u) {
+                const float value =
+                    sample_openvdb_float(
+                        volume.temperature_openvdb,
+                        point) *
+                        medium.scales.w +
+                    medium.temperature.x;
+                if (value >= medium.temperature.y)
+                    result.emission +=
+                        emission_scale *
+                        medium.scales.y *
+                        normalized_blackbody(
+                            value,
+                            wavelengths);
+            }
+            return result;
+        }
+        const uint flags = all_flags & 255u;
+        const uint color_space = (all_flags >> 8u) & 255u;
+        result.sigma_a =
+            ((flags & 1u) != 0u
+                ? evaluate_rgb_spectrum(
+                    sample_openvdb_float3(
+                        volume.sigma_a_openvdb,
+                        point),
+                    1,
+                    color_space,
+                    bindings.rgb_to_spectrum_tables,
+                    bindings.cie_spectra,
+                    wavelengths)
+                : float4(1.0)) *
+            medium.scales.x;
+        result.sigma_s =
+            ((flags & 2u) != 0u
+                ? evaluate_rgb_spectrum(
+                    sample_openvdb_float3(
+                        volume.sigma_s_openvdb,
+                        point),
+                    1,
+                    color_space,
+                    bindings.rgb_to_spectrum_tables,
+                    bindings.cie_spectra,
+                    wavelengths)
+                : float4(1.0)) *
+            medium.scales.x;
+        result.emission =
+            (flags & 4u) != 0u
+                ? evaluate_rgb_spectrum(
+                    sample_openvdb_float3(
+                        volume.emission_openvdb,
+                        point),
+                    2,
+                    color_space,
+                    bindings.rgb_to_spectrum_tables,
+                    bindings.cie_spectra,
+                    wavelengths) *
+                    medium.scales.y
+                : float4(0.0);
+        return result;
+    }
     const float density =
         cloud_density(
             volume,
@@ -912,8 +991,9 @@ make_majorant_iterator(
         return result;
     }
     if (
-        result.kind ==
-        volume_rgb_grid)
+        result.kind == volume_rgb_grid ||
+        (result.kind == volume_openvdb &&
+         (result.volume.majorant_metadata.w & (1u << 24u)) != 0u))
         result.sigma_t =
             float4(
                 medium.scales.x);

@@ -138,6 +138,7 @@ namespace spectra::render {
         scene::VolumeVectorSpace vector_space{scene::VolumeVectorSpace::Local};
         std::vector<runtime::GpuBuffer> buffers{};
         std::vector<runtime::DescriptorLease> descriptors{};
+        math::Float3 maximum{};
     };
 
     export struct GpuParticleField {

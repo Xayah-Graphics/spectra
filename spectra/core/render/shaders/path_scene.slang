@@ -285,6 +285,7 @@ public static const uint medium_volume = SPECTRA_MEDIUM_VOLUME;
 public static const uint volume_density_grid = SPECTRA_VOLUME_DENSITY_GRID;
 public static const uint volume_rgb_grid = SPECTRA_VOLUME_RGB_GRID;
 public static const uint volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
+public static const uint volume_openvdb = SPECTRA_VOLUME_OPENVDB;
 
 public struct PathMedium {
     public uint4 spectra;
@@ -308,6 +309,12 @@ public struct PathVolume {
     public DescriptorHandle<StructuredBuffer<PathPackedFloat3>> sigma_a;
     public DescriptorHandle<StructuredBuffer<PathPackedFloat3>> sigma_s;
     public DescriptorHandle<StructuredBuffer<PathPackedFloat3>> emission;
+    public DescriptorHandle<StructuredBuffer<uint>> density_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> temperature_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> emission_scale_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> sigma_a_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> sigma_s_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> emission_openvdb;
     public DescriptorHandle<StructuredBuffer<float>> majorant;
 }
 

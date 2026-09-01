@@ -746,12 +746,18 @@ namespace spectra::editor {
             } else if (entity_type == scene::EntityKind::Volume) {
                 const scene::Scene& evaluated = this->context.document.evaluated;
                 const scene::Volume& volume   = *std::ranges::find(evaluated.resources.volumes, std::get<scene::VolumeId>(entity->data), &scene::Volume::id);
-                if (const auto* grid = std::get_if<scene::GridVolume>(&volume.data)) {
+                if (const auto* grid = std::get_if<scene::DenseGridVolume>(&volume.data)) {
                     add_line(std::format("{} × {} × {}  ·  {} fields", grid->resolution.x, grid->resolution.y, grid->resolution.z, grid->fields.size()), primary);
                     for (const scene::VolumeField& field : grid->fields) {
                         const scene::FieldKind field_type = scene::field_kind(field);
                         const char* kind                  = field_type == scene::FieldKind::Float ? "scalar" : field_type == scene::FieldKind::Float3 ? "vector" : field_type == scene::FieldKind::UInt32 ? "category" : "MAC vector";
                         add_line(std::format("{}  ·  {}{}{}", field.name, kind, field.unit.empty() ? "" : "  ·  ", field.unit), secondary);
+                    }
+                } else if (const auto* grid = std::get_if<scene::OpenVdbVolume>(&volume.data)) {
+                    add_line(std::format("OpenVDB  ·  {} fields", grid->fields.size()), primary);
+                    for (const scene::OpenVdbField& field : grid->fields) {
+                        const char* kind = field.kind == scene::FieldKind::Float ? "scalar" : "vector";
+                        add_line(std::format("{}  ·  {}  ·  {}:{}", field.name, kind, std::filesystem::path{field.source}.filename().string(), field.grid_name), secondary);
                     }
                 }
             } else if (entity_type == scene::EntityKind::ParticleSet) {
@@ -871,14 +877,14 @@ namespace spectra::editor {
     void Ui::draw_presentation_sequence(const ControlRect& controls) {
         if (!controls.visible) return;
         const simulation::PresentationSequence& sequence = *this->context.simulation.presentation_sequence();
-        const std::string maximum_frame_label             = std::format("FRAME {} / {}", sequence.frame_count - 1u, sequence.frame_count - 1u);
-        const std::string start_time_label                = std::format("{:.6g} s", sequence.start_seconds);
-        const std::string end_time_label                  = std::format("{:.6g} s", sequence.start_seconds + (sequence.frame_count - 1u) * sequence.frame_seconds);
-        const float frame_width                           = ImGui::CalcTextSize(maximum_frame_label.c_str()).x;
-        const float time_width                            = std::max(ImGui::CalcTextSize(start_time_label.c_str()).x, ImGui::CalcTextSize(end_time_label.c_str()).x);
-        const float rail_minimum                          = controls.position.x + frame_width + 24.0f;
-        const float rail_maximum                          = std::max(rail_minimum + 1.0f, controls.position.x + controls.size.x - time_width - 24.0f);
-        const float rail_y                                = controls.position.y + controls.size.y * 0.5f;
+        const std::string maximum_frame_label            = std::format("FRAME {} / {}", sequence.frame_count - 1u, sequence.frame_count - 1u);
+        const std::string start_time_label               = std::format("{:.6g} s", sequence.start_seconds);
+        const std::string end_time_label                 = std::format("{:.6g} s", sequence.start_seconds + (sequence.frame_count - 1u) * sequence.frame_seconds);
+        const float frame_width                          = ImGui::CalcTextSize(maximum_frame_label.c_str()).x;
+        const float time_width                           = std::max(ImGui::CalcTextSize(start_time_label.c_str()).x, ImGui::CalcTextSize(end_time_label.c_str()).x);
+        const float rail_minimum                         = controls.position.x + frame_width + 24.0f;
+        const float rail_maximum                         = std::max(rail_minimum + 1.0f, controls.position.x + controls.size.x - time_width - 24.0f);
+        const float rail_y                               = controls.position.y + controls.size.y * 0.5f;
 
         ImGui::SetCursorScreenPos({rail_minimum, controls.position.y});
         ImGui::InvisibleButton("##PresentationSequence", {rail_maximum - rail_minimum, controls.size.y});
@@ -889,15 +895,15 @@ namespace spectra::editor {
         }
 
         const simulation::PresentationFrame frame = this->context.simulation.presentation_frame();
-        const std::string frame_label              = std::format("FRAME {} / {}", frame.index, sequence.frame_count - 1u);
-        const std::string time_label               = std::format("{:.6g} s", frame.seconds);
-        const ImVec2 time_size                     = ImGui::CalcTextSize(time_label.c_str());
-        const float text_y                         = controls.position.y + (controls.size.y - ImGui::GetTextLineHeight()) * 0.5f;
-        const float time_x                         = controls.position.x + controls.size.x - time_size.x - 8.0f;
-        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        const std::string frame_label             = std::format("FRAME {} / {}", frame.index, sequence.frame_count - 1u);
+        const std::string time_label              = std::format("{:.6g} s", frame.seconds);
+        const ImVec2 time_size                    = ImGui::CalcTextSize(time_label.c_str());
+        const float text_y                        = controls.position.y + (controls.size.y - ImGui::GetTextLineHeight()) * 0.5f;
+        const float time_x                        = controls.position.x + controls.size.x - time_size.x - 8.0f;
+        ImDrawList* draw_list                     = ImGui::GetWindowDrawList();
         const ImVec2 maximum{controls.position.x + controls.size.x, controls.position.y + controls.size.y};
-        const ImU32 primary   = ImGui::GetColorU32({0.78f, 0.84f, 0.89f, 0.92f});
-        const ImU32 accent    = ImGui::GetColorU32(this->context.simulation.faulted() ? ImVec4{0.48f, 0.53f, 0.57f, 0.72f} : ImVec4{0.28f, 0.79f, 0.90f, 0.96f});
+        const ImU32 primary = ImGui::GetColorU32({0.78f, 0.84f, 0.89f, 0.92f});
+        const ImU32 accent  = ImGui::GetColorU32(this->context.simulation.faulted() ? ImVec4{0.48f, 0.53f, 0.57f, 0.72f} : ImVec4{0.28f, 0.79f, 0.90f, 0.96f});
         draw_list->AddRectFilled(controls.position, maximum, ImGui::GetColorU32({0.015f, 0.022f, 0.030f, 0.82f}));
         draw_list->AddLine(controls.position, {maximum.x, controls.position.y}, ImGui::GetColorU32({0.55f, 0.65f, 0.72f, 0.20f}));
         draw_list->AddText({controls.position.x + 8.0f, text_y}, primary, frame_label.c_str());

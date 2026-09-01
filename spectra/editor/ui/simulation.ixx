@@ -27,5 +27,6 @@ namespace spectra::editor {
         bool recreate_pending{};
 
         void apply_parameters(std::vector<scene::SimulationParameterSetting> parameters, bool reset_simulation);
+        void apply_visualization(std::size_t visualization_index, scene::SimulationVisualization visualization);
     };
 } // namespace spectra::editor

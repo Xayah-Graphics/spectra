@@ -61,6 +61,7 @@
 #define SPECTRA_VOLUME_DENSITY_GRID     0u
 #define SPECTRA_VOLUME_RGB_GRID         1u
 #define SPECTRA_VOLUME_PROCEDURAL_CLOUD 2u
+#define SPECTRA_VOLUME_OPENVDB          3u
 
 #define SPECTRA_SPECTRUM_RGB              0u
 #define SPECTRA_SPECTRUM_CONSTANT         1u
@@ -70,21 +71,28 @@
 #define SPECTRA_ILLUMINANT_D65            1u
 #define SPECTRA_ILLUMINANT_D60            2u
 
-#define SPECTRA_VISUALIZATION_SEGMENTS          1u
-#define SPECTRA_VISUALIZATION_VECTORS           2u
-#define SPECTRA_VISUALIZATION_IMAGE             3u
-#define SPECTRA_VISUALIZATION_SURFACE           4u
-#define SPECTRA_VISUALIZATION_PARTICLES         5u
-#define SPECTRA_VISUALIZATION_VOLUME_SLICE      8u
-#define SPECTRA_VISUALIZATION_VOLUME_RAY_MARCH  9u
-#define SPECTRA_VISUALIZATION_VOLUME_MIP        10u
-#define SPECTRA_VISUALIZATION_VOLUME_ISOSURFACE 11u
-#define SPECTRA_VISUALIZATION_VOLUME_GLYPHS     12u
+#define SPECTRA_VISUALIZATION_SEGMENTS           1u
+#define SPECTRA_VISUALIZATION_VECTORS            2u
+#define SPECTRA_VISUALIZATION_IMAGE              3u
+#define SPECTRA_VISUALIZATION_SURFACE            4u
+#define SPECTRA_VISUALIZATION_PARTICLES          5u
+#define SPECTRA_VISUALIZATION_VOLUME_SLICE       8u
+#define SPECTRA_VISUALIZATION_VOLUME_RAY_MARCH   9u
+#define SPECTRA_VISUALIZATION_VOLUME_MIP         10u
+#define SPECTRA_VISUALIZATION_VOLUME_ISOSURFACE  11u
+#define SPECTRA_VISUALIZATION_VOLUME_GLYPHS      12u
 #define SPECTRA_VISUALIZATION_VOLUME_STREAMLINES 13u
-#define SPECTRA_VISUALIZATION_VOLUME_LIC        14u
-#define SPECTRA_VISUALIZATION_REFERENCE_OVERLAY 15u
-#define SPECTRA_VISUALIZATION_REFERENCE_PLANE   16u
-#define SPECTRA_VISUALIZATION_VOLUME_CELLS      17u
+#define SPECTRA_VISUALIZATION_VOLUME_LIC         14u
+#define SPECTRA_VISUALIZATION_REFERENCE_OVERLAY  15u
+#define SPECTRA_VISUALIZATION_REFERENCE_PLANE    16u
+#define SPECTRA_VISUALIZATION_VOLUME_CELLS       17u
+#define SPECTRA_VISUALIZATION_INDEXED_POINTS     18u
+#define SPECTRA_VISUALIZATION_INDEXED_SEGMENTS   19u
+#define SPECTRA_VISUALIZATION_MESH_VECTORS       20u
+#define SPECTRA_VISUALIZATION_MESH_WIREFRAME     21u
+#define SPECTRA_VISUALIZATION_MESH_VERTICES      22u
+#define SPECTRA_VISUALIZATION_VERTEX_NORMALS     23u
+#define SPECTRA_VISUALIZATION_FACE_NORMALS       24u
 
 #define SPECTRA_DIAGNOSTIC_LINES            0u
 #define SPECTRA_DIAGNOSTIC_BOXES            1u
@@ -123,10 +131,11 @@
 #define SPECTRA_FIELD_MAPPING_Z              4u
 #define SPECTRA_FIELD_MAPPING_DIVERGENCE     5u
 #define SPECTRA_FIELD_MAPPING_CURL_MAGNITUDE 6u
-#define SPECTRA_FIELD_MAPPING_Q_CRITERION     7u
+#define SPECTRA_FIELD_MAPPING_Q_CRITERION    7u
 
 #define SPECTRA_FIELD_SAMPLING_CELL   0u
 #define SPECTRA_FIELD_SAMPLING_VERTEX 1u
+#define SPECTRA_FIELD_STORAGE_OPENVDB (1u << 16u)
 
 #define SPECTRA_VECTOR_SPACE_GRID  0u
 #define SPECTRA_VECTOR_SPACE_LOCAL 1u
@@ -204,6 +213,7 @@ namespace spectra::shader_semantics {
     inline constexpr std::uint32_t volume_density_grid     = SPECTRA_VOLUME_DENSITY_GRID;
     inline constexpr std::uint32_t volume_rgb_grid         = SPECTRA_VOLUME_RGB_GRID;
     inline constexpr std::uint32_t volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
+    inline constexpr std::uint32_t volume_openvdb          = SPECTRA_VOLUME_OPENVDB;
 
     inline constexpr std::uint32_t spectrum_rgb              = SPECTRA_SPECTRUM_RGB;
     inline constexpr std::uint32_t spectrum_constant         = SPECTRA_SPECTRUM_CONSTANT;
@@ -228,6 +238,13 @@ namespace spectra::shader_semantics {
     inline constexpr std::uint32_t visualization_reference_overlay  = SPECTRA_VISUALIZATION_REFERENCE_OVERLAY;
     inline constexpr std::uint32_t visualization_reference_plane    = SPECTRA_VISUALIZATION_REFERENCE_PLANE;
     inline constexpr std::uint32_t visualization_volume_cells       = SPECTRA_VISUALIZATION_VOLUME_CELLS;
+    inline constexpr std::uint32_t visualization_indexed_points     = SPECTRA_VISUALIZATION_INDEXED_POINTS;
+    inline constexpr std::uint32_t visualization_indexed_segments   = SPECTRA_VISUALIZATION_INDEXED_SEGMENTS;
+    inline constexpr std::uint32_t visualization_mesh_vectors       = SPECTRA_VISUALIZATION_MESH_VECTORS;
+    inline constexpr std::uint32_t visualization_mesh_wireframe     = SPECTRA_VISUALIZATION_MESH_WIREFRAME;
+    inline constexpr std::uint32_t visualization_mesh_vertices      = SPECTRA_VISUALIZATION_MESH_VERTICES;
+    inline constexpr std::uint32_t visualization_vertex_normals     = SPECTRA_VISUALIZATION_VERTEX_NORMALS;
+    inline constexpr std::uint32_t visualization_face_normals       = SPECTRA_VISUALIZATION_FACE_NORMALS;
 
     inline constexpr std::uint32_t diagnostic_lines            = SPECTRA_DIAGNOSTIC_LINES;
     inline constexpr std::uint32_t diagnostic_boxes            = SPECTRA_DIAGNOSTIC_BOXES;
@@ -270,6 +287,7 @@ namespace spectra::shader_semantics {
 
     inline constexpr std::uint32_t field_sampling_cell   = SPECTRA_FIELD_SAMPLING_CELL;
     inline constexpr std::uint32_t field_sampling_vertex = SPECTRA_FIELD_SAMPLING_VERTEX;
+    inline constexpr std::uint32_t field_storage_openvdb = SPECTRA_FIELD_STORAGE_OPENVDB;
 
     inline constexpr std::uint32_t vector_space_grid  = SPECTRA_VECTOR_SPACE_GRID;
     inline constexpr std::uint32_t vector_space_local = SPECTRA_VECTOR_SPACE_LOCAL;

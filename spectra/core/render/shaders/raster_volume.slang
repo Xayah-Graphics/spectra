@@ -3,6 +3,7 @@ module raster_volume;
 import raster_scene;
 import raster_texture;
 import color;
+import openvdb_volume;
 
 struct RasterVolumePushData {
     DescriptorHandle<RWTexture2D<float4>> output;
@@ -531,6 +532,81 @@ float volume_density(
                         sigma_s.y,
                     sigma_a.z +
                         sigma_s.z));
+    }
+    if (volume.metadata.x == volume_openvdb) {
+        if ((flags & (1u << 24u)) == 0u) {
+            const float density =
+                sample_openvdb_float(
+                    volume.density_openvdb,
+                    local_position) *
+                volume.scales.x;
+            if (density <= 0.0) {
+                sigma_a = float3(0.0);
+                sigma_s = float3(0.0);
+                emission = float3(0.0);
+                return 0.0;
+            }
+            float temperature = 0.0;
+            if (
+                volume.temperature.z != 0.0 &&
+                (flags & 1u) != 0u)
+                temperature =
+                    sample_openvdb_float(
+                        volume.temperature_openvdb,
+                        local_position) *
+                        volume.scales.w +
+                    volume.temperature.x;
+            sigma_a = density * volume.sigma_a.xyz;
+            sigma_s = density * volume.sigma_s.xyz;
+            float emission_multiplier = 1.0;
+            if (
+                (any(volume.emission.xyz != 0.0) || volume.temperature.z != 0.0) &&
+                (flags & 2u) != 0u)
+                emission_multiplier =
+                    sample_openvdb_float(
+                        volume.emission_scale_openvdb,
+                        local_position);
+            emission =
+                sigma_a *
+                volume.emission.xyz *
+                volume.scales.y *
+                emission_multiplier;
+            if (
+                volume.temperature.z != 0.0 &&
+                temperature >= volume.temperature.y)
+                emission +=
+                    sigma_a *
+                    blackbody(temperature) *
+                    volume.scales.y *
+                    emission_multiplier;
+            return density;
+        }
+        const uint color_space = (flags >> 8u) & 255u;
+        sigma_a =
+            color_to_linear_srgb(
+                (flags & 1u) != 0u
+                    ? sample_openvdb_float3(volume.sigma_a_openvdb, local_position)
+                    : float3(1.0),
+                color_space) *
+            volume.scales.x;
+        sigma_s =
+            color_to_linear_srgb(
+                (flags & 2u) != 0u
+                    ? sample_openvdb_float3(volume.sigma_s_openvdb, local_position)
+                    : float3(1.0),
+                color_space) *
+            volume.scales.x;
+        emission =
+            (flags & 4u) != 0u
+                ? sigma_a *
+                    color_to_linear_srgb(
+                        sample_openvdb_float3(volume.emission_openvdb, local_position),
+                        color_space) *
+                    volume.scales.y
+                : float3(0.0);
+        return max(
+            sigma_a.x + sigma_s.x,
+            max(sigma_a.y + sigma_s.y, sigma_a.z + sigma_s.z));
     }
     const float density =
         procedural_cloud_density(

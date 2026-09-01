@@ -54,6 +54,7 @@ namespace spectra::simulation {
         void evaluate_time(double simulation_seconds);
         void reset();
         [[nodiscard]] bool apply_parameter_changes(std::size_t system_index, std::span<const scene::SimulationParameterSetting> parameters, bool reset);
+        void update_visualization(std::size_t system_index, std::size_t visualization_index, scene::SimulationVisualization visualization);
 
         [[nodiscard]] const SimulationFrame* acquire_frame();
         void consume_frame();

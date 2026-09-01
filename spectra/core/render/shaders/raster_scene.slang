@@ -36,6 +36,7 @@ public static const uint area_source_sphere_set = SPECTRA_AREA_SOURCE_SPHERE_SET
 public static const uint volume_density_grid = SPECTRA_VOLUME_DENSITY_GRID;
 public static const uint volume_rgb_grid = SPECTRA_VOLUME_RGB_GRID;
 public static const uint volume_procedural_cloud = SPECTRA_VOLUME_PROCEDURAL_CLOUD;
+public static const uint volume_openvdb = SPECTRA_VOLUME_OPENVDB;
 
 public static const uint light_point = SPECTRA_LIGHT_POINT;
 public static const uint light_spot = SPECTRA_LIGHT_SPOT;
@@ -323,4 +324,10 @@ public struct RasterVolume {
     public DescriptorHandle<StructuredBuffer<float3>> sigma_s_field;
     public DescriptorHandle<StructuredBuffer<float>> emission_scale_field;
     public DescriptorHandle<StructuredBuffer<float3>> emission_field;
+    public DescriptorHandle<StructuredBuffer<uint>> density_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> temperature_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> emission_scale_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> sigma_a_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> sigma_s_openvdb;
+    public DescriptorHandle<StructuredBuffer<uint>> emission_openvdb;
 }

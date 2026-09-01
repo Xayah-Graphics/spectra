@@ -167,7 +167,7 @@ namespace spectra::editor {
         const std::vector<std::filesystem::path> paths = this->platform.take_dropped_paths();
         if (paths.empty()) return;
         try {
-            if (paths.size() != 1u) throw std::runtime_error("Drop exactly one .spectra scene");
+            if (paths.size() != 1u) throw std::runtime_error("Drop exactly one USD scene");
             this->replace_scene(paths.front());
         } catch (const std::exception& error) {
             this->ui.notify(error.what(), true);
@@ -238,7 +238,7 @@ namespace spectra::editor {
     }
 
     void Application::replace_scene(const std::filesystem::path& path) {
-        if (path.extension() != ".spectra") throw std::runtime_error("Spectra accepts only .spectra scenes");
+        if (path.extension() != ".usd" && path.extension() != ".usda" && path.extension() != ".usdc") throw std::runtime_error("Spectra accepts only .usd, .usda, and .usdc scenes");
         if (!this->confirm_scene_replacement()) return;
         this->open_scene(path);
     }

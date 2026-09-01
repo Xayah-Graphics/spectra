@@ -3,7 +3,7 @@ module;
 #include <cuda_runtime_api.h>
 #include <spectra/sdk/cuda_types.h>
 
-export module spectra.sdk.example;
+export module spectra.sdk.example.module;
 
 import spectra.sdk;
 import spectra.sdk.cuda;
@@ -15,35 +15,13 @@ export namespace spectra::sdk::example {
         bool visible{true};
     };
 
-    struct Provider {
+    struct Module {
         Settings settings{};
 
-        static constexpr auto description = spectra::sdk::describe(
-            "spectra.sdk.example",
-            spectra::sdk::parameter<"scale", &Settings::scale>("Scale", {}, {.minimum = 0.0, .maximum = 10.0, .step = 0.1}),
-            spectra::sdk::parameter<"visible", &Settings::visible>("Visible"),
-            spectra::sdk::mesh<"mesh">({.attributes = spectra::sdk::MeshAttribute::Normal | spectra::sdk::MeshAttribute::TextureCoordinate}),
-            spectra::sdk::spheres<"spheres">(),
-            spectra::sdk::volume<"volume">(
-                spectra::sdk::field<"density", float>("Density"),
-                spectra::sdk::field<"velocity", spectra::sdk::Float3>("Velocity"),
-                spectra::sdk::field<"cell", std::uint32_t>("Cell")
-            ),
-            spectra::sdk::instances<"instances">(),
-            spectra::sdk::particles<"particles">(
-                spectra::sdk::field<"velocity", spectra::sdk::Float3>("Velocity"),
-                spectra::sdk::field<"density", float>("Density"),
-                spectra::sdk::field<"phase", std::uint32_t>("Phase")
-            ),
-            spectra::sdk::lines<"lines">(),
-            spectra::sdk::vectors<"vectors">(),
-            spectra::sdk::image<"image">(),
-            spectra::sdk::cameras<"cameras">(),
-            spectra::sdk::hash_grid_radiance_field<"field">(),
-            spectra::sdk::metric<"time", float>("Time", "s", {}, true)
-        );
+        static constexpr auto description = spectra::sdk::describe("spectra.sdk.example", spectra::sdk::parameter<"scale", &Settings::scale>("Scale", {}, {.minimum = 0.0, .maximum = 10.0, .step = 0.1}), spectra::sdk::parameter<"visible", &Settings::visible>("Visible"), spectra::sdk::mesh<"mesh">({.attributes = spectra::sdk::MeshAttribute::TextureCoordinate}), spectra::sdk::mesh_field<"mesh-scalar", float>("Mesh Scalar", {}, {.anchor = "mesh"}), spectra::sdk::indexed_points<"mesh-points">({.anchor = "mesh"}), spectra::sdk::indexed_segments<"mesh-segments">({.anchor = "mesh"}), spectra::sdk::spheres<"spheres">(), spectra::sdk::volume<"volume">(spectra::sdk::field<"density", float>("Density"), spectra::sdk::field<"velocity", spectra::sdk::Float3>("Velocity"), spectra::sdk::field<"cell", std::uint32_t>("Cell")), spectra::sdk::instances<"instances">(),
+            spectra::sdk::particles<"particles">(spectra::sdk::field<"velocity", spectra::sdk::Float3>("Velocity"), spectra::sdk::field<"density", float>("Density"), spectra::sdk::field<"phase", std::uint32_t>("Phase")), spectra::sdk::lines<"lines">(), spectra::sdk::vectors<"vectors">(), spectra::sdk::image<"image">(), spectra::sdk::cameras<"cameras">(), spectra::sdk::hash_grid_radiance_field<"field">(), spectra::sdk::metric<"time", float>("Time", "s", {}, true));
 
-        Provider(Settings source, const std::filesystem::path&) : settings(source) {}
+        Module(Settings source, const std::filesystem::path&, const spectra::sdk::SceneInputs&) : settings(source) {}
 
         void setup(spectra::sdk::cuda::Setup& setup) {
             setup.presentation_sequence({3u, 0.0, 1.0 / 24.0});
@@ -52,6 +30,13 @@ export namespace spectra::sdk::example {
             constexpr std::array texture_coordinates{spectra::sdk::Float2{}, spectra::sdk::Float2{1.0F, 0.0F}, spectra::sdk::Float2{0.0F, 1.0F}};
             if (cudaMemcpy(mesh.triangles.data(), triangles.data(), sizeof(triangles), cudaMemcpyHostToDevice) != cudaSuccess) throw std::runtime_error("CUDA topology upload failed");
             if (cudaMemcpy(mesh.texture_coordinates.data(), texture_coordinates.data(), sizeof(texture_coordinates), cudaMemcpyHostToDevice) != cudaSuccess) throw std::runtime_error("CUDA texture-coordinate upload failed");
+            setup.mesh_field<"mesh-scalar">(3u);
+            auto points   = setup.indexed_points<"mesh-points">(1u);
+            auto segments = setup.indexed_segments<"mesh-segments">(1u);
+            constexpr std::array point_indices{0u};
+            constexpr std::array segment_indices{spectra::sdk::UInt2{0u, 1u}};
+            if (cudaMemcpy(points.indices.data(), point_indices.data(), sizeof(point_indices), cudaMemcpyHostToDevice) != cudaSuccess) throw std::runtime_error("CUDA point-index upload failed");
+            if (cudaMemcpy(segments.indices.data(), segment_indices.data(), sizeof(segment_indices), cudaMemcpyHostToDevice) != cudaSuccess) throw std::runtime_error("CUDA segment-index upload failed");
             setup.spheres<"spheres">(1u);
             setup.volume<"volume">({2u, 2u, 2u});
             setup.instances<"instances">(1u);
@@ -79,22 +64,27 @@ export namespace spectra::sdk::example {
         }
 
         void reset(std::uint64_t) {}
-        void step(double seconds) { time += static_cast<float>(seconds); }
+        void step(double seconds) {
+            time += static_cast<float>(seconds);
+        }
 
         void publish(spectra::sdk::cuda::Output& output, const spectra::sdk::PresentationFrame presentation) {
-            auto frame = output.begin(nullptr);
-            auto mesh = frame.mesh<"mesh">();
-            auto spheres = frame.spheres<"spheres">(1u);
-            auto volume = frame.volume<"volume">();
+            auto frame     = output.begin(nullptr);
+            auto mesh      = frame.mesh<"mesh">();
+            auto spheres   = frame.spheres<"spheres">(1u);
+            auto volume    = frame.volume<"volume">();
             auto instances = frame.instances<"instances">(1u);
             auto particles = frame.particles<"particles">(1u);
-            auto lines = frame.lines<"lines">(1u);
-            auto vectors = frame.vectors<"vectors">(1u);
-            auto image = frame.image<"image">();
-            auto field = frame.hash_grid_radiance_field<"field">();
+            auto lines     = frame.lines<"lines">(1u);
+            auto vectors   = frame.vectors<"vectors">(1u);
+            auto image     = frame.image<"image">();
+            auto field     = frame.hash_grid_radiance_field<"field">();
             const spectra::sdk::Sphere sphere{{static_cast<float>(presentation.index) - 1.0F, 0.0F, 0.0F}, 0.25F * settings.scale};
             if (cudaMemcpy(spheres.data(), &sphere, sizeof(sphere), cudaMemcpyHostToDevice) != cudaSuccess) throw std::runtime_error("CUDA Presentation Sequence upload failed");
             static_cast<void>(mesh.positions.data());
+            if (output.requested<"mesh-scalar">()) static_cast<void>(frame.mesh_field<"mesh-scalar", float>(3u).data());
+            if (output.requested<"mesh-points">()) frame.indexed_points<"mesh-points">(1u);
+            if (output.requested<"mesh-segments">()) frame.indexed_segments<"mesh-segments">(1u);
             static_cast<void>(volume.field<"density", float>().data());
             static_cast<void>(volume.field<"velocity", spectra::sdk::Float3>().data());
             static_cast<void>(volume.field<"cell", std::uint32_t>().data());
@@ -120,4 +110,4 @@ export namespace spectra::sdk::example {
     private:
         float time{};
     };
-}
+} // namespace spectra::sdk::example

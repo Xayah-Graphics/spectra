@@ -93,3 +93,10 @@ jobs:
 
       - name: Build
         run: cmake --build "build-${{ matrix.id }}" --parallel 30
+
+      - name: Install
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP "spectra"
+          cmake --install "build-${{ matrix.id }}" --prefix $prefix --component Spectra
+          & (Join-Path $prefix "bin/spectra.exe") --version

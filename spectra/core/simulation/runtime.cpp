@@ -78,11 +78,41 @@ namespace spectra::simulation {
         [[nodiscard]] scene::FieldKind field_kind(const SpectraSdkFieldKind kind) noexcept {
             switch (kind) {
             case SpectraSdkFieldKind::Float: return scene::FieldKind::Float;
+            case SpectraSdkFieldKind::Float2: return scene::FieldKind::Float2;
             case SpectraSdkFieldKind::Float3: return scene::FieldKind::Float3;
+            case SpectraSdkFieldKind::Float4: return scene::FieldKind::Float4;
             case SpectraSdkFieldKind::UInt32: return scene::FieldKind::UInt32;
             case SpectraSdkFieldKind::MacFloat3: return scene::FieldKind::MacFloat3;
             }
             std::unreachable();
+        }
+
+        [[nodiscard]] scene::MeshElementDomain mesh_domain(const SpectraSdkMeshElementDomain domain) noexcept {
+            switch (domain) {
+            case SpectraSdkMeshElementDomain::Vertex: return scene::MeshElementDomain::Vertex;
+            case SpectraSdkMeshElementDomain::Face: return scene::MeshElementDomain::Face;
+            case SpectraSdkMeshElementDomain::Edge: return scene::MeshElementDomain::Edge;
+            }
+            std::unreachable();
+        }
+
+        [[nodiscard]] std::optional<scene::SimulationVisualization> default_visualization(const SpectraSdkOutputDescriptor& output) {
+            if (output.visualization == SpectraSdkVisualizationKind::None) return std::nullopt;
+            scene::SimulationVisualization result{
+                .id        = sdk_string(output.id),
+                .output_id = sdk_string(output.id),
+                .name      = sdk_string(output.name),
+                .visible   = output.default_visible != 0u,
+            };
+            switch (output.visualization) {
+            case SpectraSdkVisualizationKind::Points: result.data = scene::PointVisualization{}; break;
+            case SpectraSdkVisualizationKind::Segments: result.data = scene::SegmentVisualization{}; break;
+            case SpectraSdkVisualizationKind::Vectors: result.data = scene::VectorVisualization{}; break;
+            case SpectraSdkVisualizationKind::Surface: result.data = scene::SurfaceVisualization{.color_source = scene::VisualizationColorSource::Scalar}; break;
+            case SpectraSdkVisualizationKind::Image: result.data = scene::ImageVisualization{}; break;
+            case SpectraSdkVisualizationKind::None: std::unreachable();
+            }
+            return result;
         }
 
         [[nodiscard]] scene::VolumeFieldSampling field_sampling(const SpectraSdkVolumeFieldSampling sampling) noexcept {
@@ -115,6 +145,18 @@ namespace spectra::simulation {
 
         [[nodiscard]] std::uint64_t element_count(const math::UInt3 extent) noexcept {
             return static_cast<std::uint64_t>(extent.x) * extent.y * extent.z;
+        }
+
+        [[nodiscard]] std::uint64_t field_element_size(const scene::FieldKind kind) noexcept {
+            switch (kind) {
+            case scene::FieldKind::Float: return sizeof(float);
+            case scene::FieldKind::Float2: return sizeof(sdk::Float2);
+            case scene::FieldKind::Float3: return sizeof(sdk::Float3);
+            case scene::FieldKind::Float4: return sizeof(sdk::Float4);
+            case scene::FieldKind::UInt32: return sizeof(std::uint32_t);
+            case scene::FieldKind::MacFloat3: return sizeof(float);
+            }
+            std::unreachable();
         }
 
         struct OutputExportLifetime {
@@ -183,8 +225,12 @@ namespace spectra::simulation {
                 }
                 provider.outputs.reserve(source.output_count);
                 for (std::uint64_t index = 0; index != source.output_count; ++index) {
-                    const SpectraSdkOutputDescriptor& output = source.outputs[index];
-                    const std::string id                     = sdk_string(output.id);
+                    const SpectraSdkOutputDescriptor& output                    = source.outputs[index];
+                    const std::string id                                        = sdk_string(output.id);
+                    const std::string name                                      = sdk_string(output.name);
+                    const std::string unit                                      = sdk_string(output.unit);
+                    const std::string anchor                                    = sdk_string(output.anchor);
+                    std::optional<scene::SimulationVisualization> visualization = default_visualization(output);
                     if (output.kind == SpectraSdkOutputKind::Volume || output.kind == SpectraSdkOutputKind::Particles) {
                         std::vector<FieldDescriptor> fields{};
                         std::uint32_t buffer_offset{};
@@ -194,19 +240,22 @@ namespace spectra::simulation {
                             fields.emplace_back(sdk_string(source_field.id), sdk_string(source_field.name), sdk_string(source_field.unit), field_kind(source_field.kind), field_sampling(source_field.sampling), vector_space(source_field.vector_space), buffer_offset, buffer_count);
                             buffer_offset += buffer_count;
                         }
-                        if (output.kind == SpectraSdkOutputKind::Volume) provider.outputs.emplace_back(id, FieldOutput{.fields = std::move(fields)});
-                        else provider.outputs.emplace_back(id, ParticleSetOutput{.fields = std::move(fields)});
+                        if (output.kind == SpectraSdkOutputKind::Volume) provider.outputs.emplace_back(id, std::move(visualization), FieldOutput{.fields = std::move(fields)});
+                        else provider.outputs.emplace_back(id, std::move(visualization), ParticleSetOutput{.fields = std::move(fields)});
                         continue;
                     }
                     switch (output.kind) {
-                    case SpectraSdkOutputKind::Mesh: provider.outputs.emplace_back(id, TriangleMeshOutput{0u, 0u, output.mesh_attributes}); break;
-                    case SpectraSdkOutputKind::Spheres: provider.outputs.emplace_back(id, SphereSetOutput{}); break;
-                    case SpectraSdkOutputKind::Instances: provider.outputs.emplace_back(id, InstanceTransformOutput{}); break;
-                    case SpectraSdkOutputKind::Lines: provider.outputs.emplace_back(id, SegmentOutput{}); break;
-                    case SpectraSdkOutputKind::Vectors: provider.outputs.emplace_back(id, VectorOutput{}); break;
-                    case SpectraSdkOutputKind::Image: provider.outputs.emplace_back(id, ImageOutput{}); break;
-                    case SpectraSdkOutputKind::HashGridRadianceField: provider.outputs.emplace_back(id, HashGridRadianceFieldOutput{}); break;
-                    case SpectraSdkOutputKind::Cameras: provider.outputs.emplace_back(id, CameraOutput{}); break;
+                    case SpectraSdkOutputKind::Mesh: provider.outputs.emplace_back(id, std::move(visualization), TriangleMeshOutput{0u, 0u, output.mesh_attributes}); break;
+                    case SpectraSdkOutputKind::MeshField: provider.outputs.emplace_back(id, std::move(visualization), MeshFieldOutput{.anchor_id = anchor, .domain = mesh_domain(output.element_domain), .field = {id, name, unit, field_kind(output.element_kind)}}); break;
+                    case SpectraSdkOutputKind::IndexedPoints: provider.outputs.emplace_back(id, std::move(visualization), IndexedPointOutput{.anchor_id = anchor}); break;
+                    case SpectraSdkOutputKind::IndexedSegments: provider.outputs.emplace_back(id, std::move(visualization), IndexedSegmentOutput{.anchor_id = anchor}); break;
+                    case SpectraSdkOutputKind::Spheres: provider.outputs.emplace_back(id, std::move(visualization), SphereSetOutput{}); break;
+                    case SpectraSdkOutputKind::Instances: provider.outputs.emplace_back(id, std::move(visualization), InstanceTransformOutput{}); break;
+                    case SpectraSdkOutputKind::Lines: provider.outputs.emplace_back(id, std::move(visualization), SegmentOutput{}); break;
+                    case SpectraSdkOutputKind::Vectors: provider.outputs.emplace_back(id, std::move(visualization), VectorOutput{}); break;
+                    case SpectraSdkOutputKind::Image: provider.outputs.emplace_back(id, std::move(visualization), ImageOutput{}); break;
+                    case SpectraSdkOutputKind::HashGridRadianceField: provider.outputs.emplace_back(id, std::move(visualization), HashGridRadianceFieldOutput{}); break;
+                    case SpectraSdkOutputKind::Cameras: provider.outputs.emplace_back(id, std::move(visualization), CameraOutput{}); break;
                     case SpectraSdkOutputKind::Volume:
                     case SpectraSdkOutputKind::Particles:
                     case SpectraSdkOutputKind::Metrics: std::unreachable();
@@ -451,6 +500,16 @@ namespace spectra::simulation {
         return false;
     }
 
+    void Runtime::update_visualization(const std::size_t system_index, const std::size_t visualization_index, scene::SimulationVisualization visualization) {
+        scene::SimulationSystem& declared                                                  = this->configuration.setup.systems[system_index];
+        const std::string id                                                               = declared.visualizations[visualization_index].id;
+        declared.visualizations[visualization_index]                                       = visualization;
+        SystemRuntime& system                                                              = *std::ranges::find(this->systems.values, system_index, &SystemRuntime::scene_system_index);
+        OutputRuntime& output                                                              = *std::ranges::find_if(system.outputs, [&visualization](const OutputRuntime& candidate) { return candidate.descriptor.id == visualization.output_id; });
+        *std::ranges::find(output.visualizations, id, &scene::SimulationVisualization::id) = std::move(visualization);
+        this->publish_frame(PublicationKind::Presentation);
+    }
+
     const SimulationFrame* Runtime::acquire_frame() {
         if (!this->publication.frame_pending) return nullptr;
         for (SystemRuntime& system : this->systems.values)
@@ -522,7 +581,7 @@ namespace spectra::simulation {
     }
 
     SpectraSdkResult Runtime::declare_presentation_sequence(void* source, const SpectraSdkPresentationSequence* sequence) noexcept {
-        Runtime& runtime = *static_cast<Runtime*>(source);
+        Runtime& runtime                                              = *static_cast<Runtime*>(source);
         runtime.publication.configuring_system->presentation_sequence = PresentationSequence{sequence->frame_count, sequence->start_seconds, sequence->frame_seconds};
         return {};
     }
@@ -541,7 +600,10 @@ namespace spectra::simulation {
                 mesh.vertex_capacity     = layout->primary_capacity;
                 mesh.index_capacity      = layout->secondary_capacity * 3u;
                 mesh.attributes          = layout->mesh_attributes;
-            } else if (output && std::get_if<SphereSetOutput>(&output->descriptor.details)) std::get<SphereSetOutput>(output->descriptor.details).capacity = layout->primary_capacity;
+            } else if (output && std::get_if<MeshFieldOutput>(&output->descriptor.details)) std::get<MeshFieldOutput>(output->descriptor.details).capacity = layout->primary_capacity;
+            else if (output && std::get_if<IndexedPointOutput>(&output->descriptor.details)) std::get<IndexedPointOutput>(output->descriptor.details).capacity = layout->primary_capacity;
+            else if (output && std::get_if<IndexedSegmentOutput>(&output->descriptor.details)) std::get<IndexedSegmentOutput>(output->descriptor.details).capacity = layout->primary_capacity;
+            else if (output && std::get_if<SphereSetOutput>(&output->descriptor.details)) std::get<SphereSetOutput>(output->descriptor.details).capacity = layout->primary_capacity;
             else if (output && std::get_if<InstanceTransformOutput>(&output->descriptor.details)) std::get<InstanceTransformOutput>(output->descriptor.details).capacity = layout->primary_capacity;
             else if (output && std::get_if<ParticleSetOutput>(&output->descriptor.details)) {
                 ParticleSetOutput& particles = std::get<ParticleSetOutput>(output->descriptor.details);
@@ -570,9 +632,10 @@ namespace spectra::simulation {
                 slot_buffer_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float3));
                 if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Normal)) != 0u) slot_buffer_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float3));
                 if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Tangent)) != 0u) slot_buffer_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float3));
-                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u) slot_buffer_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::Float4));
-                if ((layout->mesh_attributes & std::to_underlying(SpectraSdkMeshAttribute::Scalar)) != 0u) slot_buffer_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(float));
-            } else if (layout->kind == SpectraSdkOutputKind::Volume) {
+            } else if (layout->kind == SpectraSdkOutputKind::MeshField) slot_buffer_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * field_element_size(std::get<MeshFieldOutput>(output->descriptor.details).field.kind));
+            else if (layout->kind == SpectraSdkOutputKind::IndexedPoints) static_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(std::uint32_t));
+            else if (layout->kind == SpectraSdkOutputKind::IndexedSegments) static_sizes.emplace_back(static_cast<std::uint64_t>(layout->primary_capacity) * sizeof(sdk::UInt2));
+            else if (layout->kind == SpectraSdkOutputKind::Volume) {
                 const auto& fields = std::get<FieldOutput>(output->descriptor.details).fields;
                 for (const FieldDescriptor& field : fields) {
                     if (field.kind == scene::FieldKind::MacFloat3) {
@@ -650,6 +713,7 @@ namespace spectra::simulation {
         if (binding != system.scene_bindings.end()) output.scene_binding = *binding;
         for (const scene::SimulationVisualization& view : system.visualizations)
             if (view.output_id == output.descriptor.id) output.visualizations.emplace_back(view);
+        if (output.visualizations.empty() && output.descriptor.default_visualization) output.visualizations.emplace_back(*output.descriptor.default_visualization);
     }
 
     void Runtime::declare_outputs() {
@@ -749,9 +813,9 @@ namespace spectra::simulation {
             ++particle_set.revision.topology;
             this->configuration.evaluated_scene->mark_changed(scene::SceneChange::Particle | scene::SceneChange::Structure);
         } else if (const auto* field = std::get_if<FieldOutput>(&output.descriptor.details)) {
-            scene::Volume& volume   = *std::ranges::find(this->configuration.evaluated_scene->resources.volumes, scene::VolumeId{output.scene_binding->resource_id}, &scene::Volume::id);
-            scene::GridVolume& grid = std::get<scene::GridVolume>(volume.data);
-            grid.resolution         = field->resolution;
+            scene::Volume& volume        = *std::ranges::find(this->configuration.evaluated_scene->resources.volumes, scene::VolumeId{output.scene_binding->resource_id}, &scene::Volume::id);
+            scene::DenseGridVolume& grid = std::get<scene::DenseGridVolume>(volume.data);
+            grid.resolution              = field->resolution;
             grid.fields.clear();
             grid.fields.reserve(field->fields.size());
             for (const FieldDescriptor& descriptor : field->fields) {
@@ -773,9 +837,35 @@ namespace spectra::simulation {
         system.telemetry.values.resize(system.provider_descriptor->telemetry.size());
         std::vector<SpectraSdkValue> parameters{};
         for (const scene::SimulationParameterValue& value : system.parameter_values) parameters.emplace_back(sdk_value(value));
+        std::vector<std::vector<SpectraSdkIndexSelectionInput>> mesh_selections(declared.mesh_inputs.size());
+        std::vector<SpectraSdkMeshInput> mesh_inputs{};
+        mesh_inputs.reserve(declared.mesh_inputs.size());
+        for (std::size_t input_index = 0u; input_index != declared.mesh_inputs.size(); ++input_index) {
+            const scene::SimulationMeshInput& input                = declared.mesh_inputs[input_index];
+            const scene::Geometry& geometry                        = *std::ranges::find(this->configuration.authored_scene->resources.geometries, input.geometry, &scene::Geometry::id);
+            const scene::TriangleMeshGeometry& mesh                = std::get<scene::TriangleMeshGeometry>(geometry.data);
+            std::vector<SpectraSdkIndexSelectionInput>& selections = mesh_selections[input_index];
+            selections.reserve(input.selections.size());
+            for (const scene::SimulationIndexSelection& selection : input.selections) selections.emplace_back(SpectraSdkIndexSelectionInput{{selection.id.data(), selection.id.size()}, selection.indices.data(), selection.indices.size()});
+            sdk::Transform transform{};
+            std::ranges::copy(input.transform.matrix, transform.matrix);
+            mesh_inputs.emplace_back(SpectraSdkMeshInput{
+                .id                       = {input.id.data(), input.id.size()},
+                .prim_path                = {input.prim_path.data(), input.prim_path.size()},
+                .positions                = reinterpret_cast<const sdk::Float3*>(mesh.positions.data()),
+                .position_count           = mesh.positions.size(),
+                .indices                  = mesh.indices.data(),
+                .index_count              = mesh.indices.size(),
+                .texture_coordinates      = reinterpret_cast<const sdk::Float2*>(mesh.texture_coordinates.data()),
+                .texture_coordinate_count = mesh.texture_coordinates.size(),
+                .transform                = transform,
+                .selections               = selections.data(),
+                .selection_count          = selections.size(),
+            });
+        }
         const std::u8string encoded_assets = this->configuration.assets.generic_u8string();
         std::string assets{reinterpret_cast<const char*>(encoded_assets.data()), encoded_assets.size()};
-        SpectraSdkCreateInfo create{{assets.data(), assets.size()}, parameters.data()};
+        SpectraSdkCreateInfo create{{assets.data(), assets.size()}, parameters.data(), mesh_inputs.data(), mesh_inputs.size(), this->configuration.setup.clock.step_seconds};
         std::ranges::copy(identity.uuid, create.vulkan_device_uuid);
         std::ranges::copy(identity.luid, create.vulkan_device_luid);
         create.vulkan_device_luid_valid              = identity.luid_valid;
@@ -824,7 +914,6 @@ namespace spectra::simulation {
             GpuTriangleMeshUpdate update{.geometry_id = scene::GeometryId{output.scene_binding->resource_id}, .positions = view(buffers[index++])};
             if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Normal)) != 0u) update.normals = view(buffers[index++]);
             if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Tangent)) != 0u) update.tangents = view(buffers[index++]);
-            if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u) ++index;
             frame.scene_updates.emplace_back(std::move(update));
         } else if (std::holds_alternative<SphereSetOutput>(output.descriptor.details) && output.scene_binding) frame.scene_updates.emplace_back(GpuSphereSetUpdate{scene::SphereSetId{output.scene_binding->resource_id}, view(buffers[0]), commit.active_count});
         else if (const auto* particles = std::get_if<ParticleSetOutput>(&output.descriptor.details); particles && output.scene_binding) {
@@ -841,6 +930,13 @@ namespace spectra::simulation {
             }
             frame.scene_updates.emplace_back(std::move(update));
         } else if (std::holds_alternative<HashGridRadianceFieldOutput>(output.descriptor.details) && output.scene_binding) {
+            const auto diagnostics = std::ranges::find_if(output.visualizations, [](const scene::SimulationVisualization& visualization) { return std::holds_alternative<scene::NeuralFieldVisualization>(visualization.data); });
+            if (diagnostics != output.visualizations.end()) {
+                scene::NeuralFieldDiagnostics& field_diagnostics = std::ranges::find(this->configuration.evaluated_scene->resources.neural_fields, scene::NeuralFieldId{output.scene_binding->resource_id}, &scene::NeuralField::id)->diagnostics;
+                field_diagnostics.occupancy_grid                 = diagnostics->visible;
+                field_diagnostics.occupancy_depth_mode           = diagnostics->depth_mode;
+                field_diagnostics.occupancy_color                = diagnostics->color;
+            }
             frame.scene_updates.emplace_back(GpuHashGridRadianceFieldUpdate{
                 scene::NeuralFieldId{output.scene_binding->resource_id},
                 view(buffers[0]),
@@ -861,14 +957,23 @@ namespace spectra::simulation {
             if (std::holds_alternative<SegmentOutput>(output.descriptor.details)) frame.visualizations.emplace_back(GpuSegmentVisualization{style, view(buffers[0]), commit.active_count});
             else if (std::holds_alternative<VectorOutput>(output.descriptor.details)) frame.visualizations.emplace_back(GpuVectorVisualization{style, view(buffers[0]), commit.active_count});
             else if (const auto* image = std::get_if<ImageOutput>(&output.descriptor.details)) frame.visualizations.emplace_back(GpuImageVisualization{style, *image, view(buffers[0])});
-            else if (const auto* mesh = std::get_if<TriangleMeshOutput>(&output.descriptor.details)) {
-                std::size_t scalar_index{1u};
-                if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Normal)) != 0u) ++scalar_index;
-                if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Tangent)) != 0u) ++scalar_index;
-                const std::optional<GpuBufferView> colors = (mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u ? std::optional{view(buffers[scalar_index])} : std::nullopt;
-                if ((mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Color)) != 0u) ++scalar_index;
-                const std::optional<GpuBufferView> scalars = (mesh->attributes & std::to_underlying(SpectraSdkMeshAttribute::Scalar)) != 0u ? std::optional{view(buffers[scalar_index])} : std::nullopt;
-                frame.visualizations.emplace_back(GpuSurfaceVisualization{style, view(buffers[0]), mesh->index_capacity == 0u ? std::nullopt : std::optional{view(output.storage.static_buffers[0])}, colors, scalars, mesh->vertex_capacity, mesh->index_capacity});
+            else if (const auto* points = std::get_if<IndexedPointOutput>(&output.descriptor.details)) {
+                const OutputRuntime& anchor = *std::ranges::find(system.outputs, points->anchor_id, [](const OutputRuntime& candidate) { return candidate.descriptor.id; });
+                frame.visualizations.emplace_back(GpuIndexedPointVisualization{style, view(anchor.storage.slots[system.current_slot][0]), view(output.storage.static_buffers[0]), commit.active_count});
+            } else if (const auto* segments = std::get_if<IndexedSegmentOutput>(&output.descriptor.details)) {
+                const OutputRuntime& anchor = *std::ranges::find(system.outputs, segments->anchor_id, [](const OutputRuntime& candidate) { return candidate.descriptor.id; });
+                frame.visualizations.emplace_back(GpuIndexedSegmentVisualization{style, view(anchor.storage.slots[system.current_slot][0]), view(output.storage.static_buffers[0]), commit.active_count});
+            } else if (const auto* field = std::get_if<MeshFieldOutput>(&output.descriptor.details)) {
+                const OutputRuntime& anchor = *std::ranges::find(system.outputs, field->anchor_id, [](const OutputRuntime& candidate) { return candidate.descriptor.id; });
+                if (std::holds_alternative<scene::VectorVisualization>(visualization.data)) frame.visualizations.emplace_back(GpuMeshVectorVisualization{style, view(anchor.storage.slots[system.current_slot][0]), view(buffers[0]), commit.active_count});
+                else {
+                    const std::optional<GpuBufferView> colors  = field->field.kind == scene::FieldKind::Float4 ? std::optional{view(buffers[0])} : std::nullopt;
+                    const std::optional<GpuBufferView> scalars = field->field.kind == scene::FieldKind::Float ? std::optional{view(buffers[0])} : std::nullopt;
+                    frame.visualizations.emplace_back(GpuMeshFieldSurfaceVisualization{style, {anchor.scene_binding->resource_id}, colors, scalars});
+                }
+            } else if (const auto* mesh = std::get_if<TriangleMeshOutput>(&output.descriptor.details)) {
+                if (std::holds_alternative<scene::DerivedMeshVisualization>(visualization.data)) frame.visualizations.emplace_back(GpuDerivedMeshVisualization{style, {output.scene_binding->resource_id}});
+                else frame.visualizations.emplace_back(GpuSurfaceVisualization{style, view(buffers[0]), mesh->index_capacity == 0u ? std::nullopt : std::optional{view(output.storage.static_buffers[0])}, std::nullopt, std::nullopt, mesh->vertex_capacity, mesh->index_capacity});
             }
         }
     }
@@ -889,8 +994,13 @@ namespace spectra::simulation {
         this->discard_pending_frame();
         SimulationFrame frame{};
         const PresentationFrame presentation = this->presentation_frame();
-        const SpectraSdkPresentationFrame encoded_presentation{presentation.index, presentation.seconds};
         for (SystemRuntime& system : this->systems.values) {
+            std::vector<std::uint8_t> requested(system.outputs.size());
+            for (std::size_t index = 0u; index != system.outputs.size(); ++index) {
+                const OutputRuntime& output = system.outputs[index];
+                requested[index]            = static_cast<std::uint8_t>(output.scene_binding.has_value() || (this->configuration.setup.systems[system.scene_system_index].visible && std::ranges::any_of(output.visualizations, &scene::SimulationVisualization::visible)));
+            }
+            const SpectraSdkPresentationFrame encoded_presentation{presentation.index, presentation.seconds, requested.data(), requested.size()};
             SpectraSdkFrameCommit commit{};
             check_sdk_result(system.api->publish(system.provider_instance, &encoded_presentation, &commit), "publication");
             system.current_slot   = commit.slot_index;
@@ -902,7 +1012,7 @@ namespace spectra::simulation {
         this->publication.frame            = std::move(frame);
         this->publication.telemetry_sample = kind == PublicationKind::Simulation ? std::optional{this->timeline()} : std::nullopt;
         this->publication.frame_pending    = true;
-        this->presentation.dirty            = false;
+        this->presentation.dirty           = false;
     }
 
     void Runtime::step_to(const std::uint64_t target) {

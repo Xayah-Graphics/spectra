@@ -2,24 +2,25 @@
 #define SPECTRA_SDK_INTERNAL_ABI_H
 
 #include <cstdint>
+#include <spectra/sdk/cuda_types.h>
 #include <spectra/sdk/neural_field_layout.h>
 
-#define SPECTRA_SDK_ABI_VERSION_VALUE 7
+#define SPECTRA_SDK_ABI_VERSION_VALUE             9
 #define SPECTRA_SDK_CONCATENATE_IMPL(left, right) left##right
-#define SPECTRA_SDK_CONCATENATE(left, right) SPECTRA_SDK_CONCATENATE_IMPL(left, right)
-#define SPECTRA_SDK_STRINGIFY_IMPL(value) #value
-#define SPECTRA_SDK_STRINGIFY(value) SPECTRA_SDK_STRINGIFY_IMPL(value)
-#define SPECTRA_SDK_ENTRY_SYMBOL SPECTRA_SDK_CONCATENATE(spectra_sdk_api_, SPECTRA_SDK_ABI_VERSION_VALUE)
+#define SPECTRA_SDK_CONCATENATE(left, right)      SPECTRA_SDK_CONCATENATE_IMPL(left, right)
+#define SPECTRA_SDK_STRINGIFY_IMPL(value)         #value
+#define SPECTRA_SDK_STRINGIFY(value)              SPECTRA_SDK_STRINGIFY_IMPL(value)
+#define SPECTRA_SDK_ENTRY_SYMBOL                  SPECTRA_SDK_CONCATENATE(spectra_sdk_api_, SPECTRA_SDK_ABI_VERSION_VALUE)
 
-inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION = SPECTRA_SDK_ABI_VERSION_VALUE;
-inline constexpr char SPECTRA_SDK_ENTRY_NAME[]         = SPECTRA_SDK_STRINGIFY(SPECTRA_SDK_ENTRY_SYMBOL);
+inline constexpr std::uint32_t SPECTRA_SDK_ABI_VERSION           = SPECTRA_SDK_ABI_VERSION_VALUE;
+inline constexpr char SPECTRA_SDK_ENTRY_NAME[]                   = SPECTRA_SDK_STRINGIFY(SPECTRA_SDK_ENTRY_SYMBOL);
 inline constexpr std::uint32_t SPECTRA_SDK_HASH_GRID_ENTRY_COUNT = spectra::sdk::neural_field_layout::hash_grid_entry_count;
-inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_INPUT_COUNT = SPECTRA_NEURAL_FIELD_DENSITY_INPUT_ROWS * SPECTRA_NEURAL_FIELD_DENSITY_INPUT_COLUMNS;
-inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_OUTPUT_COUNT = SPECTRA_NEURAL_FIELD_DENSITY_OUTPUT_ROWS * SPECTRA_NEURAL_FIELD_DENSITY_OUTPUT_COLUMNS;
-inline constexpr std::uint32_t SPECTRA_SDK_RGB_INPUT_COUNT = SPECTRA_NEURAL_FIELD_RGB_INPUT_ROWS * SPECTRA_NEURAL_FIELD_RGB_INPUT_COLUMNS;
-inline constexpr std::uint32_t SPECTRA_SDK_RGB_HIDDEN_COUNT = SPECTRA_NEURAL_FIELD_RGB_HIDDEN_ROWS * SPECTRA_NEURAL_FIELD_RGB_HIDDEN_COLUMNS;
-inline constexpr std::uint32_t SPECTRA_SDK_RGB_OUTPUT_COUNT = SPECTRA_NEURAL_FIELD_RGB_OUTPUT_ROWS * SPECTRA_NEURAL_FIELD_RGB_OUTPUT_COLUMNS;
-inline constexpr std::uint32_t SPECTRA_SDK_OCCUPANCY_WORD_COUNT = spectra::sdk::neural_field_layout::occupancy_word_count;
+inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_INPUT_COUNT   = SPECTRA_NEURAL_FIELD_DENSITY_INPUT_ROWS * SPECTRA_NEURAL_FIELD_DENSITY_INPUT_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_DENSITY_OUTPUT_COUNT  = SPECTRA_NEURAL_FIELD_DENSITY_OUTPUT_ROWS * SPECTRA_NEURAL_FIELD_DENSITY_OUTPUT_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_RGB_INPUT_COUNT       = SPECTRA_NEURAL_FIELD_RGB_INPUT_ROWS * SPECTRA_NEURAL_FIELD_RGB_INPUT_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_RGB_HIDDEN_COUNT      = SPECTRA_NEURAL_FIELD_RGB_HIDDEN_ROWS * SPECTRA_NEURAL_FIELD_RGB_HIDDEN_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_RGB_OUTPUT_COUNT      = SPECTRA_NEURAL_FIELD_RGB_OUTPUT_ROWS * SPECTRA_NEURAL_FIELD_RGB_OUTPUT_COLUMNS;
+inline constexpr std::uint32_t SPECTRA_SDK_OCCUPANCY_WORD_COUNT  = spectra::sdk::neural_field_layout::occupancy_word_count;
 
 #define SPECTRA_SDK_EXPORT __declspec(dllexport)
 
@@ -41,6 +42,8 @@ struct SpectraSdkPresentationSequence {
 struct SpectraSdkPresentationFrame {
     std::uint64_t index;
     double seconds;
+    const std::uint8_t* requested_outputs;
+    std::uint64_t requested_output_count;
 };
 
 enum class SpectraSdkValueKind : std::uint32_t {
@@ -80,6 +83,9 @@ struct SpectraSdkParameterDescriptor {
 
 enum class SpectraSdkOutputKind : std::uint32_t {
     Mesh,
+    MeshField,
+    IndexedPoints,
+    IndexedSegments,
     Spheres,
     Volume,
     Instances,
@@ -103,9 +109,26 @@ struct SpectraSdkCamera {
 
 enum class SpectraSdkFieldKind : std::uint32_t {
     Float,
+    Float2,
     Float3,
+    Float4,
     UInt32,
     MacFloat3,
+};
+
+enum class SpectraSdkMeshElementDomain : std::uint32_t {
+    Vertex,
+    Face,
+    Edge,
+};
+
+enum class SpectraSdkVisualizationKind : std::uint32_t {
+    None,
+    Points,
+    Segments,
+    Vectors,
+    Surface,
+    Image,
 };
 
 enum class SpectraSdkVolumeFieldSampling : std::uint32_t {
@@ -123,8 +146,6 @@ enum class SpectraSdkMeshAttribute : std::uint32_t {
     Normal            = 1u << 0u,
     Tangent           = 1u << 1u,
     TextureCoordinate = 1u << 2u,
-    Color             = 1u << 3u,
-    Scalar            = 1u << 4u,
 };
 
 struct SpectraSdkFieldDescriptor {
@@ -138,8 +159,15 @@ struct SpectraSdkFieldDescriptor {
 
 struct SpectraSdkOutputDescriptor {
     SpectraSdkString id;
+    SpectraSdkString name;
+    SpectraSdkString unit;
+    SpectraSdkString anchor;
     SpectraSdkOutputKind kind;
     std::uint32_t mesh_attributes;
+    SpectraSdkFieldKind element_kind;
+    SpectraSdkMeshElementDomain element_domain;
+    SpectraSdkVisualizationKind visualization;
+    std::uint8_t default_visible;
     const SpectraSdkFieldDescriptor* fields;
     std::uint64_t field_count;
 };
@@ -227,9 +255,32 @@ struct SpectraSdkFrameCommit {
     const SpectraSdkOutputCommit* outputs;
 };
 
+struct SpectraSdkIndexSelectionInput {
+    SpectraSdkString id;
+    const std::uint32_t* indices;
+    std::uint64_t index_count;
+};
+
+struct SpectraSdkMeshInput {
+    SpectraSdkString id;
+    SpectraSdkString prim_path;
+    const spectra::sdk::Float3* positions;
+    std::uint64_t position_count;
+    const std::uint32_t* indices;
+    std::uint64_t index_count;
+    const spectra::sdk::Float2* texture_coordinates;
+    std::uint64_t texture_coordinate_count;
+    spectra::sdk::Transform transform;
+    const SpectraSdkIndexSelectionInput* selections;
+    std::uint64_t selection_count;
+};
+
 struct SpectraSdkCreateInfo {
     SpectraSdkString assets;
     const SpectraSdkValue* parameters;
+    const SpectraSdkMeshInput* mesh_inputs;
+    std::uint64_t mesh_input_count;
+    double step_seconds;
     std::uint8_t vulkan_device_uuid[16];
     std::uint8_t vulkan_device_luid[8];
     std::uint8_t vulkan_device_luid_valid;
@@ -261,7 +312,7 @@ struct SpectraSdkApi {
 };
 
 static_assert(sizeof(SpectraSdkPresentationSequence) == 24);
-static_assert(sizeof(SpectraSdkPresentationFrame) == 16);
+static_assert(sizeof(SpectraSdkPresentationFrame) == 32);
 static_assert(sizeof(SpectraSdkValue) == 40);
 static_assert(sizeof(SpectraSdkCamera) == 64);
 static_assert(sizeof(SpectraSdkGpuBuffer) == 24);

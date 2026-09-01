@@ -99,7 +99,7 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/GUIDE.md" DESTINATION "${CMAKE_INSTAL
 install(
         FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/example/CMakeLists.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/example/provider.ixx"
+        "${CMAKE_CURRENT_SOURCE_DIR}/example/module.ixx"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/SpectraSDK/example"
         COMPONENT SDK
 )

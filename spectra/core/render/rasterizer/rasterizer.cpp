@@ -206,7 +206,13 @@ namespace spectra::render {
                 const std::vector<GpuVolumeField>::const_iterator found = std::ranges::find(shared.fields, id, &GpuVolumeField::id);
                 return found == shared.fields.end() ? this->scene.zero_volume_field_descriptor : found->descriptors.front();
             };
-            if (const auto* data = std::get_if<scene::GridVolume>(&volume.data)) {
+            record.density_openvdb        = this->scene.zero_volume_field_descriptor;
+            record.temperature_openvdb    = this->scene.zero_volume_field_descriptor;
+            record.emission_scale_openvdb = this->scene.zero_volume_field_descriptor;
+            record.sigma_a_openvdb        = this->scene.zero_volume_field_descriptor;
+            record.sigma_s_openvdb        = this->scene.zero_volume_field_descriptor;
+            record.emission_openvdb       = this->scene.zero_volume_field_descriptor;
+            if (const auto* data = std::get_if<scene::DenseGridVolume>(&volume.data)) {
                 const auto vertex_sampled = [data](const std::string_view id) {
                     const std::vector<scene::VolumeField>::const_iterator found = std::ranges::find(data->fields, id, &scene::VolumeField::id);
                     return found != data->fields.end() && scene::field_sampling(*found) == scene::VolumeFieldSampling::Vertex ? 1u : 0u;
@@ -215,6 +221,17 @@ namespace spectra::render {
                 record.metadata                 = {rgb ? 1u : 0u, data->resolution.x, data->resolution.y, data->resolution.z};
                 const std::uint32_t field_flags = (rgb ? (rendering.sigma_a_field.empty() ? 0u : 1u) | (rendering.sigma_s_field.empty() ? 0u : 2u) | (rendering.emission_field.empty() ? 0u : 4u) | (std::to_underlying(rendering.field_color_space) << 8) : (!rendering.temperature_field.empty() ? 1u : 0u) | (!rendering.emission_scale_field.empty() ? 2u : 0u)) | (vertex_sampled(rendering.density_field) << 16u) | (vertex_sampled(rendering.temperature_field) << 17u) | (vertex_sampled(rendering.emission_scale_field) << 18u) | (vertex_sampled(rendering.sigma_a_field) << 19u) | (vertex_sampled(rendering.sigma_s_field) << 20u) | (vertex_sampled(rendering.emission_field) << 21u);
                 record.procedural_parameters[3] = std::bit_cast<float>(field_flags);
+            } else if (std::holds_alternative<scene::OpenVdbVolume>(volume.data)) {
+                const bool rgb                  = rendering.density_field.empty() && (!rendering.sigma_a_field.empty() || !rendering.sigma_s_field.empty() || !rendering.emission_field.empty());
+                const std::uint32_t field_flags = (rgb ? 1u << 24u : 0u) | (rendering.temperature_field.empty() ? 0u : 1u) | (rendering.emission_scale_field.empty() ? 0u : 2u) | (rendering.sigma_a_field.empty() ? 0u : 1u) | (rendering.sigma_s_field.empty() ? 0u : 2u) | (rendering.emission_field.empty() ? 0u : 4u) | (std::to_underlying(rendering.field_color_space) << 8u);
+                record.metadata                 = {shader_semantics::volume_openvdb, 0u, 0u, 0u};
+                record.procedural_parameters[3] = std::bit_cast<float>(field_flags);
+                record.density_openvdb          = field(rendering.density_field);
+                record.temperature_openvdb      = field(rendering.temperature_field);
+                record.emission_scale_openvdb   = field(rendering.emission_scale_field);
+                record.sigma_a_openvdb          = field(rendering.sigma_a_field);
+                record.sigma_s_openvdb          = field(rendering.sigma_s_field);
+                record.emission_openvdb         = field(rendering.emission_field);
             } else {
                 const scene::ProceduralCloudVolume& cloud = std::get<scene::ProceduralCloudVolume>(volume.data);
                 record.metadata                           = {2, 0, 0, 0};

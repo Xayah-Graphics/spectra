@@ -22,6 +22,12 @@ namespace spectra::editor {
         this->mark_change(scene::SceneChange::Metadata);
     }
 
+    void Document::update_simulation_visualization(const std::size_t system_index, const std::size_t visualization_index, scene::SimulationVisualization visualization) {
+        this->authored.simulation->systems[system_index].visualizations[visualization_index]  = visualization;
+        this->evaluated.simulation->systems[system_index].visualizations[visualization_index] = std::move(visualization);
+        this->mark_change(scene::SceneChange::Metadata);
+    }
+
     void Document::update_transform(const scene::InstanceId instance_id, math::Transform transform) {
         scene::Instance& source    = *std::ranges::find(this->authored.resources.instances, instance_id, &scene::Instance::id);
         scene::Instance& evaluated = *std::ranges::find(this->evaluated.resources.instances, instance_id, &scene::Instance::id);

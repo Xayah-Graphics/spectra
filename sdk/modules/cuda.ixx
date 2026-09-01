@@ -22,8 +22,6 @@ namespace spectra::sdk::cuda {
         RawView positions{};
         RawView normals{};
         RawView tangents{};
-        RawView colors{};
-        RawView scalars{};
     };
 
     struct RawMeshSetupView {
@@ -76,9 +74,11 @@ namespace spectra::sdk::cuda {
     };
 
     void declare_presentation_sequence_internal(void* state, PresentationSequence sequence);
-    void register_output_internal(void* state, std::string_view id, OutputKind kind, MeshAttribute attributes, std::span<const std::string_view> field_ids, std::span<const FieldKind> field_kinds);
+    void register_output_internal(void* state, std::string_view id, OutputKind kind, MeshAttribute attributes, FieldKind element_kind, std::span<const std::string_view> field_ids, std::span<const FieldKind> field_kinds);
     void configure_metrics_internal(void* state, std::span<const std::string_view> ids);
     [[nodiscard]] RawMeshSetupView setup_mesh_internal(void* state, std::string_view id, std::uint32_t vertex_capacity, std::uint32_t triangle_capacity);
+    [[nodiscard]] RawView setup_mesh_field_internal(void* state, std::string_view id, std::uint32_t capacity);
+    [[nodiscard]] RawView setup_indexed_internal(void* state, std::string_view id, OutputKind kind, std::uint32_t capacity);
     [[nodiscard]] RawCamerasSetupView setup_cameras_internal(void* state, std::string_view id, std::span<const Camera> cameras, std::uint32_t width, std::uint32_t height);
     void setup_collection_internal(void* state, std::string_view id, OutputKind kind, std::uint32_t capacity);
     void setup_particles_internal(void* state, std::string_view id, std::uint32_t capacity, float radius);
@@ -86,6 +86,8 @@ namespace spectra::sdk::cuda {
     void setup_image_internal(void* state, std::string_view id, UInt3 extent);
     void setup_hash_grid_radiance_field_internal(void* state, std::string_view id);
     [[nodiscard]] RawMeshView frame_mesh_internal(void* state, std::string_view id);
+    [[nodiscard]] RawView frame_mesh_field_internal(void* state, std::string_view id, std::uint32_t active_count);
+    void frame_indexed_internal(void* state, std::string_view id, std::uint32_t active_count);
     [[nodiscard]] RawView frame_collection_internal(void* state, std::string_view id, std::uint32_t active_count);
     [[nodiscard]] RawParticlesView frame_particles_internal(void* state, std::string_view id, std::uint32_t active_count);
     [[nodiscard]] RawVolumeView frame_volume_internal(void* state, std::string_view id);
@@ -94,10 +96,19 @@ namespace spectra::sdk::cuda {
     [[nodiscard]] RawView field_internal(void* state, std::string_view id);
     [[nodiscard]] RawMacFieldView volume_mac_field_internal(void* state, std::string_view id);
     void upload_metric_internal(void* state, std::string_view id, const MetricValue& value);
+    [[nodiscard]] bool output_requested_internal(const void* state, std::string_view id) noexcept;
 
     export struct MeshSetup {
         std::span<std::uint32_t> triangles{};
         std::span<Float2> texture_coordinates{};
+    };
+
+    export struct IndexedPointsSetup {
+        std::span<std::uint32_t> indices{};
+    };
+
+    export struct IndexedSegmentsSetup {
+        std::span<UInt2> indices{};
     };
 
     export struct CamerasSetup {
@@ -109,8 +120,6 @@ namespace spectra::sdk::cuda {
         std::span<Float3> positions{};
         std::span<Float3> normals{};
         std::span<Float3> tangents{};
-        std::span<Float4> colors{};
-        std::span<float> scalars{};
     };
 
     export struct Image {
@@ -229,6 +238,23 @@ namespace spectra::sdk::cuda {
         }
 
         template <FixedString Id>
+        void mesh_field(const std::uint32_t capacity) {
+            static_cast<void>(setup_mesh_field_internal(state, Id.view(), capacity));
+        }
+
+        template <FixedString Id>
+        [[nodiscard]] IndexedPointsSetup indexed_points(const std::uint32_t capacity) {
+            const RawView view = setup_indexed_internal(state, Id.view(), OutputKind::IndexedPoints, capacity);
+            return {{static_cast<std::uint32_t*>(view.data), view.count}};
+        }
+
+        template <FixedString Id>
+        [[nodiscard]] IndexedSegmentsSetup indexed_segments(const std::uint32_t capacity) {
+            const RawView view = setup_indexed_internal(state, Id.view(), OutputKind::IndexedSegments, capacity);
+            return {{static_cast<UInt2*>(view.data), view.count}};
+        }
+
+        template <FixedString Id>
         [[nodiscard]] CamerasSetup cameras(const std::span<const Camera> values, const std::uint32_t width, const std::uint32_t height) {
             const RawCamerasSetupView view = setup_cameras_internal(state, Id.view(), values, width, height);
             return {{static_cast<Rgba8*>(view.images.data), view.images.count}, view.extent};
@@ -293,30 +319,33 @@ namespace spectra::sdk::cuda {
             std::vector<std::string_view> metric_ids{};
             std::apply(
                 [this, &metric_ids](const auto&... definition) {
-                    ([this, &metric_ids](const auto& value) {
-                        if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Output) {
-                            std::vector<std::string_view> field_ids{};
-                            std::vector<FieldKind> field_kinds{};
-                            if constexpr (requires { value.fields; }) {
-                                std::apply(
-                                    [&field_ids, &field_kinds](const auto&... field) {
-                                        (field_ids.emplace_back(std::remove_cvref_t<decltype(field)>::id.view()), ...);
-                                        (field_kinds.emplace_back(std::remove_cvref_t<decltype(field)>::kind), ...);
-                                    },
-                                    value.fields
-                                );
-                            }
-                            const MeshAttribute attributes = []<typename Definition>(const Definition& definition) {
-                                if constexpr (requires { definition.options.attributes; }) return definition.options.attributes;
-                                return MeshAttribute{};
-                            }(value);
-                            register_output_internal(state, std::remove_cvref_t<decltype(value)>::id.view(), std::remove_cvref_t<decltype(value)>::kind, attributes, field_ids, field_kinds);
-                        } else if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Metric)
-                            metric_ids.emplace_back(std::remove_cvref_t<decltype(value)>::id.view());
-                    }(definition), ...);
+                    (
+                        [this, &metric_ids](const auto& value) {
+                            if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Output) {
+                                std::vector<std::string_view> field_ids{};
+                                std::vector<FieldKind> field_kinds{};
+                                if constexpr (requires { value.fields; }) {
+                                    std::apply(
+                                        [&field_ids, &field_kinds](const auto&... field) {
+                                            (field_ids.emplace_back(std::remove_cvref_t<decltype(field)>::id.view()), ...);
+                                            (field_kinds.emplace_back(std::remove_cvref_t<decltype(field)>::kind), ...);
+                                        },
+                                        value.fields);
+                                }
+                                const MeshAttribute attributes = []<typename Definition>(const Definition& definition) {
+                                    if constexpr (requires { definition.options.attributes; }) return definition.options.attributes;
+                                    return MeshAttribute{};
+                                }(value);
+                                const FieldKind element_kind = []<typename Definition> {
+                                    if constexpr (requires { Definition::field_kind; }) return Definition::field_kind;
+                                    return FieldKind::Float;
+                                }.template operator()<std::remove_cvref_t<decltype(value)>>();
+                                register_output_internal(state, std::remove_cvref_t<decltype(value)>::id.view(), std::remove_cvref_t<decltype(value)>::kind, attributes, element_kind, field_ids, field_kinds);
+                            } else if constexpr (std::remove_cvref_t<decltype(value)>::category == DefinitionCategory::Metric) metric_ids.emplace_back(std::remove_cvref_t<decltype(value)>::id.view());
+                        }(definition),
+                        ...);
                 },
-                description.definitions
-            );
+                description.definitions);
             configure_metrics_internal(state, metric_ids);
         }
 
@@ -331,9 +360,23 @@ namespace spectra::sdk::cuda {
                 {static_cast<Float3*>(view.positions.data), view.positions.count},
                 {static_cast<Float3*>(view.normals.data), view.normals.count},
                 {static_cast<Float3*>(view.tangents.data), view.tangents.count},
-                {static_cast<Float4*>(view.colors.data), view.colors.count},
-                {static_cast<float*>(view.scalars.data), view.scalars.count},
             };
+        }
+
+        template <FixedString Id, typename Type>
+        [[nodiscard]] std::span<Type> mesh_field(const std::uint32_t count) const {
+            const RawView view = frame_mesh_field_internal(state, Id.view(), count);
+            return {static_cast<Type*>(view.data), count};
+        }
+
+        template <FixedString Id>
+        void indexed_points(const std::uint32_t count) const {
+            frame_indexed_internal(state, Id.view(), count);
+        }
+
+        template <FixedString Id>
+        void indexed_segments(const std::uint32_t count) const {
+            frame_indexed_internal(state, Id.view(), count);
         }
 
         template <FixedString Id>
@@ -410,6 +453,11 @@ namespace spectra::sdk::cuda {
     export struct Output {
         [[nodiscard]] Frame begin(void* stream) const;
 
+        template <FixedString Id>
+        [[nodiscard]] bool requested() const noexcept {
+            return output_requested_internal(state, Id.view());
+        }
+
     private:
         template <typename Provider>
         friend struct spectra::sdk::internal::ProviderBridge;
@@ -422,9 +470,9 @@ namespace spectra::sdk::cuda {
         Output(const Output&)            = delete;
         Output& operator=(const Output&) = delete;
 
-        void prepare(void* commit) const noexcept;
+        void prepare(void* commit, const std::uint8_t* requested_outputs, std::uint64_t requested_output_count) const noexcept;
         void synchronize() const;
 
         void* state{};
     };
-}
+} // namespace spectra::sdk::cuda

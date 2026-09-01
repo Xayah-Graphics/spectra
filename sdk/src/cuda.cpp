@@ -1,9 +1,8 @@
 module;
 
+#include "../internal/abi.h"
 #include <cuda_runtime_api.h>
 #include <spectra/sdk/cuda_types.h>
-
-#include "../internal/abi.h"
 
 module spectra.sdk.cuda;
 
@@ -32,7 +31,7 @@ namespace spectra::sdk::cuda {
                 const cudaError_t import_result = cudaImportExternalMemory(&memory, &description);
                 check_cuda(import_result, "cudaImportExternalMemory");
                 cudaExternalMemoryBufferDesc buffer{};
-                buffer.size = source.byte_size;
+                buffer.size                      = source.byte_size;
                 const cudaError_t mapping_result = cudaExternalMemoryGetMappedBuffer(&data, memory, &buffer);
                 if (mapping_result == cudaSuccess) return;
                 cudaDestroyExternalMemory(memory);
@@ -64,6 +63,7 @@ namespace spectra::sdk::cuda {
             std::string id{};
             SpectraSdkOutputKind kind{};
             MeshAttribute mesh_attributes{};
+            FieldKind element_kind{FieldKind::Float};
             std::vector<std::string> field_ids{};
             std::vector<FieldKind> field_kinds{};
             std::vector<std::size_t> field_buffer_offsets{};
@@ -87,6 +87,8 @@ namespace spectra::sdk::cuda {
             cudaStream_t stream{};
             SpectraSdkFrameCommit* commit{};
             std::vector<SpectraSdkOutputCommit> commits{};
+            const std::uint8_t* requested_outputs{};
+            std::uint64_t requested_output_count{};
 
             ~State() {
                 for (void* staging : metric_staging)
@@ -111,7 +113,7 @@ namespace spectra::sdk::cuda {
             cudaExternalSemaphoreHandleDesc description{};
             description.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
             description.handle.win32.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(state.sink.timeline_semaphore.value));
-            const cudaError_t result = cudaImportExternalSemaphore(&state.timeline, &description);
+            const cudaError_t result        = cudaImportExternalSemaphore(&state.timeline, &description);
             check_cuda(result, "cudaImportExternalSemaphore");
         }
 
@@ -141,16 +143,19 @@ namespace spectra::sdk::cuda {
 
         [[nodiscard]] SpectraSdkOutputKind abi_kind(const OutputKind kind) noexcept {
             switch (kind) {
-                case OutputKind::Mesh: return SpectraSdkOutputKind::Mesh;
-                case OutputKind::Spheres: return SpectraSdkOutputKind::Spheres;
-                case OutputKind::Volume: return SpectraSdkOutputKind::Volume;
-                case OutputKind::Instances: return SpectraSdkOutputKind::Instances;
-                case OutputKind::Particles: return SpectraSdkOutputKind::Particles;
-                case OutputKind::Lines: return SpectraSdkOutputKind::Lines;
-                case OutputKind::Vectors: return SpectraSdkOutputKind::Vectors;
-                case OutputKind::Image: return SpectraSdkOutputKind::Image;
-                case OutputKind::HashGridRadianceField: return SpectraSdkOutputKind::HashGridRadianceField;
-                case OutputKind::Cameras: return SpectraSdkOutputKind::Cameras;
+            case OutputKind::Mesh: return SpectraSdkOutputKind::Mesh;
+            case OutputKind::MeshField: return SpectraSdkOutputKind::MeshField;
+            case OutputKind::IndexedPoints: return SpectraSdkOutputKind::IndexedPoints;
+            case OutputKind::IndexedSegments: return SpectraSdkOutputKind::IndexedSegments;
+            case OutputKind::Spheres: return SpectraSdkOutputKind::Spheres;
+            case OutputKind::Volume: return SpectraSdkOutputKind::Volume;
+            case OutputKind::Instances: return SpectraSdkOutputKind::Instances;
+            case OutputKind::Particles: return SpectraSdkOutputKind::Particles;
+            case OutputKind::Lines: return SpectraSdkOutputKind::Lines;
+            case OutputKind::Vectors: return SpectraSdkOutputKind::Vectors;
+            case OutputKind::Image: return SpectraSdkOutputKind::Image;
+            case OutputKind::HashGridRadianceField: return SpectraSdkOutputKind::HashGridRadianceField;
+            case OutputKind::Cameras: return SpectraSdkOutputKind::Cameras;
             }
             std::unreachable();
         }
@@ -158,7 +163,19 @@ namespace spectra::sdk::cuda {
         [[nodiscard]] RawView raw_view(const ImportedBuffer& buffer, const std::uint64_t element_size) noexcept {
             return {buffer.data, buffer.byte_size / element_size};
         }
-    }
+
+        [[nodiscard]] std::uint64_t element_size(const FieldKind kind) noexcept {
+            switch (kind) {
+            case FieldKind::Float: return sizeof(float);
+            case FieldKind::Float2: return sizeof(Float2);
+            case FieldKind::Float3: return sizeof(Float3);
+            case FieldKind::Float4: return sizeof(Float4);
+            case FieldKind::UInt32: return sizeof(std::uint32_t);
+            case FieldKind::MacFloat3: return sizeof(float);
+            }
+            std::unreachable();
+        }
+    } // namespace
 
     Setup::Setup(const void* sink) {
         std::unique_ptr<State> value{new State{.sink = *static_cast<const SpectraSdkSetupSink*>(sink)}};
@@ -186,12 +203,13 @@ namespace spectra::sdk::cuda {
         if (result.error.size != 0u) throw std::runtime_error(std::string{result.error.data, result.error.size});
     }
 
-    void register_output_internal(void* source, const std::string_view id, const OutputKind kind, const MeshAttribute attributes, const std::span<const std::string_view> field_ids, const std::span<const FieldKind> field_kinds) {
-        State& state              = setup_state(source);
-        OutputState& output       = state.outputs.emplace_back();
-        output.id                 = id;
-        output.kind               = abi_kind(kind);
-        output.mesh_attributes    = attributes;
+    void register_output_internal(void* source, const std::string_view id, const OutputKind kind, const MeshAttribute attributes, const FieldKind element_kind, const std::span<const std::string_view> field_ids, const std::span<const FieldKind> field_kinds) {
+        State& state           = setup_state(source);
+        OutputState& output    = state.outputs.emplace_back();
+        output.id              = id;
+        output.kind            = abi_kind(kind);
+        output.mesh_attributes = attributes;
+        output.element_kind    = element_kind;
         output.field_ids.assign(field_ids.begin(), field_ids.end());
         output.field_kinds.assign(field_kinds.begin(), field_kinds.end());
         output.field_buffer_offsets.reserve(field_kinds.size());
@@ -218,8 +236,26 @@ namespace spectra::sdk::cuda {
         const SpectraSdkOutputLayout layout{output_index(state, output), output.kind, vertex_capacity, triangle_capacity, {}, std::to_underlying(output.mesh_attributes)};
         request_output(state, output, layout);
         const RawView triangles = triangle_capacity == 0u ? RawView{} : raw_view(output.fixed_buffers[0], sizeof(std::uint32_t));
-        const bool has_uv        = contains(output.mesh_attributes, MeshAttribute::TextureCoordinate);
+        const bool has_uv       = contains(output.mesh_attributes, MeshAttribute::TextureCoordinate);
         return {triangles, has_uv ? raw_view(output.fixed_buffers[triangle_capacity == 0u ? 0u : 1u], sizeof(Float2)) : RawView{}};
+    }
+
+    RawView setup_mesh_field_internal(void* source, const std::string_view id, const std::uint32_t capacity) {
+        State& state            = setup_state(source);
+        OutputState& output     = output_state(state, id);
+        output.primary_capacity = capacity;
+        const SpectraSdkOutputLayout layout{output_index(state, output), output.kind, capacity};
+        request_output(state, output, layout);
+        return raw_view(output.slots[0][0], element_size(output.element_kind));
+    }
+
+    RawView setup_indexed_internal(void* source, const std::string_view id, const OutputKind kind, const std::uint32_t capacity) {
+        State& state            = setup_state(source);
+        OutputState& output     = output_state(state, id);
+        output.primary_capacity = capacity;
+        const SpectraSdkOutputLayout layout{output_index(state, output), abi_kind(kind), capacity};
+        request_output(state, output, layout);
+        return raw_view(output.fixed_buffers[0], kind == OutputKind::IndexedPoints ? sizeof(std::uint32_t) : sizeof(UInt2));
     }
 
     RawCamerasSetupView setup_cameras_internal(void* source, const std::string_view id, const std::span<const Camera> cameras, const std::uint32_t width, const std::uint32_t height) {
@@ -280,8 +316,8 @@ namespace spectra::sdk::cuda {
     }
 
     void setup_hash_grid_radiance_field_internal(void* source, const std::string_view id) {
-        State& state          = setup_state(source);
-        OutputState& output   = output_state(state, id);
+        State& state            = setup_state(source);
+        OutputState& output     = output_state(state, id);
         output.primary_capacity = SPECTRA_SDK_HASH_GRID_ENTRY_COUNT;
         const SpectraSdkOutputLayout layout{output_index(state, output), output.kind, output.primary_capacity};
         request_output(state, output, layout);
@@ -326,8 +362,11 @@ namespace spectra::sdk::cuda {
         return *this;
     }
 
-    void Output::prepare(void* commit) const noexcept {
-        setup_state(state).commit = static_cast<SpectraSdkFrameCommit*>(commit);
+    void Output::prepare(void* commit, const std::uint8_t* requested_outputs, const std::uint64_t requested_output_count) const noexcept {
+        State& value                 = setup_state(state);
+        value.commit                 = static_cast<SpectraSdkFrameCommit*>(commit);
+        value.requested_outputs      = requested_outputs;
+        value.requested_output_count = requested_output_count;
     }
 
     Frame Output::begin(void* stream) const {
@@ -343,59 +382,70 @@ namespace spectra::sdk::cuda {
     }
 
     RawMeshView frame_mesh_internal(void* source, const std::string_view id) {
-        State& state          = setup_state(source);
-        OutputState& output   = output_state(state, id);
-        const auto& buffers   = output.slots[state.next_slot];
+        State& state        = setup_state(source);
+        OutputState& output = output_state(state, id);
+        const auto& buffers = output.slots[state.next_slot];
         std::size_t index{};
-        const RawView positions = raw_view(buffers[index++], sizeof(Float3));
-        const RawView normals   = contains(output.mesh_attributes, MeshAttribute::Normal) ? raw_view(buffers[index++], sizeof(Float3)) : RawView{};
-        const RawView tangents  = contains(output.mesh_attributes, MeshAttribute::Tangent) ? raw_view(buffers[index++], sizeof(Float3)) : RawView{};
-        const RawView colors    = contains(output.mesh_attributes, MeshAttribute::Color) ? raw_view(buffers[index++], sizeof(Float4)) : RawView{};
-        const RawView scalars   = contains(output.mesh_attributes, MeshAttribute::Scalar) ? raw_view(buffers[index++], sizeof(float)) : RawView{};
+        const RawView positions        = raw_view(buffers[index++], sizeof(Float3));
+        const RawView normals          = contains(output.mesh_attributes, MeshAttribute::Normal) ? raw_view(buffers[index++], sizeof(Float3)) : RawView{};
+        const RawView tangents         = contains(output.mesh_attributes, MeshAttribute::Tangent) ? raw_view(buffers[index++], sizeof(Float3)) : RawView{};
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
-        commit.active_count             = output.primary_capacity;
-        commit.secondary_count          = output.secondary_capacity;
-        return {positions, normals, tangents, colors, scalars};
+        commit.active_count            = output.primary_capacity;
+        commit.secondary_count         = output.secondary_capacity;
+        return {positions, normals, tangents};
+    }
+
+    RawView frame_mesh_field_internal(void* source, const std::string_view id, const std::uint32_t active_count) {
+        State& state                                            = setup_state(source);
+        OutputState& output                                     = output_state(state, id);
+        state.commits[output_index(state, output)].active_count = active_count;
+        return raw_view(output.slots[state.next_slot][0], element_size(output.element_kind));
+    }
+
+    void frame_indexed_internal(void* source, const std::string_view id, const std::uint32_t active_count) {
+        State& state                                            = setup_state(source);
+        OutputState& output                                     = output_state(state, id);
+        state.commits[output_index(state, output)].active_count = active_count;
     }
 
     RawView frame_collection_internal(void* source, const std::string_view id, const std::uint32_t active_count) {
-        State& state          = setup_state(source);
-        OutputState& output   = output_state(state, id);
+        State& state                   = setup_state(source);
+        OutputState& output            = output_state(state, id);
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
-        commit.active_count             = active_count;
+        commit.active_count            = active_count;
         return raw_view(output.slots[state.next_slot][0], output.kind == SpectraSdkOutputKind::Spheres ? sizeof(Sphere) : output.kind == SpectraSdkOutputKind::Instances ? sizeof(Instance) : output.kind == SpectraSdkOutputKind::Lines ? sizeof(Line) : sizeof(Vector));
     }
 
     RawParticlesView frame_particles_internal(void* source, const std::string_view id, const std::uint32_t active_count) {
-        State& state          = setup_state(source);
-        OutputState& output   = output_state(state, id);
+        State& state                   = setup_state(source);
+        OutputState& output            = output_state(state, id);
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
-        commit.active_count             = active_count;
+        commit.active_count            = active_count;
         return {&output, raw_view(output.slots[state.next_slot][0], sizeof(Float3))};
     }
 
     RawVolumeView frame_volume_internal(void* source, const std::string_view id) {
-        State& state        = setup_state(source);
-        OutputState& output = output_state(state, id);
+        State& state                   = setup_state(source);
+        OutputState& output            = output_state(state, id);
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
-        commit.active_count             = output.primary_capacity;
+        commit.active_count            = output.primary_capacity;
         return {&output, output.resolution};
     }
 
     RawImageView frame_image_internal(void* source, const std::string_view id) {
-        State& state        = setup_state(source);
-        OutputState& output = output_state(state, id);
+        State& state                   = setup_state(source);
+        OutputState& output            = output_state(state, id);
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
-        commit.active_count             = output.primary_capacity;
+        commit.active_count            = output.primary_capacity;
         return {raw_view(output.slots[state.next_slot][0], sizeof(Float4)), output.resolution};
     }
 
     RawHashGridRadianceFieldView frame_hash_grid_radiance_field_internal(void* source, const std::string_view id) {
-        State& state        = setup_state(source);
-        OutputState& output = output_state(state, id);
-        const auto& buffers = output.slots[state.next_slot];
+        State& state                   = setup_state(source);
+        OutputState& output            = output_state(state, id);
+        const auto& buffers            = output.slots[state.next_slot];
         SpectraSdkOutputCommit& commit = state.commits[output_index(state, output)];
-        commit.active_count = output.primary_capacity;
+        commit.active_count            = output.primary_capacity;
         return {
             raw_view(buffers[0], sizeof(Half4)),
             raw_view(buffers[1], sizeof(Half)),
@@ -408,20 +458,19 @@ namespace spectra::sdk::cuda {
     }
 
     RawView field_internal(void* source, const std::string_view id) {
-        OutputState& output = *static_cast<OutputState*>(source);
-        const auto found = std::ranges::find(output.field_ids, id);
-        const std::size_t index = static_cast<std::size_t>(std::distance(output.field_ids.begin(), found));
+        OutputState& output      = *static_cast<OutputState*>(source);
+        const auto found         = std::ranges::find(output.field_ids, id);
+        const std::size_t index  = static_cast<std::size_t>(std::distance(output.field_ids.begin(), found));
         const std::size_t offset = output.field_buffer_offsets[index] + (output.kind == SpectraSdkOutputKind::Particles ? 1u : 0u);
-        const std::uint64_t element_size = output.field_kinds[index] == FieldKind::Float ? sizeof(float) : output.field_kinds[index] == FieldKind::Float3 ? sizeof(Float3) : sizeof(std::uint32_t);
-        return raw_view(output.slots[*output.current_slot][offset], element_size);
+        return raw_view(output.slots[*output.current_slot][offset], element_size(output.field_kinds[index]));
     }
 
     RawMacFieldView volume_mac_field_internal(void* source, const std::string_view id) {
-        OutputState& output = *static_cast<OutputState*>(source);
-        const auto found = std::ranges::find(output.field_ids, id);
-        const std::size_t index = static_cast<std::size_t>(std::distance(output.field_ids.begin(), found));
+        OutputState& output      = *static_cast<OutputState*>(source);
+        const auto found         = std::ranges::find(output.field_ids, id);
+        const std::size_t index  = static_cast<std::size_t>(std::distance(output.field_ids.begin(), found));
         const std::size_t offset = output.field_buffer_offsets[index];
-        const auto& buffers = output.slots[*output.current_slot];
+        const auto& buffers      = output.slots[*output.current_slot];
         return {
             raw_view(buffers[offset], sizeof(float)),
             raw_view(buffers[offset + 1u], sizeof(float)),
@@ -433,9 +482,16 @@ namespace spectra::sdk::cuda {
     }
 
     void upload_metric_internal(void* source, const std::string_view id, const MetricValue& value) {
-        State& state       = setup_state(source);
-        const auto found   = std::ranges::find(state.metric_ids, id);
+        State& state                                                                                  = setup_state(source);
+        const auto found                                                                              = std::ranges::find(state.metric_ids, id);
         state.metric_values[static_cast<std::size_t>(std::distance(state.metric_ids.begin(), found))] = value;
+    }
+
+    bool output_requested_internal(const void* source, const std::string_view id) noexcept {
+        const State& state      = *static_cast<const State*>(source);
+        const auto output       = std::ranges::find(state.outputs, id, &OutputState::id);
+        const std::size_t index = static_cast<std::size_t>(std::distance(state.outputs.begin(), output));
+        return index < state.requested_output_count && state.requested_outputs[index] != 0u;
     }
 
     void Frame::commit() {
@@ -450,7 +506,7 @@ namespace spectra::sdk::cuda {
         cudaExternalSemaphoreSignalParams parameters{};
         parameters.params.fence.value = state.ready_value;
         check_cuda(cudaSignalExternalSemaphoresAsync(&state.timeline, &parameters, 1u, state.stream), "cudaSignalExternalSemaphoresAsync");
-        *state.commit = {state.next_slot, state.ready_value, state.commits.data()};
+        *state.commit   = {state.next_slot, state.ready_value, state.commits.data()};
         state.next_slot = (state.next_slot + 1u) % state.sink.slot_count;
     }
 
@@ -459,4 +515,4 @@ namespace spectra::sdk::cuda {
         check_cuda(cudaStreamSynchronize(setup_state(state).stream), "cudaStreamSynchronize");
     }
 
-}
+} // namespace spectra::sdk::cuda
