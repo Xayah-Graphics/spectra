@@ -69,7 +69,7 @@ jobs:
             -DSPECTRA_BUILD_UI=OFF
 
       - name: Build
-        run: cmake --build build --parallel 30
+        run: cmake --build build --parallel
 
       - name: Install
         run: |

@@ -92,7 +92,7 @@ jobs:
             -DSPECTRA_BUILD_UI=${{ matrix.ui }}
 
       - name: Build
-        run: cmake --build "build-${{ matrix.id }}" --parallel 30
+        run: cmake --build "build-${{ matrix.id }}" --parallel
 
       - name: Install
         shell: pwsh

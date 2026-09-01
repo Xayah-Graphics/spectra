@@ -40,7 +40,7 @@ RUN cmake -S . -B build -G Ninja \
         -DCMAKE_C_COMPILER=gcc \
         -DCMAKE_CXX_COMPILER=g++ \
         -DSPECTRA_BUILD_UI=OFF \
-    && cmake --build build --parallel 30 \
+    && cmake --build build --parallel \
     && cmake --install build --prefix /opt/spectra --component Spectra
 
 
